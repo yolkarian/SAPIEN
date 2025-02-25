@@ -1,5 +1,7 @@
 from .actor_builder import ActorBuilder
-from .. import pysapien as sapien
+from ..pysapien import Pose, Entity, Scene
+from ..pysapien.physx import PhysxArticulation, PhysxRigidDynamicComponent, PhysxArticulationLinkComponent
+from typing import Optional
 import numpy as np
 from dataclasses import dataclass
 from typing import List, Tuple
@@ -17,8 +19,8 @@ class MimicJointRecord:
 class JointRecord:
     joint_type: str = "undefined"  # "fixed", "prismatic", "revolute"
     limits: Tuple[float] = (-np.inf, np.inf)
-    pose_in_parent: sapien.Pose = sapien.Pose()
-    pose_in_child: sapien.Pose = sapien.Pose()
+    pose_in_parent:Pose = Pose()
+    pose_in_child: Pose = Pose()
     friction: float = 0
     damping: float = 0
     name: str = ""
@@ -63,14 +65,15 @@ class LinkBuilder(ActorBuilder):
 
 class ArticulationBuilder:
     def __init__(self):
-        self.initial_pose = sapien.Pose()
+        self.scene:Optional[Scene] = None
+        self.initial_pose = Pose()
         self.link_builders: List[LinkBuilder] = []
         self.mimic_joint_records: List[MimicJointRecord] = []
 
     def set_initial_pose(self, pose):
         self.initial_pose = pose
 
-    def set_scene(self, scene: sapien.Scene):
+    def set_scene(self, scene: Scene):
         self.scene = scene
         return self
 
@@ -83,16 +86,16 @@ class ArticulationBuilder:
 
         return builder
 
-    def build_entities(self, fix_root_link=None):
-        entities = []
-        links = []
+    def build_entities(self, fix_root_link=None)->List[Entity]:
+        entities:List[Entity] = []
+        links:List[PhysxRigidDynamicComponent] = []
         for b in self.link_builders:
             b._check()
             b.physx_body_type = "link"
 
-            entity = sapien.Entity()
+            entity = Entity()
 
-            link_component = b.build_physx_component(
+            link_component:PhysxArticulationLinkComponent = b.build_physx_component(
                 links[b.parent.index] if b.parent else None
             )
 
@@ -127,13 +130,13 @@ class ArticulationBuilder:
 
     def build(
         self, fix_root_link=None, build_mimic_joints=True
-    ) -> sapien.physx.PhysxArticulation:
+    ) -> PhysxArticulation:
         assert self.scene is not None
         links = self.build_entities(fix_root_link=fix_root_link)
 
-        articulation: sapien.physx.PhysxArticulation = (
+        articulation: PhysxArticulation = (
             links[0]
-            .find_component_by_type(sapien.physx.PhysxArticulationLinkComponent)
+            .find_component_by_type(PhysxArticulationLinkComponent)
             .articulation
         )
 

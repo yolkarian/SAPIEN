@@ -2,6 +2,7 @@ from collections import OrderedDict
 import copy
 import os
 import time
+from typing import List, Tuple, Optional, Dict, Iterable
 
 from lxml import etree as ET
 import networkx as nx
@@ -2685,21 +2686,21 @@ class Link(URDFTypeWithMesh):
         self._collision_mesh = None
 
     @property
-    def name(self):
+    def name(self)->str:
         """str : The name of this link."""
         return self._name
 
     @name.setter
-    def name(self, value):
+    def name(self, value:object):
         self._name = str(value)
 
     @property
-    def inertial(self):
+    def inertial(self)-> Inertial:
         """:class:`.Inertial` : Inertial properties of the link."""
         return self._inertial
 
     @inertial.setter
-    def inertial(self, value):
+    def inertial(self, value:Optional[Inertial]):
         if value is not None and not isinstance(value, Inertial):
             raise TypeError("Expected Inertial object")
         # Set default inertial
@@ -2710,12 +2711,12 @@ class Link(URDFTypeWithMesh):
         self._inertial = value
 
     @property
-    def visuals(self):
+    def visuals(self)->List[Visual]:
         """list of :class:`.Visual` : The visual properties of this link."""
         return self._visuals
 
     @visuals.setter
-    def visuals(self, value):
+    def visuals(self, value:Optional[Iterable[Visual]]):
         if value is None:
             value = []
         else:
@@ -2726,12 +2727,12 @@ class Link(URDFTypeWithMesh):
         self._visuals = value
 
     @property
-    def collisions(self):
+    def collisions(self)->Collision:
         """list of :class:`.Collision` : The collision properties of this link."""
         return self._collisions
 
     @collisions.setter
-    def collisions(self, value):
+    def collisions(self, value: Iterable[Collision]):
         if value is None:
             value = []
         else:
@@ -2940,7 +2941,7 @@ class URDF(URDFTypeWithMesh):
         self._name = str(value)
 
     @property
-    def links(self):
+    def links(self)->List[Link]:
         """list of :class:`.Link` : The links of the URDF.
 
         This returns a copy of the links array which cannot be edited
@@ -2960,7 +2961,7 @@ class URDF(URDFTypeWithMesh):
         return copy.copy(self._link_map)
 
     @property
-    def joints(self):
+    def joints(self)->List[Joint]:
         """list of :class:`.Joint` : The links of the URDF.
 
         This returns a copy of the joints array which cannot be edited
@@ -2970,7 +2971,7 @@ class URDF(URDFTypeWithMesh):
         return copy.copy(self._joints)
 
     @property
-    def joint_map(self):
+    def joint_map(self)->Dict[str, Joint]:
         """dict : Map from joint names to the joints themselves.
 
         This returns a copy of the joint map which cannot be edited
@@ -3997,7 +3998,7 @@ class URDF(URDFTypeWithMesh):
                         "{}".format(t.name, joint.name)
                     )
 
-    def _validate_graph(self):
+    def _validate_graph(self)->Tuple[Optional[Link], List[Link]]:
         """Raise an exception if the link-joint structure is invalid.
 
         Checks for the following:

@@ -31,7 +31,7 @@ jobs:
       - name: Build wheels
         run: "git config --global --add safe.directory '*' && ./scripts/build.sh"
       - name: Upload wheels
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: linux-wheels-all
           path: ./wheelhouse/*.whl
@@ -54,8 +54,7 @@ jobs:
           ./cuda_12.6.0_windows_network.exe -s cudart_12.6 nvcc_12.6 visual_studio_integration_12.6 nvtx_12.6 curand_dev_12.6
       - uses: actions/setup-python@v5
         with:
-          python-version: |
-            3.11
+          python-version: "3.11"
       - name: Build wheels
         shell: bash
         run: |
@@ -69,8 +68,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-sapien
-          path: |
-            sapien_build/_sapien_install
+          path: sapien_build/_sapien_install
 
   build-windows-pybind:
     runs-on: windows-2022
@@ -132,7 +130,7 @@ jobs:
           name: windows-wheel-3.12
           path: wheelhouse
       - name: Download wheels
-        uses: actions/download-artifact@v3
+        uses: actions/download-artifact@v4
         with:
           name: linux-wheels-all
           path: wheelhouse

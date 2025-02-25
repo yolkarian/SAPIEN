@@ -2,7 +2,7 @@ from .. import pysapien as sapien
 from dataclasses import dataclass
 import numpy as np
 import typing
-from typing import List, Union, Dict, Any, Tuple, Literal
+from typing import List, Union, Dict, Any, Tuple, Literal, Optional
 
 from .coacd import do_coacd
 
@@ -89,7 +89,7 @@ class ActorBuilder:
         self.visual_records: List[VisualShapeRecord] = []
         self.use_density = True
         self.collision_groups = [1, 1, 0, 0]
-        self.scene = None
+        self.scene:Optional[sapien.Scene] = None
         self.physx_body_type = "dynamic"
         self.name = ""
 
