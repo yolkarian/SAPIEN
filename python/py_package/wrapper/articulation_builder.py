@@ -3,9 +3,9 @@ from ..pysapien import Pose, Entity, Scene
 from ..pysapien.physx import PhysxArticulation, PhysxRigidDynamicComponent, PhysxArticulationLinkComponent
 from typing import Optional
 import numpy as np
+from numpy.typing import NDArray
 from dataclasses import dataclass
-from typing import List, Tuple
-
+from typing import List, Tuple, Union
 
 @dataclass
 class MimicJointRecord:
@@ -19,19 +19,20 @@ class MimicJointRecord:
 class JointRecord:
     joint_type: str = "undefined"  # "fixed", "prismatic", "revolute"
     limits: Tuple[float] = (-np.inf, np.inf)
-    pose_in_parent:Pose = Pose()
+    pose_in_parent: Pose = Pose()
     pose_in_child: Pose = Pose()
     friction: float = 0
     damping: float = 0
+    armature: Union[NDArray[np.float32], float] = 0.01
     name: str = ""
 
 
 class LinkBuilder(ActorBuilder):
     def __init__(self, index: int, parent):
         super().__init__()
-        self.parent = parent
-        self.index = index
-        self.joint_record = JointRecord()
+        self.parent:LinkBuilder = parent
+        self.index:int = index
+        self.joint_record = JointRecord()  # Joint record of the parent joint.
         self.physx_body_type = "link"
 
     def set_joint_name(self, name):
@@ -117,11 +118,13 @@ class ArticulationBuilder:
             ]:
                 link_component.joint.limit = np.array(b.joint_record.limits).flatten()
                 link_component.joint.set_drive_property(0, b.joint_record.damping)
+                link_component.joint.set_armature(b.joint_record.armature * np.ones_like(link_component.joint.get_armature(), dtype=np.float32))
 
             links.append(link_component)
             entities.append(entity)
 
         if fix_root_link is not None:
+            # The first component should be sapien.physx.PhysxArticulationLinkComponent
             entities[0].components[0].joint.type = (
                 "fixed" if fix_root_link else "undefined"
             )

@@ -7,6 +7,7 @@ from typing import List, Union, Dict, Any, Tuple, Literal, Optional
 from .coacd import do_coacd
 
 
+
 def preprocess_mesh_file(filename: str):
     """
     Process input mesh file to a SAPIEN supported format
@@ -16,7 +17,7 @@ def preprocess_mesh_file(filename: str):
         filename for the generated file or original filename
     """
 
-    from .geometry.usd import convert_usd_to_glb
+    from sapien.wrapper.geometry.usd import convert_usd_to_glb
 
     if any(filename.lower().endswith(s) for s in [".usd", ".usda", ".usdc", ".usdz"]):
         glb_filename = filename + ".sapien.glb"
@@ -62,6 +63,7 @@ class CollisionShapeRecord:
     decomposition_params: Union[Dict[str, Any], None] = None
 
 
+
 @dataclass
 class VisualShapeRecord:
     type: Literal["file", "plane", "box", "capsule", "sphere", "cylinder"]
@@ -97,7 +99,9 @@ class ActorBuilder:
         self._cmass_local_pose = sapien.Pose()
         self._inertia = np.zeros(3)
         self._auto_inertial = True
-
+        self.disable_gravity: bool = False
+        self.linear_damping: float = 0.0
+        self.angular_damping: float = 0.0
         self.initial_pose = sapien.Pose()
 
     def set_initial_pose(self, pose):
@@ -132,8 +136,7 @@ class ActorBuilder:
             else:
                 assert r.material is None or isinstance(
                     r.material, sapien.render.RenderMaterial
-                )
-
+                )    # gravity property is temporarily placed here.
             if r.type == "plane":
                 shape = sapien.render.RenderShapePlane(r.scale, r.material)
             elif r.type == "box":
@@ -168,13 +171,22 @@ class ActorBuilder:
 
         if self.physx_body_type == "dynamic":
             component = sapien.physx.PhysxRigidDynamicComponent()
+            component.set_linear_damping(self.linear_damping)
+            component.set_angular_damping(self.angular_damping)
+            component.set_disable_gravity(self.disable_gravity)
         elif self.physx_body_type == "kinematic":
             component = sapien.physx.PhysxRigidDynamicComponent()
+            component.set_linear_damping(self.linear_damping)
+            component.set_angular_damping(self.angular_damping)
+            component.set_disable_gravity(self.disable_gravity)
             component.kinematic = True
         elif self.physx_body_type == "static":
             component = sapien.physx.PhysxRigidStaticComponent()
         elif self.physx_body_type == "link":
             component = sapien.physx.PhysxArticulationLinkComponent(link_parent)
+            component.set_linear_damping(self.linear_damping)
+            component.set_angular_damping(self.angular_damping)
+            component.set_disable_gravity(self.disable_gravity)
         else:
             raise Exception(f"invalid physx body type [{self.physx_body_type}]")
 
@@ -280,7 +292,7 @@ class ActorBuilder:
 
         entity = self.build_entity()
         entity.name = self.name
-        entity.pose = self.initial_pose  # set pose before adding to scene
+        entity.set_pose(self.initial_pose) # set pose before adding to scene
         self.scene.add_entity(entity)
         return entity
 

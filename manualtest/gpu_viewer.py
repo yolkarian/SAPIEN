@@ -32,7 +32,7 @@ def main():
 
     robots: list[sapien.physx.PhysxArticulation] = []
     for scene in scenes:
-        scene.load_widget_from_package("demo_arena", "DemoArena")
+        # scene.load_widget_from_package("demo_arena", "DemoArena")
         builder.set_scene(scene)
         robot = builder.build()
         robots.append(robot)
@@ -180,13 +180,13 @@ def main():
     viewer.set_scenes(scenes)
     vs = viewer.window._internal_scene
     vs.set_ambient_light([0.1, 0.1, 0.1])
-    vs.set_cubemap(scenes[0].render_system.get_cubemap()._internal_cubemap)
+    # vs.set_cubemap(sapien.render.RenderCubemap()._internal_cubemap)
 
     viewer.render()
 
     while not viewer.closed:
         px.step()
-        px.sync_poses_gpu_to_cpu()
+        # px.sync_poses_gpu_to_cpu()
         viewer.window.update_render()
         viewer.render()
 
