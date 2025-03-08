@@ -1,0 +1,26 @@
+image: yolkarian/sapien-build-env:0.2
+
+pipelines:
+  branches:
+    nightly-release:
+      - step:
+          name: Build Linux All
+          script:
+            - apt-get update && apt-get install -y cmake zip
+            - git submodule update --init --recursive
+            - git fetch --tags
+            - export CMAKE_BUILD_PARALLEL_LEVEL=2
+            - git config --global --add safe.directory '*' && ./scripts/build.sh
+            - zip -r wheelhouse.zip ./wheelhouse
+          artifacts:
+            - wheelhouse.zip
+
+      - step:
+          name: Upload to Bitbucket Downloads
+          script:
+            - pipe: atlassian/bitbucket-upload-file:0.7.4
+              variables:
+                BITBUCKET_USERNAME: $BITBUCKET_USERNAME
+                BITBUCKET_APP_PASSWORD: $BITBUCKET_APP_PASSWORD
+                FILENAME: 'wheelhouse.zip'
+                DEBUG: 'true'
