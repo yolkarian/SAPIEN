@@ -13,7 +13,7 @@ jobs:
     permissions:
       contents: write
     container:
-      image: fxiangucsd/sapien-build-env:3.6
+      image: yolkarian/sapien-build-env:0.2
       env:
         CMAKE_BUILD_PARALLEL_LEVEL: 2
     steps:

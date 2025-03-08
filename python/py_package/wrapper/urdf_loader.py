@@ -23,15 +23,15 @@ def _try_very_hard_to_find_file(filename:str, urdf_dir:str, package_dir:Optional
         filename = filename[10:]
         if package_dir is not None:
             fpath = package_dir / filename
-
-        parent_dir = urdf_dir
-        while True:
-            fpath = parent_dir / filename
-            if fpath.is_file():
-                break
-            if parent_dir == Path("/"):
-                break
-            parent_dir = parent_dir.parent
+        else:
+            parent_dir = urdf_dir
+            while True:
+                fpath = parent_dir / filename
+                if fpath.is_file():
+                    break
+                if parent_dir == Path("/"):
+                    break
+                parent_dir = parent_dir.parent
     else:
         fpath = urdf_dir / filename
 
@@ -241,7 +241,7 @@ class URDFLoader:
 
         return cameras
 
-    def _config_link(self, link:Link, link_builder:ActorBuilder):
+    def _config_link_builder(self, link:Link, link_builder:ActorBuilder):
         # inertial
         if (
             link.inertial
@@ -466,6 +466,8 @@ class URDFLoader:
                 self._pose_from_origin(joint.origin, self.scale) if joint else Pose()
             )
 
+            # connect current link builder to parent link builder
+            # if there exists a parent joint, there must exist a parent linkbuilder
             link_builder = builder.create_link_builder(
                 link2builder[joint.parent] if joint else None
             )
@@ -479,8 +481,9 @@ class URDFLoader:
                 else ""
             )
 
-            self._config_link(link, link_builder)
+            self._config_link_builder(link, link_builder)
 
+            # NOTE(Yuke): the basic joint property is set here
             if joint is None:
                 # FIXME: fix root link
                 link_builder.set_joint_properties(
@@ -601,7 +604,7 @@ class URDFLoader:
     def _parse_actor(self, link_name:str):
         builder = ActorBuilder()
         builder.set_name(link_name)
-        self._config_link(self.name2link[link_name], builder)
+        self._config_link_builder(self.name2link[link_name], builder)
 
         joint = self.link2parent_joint[link_name]
         if joint is not None and joint.joint_type == "floating":
@@ -633,6 +636,7 @@ class URDFLoader:
         self.link2parent_joint[robot.base_link.name] = None
 
         roots = [robot.base_link.name]
+        # exclude floating joints and treat them as special 
         for joint in joints:
             if joint.joint_type == "floating":
                 if joint.parent != robot.base_link.name:
@@ -648,7 +652,13 @@ class URDFLoader:
         articulation_builders:List[ArticulationBuilder] = []
         for root in roots:
             if len(self.link2child_joints[root]) == 0:
-                actor_builders.append(self._parse_actor(root))
+                actor_builder = self._parse_actor(root)
+                # NOTE(Yuke): to optimize performance, static/kinematic Actor is better but pose
+                #           change after loading and building default 
+                if root == robot.base_link.name:
+                    if self.fix_root_link: # fix_root_actor kinematic Actor 
+                        actor_builder.set_physx_body_type("kinematic")
+                actor_builders.append(actor_builder)
             else:
                 if root == robot.base_link.name:
                     fix_base = self.fix_root_link

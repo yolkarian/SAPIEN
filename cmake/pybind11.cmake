@@ -6,7 +6,7 @@ include(FetchContent)
 FetchContent_Declare(
   pybind11
   GIT_REPOSITORY https://github.com/pybind/pybind11.git
-  GIT_TAG smart_holder
+  GIT_TAG archive/smart_holder
   GIT_SHALLOW TRUE
   GIT_PROGRESS TRUE
 )
