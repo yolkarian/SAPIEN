@@ -2,7 +2,7 @@ import math
 import os
 from lxml import etree as ET
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Literal
 
 import numpy as np
 
@@ -47,7 +47,8 @@ class URDFLoader:
         self.scene: Optional[Scene] = None
         self.fix_root_link = True
         self.load_multiple_collisions_from_file = False
-        self.multiple_collisions_decomposition = "none"
+        self.load_nonconvex_collision_from_file = False
+        self.multiple_collisions_decomposition:Literal["none", "cocad"] = "none"
         self.multiple_collisions_decomposition_params = dict()
 
         self.collision_is_visual = False
@@ -422,7 +423,18 @@ class URDFLoader:
                     self.package_dir,
                 )
 
-                if self.load_multiple_collisions_from_file:
+                if self.load_nonconvex_collision_from_file:
+                    link_builder.add_nonconvex_collision_from_file(
+                        filename,
+                        t_collision2link,
+                        scale * self.scale,
+                        material=material,
+                        density=density,
+                        patch_radius=patch_radius,
+                        min_patch_radius=min_patch_radius,
+                    )
+
+                elif self.load_multiple_collisions_from_file:
                     link_builder.add_multiple_convex_collisions_from_file(
                         filename,
                         t_collision2link,
