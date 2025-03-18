@@ -988,6 +988,9 @@ class PhysxSceneConfig:
     enable_pcm: bool
     enable_tgs: bool
     gravity: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]]
+    friction_offset_threshold: float
+    friction_correlation_distance:float
+    cpu_workers: int
     def __getstate__(self) -> tuple:
         ...
     def __init__(self) -> None:
@@ -1065,7 +1068,7 @@ def set_default_material(static_friction: float, dynamic_friction: float, restit
 def set_gpu_memory_config(temp_buffer_capacity: int = 16777216, max_rigid_contact_count: int = 524288, max_rigid_patch_count: int = 81920, heap_capacity: int = 67108864, found_lost_pairs_capacity: int = 262144, found_lost_aggregate_pairs_capacity: int = 1024, total_aggregate_pairs_capacity: int = 1024) -> None:
     ...
 @typing.overload
-def set_scene_config(gravity: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] = ..., bounce_threshold: float = 2.0, enable_pcm: bool = True, enable_tgs: bool = True, enable_ccd: bool = False, enable_enhanced_determinism: bool = False, enable_friction_every_iteration: bool = True, cpu_workers: int = 0) -> None:
+def set_scene_config(gravity: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] = ..., bounce_threshold: float = 2.0, enable_pcm: bool = True, enable_tgs: bool = True, enable_ccd: bool = False, enable_enhanced_determinism: bool = False, enable_friction_every_iteration: bool = True, friction_offset_threshold:float = 0.04, friction_correlation_distance:float = 0.025, cpu_workers: int = 0) -> None:
     ...
 @typing.overload
 def set_scene_config(config: PhysxSceneConfig) -> None:

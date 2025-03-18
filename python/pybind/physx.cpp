@@ -187,16 +187,22 @@ Generator<int> init_physx(py::module &sapien) {
       .def_readwrite("enable_enhanced_determinism", &PhysxSceneConfig::enableEnhancedDeterminism)
       .def_readwrite("enable_friction_every_iteration",
                      &PhysxSceneConfig::enableFrictionEveryIteration)
+      .def_readwrite("friction_offset_threshold", &PhysxSceneConfig::frictionOffsetThreshold)
+      .def_readwrite("friction_correlation_distance", &PhysxSceneConfig::frictionCorrelationDistance)
+      .def_readwrite("cpu_workers", &PhysxSceneConfig::cpuWorkers)
       .def("__repr__", [](PhysxSceneConfig &) { return "PhysxSceneConfig()"; })
       .def(py::pickle(
           [](PhysxSceneConfig &config) {
             return py::make_tuple(config.gravity, config.bounceThreshold, config.enablePCM,
                                   config.enableTGS, config.enableCCD,
                                   config.enableEnhancedDeterminism,
-                                  config.enableFrictionEveryIteration);
+                                  config.enableFrictionEveryIteration,
+                                  config.frictionOffsetThreshold,
+                                  config.frictionCorrelationDistance,
+                                  config.cpuWorkers);
           },
           [](py::tuple t) {
-            if (t.size() != 7) {
+            if (t.size() != 10) {
               throw std::runtime_error("Invalid state!");
             }
             PhysxSceneConfig config;
@@ -209,6 +215,9 @@ Generator<int> init_physx(py::module &sapien) {
                 t[5].cast<decltype(config.enableEnhancedDeterminism)>();
             config.enableFrictionEveryIteration =
                 t[6].cast<decltype(config.enableFrictionEveryIteration)>();
+            config.frictionOffsetThreshold = t[7].cast<decltype(config.frictionOffsetThreshold)>();
+            config.frictionCorrelationDistance = t[8].cast<decltype(config.frictionCorrelationDistance)>();
+            config.cpuWorkers = t[9].cast<decltype(config.cpuWorkers)>();
             return config;
           }));
 
@@ -1200,12 +1209,13 @@ Example:
            py::arg("collision_stack_size") = 64 * 64 * 1024)
 
       .def("set_scene_config",
-           py::overload_cast<Vec3, float, bool, bool, bool, bool, bool, uint32_t>(
+           py::overload_cast<Vec3, float, bool, bool, bool, bool, bool, float, float, uint32_t>(
                &PhysxDefault::setSceneConfig),
            py::arg("gravity") = Vec3{0, 0, -9.81}, py::arg("bounce_threshold") = 2.f,
            py::arg("enable_pcm") = true, py::arg("enable_tgs") = true,
            py::arg("enable_ccd") = false, py::arg("enable_enhanced_determinism") = false,
-           py::arg("enable_friction_every_iteration") = true, py::arg("cpu_workers") = 0)
+           py::arg("enable_friction_every_iteration") = true, py::arg("friction_offset_threshold") = 0.04f,
+           py::arg("friction_correlation_distance") = 0.025f, py::arg("cpu_workers") = 0)
       .def("set_scene_config",
            py::overload_cast<PhysxSceneConfig const &>(&PhysxDefault::setSceneConfig),
            py::arg("config"))

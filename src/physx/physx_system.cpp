@@ -44,6 +44,8 @@ PhysxSystemCpu::PhysxSystemCpu() {
   sceneDesc.gravity = Vec3ToPxVec3(config.gravity);
   sceneDesc.filterShader = TypeAffinityIgnoreFilterShader;
   sceneDesc.solverType = config.enableTGS ? PxSolverType::eTGS : PxSolverType::ePGS;
+  sceneDesc.frictionOffsetThreshold = config.frictionOffsetThreshold;
+  sceneDesc.frictionCorrelationDistance = config.frictionCorrelationDistance;
   sceneDesc.bounceThresholdVelocity = config.bounceThreshold;
 
   PxSceneFlags sceneFlags;
@@ -94,6 +96,8 @@ PhysxSystemGpu::PhysxSystemGpu(std::shared_ptr<Device> device) {
   sceneDesc.gravity = Vec3ToPxVec3(config.gravity);
   sceneDesc.filterShader = TypeAffinityIgnoreFilterShaderGpu;
   sceneDesc.solverType = config.enableTGS ? PxSolverType::eTGS : PxSolverType::ePGS;
+  sceneDesc.frictionOffsetThreshold = config.frictionOffsetThreshold;
+  sceneDesc.frictionCorrelationDistance = config.frictionCorrelationDistance;
   sceneDesc.bounceThresholdVelocity = config.bounceThreshold;
 
   sceneDesc.gpuDynamicsConfig = PhysxDefault::getGpuMemoryConfig();

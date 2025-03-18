@@ -57,7 +57,8 @@ void PhysxDefault::setGpuMemoryConfig(uint32_t tempBufferCapacity, uint32_t maxR
 
 void PhysxDefault::setSceneConfig(Vec3 gravity, float bounceThreshold, bool enablePCM,
                                   bool enableTGS, bool enableCCD, bool enableEnhancedDeterminism,
-                                  bool enableFrictionEveryIteration, uint32_t cpuWorkers) {
+                                  bool enableFrictionEveryIteration, float frictionOffsetThreshold,
+                                  float frictionCorrelationDistance, uint32_t cpuWorkers) {
   gSceneConfig.gravity = gravity;
   gSceneConfig.bounceThreshold = bounceThreshold;
   gSceneConfig.enablePCM = enablePCM;
@@ -65,6 +66,8 @@ void PhysxDefault::setSceneConfig(Vec3 gravity, float bounceThreshold, bool enab
   gSceneConfig.enableCCD = enableCCD;
   gSceneConfig.enableEnhancedDeterminism = enableEnhancedDeterminism;
   gSceneConfig.enableFrictionEveryIteration = enableFrictionEveryIteration;
+  gSceneConfig.frictionOffsetThreshold = frictionOffsetThreshold;
+  gSceneConfig.frictionCorrelationDistance = frictionCorrelationDistance;
   gSceneConfig.cpuWorkers = cpuWorkers;
 }
 void PhysxDefault::setSceneConfig(PhysxSceneConfig const &config) { gSceneConfig = config; }

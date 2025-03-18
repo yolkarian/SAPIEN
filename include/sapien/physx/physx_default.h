@@ -21,6 +21,8 @@ struct PhysxSceneConfig {
   bool enableEnhancedDeterminism = false; // improve determinism
   bool enableFrictionEveryIteration =
       true;                // better friction calculation, recommended for robotics
+  float frictionOffsetThreshold = 0.04f;   
+  float frictionCorrelationDistance = 0.025f;
   uint32_t cpuWorkers = 0; // CPU workers, 0 for using main thread
 };
 
@@ -55,7 +57,8 @@ public:
 
   static void setSceneConfig(Vec3 gravity, float bounceThreshold, bool enablePCM, bool enableTGS,
                              bool enableCCD, bool enableEnhancedDeterminism,
-                             bool enableFrictionEveryIteration, uint32_t cpuWorkers);
+                             bool enableFrictionEveryIteration, float frictionOffsetThreshold,
+                             float frictionCorrelationDistance, uint32_t cpuWorkers);
   static void setSceneConfig(PhysxSceneConfig const &);
   static PhysxSceneConfig const &getSceneConfig();
 
