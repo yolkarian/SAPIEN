@@ -434,7 +434,11 @@ class PhysxCollisionShapeSphere(PhysxCollisionShape):
     def radius(self) -> float:
         ...
 class PhysxCollisionShapeTriangleMesh(PhysxCollisionShape):
+    @typing.overload
     def __init__(self, filename: str, scale: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple, material: PhysxMaterial, sdf: bool = False) -> None:
+        ...
+    @typing.overload
+    def __init__(self, vertices: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]], triangles:numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]], scale: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple = ..., material: PhysxMaterial | None = ..., sdf: bool = False) -> None:
         ...
     def get_scale(self) -> numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]]:
         ...
@@ -898,6 +902,7 @@ class PhysxRigidBodyComponent(PhysxRigidBaseComponent):
 class PhysxRigidDynamicComponent(PhysxRigidBodyComponent):
     angular_velocity: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]]
     kinematic: bool
+    gyroscopic_forces: bool
     kinematic_target: sapien.pysapien.Pose
     linear_velocity: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]]
     sleep_threshold: float
@@ -930,6 +935,8 @@ class PhysxRigidDynamicComponent(PhysxRigidBodyComponent):
     def set_angular_velocity(self, velocity: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple) -> None:
         ...
     def set_kinematic(self, kinematic: bool) -> None:
+        ...
+    def set_gyroscopic_forces(self, kinematic: bool) -> None:
         ...
     def set_kinematic_target(self, target: sapien.pysapien.Pose) -> None:
         ...

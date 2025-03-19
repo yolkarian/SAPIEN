@@ -708,6 +708,11 @@ If after testing g2 and g3, the objects may collide, g0 and g1 come into play. g
   PyPhysxCollisionShapeTriangleMesh
       .def(py::init<std::string const &, Vec3, std::shared_ptr<PhysxMaterial>, bool>(),
            py::arg("filename"), py::arg("scale"), py::arg("material"), py::arg("sdf") = false)
+      .def(py::init<Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> const &,
+                    Eigen::Matrix<uint32_t, Eigen::Dynamic, 3, Eigen::RowMajor> const &,
+                    Vec3, std::shared_ptr<PhysxMaterial>, bool>(),
+                    py::arg("vertices"), py::arg("triangles"), py::arg("scale") = Vec3(1.f), 
+                    py::arg("material") = nullptr, py::arg("sdf") = false)
       .def_property_readonly("scale", &PhysxCollisionShapeTriangleMesh::getScale)
       .def("get_scale", &PhysxCollisionShapeTriangleMesh::getScale)
       .def_property_readonly("vertices", &PhysxCollisionShapeTriangleMesh::getVertices)
@@ -844,6 +849,11 @@ Example:
                     &PhysxRigidDynamicComponent::setKinematic)
       .def("get_kinematic", &PhysxRigidDynamicComponent::isKinematic)
       .def("set_kinematic", &PhysxRigidDynamicComponent::setKinematic, py::arg("kinematic"))
+
+      .def_property("gyroscopic_forces", &PhysxRigidDynamicComponent::GyroscopicForcesIsEnabled,
+          &PhysxRigidDynamicComponent::setGyroscopicForces)
+      .def("get_gyroscopic_forces", &PhysxRigidDynamicComponent::GyroscopicForcesIsEnabled)
+      .def("set_gyroscopic_forces", &PhysxRigidDynamicComponent::setGyroscopicForces, py::arg("gyroscopic_forces"))
 
       .def_property("kinematic_target", &PhysxRigidDynamicComponent::getKinematicTarget,
                     &PhysxRigidDynamicComponent::setKinematicTarget)

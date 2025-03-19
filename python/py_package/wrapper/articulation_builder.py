@@ -18,11 +18,12 @@ class MimicJointRecord:
 @dataclass
 class JointRecord:
     joint_type: str = "undefined"  # "fixed", "prismatic", "revolute"
-    limits: Tuple[float] = (-np.inf, np.inf)
+    limits: Tuple[float,float] = (-np.inf, np.inf)
     pose_in_parent: Pose = Pose()
     pose_in_child: Pose = Pose()
     friction: float = 0
     damping: float = 0
+    effort_limit: Optional[float] = None
     armature: Union[NDArray[np.float32], float] = 0.01
     name: str = ""
 
@@ -35,11 +36,11 @@ class LinkBuilder(ActorBuilder):
         self.joint_record = JointRecord()  # Joint record of the parent joint.
         self.physx_body_type = "link"
 
-    def set_joint_name(self, name):
+    def set_joint_name(self, name:str):
         self.joint_record.name = name
 
     def set_joint_properties(
-        self, type, limits, pose_in_parent, pose_in_child, friction=0, damping=0
+        self, type:str, limits:Tuple[float,float], pose_in_parent:Pose, pose_in_child:Pose, friction:float=0, damping:float=0, effort_limit:Optional[float] = None
     ):
         self.joint_record = JointRecord(
             joint_type=type,
@@ -48,6 +49,7 @@ class LinkBuilder(ActorBuilder):
             pose_in_child=pose_in_child,
             friction=friction,
             damping=damping,
+            effort_limit=effort_limit,
             name=self.joint_record.name,
         )
 
@@ -117,7 +119,10 @@ class ArticulationBuilder:
                 "revolute_unwrapped",
             ]:
                 link_component.joint.limit = np.array(b.joint_record.limits).flatten()
-                link_component.joint.set_drive_property(0, b.joint_record.damping)
+                if b.joint_record.effort_limit is not None:
+                    link_component.joint.set_drive_property(0, b.joint_record.damping, force_limit=b.joint_record.effort_limit)
+                else:
+                    link_component.joint.set_drive_property(0, b.joint_record.damping)
                 link_component.joint.set_armature(b.joint_record.armature * np.ones_like(link_component.joint.get_armature(), dtype=np.float32))
 
             links.append(link_component)

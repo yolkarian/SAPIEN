@@ -159,8 +159,17 @@ void PhysxRigidDynamicComponent::setKinematic(bool kinematic) {
     setAutoComputeMass(false);
   }
 }
+
 bool PhysxRigidDynamicComponent::isKinematic() const {
   return getPxActor()->getRigidBodyFlags().isSet(PxRigidBodyFlag::eKINEMATIC);
+}
+
+void PhysxRigidDynamicComponent::setGyroscopicForces(bool gyroscopicForces) {
+  getPxActor()->setRigidBodyFlag(PxRigidBodyFlag::eENABLE_GYROSCOPIC_FORCES, gyroscopicForces);
+}
+
+bool PhysxRigidDynamicComponent::GyroscopicForcesIsEnabled() const {
+  return getPxActor()->getRigidBodyFlags().isSet(PxRigidBodyFlag::eENABLE_GYROSCOPIC_FORCES);
 }
 
 bool PhysxRigidDynamicComponent::isSleeping() const { return getPxActor()->isSleeping(); }

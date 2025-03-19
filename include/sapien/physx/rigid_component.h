@@ -126,6 +126,9 @@ public:
   Pose getKinematicTarget() const;
   void setKinematic(bool kinematic);
   bool isKinematic() const;
+  void setGyroscopicForces(bool GyroscopicForces);
+  bool GyroscopicForcesIsEnabled() const;
+
   ::physx::PxRigidDynamic *getPxActor() const override { return mPxActor; }
 
   bool isSleeping() const;
