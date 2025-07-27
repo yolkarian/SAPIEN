@@ -528,9 +528,13 @@ void PhysxSystemGpu::gpuQueryContactPairImpulses(PhysxGpuContactPairImpulseQuery
 
   copyContactData();
 
-  handle_contacts((PxGpuContactPair *)mCudaContactBuffer.ptr, mContactCount,
+  if (mContactCount) {
+    handle_contacts((PxGpuContactPair *)mCudaContactBuffer.ptr, mContactCount,
+
                   (ActorPairQuery *)query.query.ptr, query.query.shape.at(0),
+
                   (Vec3 *)query.buffer.ptr, mCudaStream);
+  }
   cudaStreamSynchronize(mCudaStream);
 }
 
@@ -543,9 +547,12 @@ void PhysxSystemGpu::gpuQueryContactBodyImpulses(PhysxGpuContactBodyImpulseQuery
 
   copyContactData();
 
-  handle_net_contact_force((PxGpuContactPair *)mCudaContactBuffer.ptr, mContactCount,
+  if (mContactCount) {
+    handle_net_contact_force((PxGpuContactPair *)mCudaContactBuffer.ptr, mContactCount,
                            (ActorQuery *)query.query.ptr, query.query.shape.at(0),
                            (Vec3 *)query.buffer.ptr, mCudaStream);
+
+  }
   cudaStreamSynchronize(mCudaStream);
 }
 
@@ -575,8 +582,8 @@ void PhysxSystemGpu::gpuFetchArticulationLinkPose() {
 
   ensureCudaDevice();
   mPxScene->copyArticulationData(mCudaLinkPoseScratch.ptr, mCudaArticulationIndexBuffer.ptr,
-                                 PxArticulationGpuDataType::eLINK_TRANSFORM,
-                                 mCudaArticulationIndexBuffer.shape.at(0), mCudaEventWait.event);
+    PxArticulationGpuDataType::eLINK_TRANSFORM,
+    mCudaArticulationIndexBuffer.shape.at(0), mCudaEventWait.event);
   mCudaEventWait.wait(mCudaStream);
   link_pose_physx_to_sapien(
       mCudaLinkHandle.ptr, mCudaLinkPoseScratch.ptr, mCudaArticulationOffsetBuffer.ptr,
