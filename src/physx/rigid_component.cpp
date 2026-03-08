@@ -378,6 +378,19 @@ void PhysxRigidBodyComponent::addForceTorque(Vec3 const &force, Vec3 const &torq
   getPxActor()->addTorque(Vec3ToPxVec3(torque), mode);
 }
 
+void PhysxRigidBodyComponent::setMaxLinearVelocity(float speed) {
+  getPxActor()->setMaxLinearVelocity(speed);
+}
+float PhysxRigidBodyComponent::getMaxLinearVelocity() const {
+  return getPxActor()->getMaxLinearVelocity();
+}
+void PhysxRigidBodyComponent::setMaxAngularVelocity(float speed) {
+  getPxActor()->setMaxAngularVelocity(speed);
+}
+float PhysxRigidBodyComponent::getMaxAngularVelocity() const {
+  return getPxActor()->getMaxAngularVelocity();
+}
+
 void PhysxRigidBodyComponent::setMaxDepenetrationVelocity(float speed) {
   getPxActor()->setMaxDepenetrationVelocity(speed);
 }
