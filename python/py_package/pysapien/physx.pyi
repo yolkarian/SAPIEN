@@ -7,9 +7,9 @@ import typing
 
 import platform
 if platform.system() == "Darwin":
-    __all__ = ['PhysxArticulation', 'PhysxArticulationJoint', 'PhysxArticulationLinkComponent', 'PhysxBaseComponent', 'PhysxBodyConfig', 'PhysxCollisionShape', 'PhysxCollisionShapeBox', 'PhysxCollisionShapeCapsule', 'PhysxCollisionShapeConvexMesh', 'PhysxCollisionShapeCylinder', 'PhysxCollisionShapePlane', 'PhysxCollisionShapeSphere', 'PhysxCollisionShapeTriangleMesh', 'PhysxContact', 'PhysxContactPoint', 'PhysxCpuSystem', 'PhysxDistanceJointComponent', 'PhysxDriveComponent', 'PhysxEngine', 'PhysxGearComponent', 'PhysxGpuSystem', 'PhysxJointComponent', 'PhysxMaterial', 'PhysxRayHit', 'PhysxRigidBaseComponent', 'PhysxRigidBodyComponent', 'PhysxRigidDynamicComponent', 'PhysxRigidStaticComponent', 'PhysxSDFConfig', 'PhysxSceneConfig', 'PhysxShapeConfig', 'PhysxSystem', 'clear_cache', 'get_body_config', 'get_default_material', 'get_scene_config', 'get_sdf_config', 'get_shape_config', 'is_gpu_enabled', 'set_body_config', 'set_default_material', 'set_gpu_memory_config', 'set_scene_config', 'set_sdf_config', 'set_shape_config', 'version']
+    __all__ = ['PhysxArticulation', 'PhysxArticulationJoint', 'PhysxArticulationLinkComponent', 'PhysxBaseComponent', 'PhysxBodyConfig', 'PhysxCollisionShape', 'PhysxCollisionShapeBox', 'PhysxCollisionShapeCapsule', 'PhysxCollisionShapeConvexMesh', 'PhysxCollisionShapeCylinder', 'PhysxCollisionShapePlane', 'PhysxCollisionShapeSphere', 'PhysxCollisionShapeTriangleMesh', 'PhysxContact', 'PhysxContactPoint', 'PhysxCpuSystem', 'PhysxDistanceJointComponent', 'PhysxDriveComponent', 'PhysxEngine', 'PhysxGearComponent', 'PhysxGpuSystem', 'PhysxJointComponent', 'PhysxMaterial', 'PhysxRayHit', 'PhysxRigidBaseComponent', 'PhysxRigidBodyComponent', 'PhysxRigidDynamicComponent', 'PhysxRigidStaticComponent', 'PhysxSDFConfig', 'PhysxSceneConfig', 'PhysxShapeConfig', 'PhysxSystem', 'get_body_config', 'get_default_material', 'get_scene_config', 'get_sdf_config', 'get_shape_config', 'is_gpu_enabled', 'set_body_config', 'set_default_material', 'set_gpu_memory_config', 'set_scene_config', 'set_sdf_config', 'set_shape_config', 'version']
 else:
-    __all__ = ['PhysxArticulation', 'PhysxArticulationJoint', 'PhysxArticulationLinkComponent', 'PhysxBaseComponent', 'PhysxBodyConfig', 'PhysxCollisionShape', 'PhysxCollisionShapeBox', 'PhysxCollisionShapeCapsule', 'PhysxCollisionShapeConvexMesh', 'PhysxCollisionShapeCylinder', 'PhysxCollisionShapePlane', 'PhysxCollisionShapeSphere', 'PhysxCollisionShapeTriangleMesh', 'PhysxContact', 'PhysxContactPoint', 'PhysxCpuSystem', 'PhysxDistanceJointComponent', 'PhysxDriveComponent', 'PhysxEngine', 'PhysxGearComponent', 'PhysxGpuContactBodyImpulseQuery', 'PhysxGpuContactPairImpulseQuery', 'PhysxGpuSystem', 'PhysxJointComponent', 'PhysxMaterial', 'PhysxRayHit', 'PhysxRigidBaseComponent', 'PhysxRigidBodyComponent', 'PhysxRigidDynamicComponent', 'PhysxRigidStaticComponent', 'PhysxSDFConfig', 'PhysxSceneConfig', 'PhysxShapeConfig', 'PhysxSystem', 'clear_cache', 'get_body_config', 'get_default_material', 'get_scene_config', 'get_sdf_config', 'get_shape_config', 'is_gpu_enabled', 'set_body_config', 'set_default_material', 'set_gpu_memory_config', 'set_scene_config', 'set_sdf_config', 'set_shape_config', 'version']
+    __all__ = ['PhysxArticulation', 'PhysxArticulationJoint', 'PhysxArticulationLinkComponent', 'PhysxBaseComponent', 'PhysxBodyConfig', 'PhysxCollisionShape', 'PhysxCollisionShapeBox', 'PhysxCollisionShapeCapsule', 'PhysxCollisionShapeConvexMesh', 'PhysxCollisionShapeCylinder', 'PhysxCollisionShapePlane', 'PhysxCollisionShapeSphere', 'PhysxCollisionShapeTriangleMesh', 'PhysxContact', 'PhysxContactPoint', 'PhysxCpuSystem', 'PhysxDistanceJointComponent', 'PhysxDriveComponent', 'PhysxEngine', 'PhysxGearComponent', 'PhysxGpuContactBodyImpulseQuery', 'PhysxGpuContactPairImpulseQuery', 'PhysxGpuSystem', 'PhysxJointComponent', 'PhysxMaterial', 'PhysxRayHit', 'PhysxRigidBaseComponent', 'PhysxRigidBodyComponent', 'PhysxRigidDynamicComponent', 'PhysxRigidStaticComponent', 'PhysxSDFConfig', 'PhysxSceneConfig', 'PhysxShapeConfig', 'PhysxSystem', 'get_body_config', 'get_default_material', 'get_scene_config', 'get_sdf_config', 'get_shape_config', 'is_gpu_enabled', 'set_body_config', 'set_default_material', 'set_gpu_memory_config', 'set_scene_config', 'set_sdf_config', 'set_shape_config', 'version']
 M = typing.TypeVar("M", bound=int)
 class PhysxArticulation:
     name: str
@@ -139,7 +139,6 @@ class PhysxArticulationJoint:
     friction: float
     limit: numpy.ndarray[tuple[M, typing.Literal[2]], numpy.dtype[numpy.float32]]
     limits: numpy.ndarray[tuple[M, typing.Literal[2]], numpy.dtype[numpy.float32]]
-    max_velocity: float
     name: str
     pose_in_child: sapien.pysapien.Pose
     pose_in_parent: sapien.pysapien.Pose
@@ -169,8 +168,6 @@ class PhysxArticulationJoint:
         same as get_limits
         """
     def get_limits(self) -> numpy.ndarray[tuple[M, typing.Literal[2]], numpy.dtype[numpy.float32]]:
-        ...
-    def get_max_velocity(self) -> float:
         ...
     def get_name(self) -> str:
         ...
@@ -211,8 +208,6 @@ class PhysxArticulationJoint:
         same as set_limits
         """
     def set_limits(self, limit: numpy.ndarray[tuple[M, typing.Literal[2]], numpy.dtype[numpy.float32]] | list | tuple) -> None:
-        ...
-    def set_max_velocity(self, velocity: float) -> None:
         ...
     def set_name(self, name: str) -> None:
         ...
@@ -397,11 +392,7 @@ class PhysxCollisionShapeConvexMesh(PhysxCollisionShape):
     @staticmethod
     def load_multiple(filename: str, scale: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple, material: PhysxMaterial) -> list[PhysxCollisionShapeConvexMesh]:
         ...
-    @typing.overload
     def __init__(self, filename: str, scale: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple, material: PhysxMaterial) -> None:
-        ...
-    @typing.overload
-    def __init__(self, vertices: typing.Annotated[numpy.typing.ArrayLike, numpy.float32, "[m, 3]"], scale: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple, material: PhysxMaterial) -> None:
         ...
     def get_scale(self) -> numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]]:
         ...
@@ -447,7 +438,7 @@ class PhysxCollisionShapeTriangleMesh(PhysxCollisionShape):
     def __init__(self, filename: str, scale: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple, material: PhysxMaterial, sdf: bool = False) -> None:
         ...
     @typing.overload
-    def __init__(self, vertices: typing.Annotated[numpy.typing.ArrayLike, numpy.float32, "[m, 3]"], triangles: typing.Annotated[numpy.typing.ArrayLike, numpy.uint32, "[m, 3]"], scale: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple = ..., material: PhysxMaterial | None = ..., sdf: bool = False) -> None:
+    def __init__(self, vertices: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]], triangles:numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]], scale: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple = ..., material: PhysxMaterial | None = ..., sdf: bool = False) -> None:
         ...
     def get_scale(self) -> numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]]:
         ...
@@ -855,10 +846,8 @@ class PhysxRigidBodyComponent(PhysxRigidBaseComponent):
     inertia: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]]
     linear_damping: float
     mass: float
-    max_angular_velocity: float
     max_contact_impulse: float
     max_depenetration_velocity: float
-    max_linear_velocity: float
     def add_force_at_point(self, force: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple, point: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple, mode: typing.Literal['force', 'acceleration', 'velocity_change', 'impulse'] = 'force') -> None:
         ...
     def add_force_torque(self, force: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple, torque: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple, mode: typing.Literal['force', 'acceleration', 'velocity_change', 'impulse'] = 'force') -> None:
@@ -881,13 +870,9 @@ class PhysxRigidBodyComponent(PhysxRigidBaseComponent):
         ...
     def get_mass(self) -> float:
         ...
-    def get_max_angular_velocity(self) -> float:
-        ...
     def get_max_contact_impulse(self) -> float:
         ...
     def get_max_depenetration_velocity(self) -> float:
-        ...
-    def get_max_linear_velocity(self) -> float:
         ...
     def set_angular_damping(self, damping: float) -> None:
         ...
@@ -901,13 +886,9 @@ class PhysxRigidBodyComponent(PhysxRigidBaseComponent):
         ...
     def set_mass(self, mass: float) -> None:
         ...
-    def set_max_angular_velocity(self, velocity: float) -> None:
-        ...
     def set_max_contact_impulse(self, impulse: float) -> None:
         ...
     def set_max_depenetration_velocity(self, velocity: float) -> None:
-        ...
-    def set_max_linear_velocity(self, velocity: float) -> None:
         ...
     @property
     def angular_velocity(self) -> numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]]:
@@ -1070,8 +1051,6 @@ class PhysxSystem(sapien.pysapien.System):
     def rigid_static_components(self) -> list[PhysxRigidStaticComponent]:
         ...
 def _enable_gpu() -> None:
-    ...
-def clear_cache() -> None:
     ...
 def get_body_config() -> PhysxBodyConfig:
     ...
