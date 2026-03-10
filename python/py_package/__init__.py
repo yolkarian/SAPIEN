@@ -1,5 +1,5 @@
 from warnings import warn
-import pkg_resources
+from importlib.resources import files
 import os
 from pathlib import Path
 import platform
@@ -31,12 +31,10 @@ from .wrapper.actor_builder import ActorBuilder
 from .wrapper.articulation_builder import ArticulationBuilder
 from .wrapper.pinocchio_model import PinocchioModel
 
-import pkg_resources
-
 try:
     render.set_imgui_ini_filename(str(Path.home() / ".sapien" / "imgui.ini"))
     pysapien.render._internal_set_shader_search_path(
-        pkg_resources.resource_filename("sapien", "vulkan_shader")
+        str(files("sapien").joinpath("vulkan_shader"))
     )
     render.set_viewer_shader_dir("default")
     render.set_camera_shader_dir("default")

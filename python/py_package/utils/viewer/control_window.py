@@ -3,7 +3,6 @@ from pathlib import Path
 from typing import List
 
 import numpy as np
-import pkg_resources
 import sapien
 from sapien import internal_renderer as R
 from transforms3d.quaternions import mat2quat

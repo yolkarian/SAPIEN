@@ -1,7 +1,7 @@
+from importlib.resources import files
 from pathlib import Path
 
 import numpy as np
-import pkg_resources
 import sapien
 from sapien import internal_renderer as R
 
@@ -140,9 +140,7 @@ class RenderOptionsWindow(Plugin):
         self.shader_types = []
 
         try:
-            all_shader_dir = Path(
-                pkg_resources.resource_filename("sapien", "vulkan_shader")
-            )
+            all_shader_dir = Path(str(files("sapien").joinpath("vulkan_shader")))
 
             for f in all_shader_dir.iterdir():
                 if f.is_dir():

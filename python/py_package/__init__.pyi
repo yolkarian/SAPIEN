@@ -2,7 +2,6 @@ from __future__ import annotations
 from _warnings import warn
 import os as os
 from pathlib import Path
-import pkg_resources as pkg_resources
 import platform as platform
 from sapien.pysapien import Component
 from sapien.pysapien import CudaArray
@@ -38,8 +37,8 @@ from . import version
 from . import wrapper
 
 if platform.system() == "Darwin":
-    __all__ = ['ActorBuilder', 'ArticulationBuilder', 'Component', 'CudaArray', 'Device', 'Engine', 'Entity', 'Path', 'PinocchioModel', 'Pose', 'SapienRenderer', 'Scene', 'SceneConfig', 'System', 'Widget', 'asset', 'internal_renderer', 'math', 'os', 'physx', 'pkg_resources', 'platform', 'profile', 'pysapien', 'pysapien_pinocchio', 'render', 'set_log_level', 'utils', 'version', 'warn', 'wrapper']
+    __all__ = ['ActorBuilder', 'ArticulationBuilder', 'Component', 'CudaArray', 'Device', 'Engine', 'Entity', 'Path', 'PinocchioModel', 'Pose', 'SapienRenderer', 'Scene', 'SceneConfig', 'System', 'Widget', 'asset', 'internal_renderer', 'math', 'os', 'physx', 'platform', 'profile', 'pysapien', 'pysapien_pinocchio', 'render', 'set_log_level', 'utils', 'version', 'warn', 'wrapper']
 else:
-    __all__ = ['ActorBuilder', 'ArticulationBuilder', 'Component', 'CudaArray', 'Device', 'Engine', 'Entity', 'Path', 'PinocchioModel', 'Pose', 'SapienRenderer', 'Scene', 'SceneConfig', 'System', 'Widget', 'asset', 'internal_renderer', 'math', 'os', 'physx', 'pkg_resources', 'platform', 'profile', 'pysapien', 'pysapien_pinocchio', 'render', 'set_log_level', 'simsense', 'utils', 'version', 'warn', 'wrapper']
+    __all__ = ['ActorBuilder', 'ArticulationBuilder', 'Component', 'CudaArray', 'Device', 'Engine', 'Entity', 'Path', 'PinocchioModel', 'Pose', 'SapienRenderer', 'Scene', 'SceneConfig', 'System', 'Widget', 'asset', 'internal_renderer', 'math', 'os', 'physx', 'platform', 'profile', 'pysapien', 'pysapien_pinocchio', 'render', 'set_log_level', 'simsense', 'utils', 'version', 'warn', 'wrapper']
 __version__: str = '3.0.0.dev20240521+6b6d61d2'
 __warningregistry__: dict = {'version': 0}
