@@ -365,6 +365,7 @@ def read_requirements():
 project_python_home_dir = os.path.join("python", "py_package")
 package_data = {
     "sapien": [
+        "py.typed",
         "__init__.pyi",
         "pysapien/__init__.pyi",
         "pysapien/simsense.pyi",
@@ -372,6 +373,9 @@ package_data = {
         "pysapien/render.pyi",
         "pysapien/math.pyi",
         "pysapien/internal_renderer.pyi",
+        "physx/__init__.pyi",
+        "render/__init__.pyi",
+        "internal_renderer/__init__.pyi",
     ],
 }
 
