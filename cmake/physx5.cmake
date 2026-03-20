@@ -5,13 +5,34 @@ endif()
 set(PHYSX_VERSION "107.3-physx-5.6.1" CACHE STRING "Precompiled PhysX package version")
 
 function(_sapien_normalize_physx_root input output)
-  if (NOT IS_DIRECTORY "${input}")
-    set(${output} "" PARENT_SCOPE)
-  elseif (IS_DIRECTORY "${input}/PhysX")
-    set(${output} "${input}/PhysX" PARENT_SCOPE)
-  else()
-    set(${output} "${input}" PARENT_SCOPE)
-  endif()
+  foreach(candidate
+      "${input}"
+      "${input}/PhysX"
+      "${input}/physxcpu-linux-clang/PhysX"
+      "${input}/physxgpu-linux-clang/PhysX"
+      "${input}/physxcpu-windows-vc17win64/PhysX"
+      "${input}/physxgpu-windows-vc17win64/PhysX")
+    if (IS_DIRECTORY "${candidate}/include")
+      set(${output} "${candidate}" PARENT_SCOPE)
+      return()
+    endif()
+  endforeach()
+
+  set(${output} "" PARENT_SCOPE)
+endfunction()
+
+function(_sapien_pick_physx_windows_lib output lib_dir)
+  foreach(candidate IN LISTS ARGN)
+    if (EXISTS "${lib_dir}/${candidate}")
+      set(${output} "${candidate}" PARENT_SCOPE)
+      return()
+    endif()
+  endforeach()
+
+  list(JOIN ARGN ", " _sapien_physx_candidates)
+  message(FATAL_ERROR
+    "Failed to locate a compatible PhysX Windows library in ${lib_dir}. "
+    "Tried: ${_sapien_physx_candidates}")
 endfunction()
 
 set(physx5_CPU_SOURCE_DIR "")
@@ -46,8 +67,8 @@ else()
       URL_HASH SHA256=a390b9b11a63a28305c4cab871dc7f5a0dfd7380d2e540ce58011d558c87d68a
     )
     FetchContent_MakeAvailable(physx5cpu physx5gpu)
-    _sapien_normalize_physx_root("${physx5cpu_SOURCE_DIR}/physxcpu-linux-clang" physx5_CPU_SOURCE_DIR)
-    _sapien_normalize_physx_root("${physx5gpu_SOURCE_DIR}/physxgpu-linux-clang" physx5_GPU_SOURCE_DIR)
+    _sapien_normalize_physx_root("${physx5cpu_SOURCE_DIR}" physx5_CPU_SOURCE_DIR)
+    _sapien_normalize_physx_root("${physx5gpu_SOURCE_DIR}" physx5_GPU_SOURCE_DIR)
   elseif (WIN32)
     FetchContent_Declare(
       physx5cpu
@@ -60,8 +81,8 @@ else()
       URL_HASH SHA256=43f37f586caf8edb33de895267206bd5cb85d89a76896c81222e6c9b560954cf
     )
     FetchContent_MakeAvailable(physx5cpu physx5gpu)
-    _sapien_normalize_physx_root("${physx5cpu_SOURCE_DIR}/physxcpu-windows-vc17win64" physx5_CPU_SOURCE_DIR)
-    _sapien_normalize_physx_root("${physx5gpu_SOURCE_DIR}/physxgpu-windows-vc17win64" physx5_GPU_SOURCE_DIR)
+    _sapien_normalize_physx_root("${physx5cpu_SOURCE_DIR}" physx5_CPU_SOURCE_DIR)
+    _sapien_normalize_physx_root("${physx5gpu_SOURCE_DIR}" physx5_GPU_SOURCE_DIR)
   endif()
 endif()
 
@@ -106,12 +127,46 @@ elseif(UNIX)
 endif()
 
 if (WIN32)
-  target_link_directories(physx5 INTERFACE $<BUILD_INTERFACE:${physx5_CPU_SOURCE_DIR}/bin/win.x86_64.vc143.mt/release>)
-  target_link_libraries(physx5 INTERFACE
-    PhysXVehicle2_static_64.lib PhysXExtensions_static_64.lib
-    PhysX_static_64.lib PhysXPvdSDK_static_64.lib
-    PhysXCooking_static_64.lib PhysXCommon_static_64.lib
-    PhysXCharacterKinematic_static_64.lib PhysXFoundation_static_64.lib)
+  set(_sapien_physx_windows_lib_dir "${physx5_CPU_SOURCE_DIR}/bin/win.x86_64.vc143.mt/release")
+  target_link_directories(physx5 INTERFACE $<BUILD_INTERFACE:${_sapien_physx_windows_lib_dir}>)
+
+  _sapien_pick_physx_windows_lib(_sapien_physx_vehicle2_lib "${_sapien_physx_windows_lib_dir}"
+    PhysXVehicle2_static_64.lib PhysXVehicle2_64.lib)
+  _sapien_pick_physx_windows_lib(_sapien_physx_extensions_lib "${_sapien_physx_windows_lib_dir}"
+    PhysXExtensions_static_64.lib PhysXExtensions_64.lib)
+  _sapien_pick_physx_windows_lib(_sapien_physx_core_lib "${_sapien_physx_windows_lib_dir}"
+    PhysX_static_64.lib PhysX_64.lib)
+  _sapien_pick_physx_windows_lib(_sapien_physx_pvd_sdk_lib "${_sapien_physx_windows_lib_dir}"
+    PhysXPvdSDK_static_64.lib PhysXPvdSDK_64.lib)
+  _sapien_pick_physx_windows_lib(_sapien_physx_cooking_lib "${_sapien_physx_windows_lib_dir}"
+    PhysXCooking_static_64.lib PhysXCooking_64.lib)
+  _sapien_pick_physx_windows_lib(_sapien_physx_common_lib "${_sapien_physx_windows_lib_dir}"
+    PhysXCommon_static_64.lib PhysXCommon_64.lib)
+  _sapien_pick_physx_windows_lib(_sapien_physx_character_kinematic_lib "${_sapien_physx_windows_lib_dir}"
+    PhysXCharacterKinematic_static_64.lib PhysXCharacterKinematic_64.lib)
+  _sapien_pick_physx_windows_lib(_sapien_physx_foundation_lib "${_sapien_physx_windows_lib_dir}"
+    PhysXFoundation_static_64.lib PhysXFoundation_64.lib)
+
+  set(_sapien_physx_windows_libs
+    ${_sapien_physx_vehicle2_lib}
+    ${_sapien_physx_extensions_lib}
+    ${_sapien_physx_core_lib}
+    ${_sapien_physx_pvd_sdk_lib}
+    ${_sapien_physx_cooking_lib}
+    ${_sapien_physx_common_lib}
+    ${_sapien_physx_character_kinematic_lib}
+    ${_sapien_physx_foundation_lib})
+
+  foreach(_sapien_physx_optional_lib
+      PhysXTask_static_64.lib
+      PhysXTask_64.lib
+      PVDRuntime_64.lib)
+    if (EXISTS "${_sapien_physx_windows_lib_dir}/${_sapien_physx_optional_lib}")
+      list(APPEND _sapien_physx_windows_libs ${_sapien_physx_optional_lib})
+    endif()
+  endforeach()
+
+  target_link_libraries(physx5 INTERFACE ${_sapien_physx_windows_libs})
 endif()
 
 target_include_directories(physx5 SYSTEM INTERFACE $<BUILD_INTERFACE:${physx5_CPU_INCLUDE_DIR}>)

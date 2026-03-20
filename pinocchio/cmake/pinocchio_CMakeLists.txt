@@ -228,6 +228,7 @@ FOREACH(header ${HEADERS})
   LIST(APPEND HEADERS_ ${header})
   GET_FILENAME_COMPONENT(headerName ${header} NAME)
   GET_FILENAME_COMPONENT(headerPath ${header} PATH)
+  MAKE_DIRECTORY("${${PROJECT_NAME}_BINARY_DIR}/include/${PROJECT_NAME}/${headerPath}")
   EXECUTE_PROCESS(COMMAND ${CMAKE_COMMAND} -E ${LINK}
     ${${PROJECT_NAME}_SOURCE_DIR}/src/${header}
     ${${PROJECT_NAME}_BINARY_DIR}/include/${PROJECT_NAME}/${header})
