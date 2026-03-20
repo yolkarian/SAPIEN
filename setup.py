@@ -132,6 +132,13 @@ def build_sapien(sapien_source_dir, sapien_build_dir):
     else:
         cmake_args += ["-DSAPIEN_CUDA=OFF"]
 
+    if os.environ.get("SAPIEN_PHYSX5_DIR") is not None:
+        cmake_args += [f'-DSAPIEN_PHYSX5_DIR={os.environ["SAPIEN_PHYSX5_DIR"]}']
+    if os.environ.get("SAPIEN_PHYSX5_GPU_DIR") is not None:
+        cmake_args += [f'-DSAPIEN_PHYSX5_GPU_DIR={os.environ["SAPIEN_PHYSX5_GPU_DIR"]}']
+    if os.environ.get("SAPIEN_PHYSX5_VERSION") is not None:
+        cmake_args += [f'-DPHYSX_VERSION={os.environ["SAPIEN_PHYSX5_VERSION"]}']
+
     cmake_args += [
         f"-DCMAKE_BUILD_TYPE={cfg}",
         f"-DCMAKE_INSTALL_PREFIX={install_dir}",

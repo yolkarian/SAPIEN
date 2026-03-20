@@ -5,7 +5,7 @@
 #include <string>
 
 namespace physx {
-struct PxgDynamicsMemoryConfig;
+struct PxGpuDynamicsMemoryConfig;
 };
 
 namespace sapien {
@@ -47,13 +47,13 @@ class PhysxDefault {
 public:
   static std::shared_ptr<PhysxMaterial> GetDefaultMaterial();
   static void SetDefaultMaterial(float staticFriction, float dynamicFriction, float restitution);
-  static void setGpuMemoryConfig(uint32_t tempBufferCapacity, uint32_t maxRigidContactCount,
+  static void setGpuMemoryConfig(uint64_t tempBufferCapacity, uint32_t maxRigidContactCount,
                                  uint32_t maxRigidPatchCount, uint32_t heapCapacity,
                                  uint32_t foundLostPairsCapacity,
                                  uint32_t foundLostAggregatePairsCapacity,
                                  uint32_t totalAggregatePairsCapacity,
                                  uint32_t collisionStackSize);
-  static ::physx::PxgDynamicsMemoryConfig const &getGpuMemoryConfig();
+  static ::physx::PxGpuDynamicsMemoryConfig const &getGpuMemoryConfig();
 
   static void setSceneConfig(Vec3 gravity, float bounceThreshold, bool enablePCM, bool enableTGS,
                              bool enableCCD, bool enableEnhancedDeterminism,

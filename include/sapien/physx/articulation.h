@@ -81,6 +81,7 @@ public:
                          float limitStiffness);
 
   int getGpuIndex() const;
+  void internalSetGpuIndex(int index);
 
   ~PhysxArticulation();
 
@@ -99,6 +100,7 @@ private:
   Scene *mScene{};
   uint32_t mLinksAddedToScene{};
   std::string mName;
+  int mGpuIndex{-1};
 };
 
 } // namespace physx

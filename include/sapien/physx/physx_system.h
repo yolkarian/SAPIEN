@@ -281,8 +281,9 @@ private:
   CudaArray mCudaRigidDynamicIndexBuffer;
   CudaArray mCudaRigidDynamicOffsetBuffer;
 
-  // index buffer for all articulations
+  // dense articulation indices and dense-to-GPU-index mapping
   CudaArray mCudaArticulationIndexBuffer;
+  CudaArray mCudaArticulationGpuIndexBuffer;
   CudaArray mCudaArticulationOffsetBuffer;
 
   CudaArray mCudaRigidBodyBuffer;
@@ -298,6 +299,7 @@ private:
   CudaHostArray mCudaHostRigidBodyBuffer;
 
   CudaArray mCudaArticulationBuffer;
+  CudaArray mCudaArticulationApplyScratch;
   CudaArrayHandle mCudaQposHandle;
   CudaArrayHandle mCudaQvelHandle;
   CudaArrayHandle mCudaQfHandle;

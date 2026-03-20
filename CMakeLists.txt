@@ -36,7 +36,8 @@ option(SAPIEN_BUILD_PYTHON "Build Python binding, only intended to generate comp
 option(SAPIEN_BUILD_TEST "build unit tests")
 
 
-set(SAPIEN_PHYSX5_DIR "" CACHE STRING "Directory for precompield PhysX5")
+set(SAPIEN_PHYSX5_DIR "" CACHE STRING "Directory for precompiled PhysX5 CPU SDK")
+set(SAPIEN_PHYSX5_GPU_DIR "" CACHE STRING "Directory for precompiled PhysX5 GPU SDK")
 
 if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
@@ -158,7 +159,10 @@ else()
 endif()
 
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/sapien" DESTINATION "include")
-install(DIRECTORY "${physx5_SOURCE_DIR}/include" DESTINATION "include/physx")
+install(DIRECTORY "${physx5_CPU_INCLUDE_DIR}/" DESTINATION "include/physx/include")
+if (NOT physx5_GPU_INCLUDE_DIR STREQUAL physx5_CPU_INCLUDE_DIR)
+    install(DIRECTORY "${physx5_GPU_INCLUDE_DIR}/" DESTINATION "include/physx/include")
+endif()
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/3rd_party/dlpack/include/dlpack" DESTINATION "include")
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/3rd_party/sapien-vulkan-2/include/svulkan2" DESTINATION "include")
 install(DIRECTORY "${glm_SOURCE_DIR}/glm" DESTINATION "include")

@@ -181,8 +181,20 @@ Documentation:
 Make sure all submodules are initialized `git submodule update --init --recursive`.
 
 ### Build with Docker
-To build SAPIEN, simply run `./docker_build_wheels.sh`. It is not recommended to
+To build SAPIEN, run `./scripts/docker_build_wheels.sh`. It is not recommended to
 build outside of our provided docker.
+
+SAPIEN currently targets PhysX `107.3-physx-5.6.1`. GPU-enabled builds require
+CUDA toolkit and driver support for CUDA `>= 12.8`.
+
+If you want to verify against locally extracted PhysX SDK archives, point the
+build at both the CPU and GPU packages before invoking the Docker helper:
+
+```shell
+export SAPIEN_PHYSX5_DIR=/path/to/physxcpu-linux-clang
+export SAPIEN_PHYSX5_GPU_DIR=/path/to/physxgpu-linux-clang
+./scripts/docker_build_wheels.sh 310
+```
 
 For reference, the Dockerfile is provided [here](/docker/Dockerfile). Note that
 PhysX needs to be compiled with clang-9 into static libraries before building
@@ -193,6 +205,25 @@ It can be tricky to setup all dependencies outside of a Docker environment. You
 need to install all dependencies according to the [Docker
 environment](/docker/Dockerfile). If all dependencies set up correctly, run
 `python setup.py bdist_wheel` to build the wheel.
+
+```shell
+export CUDA_PATH=/usr/local/cuda-12.8
+export SAPIEN_PHYSX5_DIR=/path/to/physxcpu-linux-clang
+export SAPIEN_PHYSX5_GPU_DIR=/path/to/physxgpu-linux-clang
+python setup.py bdist_wheel --build-dir=sapien_build
+```
+
+For the PhysX 5.6.1 migration, the focused verification path is the Python
+PhysX suite:
+
+```shell
+cd unittest
+python -m unittest discover -s test_physx -p 'test_*.py'
+```
+
+At the moment, the umbrella C++ `sapien_test` target is blocked by unrelated
+renderer test API drift in `test/sapien_renderer/material.cpp` and
+`test/sapien_renderer/texture.cpp`.
 
 ## Cite SAPIEN
 If you use SAPIEN and its assets, please cite the following works:

@@ -1,6 +1,8 @@
 #include "sapien/math/pose.h"
 #include <PxContact.h>
+#include <foundation/PxTransform.h>
 #include <geomutils/PxContactPoint.h>
+#include <cstdint>
 
 struct CUstream_st;
 
@@ -51,24 +53,7 @@ struct PhysxPose {
   Vec3 p{};
 };
 static_assert(sizeof(PhysxPose) == 28);
-
-// this is used in physx articulation only
-// somehow w and v are flipped compared to rigid body
-struct PhysxVelocity {
-  Vec3 w{};
-  Vec3 v{};
-};
-static_assert(sizeof(PhysxVelocity) == 24);
-
-struct PhysxBodyData {
-  PhysxPose pose{};
-  float padding0;
-  Vec3 v{};
-  float padding1;
-  Vec3 w{};
-  float padding2;
-};
-static_assert(sizeof(PhysxBodyData) == 64);
+static_assert(sizeof(PhysxPose) == sizeof(::physx::PxTransform));
 
 struct SapienBodyData {
   Vec3 p;
@@ -77,23 +62,32 @@ struct SapienBodyData {
   Vec3 w{};
 };
 static_assert(sizeof(SapienBodyData) == 52);
+static_assert(sizeof(Vec3) == sizeof(::physx::PxVec3));
 
-void body_data_physx_to_sapien(void *sapien_data, void *physx_data, void *offset, int count,
-                               CUstream_st *);
+void body_data_physx_to_sapien(void *sapien_data, void *physx_pose,
+                               void *physx_linear_velocity, void *physx_angular_velocity,
+                               void *offset, int count, CUstream_st *);
 void link_pose_physx_to_sapien(void *sapien_data, void *physx_pose, void *offset, int link_count,
                                int count, CUstream_st *);
-void link_vel_physx_to_sapien(void *sapien_data, void *physx_vel, int count, CUstream_st *);
+void link_vel_physx_to_sapien(void *sapien_data, void *physx_linear_velocity,
+                              void *physx_angular_velocity, int count, CUstream_st *);
 
-void body_data_sapien_to_physx(void *physx_data, void *sapien_data, void *offset, int count,
-                               CUstream_st *);
-void body_data_sapien_to_physx(void *physx_data, void *physx_index, void *sapien_data,
-                               void *sapien_index, void *apply_index, void *offset, int count,
-                               CUstream_st *);
+void body_data_sapien_to_physx(void *physx_pose, void *physx_linear_velocity,
+                               void *physx_angular_velocity, void *sapien_data, void *offset,
+                               int count, CUstream_st *);
+void body_data_sapien_to_physx(void *physx_pose, void *physx_linear_velocity,
+                               void *physx_angular_velocity, void *physx_index,
+                               void *sapien_data, void *sapien_index, void *apply_index,
+                               void *offset, int count, CUstream_st *);
 
 void root_pose_sapien_to_physx(void *physx_pose, void *sapien_data, void *index, void *offset,
                                int link_count, int count, CUstream_st *);
-void root_vel_sapien_to_physx(void *physx_vel, void *sapien_data, void *index, int link_count,
-                              int count, CUstream_st *);
+void root_vel_sapien_to_physx(void *physx_linear_velocity, void *physx_angular_velocity,
+                              void *sapien_data, void *index, int link_count, int count,
+                              CUstream_st *);
+
+void gather_blocks(void *dst, void *src, void *index, int block_size, int count, CUstream_st *);
+void pack_vec3(void *dst, void *src, int stride, int count, CUstream_st *);
 
 // fill out_forces with net contact forces per body pair. query stores sorted pairs of
 // interested actors and their indices corresponding to the out_forces array

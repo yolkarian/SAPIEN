@@ -15,7 +15,7 @@ static PhysxBodyConfig gBodyConfig{};
 static PhysxShapeConfig gShapeConfig{};
 static PhysxSDFShapeConfig gSDFConfig{};
 
-static ::physx::PxgDynamicsMemoryConfig gGpuMemoryConfig{};
+static ::physx::PxGpuDynamicsMemoryConfig gGpuMemoryConfig{};
 
 void PhysxDefault::SetDefaultMaterial(float staticFriction, float dynamicFriction,
                                       float restitution) {
@@ -35,7 +35,7 @@ std::shared_ptr<PhysxMaterial> PhysxDefault::GetDefaultMaterial() {
   return m;
 }
 
-void PhysxDefault::setGpuMemoryConfig(uint32_t tempBufferCapacity, uint32_t maxRigidContactCount,
+void PhysxDefault::setGpuMemoryConfig(uint64_t tempBufferCapacity, uint32_t maxRigidContactCount,
                                       uint32_t maxRigidPatchCount, uint32_t heapCapacity,
                                       uint32_t foundLostPairsCapacity,
                                       uint32_t foundLostAggregatePairsCapacity,
@@ -51,7 +51,7 @@ void PhysxDefault::setGpuMemoryConfig(uint32_t tempBufferCapacity, uint32_t maxR
   gGpuMemoryConfig.collisionStackSize = collisionStackSize;
 }
 
-::physx::PxgDynamicsMemoryConfig const &PhysxDefault::getGpuMemoryConfig() {
+::physx::PxGpuDynamicsMemoryConfig const &PhysxDefault::getGpuMemoryConfig() {
   return gGpuMemoryConfig;
 }
 

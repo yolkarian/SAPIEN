@@ -75,12 +75,6 @@ template <> struct type_caster<::physx::PxArticulationDriveType::Enum> {
     } else if (name == "acceleration" || name == "acc") {
       value = ::physx::PxArticulationDriveType::eACCELERATION;
       return true;
-    } else if (name == "target") {
-      value = ::physx::PxArticulationDriveType::eTARGET;
-      return true;
-    } else if (name == "velocity") {
-      value = ::physx::PxArticulationDriveType::eVELOCITY;
-      return true;
     } else if (name == "none") {
       value = ::physx::PxArticulationDriveType::eNONE;
       return true;
@@ -95,10 +89,6 @@ template <> struct type_caster<::physx::PxArticulationDriveType::Enum> {
       return py::str("force").release();
     case ::physx::PxArticulationDriveType::eACCELERATION:
       return py::str("acceleration").release();
-    case ::physx::PxArticulationDriveType::eTARGET:
-      return py::str("target").release();
-    case ::physx::PxArticulationDriveType::eVELOCITY:
-      return py::str("velocity").release();
     case ::physx::PxArticulationDriveType::eNONE:
       return py::str("none").release();
     }
@@ -936,10 +926,11 @@ Example:
 
       .def("set_drive_properties", &PhysxArticulationJoint::setDriveProperties,
            py::arg("stiffness"), py::arg("damping"), py::arg("force_limit") = PX_MAX_F32,
-           py::arg("mode") = ::physx::PxForceMode::eFORCE)
+           py::arg("mode") = ::physx::PxArticulationDriveType::eFORCE)
       .def("set_drive_property", &PhysxArticulationJoint::setDriveProperties, py::arg("stiffness"),
            py::arg("damping"), py::arg("force_limit") = PX_MAX_F32,
-           py::arg("mode") = ::physx::PxForceMode::eFORCE, R"doc(same as set_drive_properties)doc")
+           py::arg("mode") = ::physx::PxArticulationDriveType::eFORCE,
+           R"doc(same as set_drive_properties)doc")
 
       .def_property("drive_target", &PhysxArticulationJoint::getDriveTargetPosition,
                     py::overload_cast<Eigen::VectorXf const &>(

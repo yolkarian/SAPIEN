@@ -60,7 +60,10 @@ If documentation and checked-in automation disagree, prefer the repository scrip
   - `./scripts/build.sh [39|310|311|312|313] [--debug] [--profile]`
 - Local install helpers exist at `scripts/install.sh` and `scripts/install_debug.sh`, but CI does not use them. Inspect them before relying on them for validation automation.
 - `setup.py` drives the wheel build and invokes CMake for the native library.
+- Current PhysX baseline is `107.3-physx-5.6.1`.
 - CUDA support is controlled by `CUDA_PATH`. If it is unset, `setup.py` builds with `SAPIEN_CUDA=OFF`.
+- PhysX 5.6.1 GPU builds require a CUDA toolkit and driver stack compatible with CUDA `>= 12.8`.
+- If the matching `sapien-sim/physx-precompiled` release asset is unavailable, prefer setting `SAPIEN_PHYSX5_DIR` to a locally built PhysX tree instead of relying on FetchContent.
 
 ## Validation
 - Use the narrowest validation that matches the change. Full wheel builds are expensive.
