@@ -351,6 +351,11 @@ class TestBody(unittest.TestCase):
         body.set_sleep_threshold(0.03)
         self.assertAlmostEqual(body.get_sleep_threshold(), 0.03)
 
+        body.gyroscopic_forces = False
+        self.assertEqual(body.gyroscopic_forces, False)
+        body.set_gyroscopic_forces(True)
+        self.assertEqual(body.get_gyroscopic_forces(), True)
+
     def test_default(self):
         sapien.physx.set_body_config(
             sleep_threshold=0.0001,

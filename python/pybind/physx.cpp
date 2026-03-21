@@ -257,6 +257,9 @@ Generator<int> init_physx(py::module &sapien) {
   auto PyPhysxSDFConfig = py::class_<PhysxSDFShapeConfig>(m, "PhysxSDFConfig");
   PyPhysxSDFConfig.def(py::init<>())
       .def_readwrite("spacing", &PhysxSDFShapeConfig::spacing)
+      .def_property("subgrid_size", [](PhysxSDFShapeConfig const &config) {
+        return config.subgridSize;
+      }, [](PhysxSDFShapeConfig &config, uint32_t value) { config.subgridSize = value; })
       .def_readwrite("subgridSize", &PhysxSDFShapeConfig::subgridSize)
       .def_readwrite("num_threads_for_construction",
                      &PhysxSDFShapeConfig::numThreadsForConstruction)

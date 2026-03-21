@@ -407,7 +407,7 @@ void PhysxTriangleMesh::loadMesh(Vertices const &vertices, Triangles const &tria
     sdfDesc.spacing = config.spacing;
     sdfDesc.subgridSize = config.subgridSize;
     sdfDesc.bitsPerSubgridPixel = PxSdfBitsPerSubgridPixel::e16_BIT_PER_PIXEL;
-    sdfDesc.numThreadsForSdfConstruction = config.subgridSize;
+    sdfDesc.numThreadsForSdfConstruction = config.numThreadsForConstruction;
     meshDesc.sdfDesc = &sdfDesc;
     params.meshPreprocessParams |= PxMeshPreprocessingFlag::eENABLE_INERTIA;
 

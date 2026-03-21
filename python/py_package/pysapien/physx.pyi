@@ -978,6 +978,7 @@ class PhysxRigidStaticComponent(PhysxRigidBaseComponent):
 class PhysxSDFConfig:
     num_threads_for_construction: int
     spacing: float
+    subgrid_size: int
     subgridSize: int
     def __getstate__(self) -> tuple:
         ...

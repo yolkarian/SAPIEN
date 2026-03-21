@@ -22,6 +22,9 @@ class TestSystem(unittest.TestCase):
         config.enable_ccd = True
         config.enable_enhanced_determinism = True
         config.enable_friction_every_iteration = False
+        config.friction_offset_threshold = 0.012
+        config.friction_correlation_distance = 0.007
+        config.cpu_workers = 2
 
         sapien.physx.set_scene_config(config)
         system = sapien.physx.PhysxCpuSystem()
@@ -35,6 +38,9 @@ class TestSystem(unittest.TestCase):
         self.assertEqual(config.enable_ccd, True)
         self.assertEqual(config.enable_enhanced_determinism, True)
         self.assertEqual(config.enable_friction_every_iteration, False)
+        self.assertAlmostEqual(config.friction_offset_threshold, 0.012)
+        self.assertAlmostEqual(config.friction_correlation_distance, 0.007)
+        self.assertEqual(config.cpu_workers, 2)
 
         sapien.physx.set_scene_config(
             gravity=[0, 0, -2],
@@ -67,6 +73,29 @@ class TestSystem(unittest.TestCase):
         sapien.physx.set_shape_config(contact_offset=0.01, rest_offset=0)
         self.assertAlmostEqual(sapien.physx.get_shape_config().contact_offset, 0.01)
         self.assertAlmostEqual(sapien.physx.get_shape_config().rest_offset, 0)
+
+        sdf = sapien.physx.PhysxSDFConfig()
+        sdf.spacing = 0.0025
+        sdf.subgrid_size = 8
+        sdf.num_threads_for_construction = 7
+        self.assertEqual(sdf.subgridSize, 8)
+        sapien.physx.set_sdf_config(sdf)
+
+        current_sdf = sapien.physx.get_sdf_config()
+        self.assertAlmostEqual(current_sdf.spacing, 0.0025)
+        self.assertEqual(current_sdf.subgrid_size, 8)
+        self.assertEqual(current_sdf.subgridSize, 8)
+        self.assertEqual(current_sdf.num_threads_for_construction, 7)
+
+        sapien.physx.set_sdf_config(
+            spacing=0.01,
+            subgrid_size=6,
+            num_threads_for_construction=4,
+        )
+        current_sdf = sapien.physx.get_sdf_config()
+        self.assertAlmostEqual(current_sdf.spacing, 0.01)
+        self.assertEqual(current_sdf.subgrid_size, 6)
+        self.assertEqual(current_sdf.num_threads_for_construction, 4)
 
         config = sapien.physx.PhysxBodyConfig()
         config.sleep_threshold = 0.001
