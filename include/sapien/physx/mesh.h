@@ -1,5 +1,6 @@
 #pragma once
 #include "sapien/math/bounding_box.h"
+#include "sapien/physx/physx_default.h"
 #include <Eigen/Eigen>
 #include <PxPhysicsAPI.h>
 #include <memory>
@@ -10,7 +11,6 @@
 namespace sapien {
 namespace physx {
 class PhysxEngine;
-class PhysxSDFShapeConfig;
 
 using Vertices = Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor>;
 using Triangles = Eigen::Matrix<uint32_t, Eigen::Dynamic, 3, Eigen::RowMajor>;
@@ -68,10 +68,13 @@ private:
 class PhysxTriangleMesh {
 public:
   PhysxTriangleMesh(Vertices const &vertices, Triangles const &triangles,
-                    bool generateSDF = false);
+                    bool generateSDF = false,
+                    std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt);
   PhysxTriangleMesh(Vertices const &vertices, Triangles const &triangles,
-                    std::string const &filename, bool generateSDF = false);
-  PhysxTriangleMesh(std::string const &filename, bool generateSDF = false);
+                    std::string const &filename, bool generateSDF = false,
+                    std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt);
+  PhysxTriangleMesh(std::string const &filename, bool generateSDF = false,
+                    std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt);
 
   ::physx::PxTriangleMesh *getPxMesh() const { return mMesh; }
   bool hasFilename() { return mFilename.has_value(); }
@@ -89,6 +92,7 @@ public:
   bool getSDFEnabled() const { return mSDF; }
   float getSDFSpacing() const { return mSDFSpacing; }
   uint32_t getSDFSubgridSize() const { return mSDFSubgridSize; }
+  PhysxSDFShapeConfig const &getSDFConfig() const { return mSDFConfig; }
 
   ~PhysxTriangleMesh() {
     if (mMesh) {
@@ -97,14 +101,16 @@ public:
   }
 
 private:
-  void loadMesh(Vertices const &vertices, Triangles const &triangles, bool generateSDF);
+  void loadMesh(Vertices const &vertices, Triangles const &triangles, bool generateSDF,
+                std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt);
   std::shared_ptr<PhysxEngine> mEngine;
   ::physx::PxTriangleMesh *mMesh{};
   std::optional<std::string> mFilename;
 
   bool mSDF{};
   float mSDFSpacing{};
-  uint32_t mSDFSubgridSize;
+  uint32_t mSDFSubgridSize{};
+  PhysxSDFShapeConfig mSDFConfig{};
 
   AABB mAABB;
   PhysxTriangleMesh() {}

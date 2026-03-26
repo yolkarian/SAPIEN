@@ -6,6 +6,7 @@
 #include <array>
 #include <map>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -185,11 +186,13 @@ public:
   // TODO: support rotation?
   PhysxCollisionShapeTriangleMesh(std::string const &filename, Vec3 const &scale,
                                   std::shared_ptr<PhysxMaterial> material = nullptr,
-                                  bool sdf = false);
+                                  bool sdf = false,
+                                  std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt);
   PhysxCollisionShapeTriangleMesh(
       Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> const &vertices,
       Eigen::Matrix<uint32_t, Eigen::Dynamic, 3, Eigen::RowMajor> const &triangles,
-      Vec3 const &scale, std::shared_ptr<PhysxMaterial> material = nullptr, bool sdf = false);
+      Vec3 const &scale, std::shared_ptr<PhysxMaterial> material = nullptr,
+      bool sdf = false, std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt);
 
   // internal use only
   PhysxCollisionShapeTriangleMesh(std::shared_ptr<PhysxTriangleMesh> mesh, Vec3 const &scale,

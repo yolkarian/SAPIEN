@@ -1,12 +1,13 @@
 import math
 import os
+import warnings
 from lxml import etree as ET
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Literal
 
 import numpy as np
 
-from ..pysapien.physx import PhysxArticulation, PhysxMaterial
+from ..pysapien.physx import PhysxArticulation, PhysxMaterial, PhysxSDFConfig
 from ..pysapien.render import RenderCameraComponent, RenderMaterial, RenderTexture2D
 from ..pysapien import Pose, Scene, Entity
 from .articulation_builder import ArticulationBuilder, MimicJointRecord, LinkBuilder
@@ -85,6 +86,32 @@ class URDFLoader:
         if link_name in self._link_density:
             return self._link_density[link_name]
         return self._density
+
+    @staticmethod
+    def _get_sdf_config(collision: Collision):
+        if collision.sdf is None:
+            return None
+
+        config = PhysxSDFConfig()
+        # `margin`, `enable_remeshing`, and `triangle_count_reduction_factor`
+        # are parsed for compatibility, but the current plain PhysX SDF cooking
+        # path in SAPIEN does not apply them.
+        mapping = {
+            "resolution": "resolution",
+            "spacing": "spacing",
+            "subgrid_size": "subgrid_size",
+            "num_threads_for_construction": "num_threads_for_construction",
+            "bits_per_subgrid_pixel": "bits_per_subgrid_pixel",
+            "narrow_band_thickness": "narrow_band_thickness",
+            "margin": "margin",
+            "enable_remeshing": "enable_remeshing",
+            "triangle_count_reduction_factor": "triangle_count_reduction_factor",
+        }
+        for source, target in mapping.items():
+            value = getattr(collision.sdf, source)
+            if value is not None:
+                setattr(config, target, value)
+        return config
 
     def set_material(self, static_friction, dynamic_friction, restitution):
         self._material = [static_friction, dynamic_friction, restitution]
@@ -411,6 +438,11 @@ class URDFLoader:
                         collision.geometry.cylinder.length * self.scale / 2.0,
                     )
 
+            if collision.sdf and not collision.geometry.mesh:
+                warnings.warn(
+                    f"ignoring <sdf> on non-mesh collision '{collision.name or cid}' of link '{link.name}'"
+                )
+
             if collision.geometry.mesh:
                 if collision.geometry.mesh.scale is not None:
                     scale = collision.geometry.mesh.scale
@@ -422,8 +454,9 @@ class URDFLoader:
                     self.urdf_dir,
                     self.package_dir,
                 )
+                sdf_config = self._get_sdf_config(collision)
 
-                if self.load_nonconvex_collision_from_file:
+                if sdf_config is not None or self.load_nonconvex_collision_from_file:
                     link_builder.add_nonconvex_collision_from_file(
                         filename,
                         t_collision2link,
@@ -432,6 +465,7 @@ class URDFLoader:
                         density=density,
                         patch_radius=patch_radius,
                         min_patch_radius=min_patch_radius,
+                        sdf_config=sdf_config,
                     )
 
                 elif self.load_multiple_collisions_from_file:

@@ -262,15 +262,39 @@ Generator<int> init_physx(py::module &sapien) {
       }, [](PhysxSDFShapeConfig &config, uint32_t value) { config.subgridSize = value; })
       .def_readwrite("subgridSize", &PhysxSDFShapeConfig::subgridSize)
       .def_readwrite("num_threads_for_construction",
-                     &PhysxSDFShapeConfig::numThreadsForConstruction)
+                      &PhysxSDFShapeConfig::numThreadsForConstruction)
+      .def_readwrite("resolution", &PhysxSDFShapeConfig::resolution)
+      .def_property("bits_per_subgrid_pixel", [](PhysxSDFShapeConfig const &config) {
+        return config.bitsPerSubgridPixel;
+      }, [](PhysxSDFShapeConfig &config, uint32_t value) { config.bitsPerSubgridPixel = value; })
+      .def_readwrite("bitsPerSubgridPixel", &PhysxSDFShapeConfig::bitsPerSubgridPixel)
+      .def_property("narrow_band_thickness", [](PhysxSDFShapeConfig const &config) {
+        return config.narrowBandThickness;
+      }, [](PhysxSDFShapeConfig &config, float value) { config.narrowBandThickness = value; })
+      .def_readwrite("narrowBandThickness", &PhysxSDFShapeConfig::narrowBandThickness)
+      .def_readwrite("margin", &PhysxSDFShapeConfig::margin)
+      .def_property("enable_remeshing", [](PhysxSDFShapeConfig const &config) {
+        return config.enableRemeshing;
+      }, [](PhysxSDFShapeConfig &config, bool value) { config.enableRemeshing = value; })
+      .def_readwrite("enableRemeshing", &PhysxSDFShapeConfig::enableRemeshing)
+      .def_property("triangle_count_reduction_factor",
+                    [](PhysxSDFShapeConfig const &config) {
+                      return config.triangleCountReductionFactor;
+                    }, [](PhysxSDFShapeConfig &config, float value) {
+                      config.triangleCountReductionFactor = value;
+                    })
+      .def_readwrite("triangleCountReductionFactor",
+                     &PhysxSDFShapeConfig::triangleCountReductionFactor)
       .def("__repr__", [](PhysxSDFShapeConfig &) { return "PhysxSDFConfig()"; })
       .def(py::pickle(
           [](PhysxSDFShapeConfig &config) {
-            return py::make_tuple(config.spacing, config.subgridSize,
-                                  config.numThreadsForConstruction);
+            return py::make_tuple(
+                config.spacing, config.subgridSize, config.numThreadsForConstruction,
+                config.resolution, config.bitsPerSubgridPixel, config.narrowBandThickness,
+                config.margin, config.enableRemeshing, config.triangleCountReductionFactor);
           },
           [](py::tuple t) {
-            if (t.size() != 3) {
+            if (t.size() != 3 && t.size() != 9) {
               throw std::runtime_error("Invalid state!");
             }
             PhysxSDFShapeConfig config;
@@ -278,6 +302,15 @@ Generator<int> init_physx(py::module &sapien) {
             config.subgridSize = t[1].cast<decltype(config.subgridSize)>();
             config.numThreadsForConstruction =
                 t[2].cast<decltype(config.numThreadsForConstruction)>();
+            if (t.size() == 9) {
+              config.resolution = t[3].cast<decltype(config.resolution)>();
+              config.bitsPerSubgridPixel = t[4].cast<decltype(config.bitsPerSubgridPixel)>();
+              config.narrowBandThickness = t[5].cast<decltype(config.narrowBandThickness)>();
+              config.margin = t[6].cast<decltype(config.margin)>();
+              config.enableRemeshing = t[7].cast<decltype(config.enableRemeshing)>();
+              config.triangleCountReductionFactor =
+                  t[8].cast<decltype(config.triangleCountReductionFactor)>();
+            }
             return config;
           }));
 
@@ -699,13 +732,17 @@ If after testing g2 and g3, the objects may collide, g0 and g1 come into play. g
       .def("get_triangles", &PhysxCollisionShapeConvexMesh::getTriangles);
 
   PyPhysxCollisionShapeTriangleMesh
-      .def(py::init<std::string const &, Vec3, std::shared_ptr<PhysxMaterial>, bool>(),
-           py::arg("filename"), py::arg("scale"), py::arg("material"), py::arg("sdf") = false)
+      .def(py::init<std::string const &, Vec3, std::shared_ptr<PhysxMaterial>, bool,
+                    std::optional<PhysxSDFShapeConfig>>(),
+           py::arg("filename"), py::arg("scale"), py::arg("material"),
+           py::arg("sdf") = false, py::arg("sdf_config") = std::nullopt)
       .def(py::init<Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> const &,
-                    Eigen::Matrix<uint32_t, Eigen::Dynamic, 3, Eigen::RowMajor> const &,
-                    Vec3, std::shared_ptr<PhysxMaterial>, bool>(),
-                    py::arg("vertices"), py::arg("triangles"), py::arg("scale") = Vec3(1.f), 
-                    py::arg("material") = nullptr, py::arg("sdf") = false)
+                     Eigen::Matrix<uint32_t, Eigen::Dynamic, 3, Eigen::RowMajor> const &,
+                     Vec3, std::shared_ptr<PhysxMaterial>, bool,
+                     std::optional<PhysxSDFShapeConfig>>(),
+           py::arg("vertices"), py::arg("triangles"), py::arg("scale") = Vec3(1.f),
+           py::arg("material") = nullptr, py::arg("sdf") = false,
+           py::arg("sdf_config") = std::nullopt)
       .def_property_readonly("scale", &PhysxCollisionShapeTriangleMesh::getScale)
       .def("get_scale", &PhysxCollisionShapeTriangleMesh::getScale)
       .def_property_readonly("vertices", &PhysxCollisionShapeTriangleMesh::getVertices)
@@ -1242,9 +1279,14 @@ Example:
       .def("get_body_config", &PhysxDefault::getBodyConfig)
 
       .def("set_sdf_config",
-           py::overload_cast<float, uint32_t, uint32_t>(&PhysxDefault::setSDFShapeConfig),
+           py::overload_cast<float, uint32_t, uint32_t, uint32_t, uint32_t, float, float,
+                             bool, float>(&PhysxDefault::setSDFShapeConfig),
            py::arg("spacing") = 0.01f, py::arg("subgrid_size") = 6,
-           py::arg("num_threads_for_construction") = 4)
+           py::arg("num_threads_for_construction") = 4, py::arg("resolution") = 0,
+           py::arg("bits_per_subgrid_pixel") = 16,
+           py::arg("narrow_band_thickness") = 0.01f, py::arg("margin") = 0.f,
+           py::arg("enable_remeshing") = false,
+           py::arg("triangle_count_reduction_factor") = 1.f)
       .def("set_sdf_config",
            py::overload_cast<PhysxSDFShapeConfig const &>(&PhysxDefault::setSDFShapeConfig),
            py::arg("config"))

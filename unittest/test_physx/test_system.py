@@ -1,4 +1,5 @@
 import unittest
+import pickle
 import numpy as np
 from common import pose_equal
 
@@ -6,6 +7,89 @@ import sapien
 
 
 class TestSystem(unittest.TestCase):
+    def test_sdf_config_extended(self):
+        original = sapien.physx.get_sdf_config()
+        self.addCleanup(sapien.physx.set_sdf_config, original)
+
+        sdf = sapien.physx.PhysxSDFConfig()
+        self.assertEqual(sdf.resolution, 0)
+        self.assertEqual(sdf.bits_per_subgrid_pixel, 16)
+        self.assertAlmostEqual(sdf.narrow_band_thickness, 0.01)
+        self.assertAlmostEqual(sdf.margin, 0.0)
+        self.assertFalse(sdf.enable_remeshing)
+        self.assertAlmostEqual(sdf.triangle_count_reduction_factor, 1.0)
+
+        sdf.spacing = 0.0025
+        sdf.subgrid_size = 8
+        sdf.num_threads_for_construction = 7
+        sdf.resolution = 96
+        sdf.bits_per_subgrid_pixel = 32
+        sdf.narrow_band_thickness = 0.025
+        sdf.margin = 0.001
+        sdf.enable_remeshing = True
+        sdf.triangle_count_reduction_factor = 0.35
+
+        self.assertEqual(sdf.subgridSize, 8)
+        self.assertEqual(sdf.bitsPerSubgridPixel, 32)
+        self.assertAlmostEqual(sdf.narrowBandThickness, 0.025)
+        self.assertTrue(sdf.enableRemeshing)
+        self.assertAlmostEqual(sdf.triangleCountReductionFactor, 0.35)
+
+        sdf.bitsPerSubgridPixel = 8
+        sdf.narrowBandThickness = 0.015
+        sdf.enableRemeshing = False
+        sdf.triangleCountReductionFactor = 0.5
+
+        self.assertEqual(sdf.bits_per_subgrid_pixel, 8)
+        self.assertAlmostEqual(sdf.narrow_band_thickness, 0.015)
+        self.assertFalse(sdf.enable_remeshing)
+        self.assertAlmostEqual(sdf.triangle_count_reduction_factor, 0.5)
+
+        roundtrip = pickle.loads(pickle.dumps(sdf))
+        self.assertAlmostEqual(roundtrip.spacing, 0.0025)
+        self.assertEqual(roundtrip.subgrid_size, 8)
+        self.assertEqual(roundtrip.num_threads_for_construction, 7)
+        self.assertEqual(roundtrip.resolution, 96)
+        self.assertEqual(roundtrip.bits_per_subgrid_pixel, 8)
+        self.assertAlmostEqual(roundtrip.narrow_band_thickness, 0.015)
+        self.assertAlmostEqual(roundtrip.margin, 0.001)
+        self.assertFalse(roundtrip.enable_remeshing)
+        self.assertAlmostEqual(roundtrip.triangle_count_reduction_factor, 0.5)
+
+        sapien.physx.set_sdf_config(sdf)
+        current_sdf = sapien.physx.get_sdf_config()
+        self.assertAlmostEqual(current_sdf.spacing, 0.0025)
+        self.assertEqual(current_sdf.subgrid_size, 8)
+        self.assertEqual(current_sdf.num_threads_for_construction, 7)
+        self.assertEqual(current_sdf.resolution, 96)
+        self.assertEqual(current_sdf.bits_per_subgrid_pixel, 8)
+        self.assertAlmostEqual(current_sdf.narrow_band_thickness, 0.015)
+        self.assertAlmostEqual(current_sdf.margin, 0.001)
+        self.assertFalse(current_sdf.enable_remeshing)
+        self.assertAlmostEqual(current_sdf.triangle_count_reduction_factor, 0.5)
+
+        sapien.physx.set_sdf_config(
+            spacing=0.01,
+            subgrid_size=6,
+            num_threads_for_construction=4,
+            resolution=128,
+            bits_per_subgrid_pixel=32,
+            narrow_band_thickness=0.02,
+            margin=0.005,
+            enable_remeshing=True,
+            triangle_count_reduction_factor=0.25,
+        )
+        current_sdf = sapien.physx.get_sdf_config()
+        self.assertAlmostEqual(current_sdf.spacing, 0.01)
+        self.assertEqual(current_sdf.subgrid_size, 6)
+        self.assertEqual(current_sdf.num_threads_for_construction, 4)
+        self.assertEqual(current_sdf.resolution, 128)
+        self.assertEqual(current_sdf.bits_per_subgrid_pixel, 32)
+        self.assertAlmostEqual(current_sdf.narrow_band_thickness, 0.02)
+        self.assertAlmostEqual(current_sdf.margin, 0.005)
+        self.assertTrue(current_sdf.enable_remeshing)
+        self.assertAlmostEqual(current_sdf.triangle_count_reduction_factor, 0.25)
+
     def test_timestep(self):
         system = sapien.physx.PhysxCpuSystem()
         system.timestep = 1 / 240

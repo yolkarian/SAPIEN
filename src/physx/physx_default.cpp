@@ -98,10 +98,20 @@ void PhysxDefault::EnableGPU() {
 }
 
 void PhysxDefault::setSDFShapeConfig(float spacing, uint32_t subgridSize,
-                                     uint32_t numThreadsForConstruction) {
+                                     uint32_t numThreadsForConstruction,
+                                     uint32_t resolution, uint32_t bitsPerSubgridPixel,
+                                     float narrowBandThickness, float margin,
+                                     bool enableRemeshing,
+                                     float triangleCountReductionFactor) {
   gSDFConfig.spacing = spacing;
   gSDFConfig.subgridSize = subgridSize;
   gSDFConfig.numThreadsForConstruction = numThreadsForConstruction;
+  gSDFConfig.resolution = resolution;
+  gSDFConfig.bitsPerSubgridPixel = bitsPerSubgridPixel;
+  gSDFConfig.narrowBandThickness = narrowBandThickness;
+  gSDFConfig.margin = margin;
+  gSDFConfig.enableRemeshing = enableRemeshing;
+  gSDFConfig.triangleCountReductionFactor = triangleCountReductionFactor;
 }
 void PhysxDefault::setSDFShapeConfig(PhysxSDFShapeConfig const &c) { gSDFConfig = c; }
 PhysxSDFShapeConfig PhysxDefault::getSDFShapeConfig() { return gSDFConfig; }

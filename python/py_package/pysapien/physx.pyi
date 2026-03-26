@@ -435,10 +435,10 @@ class PhysxCollisionShapeSphere(PhysxCollisionShape):
         ...
 class PhysxCollisionShapeTriangleMesh(PhysxCollisionShape):
     @typing.overload
-    def __init__(self, filename: str, scale: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple, material: PhysxMaterial, sdf: bool = False) -> None:
+    def __init__(self, filename: str, scale: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple, material: PhysxMaterial, sdf: bool = False, sdf_config: PhysxSDFConfig | None = None) -> None:
         ...
     @typing.overload
-    def __init__(self, vertices: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]], triangles:numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]], scale: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple = ..., material: PhysxMaterial | None = ..., sdf: bool = False) -> None:
+    def __init__(self, vertices: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]], triangles:numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]], scale: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple = ..., material: PhysxMaterial | None = ..., sdf: bool = False, sdf_config: PhysxSDFConfig | None = None) -> None:
         ...
     def get_scale(self) -> numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]]:
         ...
@@ -976,10 +976,20 @@ class PhysxRigidStaticComponent(PhysxRigidBaseComponent):
     def __init__(self) -> None:
         ...
 class PhysxSDFConfig:
+    bits_per_subgrid_pixel: int
+    bitsPerSubgridPixel: int
+    enable_remeshing: bool
+    enableRemeshing: bool
+    margin: float
+    narrow_band_thickness: float
+    narrowBandThickness: float
     num_threads_for_construction: int
+    resolution: int
     spacing: float
     subgrid_size: int
     subgridSize: int
+    triangle_count_reduction_factor: float
+    triangleCountReductionFactor: float
     def __getstate__(self) -> tuple:
         ...
     def __init__(self) -> None:
@@ -1082,7 +1092,7 @@ def set_scene_config(gravity: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy
 def set_scene_config(config: PhysxSceneConfig) -> None:
     ...
 @typing.overload
-def set_sdf_config(spacing: float = 0.009999999776482582, subgrid_size: int = 6, num_threads_for_construction: int = 4) -> None:
+def set_sdf_config(spacing: float = 0.009999999776482582, subgrid_size: int = 6, num_threads_for_construction: int = 4, resolution: int = 0, bits_per_subgrid_pixel: int = 16, narrow_band_thickness: float = 0.009999999776482582, margin: float = 0.0, enable_remeshing: bool = False, triangle_count_reduction_factor: float = 1.0) -> None:
     ...
 @typing.overload
 def set_sdf_config(config: PhysxSDFConfig) -> None:

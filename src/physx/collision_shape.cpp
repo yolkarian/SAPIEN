@@ -232,12 +232,12 @@ PhysxCollisionShapeConvexMesh::LoadMultiple(std::string const &filename, Vec3 sc
 
 PhysxCollisionShapeTriangleMesh::PhysxCollisionShapeTriangleMesh(
     std::string const &filename, Vec3 const &scale, std::shared_ptr<PhysxMaterial> material,
-    bool sdf) {
+    bool sdf, std::optional<PhysxSDFShapeConfig> sdfConfig) {
   mEngine = PhysxEngine::Get();
   mPhysicalMaterial = material ? material : PhysxDefault::GetDefaultMaterial();
 
   if (sdf) {
-    mMesh = MeshManager::Get()->loadTriangleMeshWithSDF(filename);
+    mMesh = MeshManager::Get()->loadTriangleMeshWithSDF(filename, sdfConfig);
   } else {
     mMesh = MeshManager::Get()->loadTriangleMesh(filename);
   }
@@ -253,10 +253,11 @@ PhysxCollisionShapeTriangleMesh::PhysxCollisionShapeTriangleMesh(
 PhysxCollisionShapeTriangleMesh::PhysxCollisionShapeTriangleMesh(
     Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> const &vertices,
     Eigen::Matrix<uint32_t, Eigen::Dynamic, 3, Eigen::RowMajor> const &triangles,
-    Vec3 const &scale, std::shared_ptr<PhysxMaterial> material, bool sdf) {
+    Vec3 const &scale, std::shared_ptr<PhysxMaterial> material, bool sdf,
+    std::optional<PhysxSDFShapeConfig> sdfConfig) {
   mEngine = PhysxEngine::Get();
   mPhysicalMaterial = material ? material : PhysxDefault::GetDefaultMaterial();
-  mMesh = std::make_shared<PhysxTriangleMesh>(vertices, triangles, sdf);
+  mMesh = std::make_shared<PhysxTriangleMesh>(vertices, triangles, sdf, sdfConfig);
   mPxShape = mEngine->getPxPhysics()->createShape(
       PxTriangleMeshGeometry(mMesh->getPxMesh(), PxMeshScale(Vec3ToPxVec3(scale))),
       *getPhysicalMaterial()->getPxMaterial(), true);

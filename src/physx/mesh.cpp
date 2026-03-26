@@ -2,6 +2,7 @@
 #include "../logger.h"
 #include "sapien/physx/physx_default.h"
 #include "sapien/physx/physx_system.h"
+#include <algorithm>
 #include <filesystem>
 #include <queue>
 #include <set>
@@ -292,6 +293,36 @@ static std::vector<Vertices> loadComponentVerticesFromMeshFile(std::string const
 
 //////////////////// helpers end ////////////////////
 
+static PxSdfBitsPerSubgridPixel::Enum getBitsPerSubgridPixel(uint32_t bitsPerSubgridPixel) {
+  switch (bitsPerSubgridPixel) {
+  case 8:
+    return PxSdfBitsPerSubgridPixel::e8_BIT_PER_PIXEL;
+  case 16:
+    return PxSdfBitsPerSubgridPixel::e16_BIT_PER_PIXEL;
+  case 32:
+    return PxSdfBitsPerSubgridPixel::e32_BIT_PER_PIXEL;
+  default:
+    logger::warn("invalid SDF bitsPerSubgridPixel={}, fallback to 16", bitsPerSubgridPixel);
+    return PxSdfBitsPerSubgridPixel::e16_BIT_PER_PIXEL;
+  }
+}
+
+static float getSDFSpacing(AABB const &aabb, PhysxSDFShapeConfig const &config) {
+  if (config.resolution == 0) {
+    return config.spacing;
+  }
+
+  auto extent = aabb.upper - aabb.lower;
+  float maxExtent = std::max({extent.x, extent.y, extent.z});
+  if (maxExtent <= 0.f) {
+    logger::warn("SDF resolution={} requested for zero-extent mesh, fallback to spacing={}",
+                 config.resolution, config.spacing);
+    return config.spacing;
+  }
+
+  return maxExtent / static_cast<float>(config.resolution);
+}
+
 void PhysxConvexMesh::loadMesh(Vertices const &vertices) {
   mEngine = PhysxEngine::Get();
 
@@ -384,7 +415,8 @@ Triangles PhysxConvexMesh::getTriangles() const {
 }
 
 void PhysxTriangleMesh::loadMesh(Vertices const &vertices, Triangles const &triangles,
-                                 bool generateSDF) {
+                                 bool generateSDF,
+                                 std::optional<PhysxSDFShapeConfig> sdfConfig) {
   mEngine = PhysxEngine::Get();
 
   PxTriangleMeshDesc meshDesc;
@@ -402,18 +434,44 @@ void PhysxTriangleMesh::loadMesh(Vertices const &vertices, Triangles const &tria
   }
 
   PxSDFDesc sdfDesc;
-  auto config = PhysxDefault::getSDFShapeConfig();
   if (generateSDF) {
-    sdfDesc.spacing = config.spacing;
+    auto config = sdfConfig.value_or(PhysxDefault::getSDFShapeConfig());
+    auto aabb = computeAABB(vertices);
+    auto effectiveSpacing = getSDFSpacing(aabb, config);
+
+    sdfDesc.spacing = effectiveSpacing;
     sdfDesc.subgridSize = config.subgridSize;
-    sdfDesc.bitsPerSubgridPixel = PxSdfBitsPerSubgridPixel::e16_BIT_PER_PIXEL;
+    sdfDesc.bitsPerSubgridPixel = getBitsPerSubgridPixel(config.bitsPerSubgridPixel);
+    sdfDesc.narrowBandThicknessRelativeToSdfBoundsDiagonal = config.narrowBandThickness;
     sdfDesc.numThreadsForSdfConstruction = config.numThreadsForConstruction;
     meshDesc.sdfDesc = &sdfDesc;
     params.meshPreprocessParams |= PxMeshPreprocessingFlag::eENABLE_INERTIA;
 
+    if (config.margin != 0.f) {
+      logger::warn("SDF margin={} is not implemented in plain PhysX cooking", config.margin);
+    }
+    if (config.enableRemeshing) {
+      logger::warn("SDF enableRemeshing is not implemented in plain PhysX cooking");
+    }
+    if (config.triangleCountReductionFactor != 1.f) {
+      logger::warn(
+          "SDF triangleCountReductionFactor={} is not implemented in plain PhysX cooking",
+          config.triangleCountReductionFactor);
+    }
+
     mSDF = true;
-    mSDFSpacing = sdfDesc.spacing;
+    mSDFConfig = config;
+    mSDFSpacing = effectiveSpacing;
     mSDFSubgridSize = sdfDesc.subgridSize;
+
+    // These fields are accepted for API compatibility, but the plain PhysX
+    // cooking path used here does not currently consume them, so they have no
+    // effect on the generated SDF.
+    logger::debug(
+        "cooking mesh SDF with spacing={}, resolution={}, subgridSize={}, bitsPerSubgridPixel={}, "
+        "narrowBandThickness={}",
+        effectiveSpacing, config.resolution, config.subgridSize, config.bitsPerSubgridPixel,
+        config.narrowBandThickness);
   }
 
   PxDefaultMemoryOutputStream writeBuffer;
@@ -427,19 +485,22 @@ void PhysxTriangleMesh::loadMesh(Vertices const &vertices, Triangles const &tria
 }
 
 PhysxTriangleMesh::PhysxTriangleMesh(Vertices const &vertices, Triangles const &triangles,
-                                     bool generateSDF) {
-  loadMesh(vertices, triangles, generateSDF);
+                                     bool generateSDF,
+                                     std::optional<PhysxSDFShapeConfig> sdfConfig) {
+  loadMesh(vertices, triangles, generateSDF, sdfConfig);
 }
 
 PhysxTriangleMesh::PhysxTriangleMesh(Vertices const &vertices, Triangles const &triangles,
-                                     std::string const &filename, bool generateSDF)
-    : PhysxTriangleMesh(vertices, triangles, generateSDF) {
+                                     std::string const &filename, bool generateSDF,
+                                     std::optional<PhysxSDFShapeConfig> sdfConfig)
+    : PhysxTriangleMesh(vertices, triangles, generateSDF, sdfConfig) {
   mFilename = filename;
 }
 
-PhysxTriangleMesh::PhysxTriangleMesh(std::string const &filename, bool generateSDF) {
+PhysxTriangleMesh::PhysxTriangleMesh(std::string const &filename, bool generateSDF,
+                                     std::optional<PhysxSDFShapeConfig> sdfConfig) {
   auto [vertices, triangles] = loadVerticesAndTrianglesFromMeshFile(filename);
-  loadMesh(vertices, triangles, generateSDF);
+  loadMesh(vertices, triangles, generateSDF, sdfConfig);
   mFilename = filename;
 }
 

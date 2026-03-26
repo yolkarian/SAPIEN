@@ -53,6 +53,9 @@ class CollisionShapeRecord:
 
     material: Union[sapien.physx.PhysxMaterial, None] = None
     pose: sapien.Pose = sapien.Pose()
+    # `margin`, `enable_remeshing`, and `triangle_count_reduction_factor` are
+    # currently ignored by SAPIEN's plain PhysX SDF cooking path.
+    sdf_config: Optional[sapien.physx.PhysxSDFConfig] = None
 
     density: float = 1000
     patch_radius: float = 0
@@ -235,6 +238,7 @@ class ActorBuilder:
                         scale=r.scale,
                         material=r.material,
                         sdf=self.physx_body_type in ["dynamic", "link"],
+                        sdf_config=r.sdf_config,
                     )
                     shapes = [shape]
                 elif r.type == "multiple_convex_meshes":
@@ -512,6 +516,7 @@ class ActorBuilder:
         patch_radius: float = 0,
         min_patch_radius: float = 0,
         is_trigger: bool = False,
+        sdf_config: Optional[sapien.physx.PhysxSDFConfig] = None,
     ):
         if material is None:
             material = sapien.physx.get_default_material()
@@ -524,6 +529,7 @@ class ActorBuilder:
                 scale=scale,
                 material=material,
                 density=density,
+                sdf_config=sdf_config,
                 patch_radius=patch_radius,
                 min_patch_radius=min_patch_radius,
                 is_trigger=is_trigger,

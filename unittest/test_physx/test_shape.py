@@ -110,8 +110,33 @@ class TestShape(unittest.TestCase):
     def test_nonconvex(self):
         sapien.physx.set_shape_config(contact_offset=0.015, rest_offset=0.001)
         mat = sapien.physx.PhysxMaterial(0.2, 0.1, 0.05)
+        sdf_config = sapien.physx.PhysxSDFConfig()
+        sdf_config.resolution = 64
+        sdf_config.bits_per_subgrid_pixel = 8
+        sdf_config.narrow_band_thickness = 0.02
         shape = sapien.physx.PhysxCollisionShapeTriangleMesh(
-            str(Path(".") / "assets" / "torus.stl"), [0.2, 0.3, 0.4], mat
+            str(Path(".") / "assets" / "torus.stl"),
+            [0.2, 0.3, 0.4],
+            mat,
+            sdf=True,
+            sdf_config=sdf_config,
         )
         self._test_common(shape, mat)
         self.assertTrue(np.allclose(shape.scale, [0.2, 0.3, 0.4]))
+        self.assertGreater(shape.vertices.shape[0], 0)
+        self.assertGreater(shape.triangles.shape[0], 0)
+
+        sdf_config_2 = sapien.physx.PhysxSDFConfig()
+        sdf_config_2.spacing = 0.004
+        sdf_config_2.bitsPerSubgridPixel = 32
+        sdf_config_2.narrowBandThickness = 0.03
+        shape = sapien.physx.PhysxCollisionShapeTriangleMesh(
+            shape.vertices,
+            shape.triangles,
+            [0.4, 0.3, 0.2],
+            mat,
+            sdf=True,
+            sdf_config=sdf_config_2,
+        )
+        self._test_common(shape, mat)
+        self.assertTrue(np.allclose(shape.scale, [0.4, 0.3, 0.2]))

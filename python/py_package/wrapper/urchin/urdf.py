@@ -1154,6 +1154,175 @@ class Material(URDFType):
         )
 
 
+class SDF(URDFType):
+    """SAPIEN-specific SDF collision settings for a mesh collision."""
+
+    _ATTRIBS = {
+        "resolution": (str, False),
+        "spacing": (str, False),
+        "subgrid_size": (str, False),
+        "num_threads_for_construction": (str, False),
+        "bits_per_subgrid_pixel": (str, False),
+        "narrow_band_thickness": (str, False),
+        "margin": (str, False),
+        "enable_remeshing": (str, False),
+        "triangle_count_reduction_factor": (str, False),
+    }
+    _TAG = "sdf"
+
+    def __init__(
+        self,
+        resolution=None,
+        spacing=None,
+        subgrid_size=None,
+        num_threads_for_construction=None,
+        bits_per_subgrid_pixel=None,
+        narrow_band_thickness=None,
+        margin=None,
+        enable_remeshing=None,
+        triangle_count_reduction_factor=None,
+    ):
+        self.resolution = resolution
+        self.spacing = spacing
+        self.subgrid_size = subgrid_size
+        self.num_threads_for_construction = num_threads_for_construction
+        self.bits_per_subgrid_pixel = bits_per_subgrid_pixel
+        self.narrow_band_thickness = narrow_band_thickness
+        self.margin = margin
+        self.enable_remeshing = enable_remeshing
+        self.triangle_count_reduction_factor = triangle_count_reduction_factor
+
+    @staticmethod
+    def _parse_bool(value):
+        if value is None or isinstance(value, bool):
+            return value
+        value = str(value).strip().lower()
+        if value in ["1", "true", "yes", "on"]:
+            return True
+        if value in ["0", "false", "no", "off"]:
+            return False
+        raise ValueError("Malformed boolean value {} for SDF config".format(value))
+
+    @property
+    def resolution(self):
+        return self._resolution
+
+    @resolution.setter
+    def resolution(self, value):
+        if value is not None:
+            value = int(value)
+            if value <= 0:
+                raise ValueError("SDF resolution must be positive")
+        self._resolution = value
+
+    @property
+    def spacing(self):
+        return self._spacing
+
+    @spacing.setter
+    def spacing(self, value):
+        if value is not None:
+            value = float(value)
+            if value <= 0:
+                raise ValueError("SDF spacing must be positive")
+        self._spacing = value
+
+    @property
+    def subgrid_size(self):
+        return self._subgrid_size
+
+    @subgrid_size.setter
+    def subgrid_size(self, value):
+        if value is not None:
+            value = int(value)
+            if value <= 0:
+                raise ValueError("SDF subgrid_size must be positive")
+        self._subgrid_size = value
+
+    @property
+    def num_threads_for_construction(self):
+        return self._num_threads_for_construction
+
+    @num_threads_for_construction.setter
+    def num_threads_for_construction(self, value):
+        if value is not None:
+            value = int(value)
+            if value < 0:
+                raise ValueError("SDF num_threads_for_construction must be non-negative")
+        self._num_threads_for_construction = value
+
+    @property
+    def bits_per_subgrid_pixel(self):
+        return self._bits_per_subgrid_pixel
+
+    @bits_per_subgrid_pixel.setter
+    def bits_per_subgrid_pixel(self, value):
+        if value is not None:
+            value = int(value)
+            if value not in [8, 16, 32]:
+                raise ValueError("SDF bits_per_subgrid_pixel must be one of 8, 16, 32")
+        self._bits_per_subgrid_pixel = value
+
+    @property
+    def narrow_band_thickness(self):
+        return self._narrow_band_thickness
+
+    @narrow_band_thickness.setter
+    def narrow_band_thickness(self, value):
+        if value is not None:
+            value = float(value)
+        self._narrow_band_thickness = value
+
+    @property
+    def margin(self):
+        return self._margin
+
+    @margin.setter
+    def margin(self, value):
+        if value is not None:
+            value = float(value)
+        self._margin = value
+
+    @property
+    def enable_remeshing(self):
+        return self._enable_remeshing
+
+    @enable_remeshing.setter
+    def enable_remeshing(self, value):
+        self._enable_remeshing = self._parse_bool(value)
+
+    @property
+    def triangle_count_reduction_factor(self):
+        return self._triangle_count_reduction_factor
+
+    @triangle_count_reduction_factor.setter
+    def triangle_count_reduction_factor(self, value):
+        if value is not None:
+            value = float(value)
+            if value <= 0:
+                raise ValueError("SDF triangle_count_reduction_factor must be positive")
+        self._triangle_count_reduction_factor = value
+
+    def _to_xml(self, parent, path):
+        node = self._unparse(path)
+        if "enable_remeshing" in node.attrib:
+            node.attrib["enable_remeshing"] = node.attrib["enable_remeshing"].lower()
+        return node
+
+    def copy(self, prefix="", scale=None):
+        return SDF(
+            resolution=self.resolution,
+            spacing=self.spacing,
+            subgrid_size=self.subgrid_size,
+            num_threads_for_construction=self.num_threads_for_construction,
+            bits_per_subgrid_pixel=self.bits_per_subgrid_pixel,
+            narrow_band_thickness=self.narrow_band_thickness,
+            margin=self.margin,
+            enable_remeshing=self.enable_remeshing,
+            triangle_count_reduction_factor=self.triangle_count_reduction_factor,
+        )
+
+
 class Collision(URDFTypeWithMesh):
     """Collision properties of a link.
 
@@ -1171,13 +1340,15 @@ class Collision(URDFTypeWithMesh):
     _ATTRIBS = {"name": (str, False)}
     _ELEMENTS = {
         "geometry": (Geometry, True, False),
+        "sdf": (SDF, False, False),
     }
     _TAG = "collision"
 
-    def __init__(self, name, origin, geometry):
+    def __init__(self, name, origin, geometry, sdf=None):
         self.geometry = geometry
         self.name = name
         self.origin = origin
+        self.sdf = sdf
 
     @property
     def geometry(self):
@@ -1209,6 +1380,16 @@ class Collision(URDFTypeWithMesh):
     @origin.setter
     def origin(self, value):
         self._origin = configure_origin(value)
+
+    @property
+    def sdf(self):
+        return self._sdf
+
+    @sdf.setter
+    def sdf(self, value):
+        if value is not None and not isinstance(value, SDF):
+            raise TypeError("Must set sdf with SDF object")
+        self._sdf = value
 
     @classmethod
     def _from_xml(cls, node, path, lazy_load_meshes):
@@ -1243,6 +1424,7 @@ class Collision(URDFTypeWithMesh):
             name="{}{}".format(prefix, self.name),
             origin=origin,
             geometry=self.geometry.copy(prefix=prefix, scale=scale),
+            sdf=self.sdf.copy() if self.sdf is not None else None,
         )
 
 

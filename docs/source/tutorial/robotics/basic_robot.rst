@@ -43,6 +43,23 @@ Note that there is a ``fix_root_link`` flag for the URDF loader.
 If it is true (by default), then the root link of the robot will be fixed.
 Otherwise, it is allowed to move freely.
 
+SAPIEN also supports a custom ``<sdf>`` tag under mesh collisions to request
+per-collision SDF cooking parameters. For example,
+
+.. code-block:: xml
+
+   <collision>
+      <geometry>
+         <mesh filename="../mesh/square_table_leg.obj" scale="1 1 1"/>
+      </geometry>
+      <sdf resolution="512"/>
+   </collision>
+
+This tag is SAPIEN-specific rather than standard URDF. When present on a mesh
+collision, the loader will route that collision through the non-convex mesh
+path automatically and apply the provided SDF config for that mesh only when
+the collision is built with an SDF-backed triangle mesh.
+
 The robot is loaded as ``Articulation``, which is a tree of links connected by joints.
 We can set the pose of its root link through ``set_root_pose(...)``.
 

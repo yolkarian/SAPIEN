@@ -41,6 +41,14 @@ struct PhysxSDFShapeConfig {
   float spacing = 0.01f;
   uint32_t subgridSize = 6;
   uint32_t numThreadsForConstruction = 4;
+  uint32_t resolution = 0;
+  uint32_t bitsPerSubgridPixel = 16;
+  float narrowBandThickness = 0.01f;
+  float margin = 0.f; // currently ignored by SAPIEN's plain PhysX SDF cooking path
+  bool enableRemeshing =
+      false; // currently ignored by SAPIEN's plain PhysX SDF cooking path
+  float triangleCountReductionFactor =
+      1.f; // currently ignored by SAPIEN's plain PhysX SDF cooking path
 };
 
 class PhysxDefault {
@@ -71,8 +79,13 @@ public:
   static void setShapeConfig(PhysxShapeConfig const &);
   static PhysxShapeConfig const &getShapeConfig();
 
-  static void setSDFShapeConfig(float spacing, uint32_t subgridSize,
-                                uint32_t numThreadsForConstruction);
+  static void setSDFShapeConfig(float spacing = 0.01f, uint32_t subgridSize = 6,
+                                uint32_t numThreadsForConstruction = 4,
+                                uint32_t resolution = 0,
+                                uint32_t bitsPerSubgridPixel = 16,
+                                float narrowBandThickness = 0.01f, float margin = 0.f,
+                                bool enableRemeshing = false,
+                                float triangleCountReductionFactor = 1.f);
   static void setSDFShapeConfig(PhysxSDFShapeConfig const &);
   static PhysxSDFShapeConfig getSDFShapeConfig();
 

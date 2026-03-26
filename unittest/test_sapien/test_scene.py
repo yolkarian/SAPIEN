@@ -108,6 +108,11 @@ class TestScene(unittest.TestCase):
         )
         idx += 1
 
+        nonconvex_sdf = sapien.physx.PhysxSDFConfig()
+        nonconvex_sdf.resolution = 96
+        nonconvex_sdf.bits_per_subgrid_pixel = 32
+        nonconvex_sdf.narrow_band_thickness = 0.02
+
         builder.add_nonconvex_collision_from_file(
             filename="assets/torus.stl",
             pose=poses[idx],
@@ -116,6 +121,7 @@ class TestScene(unittest.TestCase):
             patch_radius=patch_radii[idx],
             min_patch_radius=min_patch_radii[idx],
             is_trigger=False,
+            sdf_config=nonconvex_sdf,
         )
 
         collisions = builder.collision_records
@@ -139,6 +145,10 @@ class TestScene(unittest.TestCase):
         self.assertTrue(np.allclose(collisions[2].length, sizes[2][0]))
         self.assertTrue(np.allclose(collisions[3].scale, sizes[3]))
         self.assertTrue(np.allclose(collisions[4].scale, sizes[4]))
+        self.assertIs(collisions[4].sdf_config, nonconvex_sdf)
+        self.assertEqual(collisions[4].sdf_config.resolution, 96)
+        self.assertEqual(collisions[4].sdf_config.bits_per_subgrid_pixel, 32)
+        self.assertAlmostEqual(collisions[4].sdf_config.narrow_band_thickness, 0.02)
 
         body = builder.build_kinematic().find_component_by_type(
             sapien.physx.PhysxRigidBaseComponent

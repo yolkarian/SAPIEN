@@ -15,6 +15,16 @@ using namespace physx;
 namespace sapien {
 namespace physx {
 
+static bool sameSDFConfig(PhysxSDFShapeConfig const &lhs, PhysxSDFShapeConfig const &rhs) {
+  return lhs.spacing == rhs.spacing && lhs.subgridSize == rhs.subgridSize &&
+         lhs.numThreadsForConstruction == rhs.numThreadsForConstruction &&
+         lhs.resolution == rhs.resolution &&
+         lhs.bitsPerSubgridPixel == rhs.bitsPerSubgridPixel &&
+         lhs.narrowBandThickness == rhs.narrowBandThickness && lhs.margin == rhs.margin &&
+         lhs.enableRemeshing == rhs.enableRemeshing &&
+         lhs.triangleCountReductionFactor == rhs.triangleCountReductionFactor;
+}
+
 static std::shared_ptr<MeshManager> gManager;
 std::shared_ptr<MeshManager> MeshManager::Get() {
   if (!gManager) {
@@ -58,23 +68,22 @@ std::shared_ptr<PhysxTriangleMesh> MeshManager::loadTriangleMesh(const std::stri
 }
 
 std::shared_ptr<PhysxTriangleMesh>
-MeshManager::loadTriangleMeshWithSDF(const std::string &filename) {
+MeshManager::loadTriangleMeshWithSDF(const std::string &filename,
+                                     std::optional<PhysxSDFShapeConfig> config) {
   std::string fullPath = getFullPath(filename);
+  auto effectiveConfig = config.value_or(PhysxDefault::getSDFShapeConfig());
 
   auto it = mTriangleMeshWithSDFRegistry.find(fullPath);
   if (it != mTriangleMeshWithSDFRegistry.end()) {
-    if (it->second->getSDFSpacing() == PhysxDefault::getSDFShapeConfig().spacing &&
-        it->second->getSDFSubgridSize() == PhysxDefault::getSDFShapeConfig().subgridSize) {
+    if (sameSDFConfig(it->second->getSDFConfig(), effectiveConfig)) {
       logger::info("Using loaded mesh with SDF: {}", filename);
       return it->second;
     } else {
-      logger::warn(
-          "Loading same mesh with different SDF parameters: {}. This may be due to an error.",
-          filename);
+      logger::info("Reloading mesh with different SDF parameters: {}", filename);
     }
   }
 
-  auto mesh = std::make_shared<PhysxTriangleMesh>(fullPath, true);
+  auto mesh = std::make_shared<PhysxTriangleMesh>(fullPath, true, effectiveConfig);
   mTriangleMeshWithSDFRegistry[fullPath] = mesh;
 
   return mesh;
