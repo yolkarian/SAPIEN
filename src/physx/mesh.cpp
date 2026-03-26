@@ -307,7 +307,7 @@ static PxSdfBitsPerSubgridPixel::Enum getBitsPerSubgridPixel(uint32_t bitsPerSub
   }
 }
 
-static float getSDFSpacing(AABB const &aabb, PhysxSDFShapeConfig const &config) {
+static float computeSDFSpacing(AABB const &aabb, PhysxSDFShapeConfig const &config) {
   if (config.resolution == 0) {
     return config.spacing;
   }
@@ -437,7 +437,7 @@ void PhysxTriangleMesh::loadMesh(Vertices const &vertices, Triangles const &tria
   if (generateSDF) {
     auto config = sdfConfig.value_or(PhysxDefault::getSDFShapeConfig());
     auto aabb = computeAABB(vertices);
-    auto effectiveSpacing = getSDFSpacing(aabb, config);
+    auto effectiveSpacing = computeSDFSpacing(aabb, config);
 
     sdfDesc.spacing = effectiveSpacing;
     sdfDesc.subgridSize = config.subgridSize;
