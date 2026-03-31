@@ -33,7 +33,7 @@ from pybind11_stubgen.structs import (
 # pybind11-stubgen == 2.4.2
 
 
-class FixTorchJax(IParser):
+class FixTorchJaxCupy(IParser):
     def handle_class_member(
         self, path: QualifiedName, class_: type, obj: Any
     ) -> Docstring | Alias | Class | list[Method] | Field | Property | None:
@@ -53,6 +53,12 @@ class FixTorchJax(IParser):
                     QualifiedName.from_str("jax.Array")
                 )
 
+        for method in result:
+            if str(method.function.name) == "cupy":
+                method.function.returns = ResolvedType(
+                    QualifiedName.from_str("cupy.ndarray")
+                )
+
         return result
 
     def handle_module(
@@ -67,6 +73,9 @@ class FixTorchJax(IParser):
             )
             result.imports.add(
                 Import(name=None, origin=QualifiedName.from_str("jax")),
+            )
+            result.imports.add(
+                Import(name=None, origin=QualifiedName.from_str("cupy")),
             )
 
         return result
@@ -185,7 +194,7 @@ class FixFindComponentByType(IParser):
             result.type_vars.append(
                 TypeVar_(
                     name=Identifier("_T"),
-                    constraints=[ResolvedType((QualifiedName.from_str("Component")))],
+                    bound=ResolvedType(QualifiedName.from_str("Component")),
                 ),
             )
 
@@ -210,7 +219,7 @@ def stub_parser() -> IParser:
         FixMissingImports,
         FilterTypingModuleAttributes,
         FixPEP585CollectionNames,
-        FixTorchJax,
+        FixTorchJaxCupy,
         FixCppFunction,
         FixNoneParameterType,
         FixTypingTypeNames,

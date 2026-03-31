@@ -1,5 +1,6 @@
 from __future__ import annotations
 import jax
+import cupy
 import numpy
 import torch
 import typing
@@ -14,7 +15,7 @@ if platform.system() == "Darwin":
 else:
     from . import simsense
     __all__ = ['Component', 'CudaArray', 'Device', 'Entity', 'Pose', 'Profiler', 'Scene', 'System', 'abi_version', 'compiled_with_cxx11_abi', 'internal_renderer', 'math', 'physx', 'profile', 'pybind11_internals_id', 'pybind11_use_smart_holder', 'render', 'set_log_level', 'simsense']
-_T = typing.TypeVar("_T", Component)
+_T = typing.TypeVar("_T", bound=Component)
 class Component:
     entity_pose: Pose
     name: str
@@ -51,6 +52,8 @@ class Component:
         ...
 class CudaArray:
     def __init__(self, data: typing.Any) -> None:
+        ...
+    def cupy(self) -> cupy.ndarray:
         ...
     def dlpack(self) -> typing.Any:
         ...

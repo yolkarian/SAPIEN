@@ -322,6 +322,12 @@ Generator<int> init_sapien(py::module &m) {
              auto capsule = DLPackToCapsule(array.toDLPack());
              return from_dlpack(capsule);
            })
+      .def("cupy",
+           [](CudaArrayHandle &array) {
+             auto from_dlpack = py::module_::import("cupy").attr("from_dlpack");
+             auto capsule = DLPackToCapsule(array.toDLPack());
+             return from_dlpack(capsule);
+           })
       .def("dlpack", [](CudaArrayHandle &array) -> py::object {
         auto capsule = DLPackToCapsule(array.toDLPack());
         return capsule;

@@ -45,6 +45,42 @@ class TestCudaArray(unittest.TestCase):
             array.__cuda_array_interface__["data"],
         )
 
+    def test_cupy(self):
+        import torch
+        import cupy
+
+        tensor = torch.tensor([[0, 1, 2], [2, 3, 4]]).float().cuda()
+        array = sapien.CudaArray(tensor)
+
+        cp_array = array.cupy()
+        self.assertIsInstance(cp_array, cupy.ndarray)
+        self.assertEqual(cp_array.shape, tuple(array.shape))
+        self.assertEqual(cp_array.dtype, cupy.float32)
+        self.assertEqual(
+            cp_array.__cuda_array_interface__["data"],
+            array.__cuda_array_interface__["data"],
+        )
+
+    def test_cupy_slice(self):
+        import torch
+        import cupy
+
+        tensor = torch.tensor([[0, 1, 2], [2, 3, 4], [3, 4, 5]]).float().cuda()
+        tensor = tensor[1:, :-1]
+        array = sapien.CudaArray(tensor)
+
+        cp_array = array.cupy()
+        self.assertIsInstance(cp_array, cupy.ndarray)
+        self.assertEqual(cp_array.shape, tuple(array.shape))
+        self.assertEqual(
+            cp_array.__cuda_array_interface__["data"],
+            array.__cuda_array_interface__["data"],
+        )
+        self.assertEqual(
+            cp_array.__cuda_array_interface__["strides"],
+            array.__cuda_array_interface__["strides"],
+        )
+
     def test_slice(self):
         import torch
 
