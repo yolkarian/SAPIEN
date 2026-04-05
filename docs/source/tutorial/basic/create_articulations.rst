@@ -116,6 +116,23 @@ Besides, joint positions and velocities can be acquired by ``get_qpos()`` and ``
 They both return a list of scalars, the length of which is the total degree of freedom.
 The order is the same as ``get_joints()``.
 
+SAPIEN also provides ``compute_dense_jacobian()`` on CPU articulations to compute the
+world-space dense Jacobian. The returned matrix maps generalized velocities to stacked
+link spatial velocities with row order ``[vx, vy, vz, wx, wy, wz]`` for each link.
+
+For a fixed-base articulation with ``link_count`` links and ``dof`` joint degrees of
+freedom, the Jacobian shape is ``((link_count - 1) * 6, dof)``. For a floating-base
+articulation, the shape is ``(6 + (link_count - 1) * 6, 6 + dof)``; the first six
+columns correspond to the root link's linear and angular velocity in the world frame.
+
+For GPU simulation, call ``scene.physx_system.gpu_compute_articulation_jacobian()`` to
+update all articulations, or pass a CUDA int32 array of articulation ``gpu_index`` values to
+``scene.physx_system.gpu_compute_articulation_jacobian(gpu_indices)`` to update only a subset.
+The padded tensor ``scene.physx_system.cuda_articulation_jacobian`` still stores buffers for all
+articulations. Its shape is ``(articulation_count, max_rows, max_cols)`` for the current PhysX
+scene. Use ``articulation.gpu_index`` to select an articulation, and
+``articulation.get_jacobian_shape()`` to slice the valid submatrix from the padded tensor.
+
 .. literalinclude:: ../../../../examples/basic/create_articulations.py
    :dedent: 0
    :lines: 266-268

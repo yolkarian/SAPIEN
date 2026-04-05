@@ -343,6 +343,34 @@ PhysxArticulation::getLinkIncomingJointForces() {
   return mat8(Eigen::all, {0, 1, 2, 4, 5, 6});
 }
 
+std::array<uint32_t, 2> PhysxArticulation::getJacobianShape() const {
+  uint32_t dof = getDof();
+  uint32_t linkCount = mPxArticulation->getNbLinks();
+  bool fixedBase =
+      mPxArticulation->getArticulationFlags().isSet(PxArticulationFlag::eFIX_BASE);
+  uint32_t rows = (fixedBase ? 0u : 6u) + (linkCount - 1) * 6u;
+  uint32_t cols = (fixedBase ? 0u : 6u) + dof;
+  return {rows, cols};
+}
+
+Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>
+PhysxArticulation::computeDenseJacobian() {
+  if (getRoot()->isUsingDirectGPUAPI()) {
+    throw std::runtime_error(
+        "computing dense Jacobians from PhysxArticulation is not supported in GPU simulation. "
+        "Use PhysxGpuSystem.gpu_compute_articulation_jacobian() instead.");
+  }
+
+  mPxArticulation->commonInit();
+
+  PxU32 rows = 0;
+  PxU32 cols = 0;
+  mPxArticulation->computeDenseJacobian(*mCache, rows, cols);
+
+  using JacobianMatrix = Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
+  return Eigen::Map<JacobianMatrix>(mCache->denseJacobian, rows, cols);
+}
+
 Pose PhysxArticulation::getRootPose() {
   // if (getRoot()->isUsingDirectGPUAPI()) {
   //   throw std::runtime_error("getting root pose is not supported in GPU simulation.");

@@ -713,6 +713,54 @@ void PhysxSystemGpu::gpuFetchArticulationQTargetVel() {
       PxArticulationGPUAPIReadType::eJOINT_TARGET_VELOCITY, mGpuArticulationCount);
 }
 
+void PhysxSystemGpu::gpuComputeArticulationJacobian() {
+  gpuComputeArticulationJacobian(mCudaArticulationIndexBuffer.handle());
+}
+
+void PhysxSystemGpu::gpuComputeArticulationJacobian(CudaArrayHandle const &indices) {
+  SAPIEN_PROFILE_FUNCTION;
+  checkGpuInitialized();
+  indices.checkCongiguous();
+  indices.checkShape({-1});
+  indices.checkStride({sizeof(int)});
+
+  if (mGpuArticulationCount == 0) {
+    return;
+  }
+
+  ensureCudaDevice();
+  auto count = static_cast<PxU32>(indices.shape.at(0));
+  if (count == 0) {
+    return;
+  }
+
+  int maxRows = 6 + (mGpuArticulationMaxLinkCount - 1) * 6;
+  int maxCols = 6 + mGpuArticulationMaxDof;
+  void *gpuIndices = mCudaArticulationGpuIndexBuffer.ptr;
+  CUevent startEvent = nullptr;
+  if (indices.ptr != mCudaArticulationIndexBuffer.ptr) {
+    gather_blocks(mCudaArticulationIndexScratch.ptr, mCudaArticulationGpuIndexBuffer.ptr,
+                  indices.ptr, 1, count, mCudaStream);
+    gpuIndices = mCudaArticulationIndexScratch.ptr;
+    mCudaEventRecord.record(mCudaStream);
+    startEvent = mCudaEventRecord.event;
+  }
+
+  if (!mCudaEventWait.event) {
+    mCudaEventWait.init();
+  }
+  mPxScene->getDirectGPUAPI().computeArticulationData(
+      mCudaArticulationJacobianScratch.ptr,
+      (PxArticulationGPUIndex *)gpuIndices, PxArticulationGPUAPIComputeType::eDENSE_JACOBIANS,
+      count, startEvent,
+      mCudaEventWait.event);
+  mCudaEventWait.wait(mCudaStream);
+  scatter_articulation_jacobians(mCudaArticulationJacobianHandle.ptr,
+                                 mCudaArticulationJacobianScratch.ptr, indices.ptr,
+                                 mCudaArticulationJacobianShapeBuffer.ptr, maxRows, maxCols,
+                                 count, mCudaStream);
+}
+
 void PhysxSystemGpu::gpuFetchArticulationLinkIncomingJointForce() {
   checkGpuInitialized();
 
@@ -1248,6 +1296,17 @@ void PhysxSystemGpu::allocateCudaBuffers() {
                              mGpuArticulationCount * mGpuArticulationMaxDof * 5};
 
   {
+    int jacobianMaxRows = 6 + (mGpuArticulationMaxLinkCount - 1) * 6;
+    int jacobianMaxCols = 6 + mGpuArticulationMaxDof;
+    mCudaArticulationJacobianBuffer =
+        CudaArray({mGpuArticulationCount, jacobianMaxRows, jacobianMaxCols}, "f4");
+    mCudaArticulationJacobianHandle = mCudaArticulationJacobianBuffer.handle();
+    mCudaArticulationJacobianScratch =
+        CudaArray({mGpuArticulationCount * jacobianMaxRows * jacobianMaxCols}, "f4");
+    mCudaArticulationJacobianShapeBuffer = CudaArray({mGpuArticulationCount, 2}, "u4");
+  }
+
+  {
     mCudaRigidDynamicIndexBuffer = CudaArray({rigidDynamicCount}, "u4");
     mCudaRigidDynamicIndexScratch = CudaArray({rigidDynamicCount}, "u4");
     mCudaRigidDynamicOffsetBuffer = CudaArray({rigidDynamicCount, 3}, "f4");
@@ -1277,6 +1336,7 @@ void PhysxSystemGpu::allocateCudaBuffers() {
     mCudaArticulationIndexScratch = CudaArray({mGpuArticulationCount}, "u4");
 
     std::vector<std::array<float, 3>> host_offset(mGpuArticulationCount, {0.f, 0.f, 0.f});
+    std::vector<std::array<uint32_t, 2>> host_jacobian_shape(mGpuArticulationCount, {0u, 0u});
     std::vector<int> host_dense_index;
     std::vector<PxArticulationGPUIndex> host_gpu_index;
     std::unordered_map<PxArticulationReducedCoordinate *, int> articulation_to_dense_index;
@@ -1295,6 +1355,15 @@ void PhysxSystemGpu::allocateCudaBuffers() {
       if (a->isRoot()) {
         Vec3 offset = getSceneOffset(a->getScene());
         host_offset.at(art_idx) = {offset.x, offset.y, offset.z};
+        auto pxArticulation = a->getArticulation()->getPxArticulation();
+        bool fixedBase =
+            pxArticulation->getArticulationFlags().isSet(PxArticulationFlag::eFIX_BASE);
+        uint32_t linkCount = pxArticulation->getNbLinks();
+        uint32_t dofCount = pxArticulation->getDofs();
+        host_jacobian_shape.at(art_idx) = {
+            (fixedBase ? 0u : 6u) + (linkCount - 1) * 6u,
+            (fixedBase ? 0u : 6u) + dofCount,
+        };
       }
       a->internalSetGpuPoseIndex(rigidDynamicCount + art_idx * mGpuArticulationMaxLinkCount +
                                  a->getIndex());
@@ -1305,6 +1374,9 @@ void PhysxSystemGpu::allocateCudaBuffers() {
                                host_dense_index.size() * sizeof(int), cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(mCudaArticulationGpuIndexBuffer.ptr, host_gpu_index.data(),
                                host_gpu_index.size() * sizeof(PxArticulationGPUIndex),
+                               cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(mCudaArticulationJacobianShapeBuffer.ptr, host_jacobian_shape.data(),
+                               host_jacobian_shape.size() * sizeof(uint32_t) * 2,
                                cudaMemcpyHostToDevice));
   }
 

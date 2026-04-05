@@ -13,6 +13,7 @@ In this tutorial, you will learn the following:
 
 * Load a robot (URDF)
 * Set joint positions
+* Compute dense Jacobians
 * Compensate passive forces
 * Control the robot by torques
 
@@ -90,6 +91,25 @@ Its length is the degree of freedom, and its order is the same as that returned 
 .. note::
    If the articulation is loaded from a URDF file, its joints are in preorder (DFS preorder traversal over the articulation tree).
    If the articulation is built programmatically (refer to :ref:`create_articulations`), its joints are in the order when they are built.
+
+Compute dense Jacobians
+--------------------------------------
+
+For robotics applications, it is often useful to map generalized velocities to the
+spatial velocity of each link. SAPIEN provides ``compute_dense_jacobian()`` for CPU
+articulations to compute this world-space dense Jacobian directly from PhysX.
+
+The row order is ``[vx, vy, vz, wx, wy, wz]`` for each link. The valid matrix size is
+available from ``robot.get_jacobian_shape()``. For a fixed-base robot, the shape is
+``((link_count - 1) * 6, dof)``. For a floating-base robot, the shape is
+``(6 + (link_count - 1) * 6, 6 + dof)`` and the first six columns correspond to the
+root link's linear and angular velocity in the world frame.
+
+For GPU simulation, the corresponding API is ``scene.physx_system.gpu_compute_articulation_jacobian()``.
+You can also pass a CUDA int32 array of articulation ``gpu_index`` values to update only a
+subset of robots. The result is written to ``scene.physx_system.cuda_articulation_jacobian`` as
+a padded tensor of shape ``(articulation_count, max_rows, max_cols)``. Use ``robot.gpu_index``
+to select a robot and ``robot.get_jacobian_shape()`` to extract the valid submatrix.
 
 Compensate passive forces (e.g. gravity)
 -----------------------------------------

@@ -144,6 +144,34 @@ __global__ void pack_vec3_kernel(Vec3 *__restrict__ dst, float const *__restrict
   dst[g] = {src[g * stride], src[g * stride + 1], src[g * stride + 2]};
 }
 
+__global__ void scatter_articulation_jacobians_kernel(float *__restrict__ dst,
+                                                      float const *__restrict__ src,
+                                                      int const *__restrict__ index,
+                                                      uint32_t const *__restrict__ shape,
+                                                      int max_rows, int max_cols, int count) {
+  int g = blockIdx.x * blockDim.x + threadIdx.x;
+  int block_size = max_rows * max_cols;
+  int total = count * block_size;
+  if (g >= total) {
+    return;
+  }
+
+  int selection = g / block_size;
+  int block_offset = g % block_size;
+  int articulation = index[selection];
+  int row = block_offset / max_cols;
+  int col = block_offset % max_cols;
+
+  uint32_t rows = shape[articulation * 2];
+  uint32_t cols = shape[articulation * 2 + 1];
+
+  float value = 0.f;
+  if (static_cast<uint32_t>(row) < rows && static_cast<uint32_t>(col) < cols) {
+    value = src[selection * block_size + row * cols + col];
+  }
+  dst[articulation * block_size + block_offset] = value;
+}
+
 __device__ int binary_search(ActorPairQuery const *__restrict__ arr, int count, ActorPair x) {
   int low = 0;
   int high = count - 1;
@@ -334,6 +362,16 @@ void gather_blocks(void *dst, void *src, void *index, int block_size, int count,
 void pack_vec3(void *dst, void *src, int stride, int count, cudaStream_t stream) {
   pack_vec3_kernel<<<(count + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE, 0, stream>>>(
       (Vec3 *)dst, (float *)src, stride, count);
+}
+
+void scatter_articulation_jacobians(void *dst, void *src, void *index, void *shape,
+                                    int max_rows, int max_cols, int count,
+                                    cudaStream_t stream) {
+  int total = count * max_rows * max_cols;
+  scatter_articulation_jacobians_kernel<<<(total + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE, 0,
+                                          stream>>>((float *)dst, (float *)src, (int *)index,
+                                                    (uint32_t *)shape, max_rows, max_cols,
+                                                    count);
 }
 
 void handle_contacts(::physx::PxGpuContactPair *contacts, int contact_count, ActorPairQuery *query,

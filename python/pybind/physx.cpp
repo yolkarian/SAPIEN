@@ -511,6 +511,20 @@ Args:
                              &PhysxSystemGpu::gpuGetArticulationQTargetPosCudaHandle)
       .def_property_readonly("cuda_articulation_target_qvel",
                              &PhysxSystemGpu::gpuGetArticulationQTargetVelCudaHandle)
+      .def_property_readonly("cuda_articulation_jacobian",
+                             &PhysxSystemGpu::gpuGetArticulationJacobianCudaHandle, R"doc(
+Padded dense articulation Jacobians on the GPU.
+
+The tensor shape is ``(articulation_count, max_rows, max_cols)`` where
+``max_rows = 6 + (max_links - 1) * 6`` and ``max_cols = 6 + max_dofs`` for the
+current PhysX scene. Use ``articulation.gpu_index`` to select an articulation,
+then slice the valid submatrix using ``articulation.get_jacobian_shape()``.
+
+The row order within each valid submatrix is ``[vx, vy, vz, wx, wy, wz]`` for
+each link in low-level link index order. For fixed-base articulations, the root
+link rows are omitted. For floating-base articulations, the first six columns
+correspond to root linear and angular velocity in world coordinates.
+)doc")
       .def_property_readonly("cuda_articulation_link_incoming_joint_forces",
                              &PhysxSystemGpu::gpuGetArticulationLinkIncomingJointForceHandle)
 
@@ -522,6 +536,36 @@ Args:
       .def("gpu_fetch_articulation_qacc", &PhysxSystemGpu::gpuFetchArticulationQacc)
       .def("gpu_fetch_articulation_target_qpos", &PhysxSystemGpu::gpuFetchArticulationQTargetPos)
       .def("gpu_fetch_articulation_target_qvel", &PhysxSystemGpu::gpuFetchArticulationQTargetVel)
+      .def("gpu_compute_articulation_jacobian",
+           py::overload_cast<>(&PhysxSystemGpu::gpuComputeArticulationJacobian),
+           R"doc(Compute dense articulation Jacobians for all articulations on the GPU.
+
+The result is stored in `cuda_articulation_jacobian` as a padded tensor with
+shape `(articulation_count, max_rows, max_cols)`. Use `articulation.gpu_index`
+to select an articulation and `articulation.get_jacobian_shape()` to determine
+the valid submatrix for that articulation.
+
+For an articulation with ``link_count`` links and ``dof`` joint degrees of
+freedom, the valid matrix size is:
+
+- fixed base: ``((link_count - 1) * 6, dof)``
+- floating base: ``(6 + (link_count - 1) * 6, 6 + dof)``
+
+The Jacobian maps generalized velocities to stacked link spatial velocities in
+world coordinates.
+)doc")
+      .def("gpu_compute_articulation_jacobian",
+           py::overload_cast<CudaArrayHandle const &>(&PhysxSystemGpu::gpuComputeArticulationJacobian),
+           py::arg("gpu_indices"),
+           R"doc(Compute dense articulation Jacobians for selected articulations on the GPU.
+
+`gpu_indices` must be a contiguous CUDA int32 array containing articulation
+`gpu_index` values. Only the corresponding entries inside
+`cuda_articulation_jacobian` are updated; Jacobians for other articulations are
+left unchanged.
+
+The updated entries use the same padded layout as `cuda_articulation_jacobian`.
+)doc")
       .def("gpu_fetch_articulation_link_incoming_joint_forces",
            &PhysxSystemGpu::gpuFetchArticulationLinkIncomingJointForce)
 
@@ -1061,6 +1105,34 @@ Example:
       .def_property_readonly("link_incoming_joint_forces",
                              &PhysxArticulation::getLinkIncomingJointForces)
       .def("get_link_incoming_joint_forces", &PhysxArticulation::getLinkIncomingJointForces)
+
+      .def_property_readonly("jacobian_shape", &PhysxArticulation::getJacobianShape, R"doc(
+Valid dense Jacobian shape for this articulation.
+
+Returns ``(rows, cols)`` where:
+
+- fixed base: ``rows = (link_count - 1) * 6`` and ``cols = dof``
+- floating base: ``rows = 6 + (link_count - 1) * 6`` and ``cols = 6 + dof``
+
+This matches the valid submatrix inside ``scene.physx_system.cuda_articulation_jacobian``
+for GPU simulation.
+)doc")
+      .def("get_jacobian_shape", &PhysxArticulation::getJacobianShape)
+      .def("compute_dense_jacobian", &PhysxArticulation::computeDenseJacobian,
+           R"doc(Compute the dense articulation Jacobian in world space.
+
+The returned matrix maps generalized velocities to stacked link spatial
+velocities with row order `[vx, vy, vz, wx, wy, wz]` for each link.
+
+For fixed-base articulations, the returned shape is ``((link_count - 1) * 6, dof)``.
+For floating-base articulations, the returned shape is
+``(6 + (link_count - 1) * 6, 6 + dof)`` and the first six columns correspond to
+root linear and angular velocity in world coordinates.
+
+This method is available in CPU simulation. In GPU simulation, use
+`scene.physx_system.gpu_compute_articulation_jacobian()` and
+`scene.physx_system.cuda_articulation_jacobian` instead.
+)doc")
 
       .def_property("root_pose", &PhysxArticulation::getRootPose, &PhysxArticulation::setRootPose)
       .def("get_root_pose", &PhysxArticulation::getRootPose)

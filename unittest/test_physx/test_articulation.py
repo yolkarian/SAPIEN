@@ -8,6 +8,98 @@ from common import pose_equal, rand_pose
 
 
 class TestArticulation(unittest.TestCase):
+    def _check_dense_jacobian(self, fix_root_link: bool):
+        scene = sapien.Scene()
+        loader = scene.create_urdf_loader()
+        loader.fix_root_link = fix_root_link
+        robot = loader.load(str(Path(".") / "assets" / "movo_simple.urdf"))
+
+        for link in robot.links:
+            link.disable_gravity = True
+
+        qpos = np.array(
+            [
+                0.1,
+                -0.2,
+                0.15,
+                -0.1,
+                0.12,
+                -0.08,
+                0.05,
+                -0.07,
+                0.11,
+                -0.09,
+                0.06,
+                -0.04,
+                0.02,
+            ],
+            dtype=np.float32,
+        )
+        qvel = np.array(
+            [
+                -0.25,
+                0.1,
+                -0.15,
+                0.2,
+                -0.05,
+                0.18,
+                -0.12,
+                0.08,
+                -0.16,
+                0.14,
+                -0.09,
+                0.07,
+                -0.03,
+            ],
+            dtype=np.float32,
+        )
+
+        robot.set_qpos(qpos)
+        robot.set_qvel(qvel)
+
+        if not fix_root_link:
+            robot.set_root_linear_velocity([0.3, -0.2, 0.1])
+            robot.set_root_angular_velocity([-0.4, 0.2, 0.5])
+
+        scene.step()
+
+        jacobian = robot.compute_dense_jacobian()
+        rows, cols = map(int, robot.get_jacobian_shape())
+        self.assertEqual(jacobian.shape, (rows, cols))
+
+        if fix_root_link:
+            generalized_velocity = np.asarray(robot.get_qvel(), dtype=np.float32)
+            links = robot.links[1:]
+        else:
+            generalized_velocity = np.concatenate(
+                [
+                    np.asarray(robot.get_root_linear_velocity(), dtype=np.float32),
+                    np.asarray(robot.get_root_angular_velocity(), dtype=np.float32),
+                    np.asarray(robot.get_qvel(), dtype=np.float32),
+                ]
+            )
+            links = robot.links
+
+        expected_velocity = np.concatenate(
+            [
+                np.concatenate(
+                    [
+                        np.asarray(link.get_linear_velocity(), dtype=np.float32),
+                        np.asarray(link.get_angular_velocity(), dtype=np.float32),
+                    ]
+                )
+                for link in links
+            ]
+        )
+        self.assertTrue(
+            np.allclose(
+                jacobian @ generalized_velocity,
+                expected_velocity,
+                rtol=1e-4,
+                atol=1e-4,
+            )
+        )
+
     def test_drive(self):
         scene = sapien.Scene()
         loader = scene.create_urdf_loader()
@@ -95,6 +187,10 @@ class TestArticulation(unittest.TestCase):
                 atol=1e-5,
             )
         )
+
+    def test_dense_jacobian(self):
+        self._check_dense_jacobian(fix_root_link=True)
+        self._check_dense_jacobian(fix_root_link=False)
 
     def test_joint(self):
         scene = sapien.Scene()

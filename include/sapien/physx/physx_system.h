@@ -189,6 +189,12 @@ public:
   CudaArrayHandle gpuGetArticulationQTargetPosCudaHandle() const { return mCudaQTargetPosHandle; }
   CudaArrayHandle gpuGetArticulationQTargetVelCudaHandle() const { return mCudaQTargetVelHandle; }
 
+  /** Padded dense Jacobians with shape
+   *  [articulation_count, 6 + (max_links - 1) * 6, 6 + max_dofs]. */
+  CudaArrayHandle gpuGetArticulationJacobianCudaHandle() const {
+    return mCudaArticulationJacobianHandle;
+  }
+
   CudaArrayHandle gpuGetArticulationLinkIncomingJointForceHandle() const {
     return mCudaArticulationLinkIncomingJointForceBuffer.handle();
   }
@@ -201,6 +207,13 @@ public:
   void gpuFetchArticulationQacc();
   void gpuFetchArticulationQTargetPos();
   void gpuFetchArticulationQTargetVel();
+
+  /** Compute dense articulation Jacobians into gpuGetArticulationJacobianCudaHandle(). */
+  void gpuComputeArticulationJacobian();
+
+  /** Compute dense articulation Jacobians for the given articulation gpu_index values.
+   *  Only the selected entries inside gpuGetArticulationJacobianCudaHandle() are updated. */
+  void gpuComputeArticulationJacobian(CudaArrayHandle const &indices);
   void gpuFetchArticulationLinkIncomingJointForce();
 
   void gpuApplyRigidDynamicData(CudaArrayHandle const &indices);
@@ -306,8 +319,12 @@ private:
   CudaArrayHandle mCudaQaccHandle;
   CudaArrayHandle mCudaQTargetPosHandle;
   CudaArrayHandle mCudaQTargetVelHandle;
+  CudaArrayHandle mCudaArticulationJacobianHandle;
 
   CudaArray mCudaArticulationLinkIncomingJointForceBuffer;
+  CudaArray mCudaArticulationJacobianBuffer;
+  CudaArray mCudaArticulationJacobianScratch;
+  CudaArray mCudaArticulationJacobianShapeBuffer;
 
   CudaArray mCudaContactBuffer;
   CudaArray mCudaContactCount;

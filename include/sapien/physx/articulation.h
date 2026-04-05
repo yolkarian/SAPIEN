@@ -2,6 +2,7 @@
 #include "sapien/math/pose.h"
 #include <Eigen/Eigen>
 #include <PxPhysicsAPI.h>
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -40,6 +41,13 @@ public:
   Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor> getQLimit();
 
   Eigen::Matrix<float, Eigen::Dynamic, 6, Eigen::RowMajor> getLinkIncomingJointForces();
+
+  /** Dense Jacobian shape as {rows, cols}. */
+  std::array<uint32_t, 2> getJacobianShape() const;
+
+  /** Compute the dense world-space articulation Jacobian.
+   *  Rows are stacked as [vx, vy, vz, wx, wy, wz] for each link. */
+  Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> computeDenseJacobian();
 
 
   Eigen::VectorXf computePassiveForce(bool gravity, bool coriolisAndCentrifugal);
