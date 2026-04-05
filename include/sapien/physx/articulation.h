@@ -27,7 +27,7 @@ public:
 
   ::physx::PxArticulationReducedCoordinate *getPxArticulation() const { return mPxArticulation; }
 
-  uint32_t getDof();
+  uint32_t getDof() const;
 
   Eigen::VectorXf getQpos();
   void setQpos(Eigen::VectorXf const &q);

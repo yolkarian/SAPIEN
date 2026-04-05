@@ -207,7 +207,7 @@ std::vector<std::shared_ptr<PhysxArticulationJoint>> PhysxArticulation::getActiv
   return result;
 }
 
-uint32_t PhysxArticulation::getDof() {
+uint32_t PhysxArticulation::getDof() const {
   if (!mPxArticulation->getScene()) {
     throw std::runtime_error(
         "articulation properties are only available when all links are added to scene");
