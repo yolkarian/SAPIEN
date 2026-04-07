@@ -58,10 +58,12 @@ class TestArticulation(unittest.TestCase):
         robot.set_qvel(qvel)
 
         if not fix_root_link:
+            # Floating-base root velocities are only propagated to descendant link
+            # velocities after stepping once. For fixed-base articulations, stepping
+            # would change the joint velocities and invalidate the exact Jacobian check.
             robot.set_root_linear_velocity([0.3, -0.2, 0.1])
             robot.set_root_angular_velocity([-0.4, 0.2, 0.5])
-
-        scene.step()
+            scene.step()
 
         jacobian = robot.compute_dense_jacobian()
         rows, cols = map(int, robot.get_jacobian_shape())
