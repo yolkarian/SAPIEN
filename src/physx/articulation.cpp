@@ -147,6 +147,14 @@ void PhysxArticulation::internalAddPxArticulationToScene(Scene &scene) {
     PxTransform pose = getPxArticulation()->getRootGlobalPose();
     pose.p = pose.p + PxVec3(offset.x, offset.y, offset.z);
     getPxArticulation()->setRootGlobalPose(pose);
+
+    // Set GPU broadphase environment ID on each link before adding to scene
+    uint32_t envId = s->getSceneEnvironmentId(scene.shared_from_this());
+    for (auto link : mLinks) {
+      if (!link->getPxActor()->setEnvironmentID(envId)) {
+        throw std::runtime_error("failed to set PhysX GPU environment ID on articulation link");
+      }
+    }
   }
 #endif
 

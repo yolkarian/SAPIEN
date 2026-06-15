@@ -24,6 +24,15 @@ struct PhysxSceneConfig {
   float frictionOffsetThreshold = 0.04f;   
   float frictionCorrelationDistance = 0.025f;
   uint32_t cpuWorkers = 0; // CPU workers, 0 for using main thread
+
+  // GPU broadphase environment ID bits configuration.
+  // When non-zero, environment ID bits are merged into the broadphase bounds,
+  // virtually spreading environments over 3D space to reduce internal overlaps.
+  // Set to 0 to disable. 4 or 8 are good values for most RL multi-env scenarios.
+  // Only used when broadPhaseType is eGPU.
+  uint8_t gpuBroadPhaseNbBitsEnvIDX = 0;
+  uint8_t gpuBroadPhaseNbBitsEnvIDY = 0;
+  uint8_t gpuBroadPhaseNbBitsEnvIDZ = 0;
 };
 
 struct PhysxBodyConfig {

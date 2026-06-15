@@ -10,8 +10,12 @@
 #include "scene_query.h"
 #include "simulation_callback.hpp"
 #include <PxPhysicsAPI.h>
+#include <map>
 #include <memory>
+#include <optional>
 #include <set>
+#include <utility>
+#include <vector>
 
 #ifdef SAPIEN_CUDA
 #include "sapien/utils/cuda.h"
@@ -79,6 +83,7 @@ protected:
   ::physx::PxDefaultCpuDispatcher *mPxCPUDispatcher;
 
   int mSceneCollisionId{0};
+
 };
 
 class PhysxSystemCpu : public PhysxSystem {
@@ -278,6 +283,25 @@ public:
   void setSceneOffset(std::shared_ptr<Scene> scene, Vec3 offset);
   Vec3 getSceneOffset(std::shared_ptr<Scene> scene) const;
 
+  /** Set the PhysX GPU broadphase environment ID for a SAPIEN scene.
+   *  envId == -1 maps to PX_INVALID_U32 (shared object, collides with all envs).
+   *  Non-shared env IDs must be in [0, 1 << 24).
+   *  Must be called before adding PhysX bodies to the scene. */
+  void setSceneEnvironmentId(std::shared_ptr<Scene> scene, int64_t envId,
+                             bool allowDuplicate = false);
+
+  /** Get a scene's environment ID. If no ID was set explicitly, a new one is
+   *  assigned automatically. */
+  uint32_t getSceneEnvironmentId(std::shared_ptr<Scene> scene);
+
+  /** Get a scene's already assigned environment ID without assigning a new one. */
+  std::optional<uint32_t> getAssignedSceneEnvironmentId(std::shared_ptr<Scene> scene) const;
+
+  /** Convenience: set environment IDs for multiple scenes at once. */
+  void setSceneEnvironmentIds(
+      std::vector<std::pair<std::shared_ptr<Scene>, int64_t>> const &mapping,
+      bool allowDuplicate = false);
+
   std::shared_ptr<Device> getDevice() const { return mDevice; };
 
   ~PhysxSystemGpu();
@@ -287,6 +311,12 @@ private:
   void ensureCudaDevice();
 
   std::map<std::weak_ptr<Scene>, Vec3, std::owner_less<>> mSceneOffset;
+  std::map<std::weak_ptr<Scene>, uint32_t, std::owner_less<>> mSceneEnvironmentIds;
+  uint32_t mNextSceneEnvironmentId{0};
+
+  uint32_t allocateSceneEnvironmentId();
+  bool sceneHasPhysxBodies(std::shared_ptr<Scene> scene) const;
+  bool isSceneEnvironmentIdUsed(uint32_t envId, std::shared_ptr<Scene> excludedScene) const;
 
   std::set<std::shared_ptr<PhysxRigidDynamicComponent>, comp_cmp> mRigidDynamicComponents;
   std::set<std::shared_ptr<PhysxRigidStaticComponent>, comp_cmp> mRigidStaticComponents;

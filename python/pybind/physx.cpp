@@ -7,6 +7,7 @@
 #include <pybind11/numpy.h>
 #include <pybind11/smart_holder.h>
 #include <pybind11/stl.h>
+#include <algorithm>
 
 namespace py = pybind11;
 using namespace sapien;
@@ -180,6 +181,30 @@ Generator<int> init_physx(py::module &sapien) {
       .def_readwrite("friction_offset_threshold", &PhysxSceneConfig::frictionOffsetThreshold)
       .def_readwrite("friction_correlation_distance", &PhysxSceneConfig::frictionCorrelationDistance)
       .def_readwrite("cpu_workers", &PhysxSceneConfig::cpuWorkers)
+      .def_readwrite("gpu_broadphase_nb_bits_env_id_x",
+                     &PhysxSceneConfig::gpuBroadPhaseNbBitsEnvIDX)
+      .def_readwrite("gpu_broadphase_nb_bits_env_id_y",
+                     &PhysxSceneConfig::gpuBroadPhaseNbBitsEnvIDY)
+      .def_readwrite("gpu_broadphase_nb_bits_env_id_z",
+                     &PhysxSceneConfig::gpuBroadPhaseNbBitsEnvIDZ)
+      .def_property(
+          "gpu_broadphase_env_id_bits",
+          [](PhysxSceneConfig const &config) {
+            return std::max({config.gpuBroadPhaseNbBitsEnvIDX,
+                             config.gpuBroadPhaseNbBitsEnvIDY,
+                             config.gpuBroadPhaseNbBitsEnvIDZ});
+          },
+          [](PhysxSceneConfig &config, int64_t bits) {
+            if (bits == -1) {
+              bits = 0;
+            }
+            if (bits < 0 || bits > 16) {
+              throw std::runtime_error("gpu_broadphase_env_id_bits must be -1 or in [0, 16]");
+            }
+            config.gpuBroadPhaseNbBitsEnvIDX = static_cast<uint8_t>(bits);
+            config.gpuBroadPhaseNbBitsEnvIDY = static_cast<uint8_t>(bits);
+            config.gpuBroadPhaseNbBitsEnvIDZ = static_cast<uint8_t>(bits);
+          })
       .def("__repr__", [](PhysxSceneConfig &) { return "PhysxSceneConfig()"; })
       .def(py::pickle(
           [](PhysxSceneConfig &config) {
@@ -189,10 +214,13 @@ Generator<int> init_physx(py::module &sapien) {
                                   config.enableFrictionEveryIteration,
                                   config.frictionOffsetThreshold,
                                   config.frictionCorrelationDistance,
-                                  config.cpuWorkers);
+                                  config.cpuWorkers,
+                                  config.gpuBroadPhaseNbBitsEnvIDX,
+                                  config.gpuBroadPhaseNbBitsEnvIDY,
+                                  config.gpuBroadPhaseNbBitsEnvIDZ);
           },
           [](py::tuple t) {
-            if (t.size() != 10) {
+            if (t.size() != 10 && t.size() != 13) {
               throw std::runtime_error("Invalid state!");
             }
             PhysxSceneConfig config;
@@ -208,6 +236,14 @@ Generator<int> init_physx(py::module &sapien) {
             config.frictionOffsetThreshold = t[7].cast<decltype(config.frictionOffsetThreshold)>();
             config.frictionCorrelationDistance = t[8].cast<decltype(config.frictionCorrelationDistance)>();
             config.cpuWorkers = t[9].cast<decltype(config.cpuWorkers)>();
+            if (t.size() == 13) {
+              config.gpuBroadPhaseNbBitsEnvIDX =
+                  t[10].cast<decltype(config.gpuBroadPhaseNbBitsEnvIDX)>();
+              config.gpuBroadPhaseNbBitsEnvIDY =
+                  t[11].cast<decltype(config.gpuBroadPhaseNbBitsEnvIDY)>();
+              config.gpuBroadPhaseNbBitsEnvIDZ =
+                  t[12].cast<decltype(config.gpuBroadPhaseNbBitsEnvIDZ)>();
+            }
             return config;
           }));
 
@@ -468,6 +504,50 @@ each other. This function must be called before any PhysX body is added to scene
 Example: After calling `set_scene_offset([2, 1, 0])`, an SAPIEN object with
 position `[1, 1, 1]` will be at position `[1, 1, 1] + [2, 1, 0] = [3, 2, 1]` in
 PhysX scene.
+)doc")
+      .def("set_scene_environment_id", &PhysxSystemGpu::setSceneEnvironmentId, py::arg("scene"),
+           py::arg("env_id"), py::arg("allow_duplicate") = false,
+           R"doc(Set the PhysX GPU broadphase environment ID for a SAPIEN scene.
+
+In GPU mode, all SAPIEN scenes share one PhysX scene. The environment ID is
+used by the GPU broadphase to avoid cross-environment broadphase pairs.
+Actors with the same envId collide; -1 / 0xFFFFFFFF means "shared" and collides
+with all environments.
+
+If this function is not called for a scene, PhysxGpuSystem automatically assigns
+a unique environment ID the first time it needs one. This function must be
+called BEFORE adding actors/articulations to the scene when overriding the
+automatic ID. Non-shared env IDs must be unique by default; pass
+allow_duplicate=True to intentionally share a non-shared env ID.
+)doc")
+      .def("get_scene_environment_id", &PhysxSystemGpu::getSceneEnvironmentId, py::arg("scene"),
+           R"doc(Get or assign the scene's PhysX GPU broadphase environment ID.
+
+If no ID has been set explicitly, a unique non-shared ID is assigned
+automatically and returned. Use get_assigned_scene_environment_id() to inspect
+without assigning a new ID.
+)doc")
+      .def("get_or_assign_scene_environment_id", &PhysxSystemGpu::getSceneEnvironmentId,
+           py::arg("scene"),
+           R"doc(Get or assign the scene's PhysX GPU broadphase environment ID.
+
+If no ID has been set explicitly, a unique non-shared ID is assigned
+automatically and returned.
+)doc")
+      .def("get_assigned_scene_environment_id", &PhysxSystemGpu::getAssignedSceneEnvironmentId,
+           py::arg("scene"),
+           R"doc(Get the scene's already assigned PhysX GPU broadphase environment ID.
+
+Returns None if no ID has been assigned yet. This method has no side effects.
+)doc")
+      .def("set_scene_environment_ids", &PhysxSystemGpu::setSceneEnvironmentIds,
+           py::arg("mapping"), py::arg("allow_duplicate") = false,
+           R"doc(Set environment IDs for multiple scenes at once.
+
+Args:
+    mapping: list of (scene, env_id) pairs. Use -1 or 0xFFFFFFFF for shared scenes.
+    allow_duplicate: allow multiple scenes to intentionally share the same
+        non-shared env ID. Defaults to False.
 )doc")
 
       .def("gpu_init", &PhysxSystemGpu::gpuInit, R"doc(

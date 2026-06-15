@@ -246,8 +246,15 @@ void PhysxRigidStaticComponent::onAddToScene(Scene &scene) {
     PxTransform pose = getPxActor()->getGlobalPose();
     pose.p = pose.p + PxVec3(offset.x, offset.y, offset.z);
     getPxActor()->setGlobalPose(pose);
+
+    // Set GPU broadphase environment ID before adding to scene
+    uint32_t envId = s->getSceneEnvironmentId(scene.shared_from_this());
+    if (!getPxActor()->setEnvironmentID(envId)) {
+      throw std::runtime_error("failed to set PhysX GPU environment ID on rigid static actor");
+    }
   }
 #endif
+
   system->getPxScene()->addActor(*getPxActor());
 }
 
@@ -272,6 +279,12 @@ void PhysxRigidDynamicComponent::onAddToScene(Scene &scene) {
     PxTransform pose = getPxActor()->getGlobalPose();
     pose.p = pose.p + PxVec3(offset.x, offset.y, offset.z);
     getPxActor()->setGlobalPose(pose);
+
+    // Set GPU broadphase environment ID before adding to scene
+    uint32_t envId = s->getSceneEnvironmentId(scene.shared_from_this());
+    if (!getPxActor()->setEnvironmentID(envId)) {
+      throw std::runtime_error("failed to set PhysX GPU environment ID on rigid dynamic actor");
+    }
   }
 #endif
 

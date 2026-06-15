@@ -597,6 +597,20 @@ if platform.system() != "Darwin":
             ...
         def get_scene_offset(self, scene: sapien.pysapien.Scene) -> numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]]:
             ...
+        def get_scene_environment_id(self, scene: sapien.pysapien.Scene) -> int:
+            ...
+        def get_or_assign_scene_environment_id(self, scene: sapien.pysapien.Scene) -> int:
+            ...
+        def get_assigned_scene_environment_id(self, scene: sapien.pysapien.Scene) -> int | None:
+            ...
+        def set_scene_environment_id(
+            self, scene: sapien.pysapien.Scene, env_id: int, allow_duplicate: bool = False
+        ) -> None:
+            ...
+        def set_scene_environment_ids(
+            self, mapping: list[tuple[sapien.pysapien.Scene, int]], allow_duplicate: bool = False
+        ) -> None:
+            ...
         @typing.overload
         def gpu_apply_articulation_qf(self) -> None:
             ...
@@ -1033,6 +1047,10 @@ class PhysxSceneConfig:
     friction_offset_threshold: float
     friction_correlation_distance:float
     cpu_workers: int
+    gpu_broadphase_env_id_bits: int
+    gpu_broadphase_nb_bits_env_id_x: int
+    gpu_broadphase_nb_bits_env_id_y: int
+    gpu_broadphase_nb_bits_env_id_z: int
     def __getstate__(self) -> tuple:
         ...
     def __init__(self) -> None:

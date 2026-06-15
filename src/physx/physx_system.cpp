@@ -1,6 +1,7 @@
 #include "sapien/physx/physx_system.h"
 #include "../logger.h"
 #include "./filter_shader.hpp"
+#include "sapien/entity.h"
 #include "sapien/math/conversion.h"
 #include "sapien/physx/articulation.h"
 #include "sapien/physx/articulation_link_component.h"
@@ -102,6 +103,37 @@ PhysxSystemGpu::PhysxSystemGpu(std::shared_ptr<Device> device) {
   sceneDesc.bounceThresholdVelocity = config.bounceThreshold;
 
   sceneDesc.gpuDynamicsConfig = PhysxDefault::getGpuMemoryConfig();
+
+  // Configure GPU broadphase environment ID bits if requested. PhysX can only merge
+  // environment ID bits into coordinate bits that were shifted away, so ensure each
+  // shift is at least the corresponding env ID bit count.
+  PxGpuBroadPhaseDesc gpuBroadPhaseDesc;
+  auto validateEnvIdBits = [](uint8_t bits, char axis) {
+    if (bits > 16) {
+      throw std::runtime_error(std::string("failed to create PhysX GPU system: ") +
+                               "gpu broadphase env ID bits on axis " + std::string(1, axis) +
+                               " must be in [0, 16]");
+    }
+  };
+  validateEnvIdBits(config.gpuBroadPhaseNbBitsEnvIDX, 'x');
+  validateEnvIdBits(config.gpuBroadPhaseNbBitsEnvIDY, 'y');
+  validateEnvIdBits(config.gpuBroadPhaseNbBitsEnvIDZ, 'z');
+  if (config.gpuBroadPhaseNbBitsEnvIDX || config.gpuBroadPhaseNbBitsEnvIDY ||
+      config.gpuBroadPhaseNbBitsEnvIDZ) {
+    gpuBroadPhaseDesc.gpuBroadPhaseNbBitsShiftX =
+        std::max<uint8_t>(gpuBroadPhaseDesc.gpuBroadPhaseNbBitsShiftX,
+                          config.gpuBroadPhaseNbBitsEnvIDX);
+    gpuBroadPhaseDesc.gpuBroadPhaseNbBitsShiftY =
+        std::max<uint8_t>(gpuBroadPhaseDesc.gpuBroadPhaseNbBitsShiftY,
+                          config.gpuBroadPhaseNbBitsEnvIDY);
+    gpuBroadPhaseDesc.gpuBroadPhaseNbBitsShiftZ =
+        std::max<uint8_t>(gpuBroadPhaseDesc.gpuBroadPhaseNbBitsShiftZ,
+                          config.gpuBroadPhaseNbBitsEnvIDZ);
+    gpuBroadPhaseDesc.gpuBroadPhaseNbBitsEnvIDX = config.gpuBroadPhaseNbBitsEnvIDX;
+    gpuBroadPhaseDesc.gpuBroadPhaseNbBitsEnvIDY = config.gpuBroadPhaseNbBitsEnvIDY;
+    gpuBroadPhaseDesc.gpuBroadPhaseNbBitsEnvIDZ = config.gpuBroadPhaseNbBitsEnvIDZ;
+    sceneDesc.gpuBroadPhaseDesc = &gpuBroadPhaseDesc;
+  }
 
   PxSceneFlags sceneFlags;
   if (config.enableEnhancedDeterminism) {
@@ -1271,6 +1303,140 @@ Vec3 PhysxSystemGpu::getSceneOffset(std::shared_ptr<Scene> scene) const {
     return mSceneOffset.at(scene);
   }
   return Vec3(0.0f);
+}
+
+namespace {
+constexpr uint32_t kMaxSceneEnvironmentId = 1u << 24;
+
+uint32_t normalizeSceneEnvironmentId(int64_t envId) {
+  if (envId == -1 || envId == static_cast<int64_t>(PX_INVALID_U32)) {
+    return PX_INVALID_U32;
+  }
+  if (envId < 0 || envId >= static_cast<int64_t>(kMaxSceneEnvironmentId)) {
+    throw std::runtime_error(
+        "failed to set PhysX GPU scene environment ID: env_id must be -1, "
+        "0xffffffff, or in [0, 1 << 24)");
+  }
+  return static_cast<uint32_t>(envId);
+}
+}
+
+bool PhysxSystemGpu::sceneHasPhysxBodies(std::shared_ptr<Scene> scene) const {
+  if (!scene) {
+    return false;
+  }
+  for (auto const &entity : scene->getEntities()) {
+    if (entity->getComponent<PhysxRigidBaseComponent>()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool PhysxSystemGpu::isSceneEnvironmentIdUsed(uint32_t envId,
+                                               std::shared_ptr<Scene> excludedScene) const {
+  if (envId == PX_INVALID_U32) {
+    return false;
+  }
+
+  for (auto const &[scene, assignedEnvId] : mSceneEnvironmentIds) {
+    if (assignedEnvId != envId) {
+      continue;
+    }
+    auto lockedScene = scene.lock();
+    if (!lockedScene) {
+      continue;
+    }
+    if (!excludedScene || lockedScene != excludedScene) {
+      return true;
+    }
+  }
+  return false;
+}
+
+uint32_t PhysxSystemGpu::allocateSceneEnvironmentId() {
+  while (mNextSceneEnvironmentId < kMaxSceneEnvironmentId) {
+    uint32_t envId = mNextSceneEnvironmentId++;
+    if (!isSceneEnvironmentIdUsed(envId, nullptr)) {
+      return envId;
+    }
+  }
+  throw std::runtime_error(
+      "failed to auto-assign PhysX GPU scene environment ID: too many environments");
+}
+
+void PhysxSystemGpu::setSceneEnvironmentId(std::shared_ptr<Scene> scene, int64_t envIdValue,
+                                           bool allowDuplicate) {
+  if (!scene) {
+    throw std::runtime_error("failed to set PhysX GPU scene environment ID: scene is null");
+  }
+
+  uint32_t envId = normalizeSceneEnvironmentId(envIdValue);
+
+  if (mSceneEnvironmentIds.size() % 1024 == 0) {
+    std::erase_if(mSceneEnvironmentIds, [](const auto &p) { return p.first.expired(); });
+  }
+
+  if (mSceneEnvironmentIds.contains(scene)) {
+    uint32_t current = mSceneEnvironmentIds.at(scene);
+    if (current == envId) {
+      return;
+    }
+    if (sceneHasPhysxBodies(scene)) {
+      throw std::runtime_error(
+          "failed to change PhysX GPU scene environment ID: env_id must be set before "
+          "adding actors/articulations to the scene");
+    }
+  } else if (sceneHasPhysxBodies(scene)) {
+    throw std::runtime_error(
+        "failed to set PhysX GPU scene environment ID: env_id must be set before adding "
+        "actors/articulations to the scene");
+  }
+
+  if (!allowDuplicate && isSceneEnvironmentIdUsed(envId, scene)) {
+    throw std::runtime_error(
+        "failed to set PhysX GPU scene environment ID: env_id is already used by another "
+        "scene. Pass allow_duplicate=True to intentionally share a non-shared env_id");
+  }
+
+  mSceneEnvironmentIds[scene] = envId;
+}
+
+uint32_t PhysxSystemGpu::getSceneEnvironmentId(std::shared_ptr<Scene> scene) {
+  if (!scene) {
+    throw std::runtime_error("failed to get PhysX GPU scene environment ID: scene is null");
+  }
+
+  if (mSceneEnvironmentIds.size() % 1024 == 0) {
+    std::erase_if(mSceneEnvironmentIds, [](const auto &p) { return p.first.expired(); });
+  }
+
+  if (mSceneEnvironmentIds.contains(scene)) {
+    return mSceneEnvironmentIds.at(scene);
+  }
+
+  uint32_t envId = allocateSceneEnvironmentId();
+  mSceneEnvironmentIds[scene] = envId;
+  return envId;
+}
+
+std::optional<uint32_t>
+PhysxSystemGpu::getAssignedSceneEnvironmentId(std::shared_ptr<Scene> scene) const {
+  if (!scene) {
+    throw std::runtime_error("failed to get PhysX GPU scene environment ID: scene is null");
+  }
+  if (mSceneEnvironmentIds.contains(scene)) {
+    return mSceneEnvironmentIds.at(scene);
+  }
+  return std::nullopt;
+}
+
+void PhysxSystemGpu::setSceneEnvironmentIds(
+    std::vector<std::pair<std::shared_ptr<Scene>, int64_t>> const &mapping,
+    bool allowDuplicate) {
+  for (auto &[scene, envId] : mapping) {
+    setSceneEnvironmentId(scene, envId, allowDuplicate);
+  }
 }
 
 void PhysxSystemGpu::allocateCudaBuffers() {

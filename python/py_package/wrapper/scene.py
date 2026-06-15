@@ -149,6 +149,51 @@ class Scene(_Scene):
     def get_contacts(self):
         return self.physx_system.get_contacts()
 
+    def set_environment_id(self, env_id: int, allow_duplicate: bool = False):
+        """Set the PhysX GPU broadphase environment ID for this scene.
+
+        In GPU mode, all SAPIEN scenes share one PhysX scene. The environment ID
+        is used by the GPU broadphase to avoid cross-environment broadphase pairs.
+        Actors with the same envId collide. ``-1``/``0xFFFFFFFF`` means
+        "shared" and collides with all environments.
+
+        Must be called BEFORE adding actors/articulations to the scene.
+        Non-shared env IDs must be unique by default. Pass
+        ``allow_duplicate=True`` to intentionally share a non-shared env ID.
+        """
+        if not hasattr(self.physx_system, "set_scene_environment_id"):
+            raise RuntimeError("environment_id is only available for PhysxGpuSystem")
+        self.physx_system.set_scene_environment_id(
+            self, env_id, allow_duplicate=allow_duplicate
+        )
+
+    def get_environment_id(self) -> int | None:
+        """Return the already assigned PhysX GPU broadphase environment ID.
+
+        Returns ``None`` if no environment ID has been assigned yet. This method
+        has no side effects; use :meth:`get_or_assign_environment_id` to lazily
+        assign a unique ID.
+        """
+        if not hasattr(self.physx_system, "get_assigned_scene_environment_id"):
+            raise RuntimeError("environment_id is only available for PhysxGpuSystem")
+        return self.physx_system.get_assigned_scene_environment_id(self)
+
+    def get_or_assign_environment_id(self) -> int:
+        """Return this scene's environment ID, assigning a unique one if needed."""
+        if not hasattr(self.physx_system, "get_or_assign_scene_environment_id"):
+            raise RuntimeError("environment_id is only available for PhysxGpuSystem")
+        return self.physx_system.get_or_assign_scene_environment_id(self)
+
+    environment_id = property(
+        get_environment_id,
+        set_environment_id,
+        doc=(
+            "Already assigned PhysX GPU broadphase environment ID. Reading this "
+            "property has no side effects and returns None until an ID is assigned "
+            "explicitly or via get_or_assign_environment_id()."
+        ),
+    )
+
     def get_all_actors(self):
         return [
             c.entity
