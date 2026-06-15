@@ -133,6 +133,31 @@ articulations. Its shape is ``(articulation_count, max_rows, max_cols)`` for the
 scene. Use ``articulation.gpu_index`` to select an articulation, and
 ``articulation.get_jacobian_shape()`` to slice the valid submatrix from the padded tensor.
 
+GPU simulation also provides joint-only passive-force compensation buffers. Call
+``gpu_compute_articulation_gravity_compensation()`` and
+``gpu_compute_articulation_coriolis_and_centrifugal_compensation()`` after
+``PhysxGpuSystem.gpu_init()``. If joint positions or velocities were modified through GPU
+buffers, apply them and call ``gpu_update_articulation_kinematics()`` before computing
+compensation. The tensors ``cuda_articulation_gravity_compensation`` and
+``cuda_articulation_coriolis_and_centrifugal_compensation`` have shape
+``(articulation_count, max_dofs)`` and use the same order, sign convention, and padding as
+``cuda_articulation_qf``. Both compute methods also accept a contiguous CUDA int32 array of
+articulation ``gpu_index`` values to update only a subset; non-selected rows are left unchanged.
+In a control loop, cache the ``.torch()`` views once after ``gpu_init()`` instead of recreating
+them every step.
+
+.. code-block:: python
+
+   system = scene.physx_system
+   system.gpu_compute_articulation_gravity_compensation()
+   system.gpu_compute_articulation_coriolis_and_centrifugal_compensation()
+
+   qf = system.cuda_articulation_qf.torch()
+   gravity = system.cuda_articulation_gravity_compensation.torch()
+   coriolis = system.cuda_articulation_coriolis_and_centrifugal_compensation.torch()
+   qf[:] = gravity + coriolis
+   system.gpu_apply_articulation_qf()
+
 .. literalinclude:: ../../../../examples/basic/create_articulations.py
    :dedent: 0
    :lines: 266-268

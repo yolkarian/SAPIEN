@@ -172,6 +172,31 @@ __global__ void scatter_articulation_jacobians_kernel(float *__restrict__ dst,
   dst[articulation * block_size + block_offset] = value;
 }
 
+__global__ void scatter_articulation_joint_forces_kernel(float *__restrict__ dst,
+                                                         float const *__restrict__ src,
+                                                         int const *__restrict__ index,
+                                                         uint32_t const *__restrict__ meta,
+                                                         int max_dofs, int count) {
+  int g = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = count * max_dofs;
+  if (g >= total) {
+    return;
+  }
+
+  int selection = g / max_dofs;
+  int dof = g % max_dofs;
+  int articulation = index[selection];
+  uint32_t root_force_offset = meta[articulation * 2];
+  uint32_t dof_count = meta[articulation * 2 + 1];
+
+  float value = 0.f;
+  if (static_cast<uint32_t>(dof) < dof_count) {
+    int src_block_size = max_dofs + 6;
+    value = src[selection * src_block_size + root_force_offset + dof];
+  }
+  dst[articulation * max_dofs + dof] = value;
+}
+
 __device__ int binary_search(ActorPairQuery const *__restrict__ arr, int count, ActorPair x) {
   int low = 0;
   int high = count - 1;
@@ -372,6 +397,18 @@ void scatter_articulation_jacobians(void *dst, void *src, void *index, void *sha
                                           stream>>>((float *)dst, (float *)src, (int *)index,
                                                     (uint32_t *)shape, max_rows, max_cols,
                                                     count);
+}
+
+void scatter_articulation_joint_forces(void *dst, void *src, void *index, void *meta,
+                                       int max_dofs, int count, cudaStream_t stream) {
+  int total = count * max_dofs;
+  if (total == 0) {
+    return;
+  }
+  scatter_articulation_joint_forces_kernel<<<(total + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE,
+                                             0, stream>>>((float *)dst, (float *)src,
+                                                          (int *)index, (uint32_t *)meta,
+                                                          max_dofs, count);
 }
 
 void handle_contacts(::physx::PxGpuContactPair *contacts, int contact_count, ActorPairQuery *query,

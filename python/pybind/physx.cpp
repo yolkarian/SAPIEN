@@ -507,6 +507,24 @@ Args:
                              &PhysxSystemGpu::gpuGetArticulationQaccCudaHandle)
       .def_property_readonly("cuda_articulation_qf",
                              &PhysxSystemGpu::gpuGetArticulationQfCudaHandle)
+      .def_property_readonly(
+          "cuda_articulation_gravity_compensation",
+          &PhysxSystemGpu::gpuGetArticulationGravityCompensationCudaHandle,
+          R"doc(Padded joint gravity compensation on the GPU.
+
+The tensor shape is ``(articulation_count, max_dofs)``. Rows are indexed by
+``articulation.gpu_index`` and use the same joint DOF order, sign convention,
+and padding as ``cuda_articulation_qf``.
+)doc")
+      .def_property_readonly(
+          "cuda_articulation_coriolis_and_centrifugal_compensation",
+          &PhysxSystemGpu::gpuGetArticulationCoriolisAndCentrifugalCompensationCudaHandle,
+          R"doc(Padded joint Coriolis and centrifugal compensation on the GPU.
+
+The tensor shape is ``(articulation_count, max_dofs)``. Rows are indexed by
+``articulation.gpu_index`` and use the same joint DOF order, sign convention,
+and padding as ``cuda_articulation_qf``.
+)doc")
       .def_property_readonly("cuda_articulation_target_qpos",
                              &PhysxSystemGpu::gpuGetArticulationQTargetPosCudaHandle)
       .def_property_readonly("cuda_articulation_target_qvel",
@@ -555,7 +573,8 @@ The Jacobian maps generalized velocities to stacked link spatial velocities in
 world coordinates.
 )doc")
       .def("gpu_compute_articulation_jacobian",
-           py::overload_cast<CudaArrayHandle const &>(&PhysxSystemGpu::gpuComputeArticulationJacobian),
+           py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuComputeArticulationJacobian),
            py::arg("gpu_indices"),
            R"doc(Compute dense articulation Jacobians for selected articulations on the GPU.
 
@@ -565,6 +584,43 @@ world coordinates.
 left unchanged.
 
 The updated entries use the same padded layout as `cuda_articulation_jacobian`.
+)doc")
+      .def("gpu_compute_articulation_gravity_compensation",
+           py::overload_cast<>(
+               &PhysxSystemGpu::gpuComputeArticulationGravityCompensation),
+           R"doc(Compute joint gravity compensation for all articulations on the GPU.
+
+The result is stored in `cuda_articulation_gravity_compensation` as a padded
+tensor with shape `(articulation_count, max_dofs)`.
+)doc")
+      .def("gpu_compute_articulation_gravity_compensation",
+           py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuComputeArticulationGravityCompensation),
+           py::arg("gpu_indices"),
+           R"doc(Compute joint gravity compensation for selected articulations on the GPU.
+
+`gpu_indices` must be a contiguous CUDA int32 array containing articulation
+`gpu_index` values. Only selected rows inside
+`cuda_articulation_gravity_compensation` are updated.
+)doc")
+      .def("gpu_compute_articulation_coriolis_and_centrifugal_compensation",
+           py::overload_cast<>(
+               &PhysxSystemGpu::gpuComputeArticulationCoriolisAndCentrifugalCompensation),
+           R"doc(Compute joint Coriolis and centrifugal compensation for all articulations.
+
+The result is stored in
+`cuda_articulation_coriolis_and_centrifugal_compensation` as a padded tensor
+with shape `(articulation_count, max_dofs)`.
+)doc")
+      .def("gpu_compute_articulation_coriolis_and_centrifugal_compensation",
+           py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuComputeArticulationCoriolisAndCentrifugalCompensation),
+           py::arg("gpu_indices"),
+           R"doc(Compute joint Coriolis and centrifugal compensation for selected articulations.
+
+`gpu_indices` must be a contiguous CUDA int32 array containing articulation
+`gpu_index` values. Only selected rows inside
+`cuda_articulation_coriolis_and_centrifugal_compensation` are updated.
 )doc")
       .def("gpu_fetch_articulation_link_incoming_joint_forces",
            &PhysxSystemGpu::gpuFetchArticulationLinkIncomingJointForce)

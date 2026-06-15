@@ -185,6 +185,12 @@ public:
   CudaArrayHandle gpuGetArticulationQvelCudaHandle() const { return mCudaQvelHandle; }
   CudaArrayHandle gpuGetArticulationQaccCudaHandle() const { return mCudaQaccHandle; }
   CudaArrayHandle gpuGetArticulationQfCudaHandle() const { return mCudaQfHandle; }
+  CudaArrayHandle gpuGetArticulationGravityCompensationCudaHandle() const {
+    return mCudaArticulationGravityCompensationHandle;
+  }
+  CudaArrayHandle gpuGetArticulationCoriolisAndCentrifugalCompensationCudaHandle() const {
+    return mCudaArticulationCoriolisAndCentrifugalCompensationHandle;
+  }
 
   CudaArrayHandle gpuGetArticulationQTargetPosCudaHandle() const { return mCudaQTargetPosHandle; }
   CudaArrayHandle gpuGetArticulationQTargetVelCudaHandle() const { return mCudaQTargetVelHandle; }
@@ -214,6 +220,23 @@ public:
   /** Compute dense articulation Jacobians for the given articulation gpu_index values.
    *  Only the selected entries inside gpuGetArticulationJacobianCudaHandle() are updated. */
   void gpuComputeArticulationJacobian(CudaArrayHandle const &indices);
+
+  /** Compute joint gravity compensation into gpuGetArticulationGravityCompensationCudaHandle(). */
+  void gpuComputeArticulationGravityCompensation();
+
+  /** Compute joint gravity compensation for the given articulation gpu_index values.
+   *  Only the selected entries inside gpuGetArticulationGravityCompensationCudaHandle() are
+   *  updated. */
+  void gpuComputeArticulationGravityCompensation(CudaArrayHandle const &indices);
+
+  /** Compute joint Coriolis and centrifugal compensation into
+   *  gpuGetArticulationCoriolisAndCentrifugalCompensationCudaHandle(). */
+  void gpuComputeArticulationCoriolisAndCentrifugalCompensation();
+
+  /** Compute joint Coriolis and centrifugal compensation for the given articulation gpu_index
+   *  values. Only the selected entries inside
+   *  gpuGetArticulationCoriolisAndCentrifugalCompensationCudaHandle() are updated. */
+  void gpuComputeArticulationCoriolisAndCentrifugalCompensation(CudaArrayHandle const &indices);
   void gpuFetchArticulationLinkIncomingJointForce();
 
   void gpuApplyRigidDynamicData(CudaArrayHandle const &indices);
@@ -289,6 +312,9 @@ private:
   CudaArray mCudaArticulationIndexScratch;
 
   void allocateCudaBuffers();
+  void gpuComputeArticulationCompensation(
+      CudaArrayHandle const &indices, CudaArrayHandle const &output,
+      ::physx::PxArticulationGPUAPIComputeType::Enum computeType);
 
   // indx buffer for all rigid dynamic bodies
   CudaArray mCudaRigidDynamicIndexBuffer;
@@ -319,9 +345,14 @@ private:
   CudaArrayHandle mCudaQaccHandle;
   CudaArrayHandle mCudaQTargetPosHandle;
   CudaArrayHandle mCudaQTargetVelHandle;
+  CudaArrayHandle mCudaArticulationGravityCompensationHandle;
+  CudaArrayHandle mCudaArticulationCoriolisAndCentrifugalCompensationHandle;
   CudaArrayHandle mCudaArticulationJacobianHandle;
 
   CudaArray mCudaArticulationLinkIncomingJointForceBuffer;
+  CudaArray mCudaArticulationCompensationScratch;
+  // Per-articulation {root_force_offset, dof_count} for joint-only compensation views.
+  CudaArray mCudaArticulationCompensationMetaBuffer;
   CudaArray mCudaArticulationJacobianBuffer;
   CudaArray mCudaArticulationJacobianScratch;
   CudaArray mCudaArticulationJacobianShapeBuffer;

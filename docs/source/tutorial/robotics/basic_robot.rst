@@ -139,6 +139,26 @@ Its length is the degree of freedom, and its order is the same as that returned 
 Note that when ``qf`` is set, it will be applied every simulation step.
 You can call ``robot.get_qf()`` to acquire its current value.
 
+In Direct GPU simulation, avoid calling ``robot.compute_passive_force()`` in the step loop.
+Instead, call ``physx_system.gpu_compute_articulation_gravity_compensation()`` and
+``physx_system.gpu_compute_articulation_coriolis_and_centrifugal_compensation()``. Their output
+CUDA arrays are padded to ``(articulation_count, max_dofs)`` and match
+``cuda_articulation_qf``. Both methods accept a CUDA int32 array of articulation
+``gpu_index`` values to update only a subset. After applying any GPU qpos/qvel updates, call
+``gpu_update_articulation_kinematics()`` before computing compensation. In a control loop,
+cache the ``.torch()`` views once after ``gpu_init()`` instead of recreating them every step.
+
+.. code-block:: python
+
+   physx_system.gpu_compute_articulation_gravity_compensation()
+   physx_system.gpu_compute_articulation_coriolis_and_centrifugal_compensation()
+
+   qf = physx_system.cuda_articulation_qf.torch()
+   gravity = physx_system.cuda_articulation_gravity_compensation.torch()
+   coriolis = physx_system.cuda_articulation_coriolis_and_centrifugal_compensation.torch()
+   qf[:] = gravity + coriolis
+   physx_system.gpu_apply_articulation_qf()
+
 Now, if you run the example with ``demo(fix_root_link=True, balance_passive_force=True)``, it is observed that the robot can stay at the target pose for a short period.
 However, it will then deviate from this pose gradually due to numerical error.
 

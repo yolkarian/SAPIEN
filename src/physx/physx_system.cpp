@@ -761,6 +761,71 @@ void PhysxSystemGpu::gpuComputeArticulationJacobian(CudaArrayHandle const &indic
                                  count, mCudaStream);
 }
 
+void PhysxSystemGpu::gpuComputeArticulationGravityCompensation() {
+  checkGpuInitialized();
+  gpuComputeArticulationGravityCompensation(mCudaArticulationIndexBuffer.handle());
+}
+
+void PhysxSystemGpu::gpuComputeArticulationGravityCompensation(
+    CudaArrayHandle const &indices) {
+  gpuComputeArticulationCompensation(indices, mCudaArticulationGravityCompensationHandle,
+                                     PxArticulationGPUAPIComputeType::eGRAVITY_COMPENSATION);
+}
+
+void PhysxSystemGpu::gpuComputeArticulationCoriolisAndCentrifugalCompensation() {
+  checkGpuInitialized();
+  gpuComputeArticulationCoriolisAndCentrifugalCompensation(
+      mCudaArticulationIndexBuffer.handle());
+}
+
+void PhysxSystemGpu::gpuComputeArticulationCoriolisAndCentrifugalCompensation(
+    CudaArrayHandle const &indices) {
+  gpuComputeArticulationCompensation(
+      indices, mCudaArticulationCoriolisAndCentrifugalCompensationHandle,
+      PxArticulationGPUAPIComputeType::eCORIOLIS_AND_CENTRIFUGAL_COMPENSATION);
+}
+
+void PhysxSystemGpu::gpuComputeArticulationCompensation(
+    CudaArrayHandle const &indices, CudaArrayHandle const &output,
+    PxArticulationGPUAPIComputeType::Enum computeType) {
+  SAPIEN_PROFILE_FUNCTION;
+  checkGpuInitialized();
+  indices.checkCongiguous();
+  indices.checkShape({-1});
+  indices.checkStride({sizeof(int)});
+
+  if (mGpuArticulationCount == 0) {
+    return;
+  }
+
+  ensureCudaDevice();
+  auto count = static_cast<PxU32>(indices.shape.at(0));
+  if (count == 0) {
+    return;
+  }
+
+  void *gpuIndices = mCudaArticulationGpuIndexBuffer.ptr;
+  CUevent startEvent = nullptr;
+  if (indices.ptr != mCudaArticulationIndexBuffer.ptr) {
+    gather_blocks(mCudaArticulationIndexScratch.ptr, mCudaArticulationGpuIndexBuffer.ptr,
+                  indices.ptr, 1, count, mCudaStream);
+    gpuIndices = mCudaArticulationIndexScratch.ptr;
+    mCudaEventRecord.record(mCudaStream);
+    startEvent = mCudaEventRecord.event;
+  }
+
+  if (!mCudaEventWait.event) {
+    mCudaEventWait.init();
+  }
+  mPxScene->getDirectGPUAPI().computeArticulationData(
+      mCudaArticulationCompensationScratch.ptr, (PxArticulationGPUIndex *)gpuIndices,
+      computeType, count, startEvent, mCudaEventWait.event);
+  mCudaEventWait.wait(mCudaStream);
+  scatter_articulation_joint_forces(output.ptr, mCudaArticulationCompensationScratch.ptr,
+                                    indices.ptr, mCudaArticulationCompensationMetaBuffer.ptr,
+                                    mGpuArticulationMaxDof, count, mCudaStream);
+}
+
 void PhysxSystemGpu::gpuFetchArticulationLinkIncomingJointForce() {
   checkGpuInitialized();
 
@@ -1248,52 +1313,32 @@ void PhysxSystemGpu::allocateCudaBuffers() {
                                                   .ptr = (float *)mCudaRigidBodyTorqueBuffer.ptr};
   // TODO: articulation link handle
 
-  mCudaArticulationBuffer = CudaArray({mGpuArticulationCount * mGpuArticulationMaxDof * 6}, "f4");
-  mCudaArticulationApplyScratch =
-      CudaArray({mGpuArticulationCount * mGpuArticulationMaxDof}, "f4");
+  int articulationBufferBlockSize = mGpuArticulationCount * mGpuArticulationMaxDof;
+  mCudaArticulationBuffer = CudaArray({articulationBufferBlockSize * 8}, "f4");
+  mCudaArticulationApplyScratch = CudaArray({articulationBufferBlockSize}, "f4");
+  mCudaArticulationCompensationScratch =
+      CudaArray({mGpuArticulationCount * (mGpuArticulationMaxDof + 6)}, "f4");
 
-  mCudaQposHandle = CudaArrayHandle{.shape = {mGpuArticulationCount, mGpuArticulationMaxDof},
-                                    .strides = {mGpuArticulationMaxDof * 4, 4},
-                                    .type = "f4",
-                                    .cudaId = mCudaArticulationBuffer.cudaId,
-                                    .ptr = mCudaArticulationBuffer.ptr};
+  float *articulationBufferPtr = static_cast<float *>(mCudaArticulationBuffer.ptr);
+  auto articulationBufferHandle = [&](int block) {
+    return CudaArrayHandle{
+        .shape = {mGpuArticulationCount, mGpuArticulationMaxDof},
+        .strides = {mGpuArticulationMaxDof * 4, 4},
+        .type = "f4",
+        .cudaId = mCudaArticulationBuffer.cudaId,
+        .ptr = articulationBufferPtr ? articulationBufferPtr + articulationBufferBlockSize * block
+                                     : nullptr,
+    };
+  };
 
-  mCudaQvelHandle = CudaArrayHandle{.shape = {mGpuArticulationCount, mGpuArticulationMaxDof},
-                                    .strides = {mGpuArticulationMaxDof * 4, 4},
-                                    .type = "f4",
-                                    .cudaId = mCudaArticulationBuffer.cudaId,
-                                    .ptr = (float *)mCudaArticulationBuffer.ptr +
-                                           mGpuArticulationCount * mGpuArticulationMaxDof};
-
-  mCudaQfHandle = CudaArrayHandle{.shape = {mGpuArticulationCount, mGpuArticulationMaxDof},
-                                  .strides = {mGpuArticulationMaxDof * 4, 4},
-                                  .type = "f4",
-                                  .cudaId = mCudaArticulationBuffer.cudaId,
-                                  .ptr = (float *)mCudaArticulationBuffer.ptr +
-                                         mGpuArticulationCount * mGpuArticulationMaxDof * 2};
-
-  mCudaQaccHandle = CudaArrayHandle{.shape = {mGpuArticulationCount, mGpuArticulationMaxDof},
-                                    .strides = {mGpuArticulationMaxDof * 4, 4},
-                                    .type = "f4",
-                                    .cudaId = mCudaArticulationBuffer.cudaId,
-                                    .ptr = (float *)mCudaArticulationBuffer.ptr +
-                                           mGpuArticulationCount * mGpuArticulationMaxDof * 3};
-
-  mCudaQTargetPosHandle =
-      CudaArrayHandle{.shape = {mGpuArticulationCount, mGpuArticulationMaxDof},
-                      .strides = {mGpuArticulationMaxDof * 4, 4},
-                      .type = "f4",
-                      .cudaId = mCudaArticulationBuffer.cudaId,
-                      .ptr = (float *)mCudaArticulationBuffer.ptr +
-                             mGpuArticulationCount * mGpuArticulationMaxDof * 4};
-
-  mCudaQTargetVelHandle =
-      CudaArrayHandle{.shape = {mGpuArticulationCount, mGpuArticulationMaxDof},
-                      .strides = {mGpuArticulationMaxDof * 4, 4},
-                      .type = "f4",
-                      .cudaId = mCudaArticulationBuffer.cudaId,
-                      .ptr = (float *)mCudaArticulationBuffer.ptr +
-                             mGpuArticulationCount * mGpuArticulationMaxDof * 5};
+  mCudaQposHandle = articulationBufferHandle(0);
+  mCudaQvelHandle = articulationBufferHandle(1);
+  mCudaQfHandle = articulationBufferHandle(2);
+  mCudaQaccHandle = articulationBufferHandle(3);
+  mCudaQTargetPosHandle = articulationBufferHandle(4);
+  mCudaQTargetVelHandle = articulationBufferHandle(5);
+  mCudaArticulationGravityCompensationHandle = articulationBufferHandle(6);
+  mCudaArticulationCoriolisAndCentrifugalCompensationHandle = articulationBufferHandle(7);
 
   {
     int jacobianMaxRows = 6 + (mGpuArticulationMaxLinkCount - 1) * 6;
@@ -1334,9 +1379,11 @@ void PhysxSystemGpu::allocateCudaBuffers() {
     mCudaArticulationIndexBuffer = CudaArray({mGpuArticulationCount}, "i4");
     mCudaArticulationGpuIndexBuffer = CudaArray({mGpuArticulationCount}, "u4");
     mCudaArticulationIndexScratch = CudaArray({mGpuArticulationCount}, "u4");
+    mCudaArticulationCompensationMetaBuffer = CudaArray({mGpuArticulationCount, 2}, "u4");
 
     std::vector<std::array<float, 3>> host_offset(mGpuArticulationCount, {0.f, 0.f, 0.f});
     std::vector<std::array<uint32_t, 2>> host_jacobian_shape(mGpuArticulationCount, {0u, 0u});
+    std::vector<std::array<uint32_t, 2>> host_compensation_meta(mGpuArticulationCount, {0u, 0u});
     std::vector<int> host_dense_index;
     std::vector<PxArticulationGPUIndex> host_gpu_index;
     std::unordered_map<PxArticulationReducedCoordinate *, int> articulation_to_dense_index;
@@ -1360,10 +1407,12 @@ void PhysxSystemGpu::allocateCudaBuffers() {
             pxArticulation->getArticulationFlags().isSet(PxArticulationFlag::eFIX_BASE);
         uint32_t linkCount = pxArticulation->getNbLinks();
         uint32_t dofCount = pxArticulation->getDofs();
+        uint32_t rootForceOffset = fixedBase ? 0u : 6u;
         host_jacobian_shape.at(art_idx) = {
-            (fixedBase ? 0u : 6u) + (linkCount - 1) * 6u,
-            (fixedBase ? 0u : 6u) + dofCount,
+            rootForceOffset + (linkCount - 1) * 6u,
+            rootForceOffset + dofCount,
         };
+        host_compensation_meta.at(art_idx) = {rootForceOffset, dofCount};
       }
       a->internalSetGpuPoseIndex(rigidDynamicCount + art_idx * mGpuArticulationMaxLinkCount +
                                  a->getIndex());
@@ -1377,6 +1426,10 @@ void PhysxSystemGpu::allocateCudaBuffers() {
                                cudaMemcpyHostToDevice));
     checkCudaErrors(cudaMemcpy(mCudaArticulationJacobianShapeBuffer.ptr, host_jacobian_shape.data(),
                                host_jacobian_shape.size() * sizeof(uint32_t) * 2,
+                               cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaMemcpy(mCudaArticulationCompensationMetaBuffer.ptr,
+                               host_compensation_meta.data(),
+                               host_compensation_meta.size() * sizeof(uint32_t) * 2,
                                cudaMemcpyHostToDevice));
   }
 

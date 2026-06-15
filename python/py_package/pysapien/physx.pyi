@@ -653,6 +653,22 @@ if platform.system() != "Darwin":
             ...
         def gpu_create_contact_pair_impulse_query(self, body_pairs: list[tuple[PhysxRigidBaseComponent, PhysxRigidBaseComponent]]) -> PhysxGpuContactPairImpulseQuery:
             ...
+        @typing.overload
+        def gpu_compute_articulation_gravity_compensation(self) -> None:
+            ...
+        @typing.overload
+        def gpu_compute_articulation_gravity_compensation(
+            self, gpu_indices: sapien.pysapien.CudaArray
+        ) -> None:
+            ...
+        @typing.overload
+        def gpu_compute_articulation_coriolis_and_centrifugal_compensation(self) -> None:
+            ...
+        @typing.overload
+        def gpu_compute_articulation_coriolis_and_centrifugal_compensation(
+            self, gpu_indices: sapien.pysapien.CudaArray
+        ) -> None:
+            ...
         def gpu_fetch_articulation_link_incoming_joint_forces(self) -> None:
             ...
         def gpu_fetch_articulation_link_pose(self) -> None:
@@ -729,6 +745,14 @@ if platform.system() != "Darwin":
             ...
         @property
         def cuda_articulation_qf(self) -> sapien.pysapien.CudaArray:
+            ...
+        @property
+        def cuda_articulation_gravity_compensation(self) -> sapien.pysapien.CudaArray:
+            ...
+        @property
+        def cuda_articulation_coriolis_and_centrifugal_compensation(
+            self,
+        ) -> sapien.pysapien.CudaArray:
             ...
         @property
         def cuda_articulation_qpos(self) -> sapien.pysapien.CudaArray:

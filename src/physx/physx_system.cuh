@@ -90,6 +90,8 @@ void gather_blocks(void *dst, void *src, void *index, int block_size, int count,
 void pack_vec3(void *dst, void *src, int stride, int count, CUstream_st *);
 void scatter_articulation_jacobians(void *dst, void *src, void *index, void *shape,
                                     int max_rows, int max_cols, int count, CUstream_st *);
+void scatter_articulation_joint_forces(void *dst, void *src, void *index, void *meta,
+                                       int max_dofs, int count, CUstream_st *);
 
 // fill out_forces with net contact forces per body pair. query stores sorted pairs of
 // interested actors and their indices corresponding to the out_forces array
