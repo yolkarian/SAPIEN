@@ -374,6 +374,7 @@ package_data = {
     "sapien": [
         "py.typed",
         "__init__.pyi",
+        "core/__init__.pyi",
         "pysapien/__init__.pyi",
         "pysapien/simsense.pyi",
         "pysapien/physx.pyi",
