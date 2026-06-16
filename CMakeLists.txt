@@ -96,7 +96,9 @@ endif ()
 file(GLOB_RECURSE SAPIEN_SRC "src/*.h" "src/*.cpp" "src/*.cc")
 add_library(sapien SHARED ${SAPIEN_SRC} ${SAPIEN_CUDA_SRC})
 if (${SAPIEN_CUDA})
-    set_target_properties(sapien PROPERTIES CUDA_ARCHITECTURES "60;61;70;75;80;86")
+    # SAPIEN's own CUDA kernels. simsense has its own architecture list and is
+    # currently used by the realistic depth sensor pipeline.
+    set_target_properties(sapien PROPERTIES CUDA_ARCHITECTURES "60;61;70;75;80;86;89;90;100;120")
 
     if (MSVC)
         target_link_libraries(svulkan2 PRIVATE "$ENV{CUDA_PATH}/lib/x64/cudart_static.lib")

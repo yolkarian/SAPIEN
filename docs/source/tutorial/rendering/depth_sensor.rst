@@ -13,10 +13,12 @@ In this tutorial, you will learn the following:
 The full script can be downloaded from :download:`rt_stereodepth.py <../../../../examples/rendering/rt_stereodepth.py>`
 
 .. note::
-   You are required to have an NVIDIA GPU with 6.0 <= compute capability <= 8.6 to use ``StereoDepthSensor``. For users without available NVIDIA
-   GPU, there is an alternative implementation named ``ActiveLightSensor`` that can run on CPU. Note that ``ActiveLightSensor`` will produce slightly
-   different results compared to ``StereoDepthSensor`` and will be much slower. Usage of ``StereoDepthSensor`` is always recommended when an NVIDIA
-   GPU is available.
+   ``StereoDepthSensor`` uses the ``simsense`` CUDA backend. Within SAPIEN's packaged sensor API, ``simsense`` backs the realistic depth sensor
+   pipeline exposed through ``StereoDepthSensor``; it is not the backend for the rest of SAPIEN's CUDA functionality. The current ``simsense`` build
+   is still limited to NVIDIA GPUs with 6.0 <= compute capability <= 8.6, so Blackwell support for SAPIEN's own CUDA kernels does not yet extend to
+   ``StereoDepthSensor``. For users without a supported NVIDIA GPU, there is an alternative implementation named ``ActiveLightSensor`` that can run on
+   CPU. Note that ``ActiveLightSensor`` will produce slightly different results compared to ``StereoDepthSensor`` and will be much slower. Usage of
+   ``StereoDepthSensor`` is always recommended when a supported NVIDIA GPU is available.
 
 
 Sim-to-real gap
