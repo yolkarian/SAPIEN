@@ -1,7 +1,7 @@
 [submodule "3rd_party/sapien-vulkan-2"]
 	path = 3rd_party/sapien-vulkan-2
-	url = https://github.com/haosulab/sapien-vulkan-2.git
+	url = https://codeberg.org/yuke/sapien-vulkan-2.git
 [submodule "3rd_party/simsense"]
 	path = 3rd_party/simsense
-	url = https://github.com/haosulab/simsense.git
+	url = https://codeberg.org/yuke/simsense.git
 	branch = sapien
