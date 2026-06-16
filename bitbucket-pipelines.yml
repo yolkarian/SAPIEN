@@ -1,4 +1,4 @@
-image: yolkarian/sapien-build-env:0.3
+image: yolkarian/sapien-build-env:0.3.1
 
 pipelines:
   branches:
@@ -9,7 +9,6 @@ pipelines:
             - apt-get update && apt-get install -y cmake zip
             - git submodule update --init --recursive
             - git fetch --tags
-            - export CMAKE_BUILD_PARALLEL_LEVEL=2
             - git config --global --add safe.directory '*' && ./scripts/build.sh
             - zip -r wheelhouse.zip ./wheelhouse
           artifacts:

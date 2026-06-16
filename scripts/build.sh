@@ -1,12 +1,29 @@
 #!/usr/bin/env bash
 
+set -e
+
 VERSION=
 DEBUG=
 PROFILE=
+JOBS=
 while [[ "$#" -gt 0 ]]; do
     case $1 in
         --debug) DEBUG=1;;
         --profile) PROFILE=1;;
+        --limit-parallel) JOBS=2;;
+        -j|--jobs|--parallel)
+            OPT="$1"
+            shift
+            if [[ "$#" -eq 0 ]]; then
+                echo "Error: ${OPT} requires a positive integer" >&2
+                exit 1
+            fi
+            JOBS="$1"
+            ;;
+        -j*) JOBS="${1#-j}";;
+        --jobs=*) JOBS="${1#*=}";;
+        --parallel=*) JOBS="${1#*=}";;
+        --limit-parallel=*) JOBS="${1#*=}";;
         35) VERSION="35";;
         36) VERSION="36";;
         37) VERSION="37";;
@@ -20,8 +37,17 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
+if [ -n "${JOBS}" ]; then
+  if ! [[ "${JOBS}" =~ ^[1-9][0-9]*$ ]]; then
+    echo "Error: parallel jobs must be a positive integer, got '${JOBS}'" >&2
+    exit 1
+  fi
+  export CMAKE_BUILD_PARALLEL_LEVEL="${JOBS}"
+fi
+
 [ -z $VERSION ] && echo "Version not specified, building for all versions" || echo "Compile for Python ${VERSION}"
 ( [ $DEBUG ] && echo "Debug Mode" ) || ( [ $PROFILE ] && echo "Profile Mode" )  || echo "Release Mode"
+[ -n "${JOBS}" ] && echo "CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL}"
 
 function build_sapien() {
   echo "Building SAPIEN"

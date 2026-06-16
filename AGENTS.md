@@ -85,7 +85,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
 - When examples or module names change, verify the docs still point at real files in `python/py_package/example/`.
 
 ## CI Notes
-- GitHub Actions builds Linux wheels in `yolkarian/sapien-build-env:0.3` and Windows wheels separately.
+- GitHub Actions builds Linux wheels in `yolkarian/sapien-build-env:0.3.1` and Windows wheels separately.
 - When build behavior, Python version support, or packaging details matter, check:
   - `.github/workflows/build.yml`
   - `scripts/build.sh`
