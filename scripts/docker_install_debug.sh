@@ -11,7 +11,7 @@ docker run -v `pwd`:/workspace/SAPIEN -it --rm \
        -e SAPIEN_PHYSX5_DIR \
        -e SAPIEN_PHYSX5_GPU_DIR \
        -e SAPIEN_PHYSX5_VERSION \
-       yolkarian/sapien-build-env:0.2 bash -c "export CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL} && cd /workspace/SAPIEN && ./scripts/build.sh ${PYTHON_VERSION} --debug"
+       yolkarian/sapien-build-env:0.3 bash -c "export CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL} && cd /workspace/SAPIEN && ./scripts/build.sh ${PYTHON_VERSION} --debug"
 
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 

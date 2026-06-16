@@ -1,4 +1,4 @@
-image: yolkarian/sapien-build-env:0.2
+image: yolkarian/sapien-build-env:0.3
 
 pipelines:
   branches:
