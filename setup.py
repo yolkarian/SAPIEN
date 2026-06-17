@@ -292,7 +292,9 @@ class CMakeBuild(build_ext):
             shutil.rmtree(oidn_library_path)
         os.makedirs(oidn_library_path, exist_ok=True)
 
-        # provide oidn for linux
+        # provide OIDN for linux. The exact OIDN patch version is controlled by
+        # sapien-vulkan-2, so copy all real OpenImageDenoise shared libraries
+        # instead of hard-coding names such as 2.0.1.
         if platform.system() == "Linux":
             for folder in ["lib", "lib64"]:
                 library_dir = os.path.join(sapien_install_dir, folder)
@@ -300,12 +302,14 @@ class CMakeBuild(build_ext):
                     continue
                 print("copy library from", library_dir)
                 for lib in os.listdir(library_dir):
-                    if lib in [
-                        "libOpenImageDenoise.so.2.0.1",
-                        "libOpenImageDenoise_core.so.2.0.1",
-                        "libOpenImageDenoise_device_cuda.so.2.0.1",
-                    ]:
-                        shutil.copy(os.path.join(library_dir, lib), oidn_library_path)
+                    source = os.path.join(library_dir, lib)
+                    if (
+                        lib.startswith("libOpenImageDenoise")
+                        and ".so" in lib
+                        and os.path.isfile(source)
+                        and not os.path.islink(source)
+                    ):
+                        shutil.copy2(source, oidn_library_path)
 
     def copy_assets(self, ext):
         vulkan_shader_path = os.path.join(self.build_lib, "sapien", "vulkan_shader")
