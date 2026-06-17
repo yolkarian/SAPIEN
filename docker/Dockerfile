@@ -13,7 +13,7 @@ RUN for py in cp39-cp39 cp310-cp310 cp311-cp311 cp312-cp312 cp313-cp313; do \
     done
 
 # custom auditwheel
-RUN /opt/python/cp313-cp313/bin/pip install git+https://github.com/fbxiang/auditwheel.git@fe61bcdfb78f3955d9a3b6fbb05e3852c32239b0
+RUN /opt/python/cp313-cp313/bin/pip install git+https://github.com/pypa/auditwheel.git@fe61bcdfb78f3955d9a3b6fbb05e3852c32239b0
 RUN echo "#!/opt/python/cp313-cp313/bin/python" > /usr/local/bin/auditwheel && \
     echo "import re, sys" >> /usr/local/bin/auditwheel && \
     echo "from auditwheel.main import main" >> /usr/local/bin/auditwheel && \
