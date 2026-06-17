@@ -102,9 +102,11 @@ function build_pybind() {
   PACKAGE_VERSION=`${BIN} setup.py --get-version`
   WHEEL_NAME="./dist/sapien-${PACKAGE_VERSION}-cp${PY_VERSION}-cp${PY_VERSION}${EXT}-linux_x86_64.whl"
   if test -f "$WHEEL_NAME"; then
-    echo "$FILE exist, begin audit and repair"
+    echo "$WHEEL_NAME exists, begin audit and repair"
   fi
-  auditwheel repair ${WHEEL_NAME} --exclude 'libvulkan*' --exclude 'libOpenImageDenoise*' --internal libsapien --internal libsvulkan2
+  # libcuda.so.1 is the host NVIDIA driver API. It is required by the OIDN CUDA
+  # module but must remain external and be supplied by the NVIDIA driver/runtime.
+  auditwheel repair ${WHEEL_NAME} --exclude 'libvulkan*' --exclude 'libOpenImageDenoise*' --exclude 'libcuda.so*' --internal libsapien --internal libsvulkan2
 }
 
 build_sapien
