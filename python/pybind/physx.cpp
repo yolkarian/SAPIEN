@@ -578,6 +578,22 @@ Args:
                              &PhysxSystemGpu::gpuGetRigidBodyTorqueCudaHandle)
       .def_property_readonly("cuda_rigid_dynamic_torque",
                              &PhysxSystemGpu::gpuGetRigidDynamicTorqueCudaHandle)
+      .def_property_readonly("cuda_articulation_link_force",
+                             &PhysxSystemGpu::gpuGetArticulationLinkForceCudaHandle,
+                             R"doc(Padded world-space articulation link force buffer.
+
+The tensor shape is ``(articulation_count, max_links, 4)``. Rows are indexed by
+``articulation.gpu_index`` and low-level ``link.index``. The first three
+channels store the world-space force vector and the fourth channel is padding.
+)doc")
+      .def_property_readonly("cuda_articulation_link_torque",
+                             &PhysxSystemGpu::gpuGetArticulationLinkTorqueCudaHandle,
+                             R"doc(Padded world-space articulation link torque buffer.
+
+The tensor shape is ``(articulation_count, max_links, 4)``. Rows are indexed by
+``articulation.gpu_index`` and low-level ``link.index``. The first three
+channels store the world-space torque vector and the fourth channel is padding.
+)doc")
 
       .def_property_readonly("cuda_articulation_qpos",
                              &PhysxSystemGpu::gpuGetArticulationQposCudaHandle)
@@ -732,6 +748,10 @@ Usage:
            py::overload_cast<>(&PhysxSystemGpu::gpuApplyRigidDynamicForce))
       .def("gpu_apply_rigid_dynamic_torque",
            py::overload_cast<>(&PhysxSystemGpu::gpuApplyRigidDynamicTorque))
+      .def("gpu_apply_articulation_link_force",
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationLinkForce))
+      .def("gpu_apply_articulation_link_torque",
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationLinkTorque))
 
       .def("gpu_apply_articulation_root_pose",
            py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationRootPose))
@@ -767,6 +787,14 @@ Usage:
            py::arg("index_buffer"))
       .def("gpu_apply_articulation_qf",
            py::overload_cast<CudaArrayHandle const &>(&PhysxSystemGpu::gpuApplyArticulationQf),
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_link_force",
+           py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyArticulationLinkForce),
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_link_torque",
+           py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyArticulationLinkTorque),
            py::arg("index_buffer"))
       .def("gpu_apply_articulation_target_position",
            py::overload_cast<CudaArrayHandle const &>(

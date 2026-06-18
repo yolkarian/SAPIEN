@@ -185,6 +185,12 @@ public:
   CudaArrayHandle gpuGetRigidDynamicTorqueCudaHandle() const {
     return mCudaRigidDynamicTorqueHandle;
   }
+  CudaArrayHandle gpuGetArticulationLinkForceCudaHandle() const {
+    return mCudaArticulationLinkForceHandle;
+  }
+  CudaArrayHandle gpuGetArticulationLinkTorqueCudaHandle() const {
+    return mCudaArticulationLinkTorqueHandle;
+  }
 
   CudaArrayHandle gpuGetArticulationQposCudaHandle() const { return mCudaQposHandle; }
   CudaArrayHandle gpuGetArticulationQvelCudaHandle() const { return mCudaQvelHandle; }
@@ -252,10 +258,14 @@ public:
   void gpuApplyArticulationQf(CudaArrayHandle const &indices);
   void gpuApplyArticulationQTargetPos(CudaArrayHandle const &indices);
   void gpuApplyArticulationQTargetVel(CudaArrayHandle const &indices);
+  void gpuApplyArticulationLinkForce(CudaArrayHandle const &indices);
+  void gpuApplyArticulationLinkTorque(CudaArrayHandle const &indices);
 
   void gpuApplyRigidDynamicData();
   void gpuApplyRigidDynamicForce();
   void gpuApplyRigidDynamicTorque();
+  void gpuApplyArticulationLinkForce();
+  void gpuApplyArticulationLinkTorque();
   void gpuApplyArticulationRootPose();
   void gpuApplyArticulationRootVel();
   void gpuApplyArticulationQpos();
@@ -361,9 +371,15 @@ private:
 
   CudaArray mCudaRigidBodyForceBuffer;
   CudaArrayHandle mCudaRigidDynamicForceHandle;
+  CudaArrayHandle mCudaArticulationLinkForceHandle;
+  CudaArray mCudaArticulationLinkForcePaddedScratch;
+  CudaArray mCudaArticulationLinkForcePackedScratch;
 
   CudaArray mCudaRigidBodyTorqueBuffer;
   CudaArrayHandle mCudaRigidDynamicTorqueHandle;
+  CudaArrayHandle mCudaArticulationLinkTorqueHandle;
+  CudaArray mCudaArticulationLinkTorquePaddedScratch;
+  CudaArray mCudaArticulationLinkTorquePackedScratch;
 
   CudaHostArray mCudaHostRigidBodyBuffer;
 

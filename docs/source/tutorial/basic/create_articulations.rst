@@ -146,6 +146,13 @@ articulation ``gpu_index`` values to update only a subset; non-selected rows are
 In a control loop, cache the ``.torch()`` views once after ``gpu_init()`` instead of recreating
 them every step.
 
+For Direct GPU simulation, articulation link force and torque buffers are exposed as
+``cuda_articulation_link_force`` and ``cuda_articulation_link_torque`` with shape
+``(articulation_count, max_links, 4)``. The first three channels are world-space
+force/torque vectors and the fourth channel is padding. Rows are indexed by
+``articulation.gpu_index`` and low-level ``link.index``. After writing these buffers, call
+``gpu_apply_articulation_link_force()`` and/or ``gpu_apply_articulation_link_torque()``.
+
 .. code-block:: python
 
    system = scene.physx_system

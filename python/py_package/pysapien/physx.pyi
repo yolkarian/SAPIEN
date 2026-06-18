@@ -618,6 +618,18 @@ if platform.system() != "Darwin":
         def gpu_apply_articulation_qf(self, index_buffer: sapien.pysapien.CudaArray) -> None:
             ...
         @typing.overload
+        def gpu_apply_articulation_link_force(self) -> None:
+            ...
+        @typing.overload
+        def gpu_apply_articulation_link_force(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+            ...
+        @typing.overload
+        def gpu_apply_articulation_link_torque(self) -> None:
+            ...
+        @typing.overload
+        def gpu_apply_articulation_link_torque(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+            ...
+        @typing.overload
         def gpu_apply_articulation_qpos(self) -> None:
             ...
         @typing.overload
@@ -750,6 +762,12 @@ if platform.system() != "Darwin":
             """
         @property
         def cuda_articulation_link_data(self) -> sapien.pysapien.CudaArray:
+            ...
+        @property
+        def cuda_articulation_link_force(self) -> sapien.pysapien.CudaArray:
+            ...
+        @property
+        def cuda_articulation_link_torque(self) -> sapien.pysapien.CudaArray:
             ...
         @property
         def cuda_articulation_link_incoming_joint_forces(self) -> sapien.pysapien.CudaArray:

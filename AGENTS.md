@@ -33,6 +33,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
 
 ## Development Rules
 - Keep public C++ headers, C++ implementation, Python bindings, and Python wrappers in sync when an API crosses those layers.
+- When adding a new feature, add appropriate automated tests with it. Prefer Python `unittest/` coverage for Python-facing behavior and C++ `test/` coverage for native behavior.
 - For Python-facing API changes, inspect all affected surfaces:
   - `include/sapien/**`
   - `src/**`
@@ -55,9 +56,16 @@ If documentation and checked-in automation disagree, prefer the repository scrip
 - Initialize submodules before any source build:
   - `git submodule update --init --recursive`
 - Preferred wheel build in Docker:
-  - `./scripts/docker_build_wheels.sh [39|310|311|312|313]`
+  - Use the latest `yolkarian/sapien-build-env:<tag>` image used by the checked-in CI/scripts; check `.github/workflows/build.yml` and `scripts/docker_build_wheels.sh` before building.
+  - If the Docker image is not present locally, pull it from the registry first, matching GitHub Actions' container behavior:
+    - `docker image inspect yolkarian/sapien-build-env:<tag> >/dev/null 2>&1 || docker pull yolkarian/sapien-build-env:<tag>`
+  - Default new-feature wheel build: compile the Python 3.11 wheel with parallelism limited to 4:
+    - `CMAKE_BUILD_PARALLEL_LEVEL=4 ./scripts/docker_build_wheels.sh 311`
+  - General form: `CMAKE_BUILD_PARALLEL_LEVEL=4 ./scripts/docker_build_wheels.sh [39|310|311|312|313]`
 - Direct build script used by CI:
-  - `./scripts/build.sh [39|310|311|312|313] [--debug] [--profile]`
+  - `./scripts/build.sh [39|310|311|312|313] [--debug] [--profile] [--jobs N]`
+  - When compiling directly, limit parallelism to 4 by default for validation builds:
+    - `./scripts/build.sh 311 --jobs 4`
 - Local install helpers exist at `scripts/install.sh` and `scripts/install_debug.sh`, but CI does not use them. Inspect them before relying on them for validation automation.
 - `setup.py` drives the wheel build and invokes CMake for the native library.
 - Current PhysX baseline is `107.3-physx-5.6.1`.
@@ -67,6 +75,12 @@ If documentation and checked-in automation disagree, prefer the repository scrip
 
 ## Validation
 - Use the narrowest validation that matches the change. Full wheel builds are expensive.
+- New features must include matching automated tests unless there is a clear documented reason they cannot be tested automatically.
+- After adding a new feature, the default validation path is to build the Python 3.11 wheel in the latest `sapien-build-env` image with build parallelism limited to 4, then validate that wheel inside a fresh mamba environment.
+- Create a clean mamba environment for Python validation, install the newly built wheel, and run targeted tests/smoke tests there, for example:
+  - `mamba create -n sapien-wheel-py311 python=3.11 -y`
+  - `mamba run -n sapien-wheel-py311 python -m pip install wheelhouse/sapien-*-cp311-*.whl`
+  - `mamba run -n sapien-wheel-py311 python -m unittest discover unittest`
 - Python tests live under `unittest/` and use the standard library `unittest` runner.
 - C++ tests live under `test/` and require configuring CMake with `-DSAPIEN_BUILD_TEST=ON`, then building the `sapien_test` target.
 - Documented runtime smoke tests:
@@ -85,7 +99,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
 - When examples or module names change, verify the docs still point at real files in `python/py_package/example/`.
 
 ## CI Notes
-- GitHub Actions builds Linux wheels in `yolkarian/sapien-build-env:0.3.1` and Windows wheels separately.
+- GitHub Actions builds Linux wheels in `yolkarian/sapien-build-env:<tag>` and Windows wheels separately. Check `.github/workflows/build.yml` for the current/latest image tag instead of relying on stale hard-coded values.
 - When build behavior, Python version support, or packaging details matter, check:
   - `.github/workflows/build.yml`
   - `scripts/build.sh`

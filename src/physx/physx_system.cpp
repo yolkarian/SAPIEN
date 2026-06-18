@@ -996,6 +996,88 @@ void PhysxSystemGpu::gpuApplyRigidDynamicTorque() {
       PxRigidDynamicGPUAPIWriteType::eTORQUE, count, mCudaEventRecord.event);
 }
 
+void PhysxSystemGpu::gpuApplyArticulationLinkForce() {
+  gpuApplyArticulationLinkForce(mCudaArticulationIndexBuffer.handle());
+}
+
+void PhysxSystemGpu::gpuApplyArticulationLinkForce(CudaArrayHandle const &indices) {
+  SAPIEN_PROFILE_FUNCTION;
+  checkGpuInitialized();
+  indices.checkCongiguous();
+  indices.checkShape({-1});
+  indices.checkStride({sizeof(int)});
+
+  if (mGpuArticulationCount == 0) {
+    return;
+  }
+  ensureCudaDevice();
+
+  auto count = static_cast<PxU32>(indices.shape.at(0));
+  if (count == 0) {
+    return;
+  }
+
+  void *paddedData = mCudaArticulationLinkForceHandle.ptr;
+  void *gpuIndices = mCudaArticulationGpuIndexBuffer.ptr;
+  if (indices.ptr != mCudaArticulationIndexBuffer.ptr) {
+    gather_blocks(mCudaArticulationLinkForcePaddedScratch.ptr,
+                  mCudaArticulationLinkForceHandle.ptr, indices.ptr,
+                  mGpuArticulationMaxLinkCount * 4, count, mCudaStream);
+    gather_blocks(mCudaArticulationIndexScratch.ptr, mCudaArticulationGpuIndexBuffer.ptr,
+                  indices.ptr, 1, count, mCudaStream);
+    paddedData = mCudaArticulationLinkForcePaddedScratch.ptr;
+    gpuIndices = mCudaArticulationIndexScratch.ptr;
+  }
+
+  pack_vec3(mCudaArticulationLinkForcePackedScratch.ptr, paddedData, 4,
+            count * mGpuArticulationMaxLinkCount, mCudaStream);
+  mCudaEventRecord.record(mCudaStream);
+  mPxScene->getDirectGPUAPI().setArticulationData(
+      mCudaArticulationLinkForcePackedScratch.ptr, (PxArticulationGPUIndex *)gpuIndices,
+      PxArticulationGPUAPIWriteType::eLINK_FORCE, count, mCudaEventRecord.event);
+}
+
+void PhysxSystemGpu::gpuApplyArticulationLinkTorque() {
+  gpuApplyArticulationLinkTorque(mCudaArticulationIndexBuffer.handle());
+}
+
+void PhysxSystemGpu::gpuApplyArticulationLinkTorque(CudaArrayHandle const &indices) {
+  SAPIEN_PROFILE_FUNCTION;
+  checkGpuInitialized();
+  indices.checkCongiguous();
+  indices.checkShape({-1});
+  indices.checkStride({sizeof(int)});
+
+  if (mGpuArticulationCount == 0) {
+    return;
+  }
+  ensureCudaDevice();
+
+  auto count = static_cast<PxU32>(indices.shape.at(0));
+  if (count == 0) {
+    return;
+  }
+
+  void *paddedData = mCudaArticulationLinkTorqueHandle.ptr;
+  void *gpuIndices = mCudaArticulationGpuIndexBuffer.ptr;
+  if (indices.ptr != mCudaArticulationIndexBuffer.ptr) {
+    gather_blocks(mCudaArticulationLinkTorquePaddedScratch.ptr,
+                  mCudaArticulationLinkTorqueHandle.ptr, indices.ptr,
+                  mGpuArticulationMaxLinkCount * 4, count, mCudaStream);
+    gather_blocks(mCudaArticulationIndexScratch.ptr, mCudaArticulationGpuIndexBuffer.ptr,
+                  indices.ptr, 1, count, mCudaStream);
+    paddedData = mCudaArticulationLinkTorquePaddedScratch.ptr;
+    gpuIndices = mCudaArticulationIndexScratch.ptr;
+  }
+
+  pack_vec3(mCudaArticulationLinkTorquePackedScratch.ptr, paddedData, 4,
+            count * mGpuArticulationMaxLinkCount, mCudaStream);
+  mCudaEventRecord.record(mCudaStream);
+  mPxScene->getDirectGPUAPI().setArticulationData(
+      mCudaArticulationLinkTorquePackedScratch.ptr, (PxArticulationGPUIndex *)gpuIndices,
+      PxArticulationGPUAPIWriteType::eLINK_TORQUE, count, mCudaEventRecord.event);
+}
+
 void PhysxSystemGpu::gpuApplyArticulationRootPose() {
   gpuApplyArticulationRootPose(mCudaArticulationIndexBuffer.handle());
 }
@@ -1470,14 +1552,33 @@ void PhysxSystemGpu::allocateCudaBuffers() {
                                                  .type = "f4",
                                                  .cudaId = mCudaRigidBodyForceBuffer.cudaId,
                                                  .ptr = (float *)mCudaRigidBodyForceBuffer.ptr};
-  // TODO: articulation link handle
+  mCudaArticulationLinkForceHandle =
+      CudaArrayHandle{.shape = {mGpuArticulationCount, mGpuArticulationMaxLinkCount, 4},
+                      .strides = {mGpuArticulationMaxLinkCount * 16, 16, 4},
+                      .type = "f4",
+                      .cudaId = mCudaRigidBodyForceBuffer.cudaId,
+                      .ptr = (float *)mCudaRigidBodyForceBuffer.ptr + 4 * rigidDynamicCount};
+  mCudaArticulationLinkForcePaddedScratch =
+      CudaArray({mGpuArticulationCount, mGpuArticulationMaxLinkCount, 4}, "f4");
+  mCudaArticulationLinkForcePackedScratch =
+      CudaArray({mGpuArticulationCount, mGpuArticulationMaxLinkCount, 3}, "f4");
+
   mCudaRigidBodyTorqueBuffer = CudaArray({rigidBodyCount, 4}, "f4");
   mCudaRigidDynamicTorqueHandle = CudaArrayHandle{.shape = {rigidDynamicCount, 4},
                                                   .strides = {16, 4},
                                                   .type = "f4",
                                                   .cudaId = mCudaRigidBodyTorqueBuffer.cudaId,
                                                   .ptr = (float *)mCudaRigidBodyTorqueBuffer.ptr};
-  // TODO: articulation link handle
+  mCudaArticulationLinkTorqueHandle =
+      CudaArrayHandle{.shape = {mGpuArticulationCount, mGpuArticulationMaxLinkCount, 4},
+                      .strides = {mGpuArticulationMaxLinkCount * 16, 16, 4},
+                      .type = "f4",
+                      .cudaId = mCudaRigidBodyTorqueBuffer.cudaId,
+                      .ptr = (float *)mCudaRigidBodyTorqueBuffer.ptr + 4 * rigidDynamicCount};
+  mCudaArticulationLinkTorquePaddedScratch =
+      CudaArray({mGpuArticulationCount, mGpuArticulationMaxLinkCount, 4}, "f4");
+  mCudaArticulationLinkTorquePackedScratch =
+      CudaArray({mGpuArticulationCount, mGpuArticulationMaxLinkCount, 3}, "f4");
 
   int articulationBufferBlockSize = mGpuArticulationCount * mGpuArticulationMaxDof;
   mCudaArticulationBuffer = CudaArray({articulationBufferBlockSize * 8}, "f4");

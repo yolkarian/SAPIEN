@@ -111,6 +111,12 @@ subset of robots. The result is written to ``scene.physx_system.cuda_articulatio
 a padded tensor of shape ``(articulation_count, max_rows, max_cols)``. Use ``robot.gpu_index``
 to select a robot and ``robot.get_jacobian_shape()`` to extract the valid submatrix.
 
+Direct GPU simulation can also apply world-space external forces and torques to individual robot
+links. Write ``physx_system.cuda_articulation_link_force`` and/or
+``physx_system.cuda_articulation_link_torque`` with shape ``(articulation_count, max_links, 4)``
+(the first three channels are the vector and the fourth is padding), then call
+``gpu_apply_articulation_link_force()`` and/or ``gpu_apply_articulation_link_torque()``.
+
 Compensate passive forces (e.g. gravity)
 -----------------------------------------
 
