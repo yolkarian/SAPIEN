@@ -16,13 +16,13 @@ jobs:
       image: yolkarian/sapien-build-env:0.3.1
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           submodules: "true"
           fetch-depth: 0
           fetch-tags: true
       - name: Set up cmake cache
-        uses: actions/cache@v3
+        uses: actions/cache@v4
         with:
           path: docker_sapien_build/_sapien_deps
           key: ${{ runner.os }}.${{ hashFiles('**/*.cmake', '**/CMakeLists.txt') }}
