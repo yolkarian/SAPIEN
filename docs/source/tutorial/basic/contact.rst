@@ -5,30 +5,64 @@ Contact
 
 .. highlight:: python
 
-Contact information is useful to check whether two rigid bodies collide or whether an object is grasped by a gripper.
-The example shows how to check the contact between two actors (one box supported by another box).
+Contact information is useful for detecting collisions, grasps, and impacts.
+Current SAPIEN contacts expose PhysX components and collision shapes rather than
+old ``actor0``/``actor1`` fields.
 
-In this tutorial, you will learn the following:
+In this tutorial, you will learn how to read ``PhysxContact`` and
+``PhysxContactPoint`` objects.
 
-* Get contact information from ``Contact``
+Minimal example
+----------------
 
-The full script is included as follows:
+.. code-block:: python
 
-.. literalinclude:: ../../../../examples/basic/contact.py
-    :linenos:
+   import sapien
 
-You can call ``get_contacts`` to fetch all contacts after the current simulation step.
-It returns a list of ``Contact``.
-``contact.actor0`` and ``contact.actor1`` refer to two actors involved in the contact.
-``contact.points`` contains a list of ``ContactPoint``.
+   scene = sapien.Scene()
+   scene.add_ground(0)
 
-For each contact point, 
+   builder = scene.create_actor_builder()
+   builder.add_box_collision(half_size=[0.2, 0.2, 0.2])
+   builder.add_box_visual(half_size=[0.2, 0.2, 0.2], material=[1, 0, 0])
+   box = builder.build(name="box")
+   box.set_pose(sapien.Pose([0, 0, 1]))
 
-* ``impulse``: the impulse applied on the first actor.
-* ``normal``: the direction of impulse.
-* ``position``: the point of application in the world frame.
-* ``seperation``: minimum distance between two shapes involved in the contact.
+   for _ in range(120):
+      scene.step()
+
+   for contact in scene.get_contacts():
+      body0, body1 = contact.bodies
+      shape0, shape1 = contact.shapes
+      entity0 = body0.entity
+      entity1 = body1.entity
+      print("contact:", entity0.name, entity1.name, shape0, shape1)
+
+      for point in contact.points:
+         print("position", point.position)
+         print("normal", point.normal)
+         print("impulse", point.impulse)
+         print("separation", point.separation)
+
+Contact fields
+---------------
+
+``scene.get_contacts()`` returns a list of ``sapien.physx.PhysxContact``.
+
+* ``contact.bodies``: two ``PhysxRigidBaseComponent`` objects involved in the
+  contact. Use ``body.entity`` to get their owning entities.
+* ``contact.shapes``: two ``PhysxCollisionShape`` objects involved in the
+  contact.
+* ``contact.points``: a list of contact points.
+
+For each ``PhysxContactPoint``:
+
+* ``impulse`` is the impulse vector applied by the solver;
+* ``normal`` is the contact normal;
+* ``position`` is the world-space contact position;
+* ``separation`` is the signed separation distance for the contact pair.
 
 .. note::
-   ``Contact`` in SAPIEN does not mean that two actors are contacting each other.
-   It will be generated when the contact is about to start or end, and, of course, when the contact is happening.
+
+   A contact object can be generated while contact is beginning or ending, not
+   only while two shapes are visibly resting on each other.

@@ -409,6 +409,9 @@ Generator<int> init_physx(py::module &sapien) {
   auto PyPhysxCollisionShapeConvexMesh =
       py::class_<PhysxCollisionShapeConvexMesh, PhysxCollisionShape>(
           m, "PhysxCollisionShapeConvexMesh");
+  auto PyPhysxCollisionShapeHeightField =
+      py::class_<PhysxCollisionShapeHeightField, PhysxCollisionShape>(
+          m, "PhysxCollisionShapeHeightField");
   auto PyPhysxCollisionShapeTriangleMesh =
       py::class_<PhysxCollisionShapeTriangleMesh, PhysxCollisionShape>(
           m, "PhysxCollisionShapeTriangleMesh");
@@ -739,7 +742,19 @@ Usage:
     # query.cuda_buffer is now filled with net contact forces for each body
 )doc")
 
-      .def("gpu_update_articulation_kinematics", &PhysxSystemGpu::gpuUpdateArticulationKinematics)
+      .def("gpu_update_articulation_kinematics",
+           py::overload_cast<>(&PhysxSystemGpu::gpuUpdateArticulationKinematics),
+           R"doc(Update link poses and velocities from current root and joint state
+for all articulations.)doc")
+      .def("gpu_update_articulation_kinematics",
+           py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuUpdateArticulationKinematics),
+           py::arg("index_buffer"),
+           R"doc(Update link poses and velocities for selected articulations.
+
+`index_buffer` must be a contiguous CUDA int32 array containing SAPIEN
+articulation `gpu_index` values.
+)doc")
 
       // TODO apply force torque
       .def("gpu_apply_rigid_dynamic_data",
@@ -938,6 +953,20 @@ If after testing g2 and g3, the objects may collide, g0 and g1 come into play. g
       .def("get_vertices", &PhysxCollisionShapeConvexMesh::getVertices)
       .def_property_readonly("triangles", &PhysxCollisionShapeConvexMesh::getTriangles)
       .def("get_triangles", &PhysxCollisionShapeConvexMesh::getTriangles);
+
+  PyPhysxCollisionShapeHeightField
+      .def(py::init<HeightFieldSamples const &, float, float, float,
+                    std::shared_ptr<PhysxMaterial>>(),
+           py::arg("height_field"), py::arg("row_scale"), py::arg("column_scale"),
+           py::arg("height_scale"), py::arg("material") = nullptr)
+      .def_property_readonly("row_scale", &PhysxCollisionShapeHeightField::getRowScale)
+      .def("get_row_scale", &PhysxCollisionShapeHeightField::getRowScale)
+      .def_property_readonly("column_scale", &PhysxCollisionShapeHeightField::getColumnScale)
+      .def("get_column_scale", &PhysxCollisionShapeHeightField::getColumnScale)
+      .def_property_readonly("height_scale", &PhysxCollisionShapeHeightField::getHeightScale)
+      .def("get_height_scale", &PhysxCollisionShapeHeightField::getHeightScale)
+      .def_property_readonly("height_field", &PhysxCollisionShapeHeightField::getSamples)
+      .def("get_height_field", &PhysxCollisionShapeHeightField::getSamples);
 
   PyPhysxCollisionShapeTriangleMesh
       .def(py::init<std::string const &, Vec3, std::shared_ptr<PhysxMaterial>, bool,

@@ -1,77 +1,105 @@
 .. _gym:
 
-Build Gym-style Interface
-==========================
+Build a Gym-style Interface
+===========================
 
 .. highlight:: python
 
-.. note::
-   Please first complete :ref:`basic_index` before continuing this tutorial.
+SAPIEN does not depend on Gym or Gymnasium, but it is straightforward to wrap a
+``sapien.Scene`` in a Gym-style class.
 
-`OpenAI Gym <https://gym.openai.com/>`_ is widely used for research on reinforcement learning.
-It provides a base class ``gym.Env`` as the interface for many RL tasks.
-We are going to showcase how to write a gym-style environment with SAPIEN.
+In this tutorial, you will learn how to:
 
-In this tutorial, you will learn the following:
+* structure ``reset`` and ``step`` around SAPIEN's scene loop;
+* save and restore CPU simulation state;
+* keep rendering optional for headless training.
 
-* Implement a simplified `Ant <https://gym.openai.com/envs/Ant-v2/>`_ environment based on SAPIEN
-* Save and restore the simulation states
-
-.. figure:: assets/ant.gif
-    :width: 640px
-    :align: center
-    :figclass: align-center
-
-``gym`` and ``transforms3d`` are required for this example, which can be installed by ``pip install gym transforms3d``.
-The full code of the Ant environment can be downloaded here :download:`ant.py <../../../../examples/rl/ant.py>`
-
-SapienEnv: base class
+Minimal environment skeleton
 --------------------------------------
 
-Let's start with a base class ``SapienEnv``, which inherits ``gym.Env``.
-Similar to `MujocoEnv <https://github.com/openai/gym/blob/master/gym/envs/mujoco/mujoco_env.py>`_, it is a virtual class with several unimplemented member functions.
-The full code of the base class can be downloaded here :download:`sapien_env.py <../../../../examples/rl/sapien_env.py>`
+.. code-block:: python
 
-.. literalinclude:: ../../../../examples/rl/sapien_env.py
+   import numpy as np
+   import sapien
 
-In the constructor, we first set up the engine, scene and renderer.
-Then, we call ``self._build_world()`` to build the simulation world.
-``_build_world`` is a virtual function to implement.
-Besides, ``_setup_viewer`` is another virtual function used for on-screen visualization.
+   class SapienEnv:
+      def __init__(self, render: bool = False):
+         self.render = render
+         systems = [sapien.physx.PhysxCpuSystem()]
+         if render:
+            systems.append(sapien.render.RenderSystem())
 
-.. note::
-   SAPIEN does not support creating a simulation world from a XML direclty, like Mujoco MJCF.
-   But users can write their own parsers with their preferred formats.
+         self.scene = sapien.Scene(systems)
+         self.scene.set_timestep(1 / 100)
+         self._build_world()
 
-AntEnv: environment
------------------------
+         self._initial_physx_state = self.scene.physx_system.pack()
+         self._initial_pose_state = self.scene.pack_poses()
 
-Based on ``SapienEnv``, we can create a gym-style environment ``AntEnv``.
-First, we need to update the constructor and implement ``_build_world`` to build the simulation world.
-It creates the ground and an ant articulation.
-The implementation of ``create_ant`` is not shown here.
-The initial state of the actuator (ant) is stored, which will be restored every time the environment is reset.
+      def _build_world(self):
+         self.scene.add_ground(0, render=self.render)
+         builder = self.scene.create_actor_builder()
+         builder.add_box_collision(half_size=[0.2, 0.2, 0.2])
+         if self.render:
+            builder.add_box_visual(half_size=[0.2, 0.2, 0.2], material=[1, 0, 0])
+         self.box = builder.build(name="box")
+         self.box.set_pose(sapien.Pose([0, 0, 0.2]))
+         self.box_body = self.box.find_component_by_type(
+            sapien.physx.PhysxRigidDynamicComponent
+         )
 
-.. literalinclude:: ../../../../examples/rl/ant.py
-   :dedent: 0
-   :lines: 20-49
-   :emphasize-lines: 7
+      def reset(self):
+         self.scene.unpack_poses(self._initial_pose_state)
+         self.scene.physx_system.unpack(self._initial_physx_state)
+         return self._get_obs()
 
-Furthermore, we need to implement two important virtual functions of ``gym.Env``, ``step`` and ``reset``.
+      def step(self, action):
+         force = np.asarray(action, dtype=np.float32)
+         self.box_body.add_force_torque(force, [0, 0, 0])
+         self.scene.step()
+         obs = self._get_obs()
+         reward = float(self.box.pose.p[2])
+         terminated = False
+         truncated = False
+         info = {}
+         return obs, reward, terminated, truncated, info
 
-.. literalinclude:: ../../../../examples/rl/ant.py
-   :dedent: 0
-   :lines: 179-215
-   :emphasize-lines: 28
+      def _get_obs(self):
+         return np.concatenate([self.box.pose.p, self.box_body.linear_velocity])
 
-``step`` runs one timestep of the environment's dynamics, and ``reset`` resets the state of the environment.
-For our implementation, we restore the state of the actuator (ant) and add some noise to initial joint states when the environment is reset.
+State save and restore
+--------------------------------------
 
-Random Agent
+For CPU PhysX scenes, ``scene.physx_system.pack()`` and ``unpack(...)`` serialize
+PhysX state. ``scene.pack_poses()`` and ``unpack_poses(...)`` serialize SAPIEN
+entity poses. Store both if your reset must restore both PhysX and entity-side
+state.
+
+For GPU PhysX, state is managed through ``PhysxGpuSystem.cuda_*`` buffers. Write
+reset states into the relevant buffers, call the matching ``gpu_apply_*``
+methods, then fetch the state needed for observations.
+
+Rendering during RL
+--------------------------------------
+
+Rendering is optional. For pure training, create scenes with only a PhysX system.
+For evaluation videos or debugging, add a ``sapien.render.RenderSystem`` only to
+the scenes you render.
+
+With CPU PhysX, ``scene.update_render()`` is enough before viewer/camera render.
+With GPU PhysX, avoid ``sync_poses_gpu_to_cpu()`` in training loops; for offscreen
+capture, prefer the direct GPU rendering path described in the GPU workflow
+notes and use ``sapien.render.RenderSystemGroup`` with CUDA pose buffers.
+
+Random rollout
 ---------------------
 
-As a gym environment, we can run the environment with a random agent.
+.. code-block:: python
 
-.. literalinclude:: ../../../../examples/rl/ant.py
-   :dedent: 0
-   :lines: 255-265
+   env = SapienEnv(render=False)
+   obs = env.reset()
+   for _ in range(1000):
+      action = np.random.uniform(-1, 1, size=3)
+      obs, reward, terminated, truncated, info = env.step(action)
+      if terminated or truncated:
+         obs = env.reset()

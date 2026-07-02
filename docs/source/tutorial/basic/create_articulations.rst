@@ -5,153 +5,171 @@ Create Articulations
 
 .. highlight:: python
 
-The **articulation** is a set of **links** (each of which behaves like a rigid body) connected together with special **joints**.
-For instance, a drawer can be connected to a table by a **prismatic** joint (slider), and a door can be connected to a frame by a **revolute** joint (hinge).
-A robot is also an instance of an articulation.
-Articulations are usually loaded from `URDF XML <http://wiki.ros.org/urdf/XML>`_, which we will see in other examples.
-This tutorial showcases how to create an articulation programmatically by SAPIEN.
+An articulation is a tree of rigid links connected by joints. Robots loaded from
+URDF are articulations, and you can also build small articulations directly in
+Python.
 
-Articulations can be controlled by applying **torques** on their joints.
-To drive an articulation to a desired state, users can apply a `controller <https://en.wikipedia.org/wiki/Control_theory>`_ to compute corrective torques according to the difference between the actual and the desired.
+In this tutorial, you will learn how to:
 
-In this tutorial, you will learn the following:
-
-* Create ``Articulation``
-* Control the articulation with builtin controllers
-* Get kinematic quantities of the articulation
-
-The example illustrates how to build a controllable toy car from scratch.
-``transforms3d`` is required.
+* create links with ``ArticulationBuilder`` and ``LinkBuilder``;
+* configure revolute, prismatic, and fixed joints;
+* drive joints with PhysX drives;
+* read articulation state, Jacobians, and GPU buffers.
 
 .. figure:: assets/create_articulations.gif
-    :width: 640px
-    :align: center
-    :figclass: align-center
-
-The full script can be downloaded here :download:`create_articulations.py <../../../../examples/basic/create_articulations.py>`
+   :width: 640px
+   :align: center
+   :figclass: align-center
 
 Create a root link
 -------------------------------------------
 
-In SAPIEN, the articulation is represented as a tree.
-Each node is a link, and each edge indicates that the child link is connected to the parent link by a joint.
-To build a toy car, let's start with the car body.
+The first link builder is the root link. Link builders inherit the same shape
+helpers as ``ActorBuilder``.
 
-.. literalinclude:: ../../../../examples/basic/create_articulations.py
-   :dedent: 0
-   :lines: 19-36
-   :emphasize-lines: 12,15
+.. code-block:: python
 
-``Articulation`` is created by ``ArticulationBuilder``.
-Each link is built by ``LinkBuilder``, which can be created by an articulation builder.
-A link is just a rigid body, and thus collision and visual shapes can be added.
-A root link is created when ``create_link_builder()`` is called without specifying the parent link.
+   import numpy as np
+   import sapien
 
-Create a child link connected by a revolute joint
+   scene = sapien.Scene()
+   builder = scene.create_articulation_builder()
+
+   root = builder.create_link_builder()
+   root.set_name("base")
+   root.add_box_collision(half_size=[0.2, 0.1, 0.05])
+   root.add_box_visual(half_size=[0.2, 0.1, 0.05], material=[0.8, 0.2, 0.2])
+
+Create a child link and joint
 ----------------------------------------------------
 
-Next, we create a child link (front steering shaft) connected to the root link (car body) by a revolute joint.
+``create_link_builder(parent)`` creates a child of an existing link. The joint's
+motion axis is the x-axis of the joint frame. ``pose_in_parent`` and
+``pose_in_child`` place that joint frame in the two link frames.
 
-.. literalinclude:: ../../../../examples/basic/create_articulations.py
-   :dedent: 0
-   :lines: 38-60
+.. code-block:: python
 
-A child link is created when ``create_link_builder(parent_link)`` is called with specifying the parent link.
-Besides, we need to configure the joint.
+   arm = builder.create_link_builder(root)
+   arm.set_name("arm")
+   arm.set_joint_name("hinge")
+   arm.add_capsule_collision(
+      pose=sapien.Pose(q=[0.7071068, 0, 0.7071068, 0]),
+      radius=0.04,
+      half_length=0.35,
+   )
+   arm.add_capsule_visual(
+      pose=sapien.Pose(q=[0.7071068, 0, 0.7071068, 0]),
+      radius=0.04,
+      half_length=0.35,
+      material=[0.2, 0.2, 0.8],
+   )
+   arm.set_joint_properties(
+      "revolute",
+      limits=[[-np.pi / 2, np.pi / 2]],
+      pose_in_parent=sapien.Pose([0.2, 0, 0]),
+      pose_in_child=sapien.Pose([-0.35, 0, 0]),
+      friction=0.0,
+      damping=0.1,
+   )
 
-There are multiple types of joints: prismatic, revolute, fixed.
-The definitions follow `PhysX <https://gameworksdocs.nvidia.com/PhysX/4.1/documentation/physxguide/Manual/Joints.html>`_.
+   articulation = builder.build(fix_root_link=True)
+   articulation.name = "single_hinge"
 
-* **revolute**: a revolute joint (also called a hinge) keeps the origins and x-axes of the frames together, and allows free rotation around this common axis.
-* **prismatic**: a prismatic joint (also called a slider) keeps the orientations identical, but allows the origin of each frame to slide freely along the common x-axis.
-* **fixed**: a fixed joint locks the orientations and origins rigidly together
+Supported joint types include ``"fixed"``, ``"revolute"``,
+``"revolute_unwrapped"``, ``"continuous"``, and ``"prismatic"``. The root joint
+is fixed when ``fix_root_link=True``.
 
-The location of the joint is defined by the joint pose in the parent frame ``pose_in_parent``, and the joint pose in the child frame ``pose_in_child``.
-
-Other properties of a joint, like joint friction and joint damping, can also be set through ``set_joint_properties(...)``.
-
-Control an articulation with builtin drives
+Control an articulation with drives
 ----------------------------------------------------
 
-After building the articulation, we want to control it by actuating its joints.
-SAPIEN provides builtin **drives** (controllers) to control either the position or the speed of a joint.
+Active joints are available as ``articulation.active_joints`` or
+``articulation.get_active_joints()``. Set drive properties and targets on each
+joint.
 
-.. literalinclude:: ../../../../examples/basic/create_articulations.py
-   :dedent: 0
-   :lines: 158-162
+.. code-block:: python
 
-All the joints of an articulation can be acquired by ``get_joints()``.
+   for joint in articulation.active_joints:
+      joint.set_drive_property(stiffness=50.0, damping=5.0, force_limit=100.0)
+      joint.set_drive_target(0.3)
+      joint.set_drive_velocity_target(0.0)
 
-.. note::
-   Although the order of joints returned by ``get_joints()`` is fixed, it is recommended to index a joint by its name.
-   Joint names should be unique, which is not forced in SAPIEN though. 
+   for _ in range(240):
+      scene.step()
 
-.. literalinclude:: ../../../../examples/basic/create_articulations.py
-   :dedent: 0
-   :lines: 218-222
+The drive implements a PhysX PD controller. There is no articulation-level
+``set_drive_target`` helper in the current API; set targets on the active joints
+or use the GPU target buffers in ``PhysxGpuSystem``.
 
-For each active joint (with non-zero degree of freedom), we can set its drive properties: ``stiffness`` and ``damping``.
-They implies the extent to which the drive attempts to achieve the target position and velocity respectively.
-There do not exist a general rule to set those values and you usually should tune them case by case.
-If you are familiar with control theory, they correspond to *P* and *D* terms in `PID controller <https://en.wikipedia.org/wiki/PID_controller>`_.
-The initial target position and velocity of a joint are zero by default.
-Since our toy car is designed to be a front-wheel drive car, we set both the stiffness and damping as zero for the back gear.
-
-.. note::
-   When a non-zero target is set and stiffness/damping is also non-zero, the drive takes effect internally at each simulation step.
-
-We can implement different behaviors when different keys are pressed.
-``set_drive_target(...)`` and ``set_drive_velocity_target(...)`` are called to set the target position and velocity of a joint drive.
-
-.. literalinclude:: ../../../../examples/basic/create_articulations.py
-   :dedent: 0
-   :lines: 225-257
-
-Get kinematic quantities of the articulation
+Read articulation state
 ------------------------------------------------------------
 
-The pose of the articulation (frame) in the world frame can be acquired by ``get_pose()``.
-It is the same as the pose of the root link.
-Besides, joint positions and velocities can be acquired by ``get_qpos()`` and ``get_qvel()``.
-They both return a list of scalars, the length of which is the total degree of freedom.
-The order is the same as ``get_joints()``.
+The articulation stores root pose, generalized positions, velocities,
+accelerations, and forces.
 
-SAPIEN also provides ``compute_dense_jacobian()`` on CPU articulations to compute the
-world-space dense Jacobian. The returned matrix maps generalized velocities to stacked
-link spatial velocities with row order ``[vx, vy, vz, wx, wy, wz]`` for each link.
+.. code-block:: python
 
-For a fixed-base articulation with ``link_count`` links and ``dof`` joint degrees of
-freedom, the Jacobian shape is ``((link_count - 1) * 6, dof)``. For a floating-base
-articulation, the shape is ``(6 + (link_count - 1) * 6, 6 + dof)``; the first six
-columns correspond to the root link's linear and angular velocity in the world frame.
+   print(articulation.root_pose)
+   print(articulation.qpos)
+   print(articulation.qvel)
+   print(articulation.qlimits)
 
-For GPU simulation, call ``scene.physx_system.gpu_compute_articulation_jacobian()`` to
-update all articulations, or pass a CUDA int32 array of articulation ``gpu_index`` values to
-``scene.physx_system.gpu_compute_articulation_jacobian(gpu_indices)`` to update only a subset.
-The padded tensor ``scene.physx_system.cuda_articulation_jacobian`` still stores buffers for all
-articulations. Its shape is ``(articulation_count, max_rows, max_cols)`` for the current PhysX
-scene. Use ``articulation.gpu_index`` to select an articulation, and
-``articulation.get_jacobian_shape()`` to slice the valid submatrix from the padded tensor.
+   articulation.set_qpos([0.1] * articulation.dof)
+   articulation.set_qvel([0.0] * articulation.dof)
+   articulation.set_qf([0.0] * articulation.dof)
 
-GPU simulation also provides joint-only passive-force compensation buffers. Call
-``gpu_compute_articulation_gravity_compensation()`` and
-``gpu_compute_articulation_coriolis_and_centrifugal_compensation()`` after
-``PhysxGpuSystem.gpu_init()``. If joint positions or velocities were modified through GPU
-buffers, apply them and call ``gpu_update_articulation_kinematics()`` before computing
-compensation. The tensors ``cuda_articulation_gravity_compensation`` and
-``cuda_articulation_coriolis_and_centrifugal_compensation`` have shape
-``(articulation_count, max_dofs)`` and use the same order, sign convention, and padding as
-``cuda_articulation_qf``. Both compute methods also accept a contiguous CUDA int32 array of
-articulation ``gpu_index`` values to update only a subset; non-selected rows are left unchanged.
-In a control loop, cache the ``.torch()`` views once after ``gpu_init()`` instead of recreating
-them every step.
+CPU Jacobians and passive forces
+------------------------------------------------------------
 
-For Direct GPU simulation, articulation link force and torque buffers are exposed as
-``cuda_articulation_link_force`` and ``cuda_articulation_link_torque`` with shape
-``(articulation_count, max_links, 4)``. The first three channels are world-space
-force/torque vectors and the fourth channel is padding. Rows are indexed by
-``articulation.gpu_index`` and low-level ``link.index``. After writing these buffers, call
-``gpu_apply_articulation_link_force()`` and/or ``gpu_apply_articulation_link_torque()``.
+CPU articulations provide ``compute_dense_jacobian()``. The returned matrix maps
+generalized velocities to stacked link spatial velocities in row order
+``[vx, vy, vz, wx, wy, wz]`` for each link. ``get_jacobian_shape()`` returns the
+valid matrix shape.
+
+For a fixed-base articulation with ``link_count`` links and ``dof`` joint
+degrees of freedom, the Jacobian shape is ``((link_count - 1) * 6, dof)``. For a
+floating-base articulation, the shape is ``(6 + (link_count - 1) * 6, 6 + dof)``;
+the first six columns correspond to the root link's linear and angular velocity
+in world coordinates.
+
+.. code-block:: python
+
+   jacobian = articulation.compute_dense_jacobian()
+   rows, cols = articulation.get_jacobian_shape()
+   jacobian = jacobian[:rows, :cols]
+
+   qf = articulation.compute_passive_force(
+      gravity=True,
+      coriolis_and_centrifugal=True,
+   )
+   articulation.set_qf(qf)
+
+GPU articulation buffers
+------------------------------------------------------------
+
+With ``sapien.physx.PhysxGpuSystem``, initialize GPU simulation after all bodies
+are added, then use ``cuda_*`` buffers and ``gpu_apply_*`` / ``gpu_fetch_*``
+methods for batched control.
+
+.. code-block:: python
+
+   sapien.physx.enable_gpu()
+   physx_system = sapien.physx.PhysxGpuSystem()
+   scene = sapien.Scene([physx_system, sapien.render.RenderSystem("cuda")])
+   # build actors/articulations here
+   physx_system.gpu_init()
+
+For GPU Jacobians, call ``scene.physx_system.gpu_compute_articulation_jacobian()``
+to update all articulations, or pass a CUDA int32 array of articulation
+``gpu_index`` values to update a subset. The padded tensor
+``scene.physx_system.cuda_articulation_jacobian`` stores buffers for all
+articulations. Use ``articulation.gpu_index`` to select a row and
+``articulation.get_jacobian_shape()`` to slice the valid submatrix.
+
+GPU simulation also provides joint-only passive-force compensation buffers:
+``cuda_articulation_gravity_compensation`` and
+``cuda_articulation_coriolis_and_centrifugal_compensation``. Cache their
+``.torch()``/``.cupy()``/``.jax()`` views once after ``gpu_init()`` instead of
+recreating them in the control loop.
 
 .. code-block:: python
 
@@ -165,13 +183,15 @@ force/torque vectors and the fourth channel is padding. Rows are indexed by
    qf[:] = gravity + coriolis
    system.gpu_apply_articulation_qf()
 
-.. literalinclude:: ../../../../examples/basic/create_articulations.py
-   :dedent: 0
-   :lines: 266-268
+Direct GPU simulation can also apply world-space forces and torques to links via
+``cuda_articulation_link_force`` and ``cuda_articulation_link_torque``. These
+buffers have shape ``(articulation_count, max_links, 4)``; the first three
+channels are the vector and the fourth channel is padding. After writing them,
+call ``gpu_apply_articulation_link_force()`` and/or
+``gpu_apply_articulation_link_torque()``.
 
 Remove an articulation
 -------------------------------------------
 
-Similar to removing an actor, ``scene.remove_articulation(articulation)`` will
-remove it from the scene. Using the articulation or any of its links or joints
-after removal will result in undefined behavior (usually a crash).
+``scene.remove_articulation(articulation)`` removes all link entities from the
+scene. Do not use the articulation, its links, or its joints after removal.

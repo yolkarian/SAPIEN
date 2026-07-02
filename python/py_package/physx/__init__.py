@@ -7,6 +7,7 @@ import requests
 
 from ..pysapien.physx import *
 from ..pysapien.physx import _enable_gpu
+from .gpu_ik import GpuInverseKinematicsSolver, gpu_inverse_kinematics
 
 
 def enable_gpu():

@@ -19,6 +19,7 @@ namespace physx {
 class PhysxEngine;
 class PhysxMaterial;
 class PhysxConvexMesh;
+class PhysxHeightField;
 class PhysxTriangleMesh;
 class PhysxRigidBaseComponent;
 
@@ -178,6 +179,36 @@ public:
 
 private:
   std::shared_ptr<PhysxConvexMesh> mMesh;
+  AABB mLocalAABB;
+};
+
+class PhysxCollisionShapeHeightField : public PhysxCollisionShape {
+public:
+  PhysxCollisionShapeHeightField(HeightFieldSamples const &samples, float rowScale,
+                                 float columnScale, float heightScale,
+                                 std::shared_ptr<PhysxMaterial> material = nullptr);
+
+  // internal use only
+  PhysxCollisionShapeHeightField(std::shared_ptr<PhysxHeightField> heightField,
+                                 float rowScale, float columnScale, float heightScale,
+                                 std::shared_ptr<PhysxMaterial> material = nullptr);
+
+  float getRowScale() const { return mRowScale; }
+  float getColumnScale() const { return mColumnScale; }
+  float getHeightScale() const { return mHeightScale; }
+  HeightFieldSamples getSamples() const;
+
+  std::shared_ptr<PhysxHeightField> getHeightField() const { return mHeightField; }
+  AABB getLocalAABB() const override;
+  AABB computeGlobalAABBTight() const override;
+
+  std::shared_ptr<PhysxCollisionShape> clone() const override;
+
+private:
+  std::shared_ptr<PhysxHeightField> mHeightField;
+  float mRowScale;
+  float mColumnScale;
+  float mHeightScale;
   AABB mLocalAABB;
 };
 

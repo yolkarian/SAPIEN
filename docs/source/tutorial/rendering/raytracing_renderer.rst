@@ -1,33 +1,28 @@
 .. _raytracing_renderer:
 
-
-Ray Tracing Renderer [New!]
+Ray Tracing Renderer
 ==========================
 
 .. highlight:: python
 
-In this tutorial, you will learn the following:
+SAPIEN's render module supports both rasterization and ray tracing through shader
+packs. There is no renderer object to pass into the scene in current SAPIEN;
+configure global render options through ``sapien.render`` before creating
+cameras or viewers.
 
-* Use ray tracing in ``SapienRenderer``
+In this tutorial, you will learn how to:
 
-The full script can be downloaded from :download:`rt.py <../../../../examples/rendering/rt.py>`, :download:`rt_mat.py <../../../../examples/rendering/rt_mat.py>`.
+* switch cameras and viewers to the ray-tracing shader pack;
+* configure samples per pixel, path depth, and denoising;
+* use material parameters that are most visible in ray tracing.
 
 Ray tracing vs. rasterization
 ------------------------------------
 
-In the previous tutorials, we have learned how to set up a basic scene with
-SAPIEN and acquire rendering results under the default settings using
-`SapienRenderer`. By default, `SapienRenderer` uses a high-efficiency
-rasterization-based rendering pipeline, making it suitable for data-intensive
-tasks such as reinforcement learning.
-
-However, though fast, the rasterization-based renderer is not
-physically-grounded, and cannot faithfully model many real-world effects,
-*e.g.*, indirect lighting, realistic shadows, reflections and refractions,
-making the results overly flat and lack realism. On the other end, ray tracing
-renderer simulates how light rays interact with objects in a physically correct
-manner, and produces images that can be indistinguishable from those captured by
-a camera.
+The default ``"default"`` shader pack is rasterization-based and is usually the
+fastest choice for RL and data collection. The ``"rt"`` shader pack traces rays
+and can model effects such as indirect lighting, reflection, refraction, and
+soft shadows, at a higher cost.
 
 .. figure:: assets/rst_vs_rt.png
    :width: 540px
@@ -35,102 +30,112 @@ a camera.
 
    From *A Shader-Based Ray Tracing Engine*, Park et al.
 
-Ray tracing with SAPIEN
+Enable ray tracing
 ------------------------------------
 
-In SAPIEN 2.2, the default renderer ``SapienRenderer`` (formerly known as
-``VulkanRenderer``) supports both rasterization and ray tracing, and different
-cameras can use differet rendering pipelines. Choosing a pipeline is done
-through specifying a `shader pack`, which is a directory containing a collection
-of `glsl` files.
+Set the camera and viewer shader directories before creating cameras or the
+viewer.
 
-To use the ray-tracing pipeline, simply add the following lines before creating a
-camera or a viewer.
+.. code-block:: python
 
-.. literalinclude:: ../../../../examples/rendering/rt.py
-   :dedent: 0
-   :lines: 17-18
+   import sapien
 
-That's it! You can now rerun the script with raytracing renderer. The result would look like:
+   sapien.render.set_camera_shader_dir("rt")
+   sapien.render.set_viewer_shader_dir("rt")
+   sapien.render.set_ray_tracing_samples_per_pixel(16)
+   sapien.render.set_ray_tracing_path_depth(8)
+   sapien.render.set_ray_tracing_denoiser("oidn")  # "none", "oidn", or "optix"
+
+   scene = sapien.Scene()
+   camera = scene.add_camera("camera", 640, 480, 1.0, 0.01, 100.0)
+
+To return to rasterization later in the same process, reset the shader dirs:
+
+.. code-block:: python
+
+   sapien.render.set_camera_shader_dir("default")
+   sapien.render.set_viewer_shader_dir("default")
+
+Sampling and denoising
+------------------------------------
+
+Ray-traced images are noisy when the sample count is low. Increase samples per
+pixel for quality, and use a denoiser when available.
+
+.. code-block:: python
+
+   sapien.render.set_ray_tracing_samples_per_pixel(64)
+   sapien.render.set_ray_tracing_path_depth(12)
+   sapien.render.set_ray_tracing_denoiser("oidn")
+
+``oidn`` uses the packaged Open Image Denoise integration. ``optix`` requires a
+compatible NVIDIA RTX driver stack. If either denoiser is unavailable on your
+machine, use ``"none"``.
 
 .. figure:: assets/rt_color.png
    :width: 540px
    :align: center
 
-
-You may find that the result looks more realistic with the ray tracing shader.
-However the result contains noise due to under-sampling. To reduce the noise,
-one way is to increase the sample-per-pixel for the renderer. To achieve this,
-simply change the ``rt_samples_per_pixel`` in ``render_config``.
-
-.. literalinclude:: ../../../../examples/rendering/rt.py
-   :dedent: 0
-   :lines: 19
-
-Increasing the spp will affect the rendering speed directly. A cheaper way to reduce the noise is using a denoiser. ``SapienRenderer`` supports the OptiX denoiser on NVIDIA RTX GPUs.
-
-.. literalinclude:: ../../../../examples/rendering/rt.py
-   :dedent: 0
-   :lines: 20
-
-.. note::
-   You are required to have an NVIDIA RTX GPU with driver version >= 522 installed to use the denoiser.
-
-   While you may get the denoiser to work on drivers of lower versions, it is not officially supported.
-
-Reflection and refraction
+Materials for ray tracing
 ------------------------------------
 
-Ray tracing allows SAPIEN to render realistic reflection and refractions.
+Render materials live in ``sapien.render``. The parameters ``base_color``,
+``roughness``, ``metallic``, ``transmission``, ``ior``, and
+``transmission_roughness`` affect ray-traced reflection/refraction.
 
-We will create a scene in SAPIEN and render with ray tracing turned on and off.
-First, let's setup the environment:
+.. code-block:: python
 
-.. literalinclude:: ../../../../examples/rendering/rt_mat.py
-   :dedent: 0
-   :lines: 13-53
+   glass = sapien.render.RenderMaterial(
+      base_color=[0.8, 0.9, 1.0, 0.4],
+      roughness=0.02,
+      metallic=0.0,
+      transmission=0.9,
+      ior=1.45,
+   )
 
-We add a flag ``ray_tracing`` to allow switching between rasterization and ray
-tracing. Next, let's build the scene. First, we create a rough bluish sphere:
+   metal = sapien.render.RenderMaterial(
+      base_color=[0.9, 0.75, 0.5, 1.0],
+      roughness=0.15,
+      metallic=1.0,
+   )
 
-.. literalinclude:: ../../../../examples/rendering/rt_mat.py
-   :dedent: 0
-   :lines: 55-63
+   builder = scene.create_actor_builder()
+   builder.add_sphere_collision(radius=0.3)
+   builder.add_sphere_visual(radius=0.3, material=glass)
+   sphere = builder.build(name="glass_sphere")
 
-Next, we create a rough transparent sphere:
+   builder = scene.create_actor_builder()
+   builder.add_box_collision(half_size=[0.2, 0.2, 0.2])
+   builder.add_box_visual(half_size=[0.2, 0.2, 0.2], material=metal)
+   box = builder.build(name="metal_box")
 
-.. literalinclude:: ../../../../examples/rendering/rt_mat.py
-   :dedent: 0
-   :lines: 65-75
+Lighting and environment maps
+------------------------------------
 
-Generally, setting a large `transmission` value will lead to a transparent
-material. Similarly, we can add a capsule and a box with complex materials:
+Ray tracing benefits from realistic lighting. Use area lights for soft shadows
+and environment maps for image-based lighting.
 
-.. literalinclude:: ../../../../examples/rendering/rt_mat.py
-   :dedent: 0
-   :lines: 77-95
+.. code-block:: python
 
-Finally, let's load an external mesh and assign a highly metallic material to that object:
+   scene.set_ambient_light([0.02, 0.02, 0.02])
+   scene.add_area_light_for_ray_tracing(
+      pose=sapien.Pose([0, 0, 3]),
+      color=[5, 5, 5],
+      half_width=1.0,
+      half_height=1.0,
+   )
+   # scene.set_environment_map("path/to/cubemap.ktx")
 
-.. literalinclude:: ../../../../examples/rendering/rt_mat.py
-   :dedent: 0
-   :lines: 97-103
+Render from the ray-tracing camera in the same way as the rasterized camera:
 
-After building the scene, we can get rendering results from the camera:
+.. code-block:: python
 
-.. literalinclude:: ../../../../examples/rendering/rt_mat.py
-   :dedent: 0
-   :lines: 108-115
-
-.. figure:: assets/mat_rast.png
-    :width: 720px
-    :align: center
-
-    Result with default rasterizer
+   scene.update_render()
+   camera.take_picture()
+   color = camera.get_picture("Color")
 
 .. figure:: assets/mat_rt.png
-    :width: 720px
-    :align: center
+   :width: 720px
+   :align: center
 
-    Result with ray tracer
-
+   Example result with the ray-tracing shader pack

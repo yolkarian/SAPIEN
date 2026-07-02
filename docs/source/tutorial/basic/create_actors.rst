@@ -1,85 +1,153 @@
 .. _create_actors:
 
-Create Actors
+Create Rigid Bodies
 ==================
 
 .. highlight:: python
 
-SAPIEN simulates rigid body dynamics.
-In SAPIEN, **actor** is an alias of rigid body.
+SAPIEN's high-level actor API builds rigid-body ``sapien.Entity`` objects. An
+entity can contain a PhysX rigid component for simulation and a render body
+component for visualization.
 
-In this tutorial, you will learn the following:
+In this tutorial, you will learn how to:
 
-* Create ``Actor`` using primitives (box, sphere, capsule)
-* Create ``Actor`` using mesh files
-* Use ``Pose`` to set the pose of an actor
+* create rigid bodies with primitive collision and visual shapes;
+* create rigid bodies from mesh files;
+* set body and shape poses with ``sapien.Pose``;
+* access the underlying PhysX component.
 
 .. figure:: assets/create_actors.png
-    :width: 640px
-    :align: center
-    :figclass: align-center
+   :width: 640px
+   :align: center
+   :figclass: align-center
 
-The full script can be downloaded here :download:`create_actors.py <../../../../examples/basic/create_actors.py>`
-
-Create an actor by a single primitive
+Create a body from one primitive
 -------------------------------------------
 
-The primitives supported by SAPIEN include box, sphere and capsule.
-Here we show an example about how to create a box.
-Examples to create a sphere and a capsule can be found in the code provided.
+Use ``scene.create_actor_builder()`` to create an ``ActorBuilder``. Shape poses
+are relative to the body frame, while ``entity.set_pose(...)`` sets the body pose
+in the world frame.
 
-.. literalinclude:: ../../../../examples/basic/create_actors.py
-   :dedent: 0
-   :lines: 19-46
+.. code-block:: python
 
-``Actor`` (or rigid body) is created through ``ActorBuilder`` in SAPIEN.
-An actor consists of both collision shapes (used for physical simulation) and visual shapes (used for rendering).
-You can call ``add_box_collision`` and ``add_box_visual`` to add collision and visual shapes of an box respectively.
+   import sapien
 
-.. note::
-   Collision shapes do not necessarily correspond to visual shapes. 
-   For example, you might have a simple collision shape for fast simulation, but a complicated visual shape for realistic rendering.
+   scene = sapien.Scene()
 
-Then, you might create a box as follows:
+   builder = scene.create_actor_builder()
+   builder.add_box_collision(half_size=[0.5, 0.5, 0.5])
+   builder.add_box_visual(half_size=[0.5, 0.5, 0.5], material=[1.0, 0.0, 0.0])
+   box = builder.build(name="box")
+   box.set_pose(sapien.Pose(p=[0, 0, 0.5]))
 
-.. literalinclude:: ../../../../examples/basic/create_actors.py
-   :dedent: 0
-   :lines: 127-133
+``Pose`` stores a position ``p`` and a quaternion ``q`` in ``wxyz`` order. It can
+also be constructed from a 4x4 transformation matrix.
 
-The pose of the box in the world frame can be specified by ``Pose``.
-``Pose`` describes a 6D pose, consisting of a 3-dim position vector ``p`` and a 4-dim quaternion ``q`` (to represent the rotation, in the wxyz convention).
-
-Create an actor by multiple primitives
+Create a body from multiple primitives
 -------------------------------------------
 
-Next, we show an example to create an actor (table) by multiple boxes (a tabletop with four legs).
+A single rigid body may have multiple collision and render shapes. The following
+creates a table from one top and four legs.
 
-.. literalinclude:: ../../../../examples/basic/create_actors.py
-   :dedent: 0
-   :lines: 82-112
+.. code-block:: python
 
-We can call ``add_box_collision(pose=Pose(...), ...)`` to set the pose of a collision shape in **the actor frame**.
-Similarly, we can call ``add_box_visual(pose=Pose(...), ...)`` for a visual shape.
-Note that ``table.set_pose(pose)`` sets the pose of the actor in **the world frame**.
+   builder = scene.create_actor_builder()
+   builder.add_box_collision(half_size=[0.6, 0.4, 0.05])
+   builder.add_box_visual(half_size=[0.6, 0.4, 0.05], material=[0.7, 0.5, 0.3])
 
-Create an actor by a mesh file
+   for x in [-0.45, 0.45]:
+      for y in [-0.3, 0.3]:
+         leg_pose = sapien.Pose([x, y, -0.35])
+         builder.add_box_collision(pose=leg_pose, half_size=[0.05, 0.05, 0.35])
+         builder.add_box_visual(
+            pose=leg_pose,
+            half_size=[0.05, 0.05, 0.35],
+            material=[0.7, 0.5, 0.3],
+         )
+
+   table = builder.build_static(name="table")
+   table.set_pose(sapien.Pose([0, 0, 0.75]))
+
+Create static and kinematic bodies
 -------------------------------------------
 
-Apart from primitives, actors can also be created from mesh files.
+``builder.build()`` creates a dynamic rigid body by default. Use
+``build_static`` for fixed geometry and ``build_kinematic`` for bodies whose
+motion is controlled by user-provided poses or kinematic targets.
 
-.. literalinclude:: ../../../../examples/basic/create_actors.py
-   :dedent: 0
-   :lines: 157-161
+.. code-block:: python
 
-.. note::
-   Any collision shape in SAPIEN is required to be convex.
-   To this end, a mesh will be "cooked" into a convex mesh before being used in the simulation.
-   The converted convex mesh is cached at the same directory of the original mesh file.
-   Thus, if the mesh file is changed, please remove the cache.
+   static_builder = scene.create_actor_builder()
+   static_builder.add_box_collision(half_size=[1, 1, 0.05])
+   static_body = static_builder.build_static(name="static_body")
 
-Remove an actor
+   mover_builder = scene.create_actor_builder()
+   mover_builder.add_sphere_collision(radius=0.2)
+   mover_builder.add_sphere_visual(radius=0.2, material=[0.2, 0.4, 1.0])
+   mover = mover_builder.build_kinematic(name="kinematic_sphere")
+
+Create a height field
 -------------------------------------------
 
-After an actor is built with ``actor = builder.build()``, You can call
-``scene.remove_actor(actor)`` to remove it. Using a removed actor will result in
-undefined behavior (usually a crash).
+Use ``scene.add_heightfield`` for large static z-up terrain. Rows map to +x,
+columns map to +y, and int16 sample values map to +z after ``height_scale`` is
+applied. When ``render=True``, SAPIEN also creates a triangle-mesh render shape
+for visualization. In ``PhysxGpuSystem`` / Direct GPU API workflows, add the
+height field before ``gpu_init()``.
+
+.. code-block:: python
+
+   import numpy as np
+
+   height_field = np.zeros((128, 128), dtype=np.int16)
+   height_field[48:80, 48:80] = 20
+   terrain = scene.add_heightfield(
+      height_field,
+      row_scale=0.1,
+      column_scale=0.1,
+      height_scale=0.005,
+      render=True,
+   )
+
+Create a body from mesh files
+-------------------------------------------
+
+Visual meshes can be loaded with ``add_visual_from_file``. For collisions, choose
+a representation that matches the object and body type.
+
+.. code-block:: python
+
+   builder = scene.create_actor_builder()
+   builder.add_visual_from_file("model.glb", scale=[1, 1, 1])
+   builder.add_convex_collision_from_file("collision.obj", scale=[1, 1, 1])
+   mesh_body = builder.build(name="mesh_body")
+
+Available mesh collision helpers include:
+
+* ``add_convex_collision_from_file``: cook one convex mesh;
+* ``add_multiple_convex_collisions_from_file``: load multiple convex parts, or
+  request ``decomposition="coacd"``;
+* ``add_nonconvex_collision_from_file``: load a triangle mesh collision. For
+  dynamic bodies and articulation links, SAPIEN builds an SDF-backed triangle
+  mesh and accepts an optional ``sapien.physx.PhysxSDFConfig``.
+
+Collision and render components
+-------------------------------------------
+
+The builder returns an entity. Access PhysX or render details through its
+components.
+
+.. code-block:: python
+
+   body = box.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+   print(body.mass, body.linear_velocity)
+
+   shapes = body.get_collision_shapes()
+   shapes[0].set_collision_groups([1, 1, 0, 0])
+
+Remove a body
+-------------------------------------------
+
+After a body is built, remove it with ``scene.remove_actor(entity)`` or
+``scene.remove_entity(entity)``. Do not use the removed entity or its components
+after removal.

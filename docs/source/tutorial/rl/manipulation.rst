@@ -6,47 +6,116 @@ Basic Manipulation
 .. highlight:: python
 
 .. note::
-   Please first complete :ref:`basic_index` and :ref:`gym` before continuing this tutorial.
 
-In this tutorial, you will learn the following:
+   Please complete :ref:`basic_index`, :ref:`basic_robot`, and :ref:`gym` before
+   building manipulation environments.
 
-* Implement a basic manipulation environment (block lifting)
+A manipulation environment is usually a SAPIEN scene containing a robot
+articulation, objects, task-specific observations, rewards, and reset logic.
+The old repository-level ``examples/rl/lift.py`` file is not shipped in the
+current tree, so this page shows the current API patterns directly.
 
-.. figure:: assets/lift.gif
-    :width: 640px
-    :align: center
-    :figclass: align-center
-
-    The panda robot arm is taking random actions.
-
-The full code of the environment can be downloaded here :download:`lift.py <../../../../examples/rl/lift.py>`
-
-Setup 
+Scene setup
 --------------------------------------
 
-Based on ``SapienEnv`` implemented in the previous example (:ref:`gym`), we can create ``LiftEnv``.
-The simulation world consists of the ground, a table top, a cube to lift and a panda robot arm.
+.. code-block:: python
 
-.. literalinclude:: ../../../../examples/rl/lift.py
-   :dedent: 0
-   :lines: 12-66
+   import numpy as np
+   import sapien
 
-We use internal velocity drives to control all joints (the first 7 joints) of the arm, except the gripper fingers.
-The fingers will be directly controlled by torques.
+   scene = sapien.Scene()
+   scene.set_timestep(1 / 100)
+   scene.add_ground(0)
 
-Task Definition
+   # Table
+   builder = scene.create_actor_builder()
+   builder.add_box_collision(half_size=[0.5, 0.5, 0.05])
+   builder.add_box_visual(half_size=[0.5, 0.5, 0.05], material=[0.6, 0.4, 0.2])
+   table = builder.build_static(name="table")
+   table.set_pose(sapien.Pose([0.5, 0, 0.5]))
+
+   # Cube to lift
+   builder = scene.create_actor_builder()
+   builder.add_box_collision(half_size=[0.03, 0.03, 0.03])
+   builder.add_box_visual(half_size=[0.03, 0.03, 0.03], material=[0.1, 0.5, 1.0])
+   cube = builder.build(name="cube")
+   cube.set_pose(sapien.Pose([0.5, 0, 0.58]))
+   cube_body = cube.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+
+   # Robot
+   loader = scene.create_urdf_loader()
+   loader.fix_root_link = True
+   robot = loader.load("/path/to/panda.urdf", package_dir="/path/to/package")
+
+Control
 --------------------------------------
 
-Next, let's define the task of block lifting.
-**The goal is to lift the cube by at least 2cm above the table top**.
+For position or velocity control, configure PhysX drives on the robot's active
+joints. Set targets per joint in the current API.
 
-.. literalinclude:: ../../../../examples/rl/lift.py
-   :dedent: 0
-   :lines: 71-118
+.. code-block:: python
 
-The action is defined as the concatenation of target joint velocities and torques on gripper fingers.
-The observation is the concatenation of joint positions, joint velocities, the pose of cube and end-effector (the 8-th link), as well as the relative displacement between the cube and end-effector.
-The total reward is defined as the sum of reaching reward and lifting reward.
+   arm_joints = robot.active_joints[:7]
+   finger_joints = robot.active_joints[7:]
 
-.. note::
-   The definitions of action, observation, reward are usually heuristically designed.
+   for joint in arm_joints:
+      joint.set_drive_property(stiffness=0.0, damping=200.0, force_limit=100.0)
+
+   def apply_action(action):
+      target_vel = action[: len(arm_joints)]
+      finger_force = action[len(arm_joints):]
+
+      for joint, velocity in zip(arm_joints, target_vel):
+         joint.set_drive_velocity_target(float(velocity))
+
+      qf = np.zeros(robot.dof, dtype=np.float32)
+      qf[-len(finger_joints):] = finger_force
+      robot.set_qf(qf)
+
+Task definition
+--------------------------------------
+
+A simple lift task can use observations from robot state, object pose, object
+velocity, and task-relative vectors.
+
+.. code-block:: python
+
+   def get_obs():
+      ee_link = robot.links[-1]
+      ee_pose = ee_link.entity.pose
+      return np.concatenate([
+         robot.qpos,
+         robot.qvel,
+         cube.pose.p,
+         cube.pose.q,
+         cube_body.linear_velocity,
+         ee_pose.p,
+         cube.pose.p - ee_pose.p,
+      ])
+
+   def compute_reward():
+      cube_height = cube.pose.p[2]
+      lift_reward = max(cube_height - 0.58, 0.0)
+      return float(lift_reward)
+
+Reset
+--------------------------------------
+
+Store initial state after building the world. During reset, restore SAPIEN poses
+and PhysX state, then randomize task variables as needed.
+
+.. code-block:: python
+
+   initial_pose_state = scene.pack_poses()
+   initial_physx_state = scene.physx_system.pack()
+
+   def reset():
+      scene.unpack_poses(initial_pose_state)
+      scene.physx_system.unpack(initial_physx_state)
+      cube.set_pose(sapien.Pose([0.5, np.random.uniform(-0.05, 0.05), 0.58]))
+      return get_obs()
+
+For GPU PhysX manipulation, use the GPU reset and step workflows: write state to
+``cuda_*`` buffers, call only the matching ``gpu_apply_*`` methods, fetch the
+state required by observations, and avoid CPU pose synchronization except for
+viewer/debug rendering.

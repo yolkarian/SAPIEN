@@ -22,6 +22,28 @@ class TestScene(unittest.TestCase):
         scene.add_system(system)
         self.assertEqual(scene.get_system("physx"), system)
 
+    def test_add_heightfield(self):
+        scene = sapien.Scene()
+        height_field = np.array([[0, 1, 2], [3, 4, 5]], dtype=np.int16)
+        terrain = scene.add_heightfield(
+            height_field,
+            row_scale=0.1,
+            column_scale=0.2,
+            height_scale=0.01,
+            render=True,
+            name="terrain",
+        )
+        self.assertEqual(terrain.name, "terrain")
+        body = terrain.find_component_by_type(sapien.physx.PhysxRigidStaticComponent)
+        self.assertIsNotNone(body)
+        self.assertEqual(len(body.collision_shapes), 1)
+        self.assertIsInstance(
+            body.collision_shapes[0], sapien.physx.PhysxCollisionShapeHeightField
+        )
+        render_body = terrain.find_component_by_type(sapien.render.RenderBodyComponent)
+        self.assertIsNotNone(render_body)
+        self.assertEqual(len(render_body.render_shapes), 1)
+
     def test_clear(self):
         scene = sapien.Scene()
         scene.add_entity(sapien.Entity())

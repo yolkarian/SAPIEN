@@ -3,10 +3,77 @@ from __future__ import annotations
 from typing import Optional, TypeVar, Union
 from warnings import warn
 
+import numpy as np
+
 from .. import pysapien as sapien
 from ..pysapien import Scene as _Scene
 from ..pysapien.physx import PhysxSceneConfig as SceneConfig
 from ..pysapien.render import RenderCameraComponent, RenderCubemap
+
+
+def _validate_height_field(height_field) -> np.ndarray:
+    samples = np.asarray(height_field)
+    if samples.ndim != 2:
+        raise ValueError("height_field must be a 2D array")
+    if samples.shape[0] < 2 or samples.shape[1] < 2:
+        raise ValueError("height_field must have at least two rows and two columns")
+    if samples.min() < np.iinfo(np.int16).min or samples.max() > np.iinfo(np.int16).max:
+        raise ValueError("height_field values must fit in int16")
+    return np.ascontiguousarray(samples, dtype=np.int16)
+
+
+def _height_field_render_material(material):
+    if material is None:
+        return sapien.render.RenderMaterial()
+    if isinstance(material, sapien.render.RenderMaterial):
+        return material
+    return sapien.render.RenderMaterial(base_color=(*material[:3], 1))
+
+
+def _height_field_render_mesh(
+    height_field: np.ndarray, row_scale: float, column_scale: float, height_scale: float
+):
+    rows, columns = height_field.shape
+    row_grid, column_grid = np.meshgrid(
+        np.arange(rows, dtype=np.float32),
+        np.arange(columns, dtype=np.float32),
+        indexing="ij",
+    )
+
+    vertices = np.empty((rows * columns, 3), dtype=np.float32)
+    vertices[:, 0] = (row_grid * row_scale).reshape(-1)
+    vertices[:, 1] = (column_grid * column_scale).reshape(-1)
+    vertices[:, 2] = (height_field.astype(np.float32) * height_scale).reshape(-1)
+
+    base = (
+        np.arange(rows - 1, dtype=np.uint32)[:, None] * columns
+        + np.arange(columns - 1, dtype=np.uint32)[None, :]
+    ).reshape(-1)
+    triangles = np.empty((2 * base.size, 3), dtype=np.uint32)
+    triangles[0::2] = np.stack([base, base + columns, base + 1], axis=1)
+    triangles[1::2] = np.stack([base + 1, base + columns, base + columns + 1], axis=1)
+
+    face_vertices = vertices[triangles]
+    face_normals = np.cross(
+        face_vertices[:, 1] - face_vertices[:, 0],
+        face_vertices[:, 2] - face_vertices[:, 0],
+    )
+    face_norms = np.linalg.norm(face_normals, axis=1, keepdims=True)
+    face_normals = np.divide(
+        face_normals,
+        np.maximum(face_norms, 1e-12),
+        out=np.zeros_like(face_normals),
+    )
+    normals = np.zeros_like(vertices)
+    np.add.at(normals, triangles.reshape(-1), np.repeat(face_normals, 3, axis=0))
+    normal_norms = np.linalg.norm(normals, axis=1, keepdims=True)
+    normals = np.divide(normals, np.maximum(normal_norms, 1e-12), out=normals)
+    normals[normal_norms.reshape(-1) <= 1e-12] = [0, 0, 1]
+
+    uvs = np.empty((rows * columns, 2), dtype=np.float32)
+    uvs[:, 0] = (row_grid / max(rows - 1, 1)).reshape(-1)
+    uvs[:, 1] = (column_grid / max(columns - 1, 1)).reshape(-1)
+    return vertices, triangles, normals.astype(np.float32), uvs
 
 
 class Widget:
@@ -145,6 +212,85 @@ class Scene(_Scene):
         ground = builder.build()
         ground.name = "ground"
         return ground
+
+    def add_heightfield(
+        self,
+        height_field,
+        row_scale: float,
+        column_scale: float | None = None,
+        height_scale: float = 1.0,
+        pose=None,
+        render=True,
+        material=None,
+        render_material=None,
+        name="heightfield",
+    ):
+        """Add a static z-up PhysX height field with an optional render mesh.
+
+        ``height_field`` is a 2D int16-compatible array. Public scene coordinates
+        are z-up: rows map to +x, columns map to +y, and sample values map to +z
+        after applying ``height_scale``. For ``PhysxGpuSystem`` / Direct GPU API
+        workflows, add the height field before calling ``gpu_init()``.
+        """
+        height_field = _validate_height_field(height_field)
+        row_scale = float(row_scale)
+        column_scale = row_scale if column_scale is None else float(column_scale)
+        height_scale = float(height_scale)
+        if row_scale <= 0 or column_scale <= 0 or height_scale <= 0:
+            raise ValueError("height field scales must be positive")
+        if pose is None:
+            pose = sapien.Pose()
+        if material is None:
+            material = sapien.physx.get_default_material()
+
+        rows, columns = height_field.shape
+        # PhysX height fields use local x/z as the grid plane and local y as
+        # height. Rotate local +y to SAPIEN +z. A pure rotation maps local +z to
+        # -y, so reverse columns and offset by the terrain width to preserve the
+        # public +y column direction.
+        collision_height_field = np.ascontiguousarray(height_field[:, ::-1], dtype=np.int16)
+        collision_pose = sapien.Pose(
+            p=[0, (columns - 1) * column_scale, 0],
+            q=[0.7071068, 0.7071068, 0, 0],
+        )
+
+        entity = sapien.Entity()
+        entity.name = name
+        entity.set_pose(pose)
+
+        body = sapien.physx.PhysxRigidStaticComponent()
+        body.name = name
+        collision_shape = sapien.physx.PhysxCollisionShapeHeightField(
+            collision_height_field,
+            row_scale,
+            column_scale,
+            height_scale,
+            material,
+        )
+        collision_shape.local_pose = collision_pose
+        body.attach(collision_shape)
+        entity.add_component(body)
+
+        if render:
+            vertices, triangles, normals, uvs = _height_field_render_mesh(
+                height_field, row_scale, column_scale, height_scale
+            )
+            render_body = sapien.render.RenderBodyComponent()
+            render_body.name = name
+            render_shape = sapien.render.RenderShapeTriangleMesh(
+                vertices,
+                triangles,
+                normals,
+                uvs,
+                _height_field_render_material(render_material),
+            )
+            render_shape.local_pose = sapien.Pose()
+            render_shape.name = name
+            render_body.attach(render_shape)
+            entity.add_component(render_body)
+
+        self.add_entity(entity)
+        return entity
 
     def get_contacts(self):
         return self.physx_system.get_contacts()

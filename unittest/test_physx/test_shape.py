@@ -98,6 +98,19 @@ class TestShape(unittest.TestCase):
         self.assertTrue(np.allclose(shape.radius, 0.2))
         self.assertTrue(np.allclose(shape.half_length, 0.3))
 
+    def test_heightfield(self):
+        sapien.physx.set_shape_config(contact_offset=0.015, rest_offset=0.001)
+        mat = sapien.physx.PhysxMaterial(0.2, 0.1, 0.05)
+        height_field = np.array([[0, 1, 2], [3, 4, 5]], dtype=np.int16)
+        shape = sapien.physx.PhysxCollisionShapeHeightField(
+            height_field, row_scale=0.1, column_scale=0.2, height_scale=0.01, material=mat
+        )
+        self._test_common(shape, mat)
+        self.assertAlmostEqual(shape.row_scale, 0.1)
+        self.assertAlmostEqual(shape.column_scale, 0.2)
+        self.assertAlmostEqual(shape.height_scale, 0.01)
+        self.assertTrue(np.array_equal(shape.height_field, height_field))
+
     def test_convex(self):
         sapien.physx.set_shape_config(contact_offset=0.015, rest_offset=0.001)
         mat = sapien.physx.PhysxMaterial(0.2, 0.1, 0.05)

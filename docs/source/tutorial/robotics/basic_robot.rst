@@ -1,158 +1,168 @@
 .. _basic_robot:
 
-Getting Started with Robot
+Getting Started with Robots
 ===========================
 
 .. highlight:: python
 
-.. note::
-   Please first complete :ref:`basic_index` before continuing this tutorial.
-   The assets (robot) used in this tutorial can be found `here <https://github.com/haosulab/SAPIEN-Release/tree/master/examples/assets>`__.
+Robots are represented as PhysX articulations. Most robots are loaded from URDF
+files through ``scene.create_urdf_loader()``.
 
-In this tutorial, you will learn the following:
+In this tutorial, you will learn how to:
 
-* Load a robot (URDF)
-* Set joint positions
-* Compute dense Jacobians
-* Compensate passive forces
-* Control the robot by torques
-
-The full script can be downloaded here :download:`basic_robot.py <../../../../examples/robotics/basic_robot.py>`
-
-Set up the engine, renderer and scene
------------------------------------------
-
-First of all, let's set up the simulation environment as illustrated in :ref:`hello_world`.
-
-.. literalinclude:: ../../../../examples/robotics/basic_robot.py
-   :dedent: 0
-   :lines: 5-22
+* load a robot URDF;
+* set root and joint state;
+* compute Jacobians and passive-force compensation;
+* use GPU articulation buffers for batched simulation.
 
 Load a robot URDF
 -----------------------------------------
 
-Now, you can create a ``URDFLoader`` to load the URDF XML of Kinova Jaco2 arm.
-`URDF XML <http://wiki.ros.org/urdf/XML>`_ describes a robot.
-Usually, URDF files are provided by manufacturers.
-For example, the URDF XML of Kinova Jaco2 arm can be found `here <https://github.com/Kinovarobotics/kinova-ros>`__.
+.. code-block:: python
 
-.. literalinclude:: ../../../../examples/robotics/basic_robot.py
-   :dedent: 0
-   :lines: 25-28
+   import numpy as np
+   import sapien
 
-Note that there is a ``fix_root_link`` flag for the URDF loader.
-If it is true (by default), then the root link of the robot will be fixed.
-Otherwise, it is allowed to move freely.
+   scene = sapien.Scene()
+   scene.set_timestep(1 / 240)
+   scene.add_ground(0)
+   scene.set_ambient_light([0.4, 0.4, 0.4])
+   scene.add_directional_light([1, -1, -1], [0.5, 0.5, 0.5])
 
-SAPIEN also supports a custom ``<sdf>`` tag under mesh collisions to request
-per-collision SDF cooking parameters. For example,
+   loader = scene.create_urdf_loader()
+   loader.fix_root_link = True
+   robot = loader.load("/path/to/robot.urdf", package_dir="/path/to/package/root")
+   robot.name = "robot"
+
+``loader.fix_root_link`` is ``True`` by default. If it is ``False``, the root
+link is allowed to move. For URDFs that contain single rigid bodies or multiple
+root objects, use ``loader.load_multiple(...)``.
+
+The packaged command-line smoke example demonstrates URDF loading:
+
+.. code-block:: shell
+
+   python -m sapien.example.load_urdf /path/to/robot.urdf --package /path/to/package/root
+
+SAPIEN also supports a custom, non-standard ``<sdf>`` tag under mesh collisions
+to request per-collision SDF cooking parameters:
 
 .. code-block:: xml
 
    <collision>
       <geometry>
-         <mesh filename="../mesh/square_table_leg.obj" scale="1 1 1"/>
+         <mesh filename="../mesh/link.obj" scale="1 1 1"/>
       </geometry>
       <sdf resolution="512"/>
    </collision>
 
-This tag is SAPIEN-specific rather than standard URDF. When present on a mesh
-collision, the loader will route that collision through the non-convex mesh
-path automatically and apply the provided SDF config for that mesh only when
-the collision is built with an SDF-backed triangle mesh.
+When present on a mesh collision, the loader routes that collision through the
+non-convex mesh path and passes the parsed ``PhysxSDFConfig`` to the builder.
 
-The robot is loaded as ``Articulation``, which is a tree of links connected by joints.
-We can set the pose of its root link through ``set_root_pose(...)``.
-
-If you run the example with ``demo(fix_root_link=False, balance_passive_force=False)``, it is expected that you will observe the following "falling-down" robot arm.
-We will see how to keep the robot at a certain pose later.
-
-.. figure:: assets/robot_fall.gif
-    :width: 640px
-    :align: center
-    :figclass: align-center
-
-    The robot arm falls down.
-
-.. note::
-   When a robot is already loaded, changing the flag of the URDF loader will not take effect.
-
-Set joint positions
+Set robot state
 --------------------------------------
 
-.. literalinclude:: ../../../../examples/robotics/basic_robot.py
-   :dedent: 0
-   :lines: 31-34
+The articulation stores a root pose and generalized coordinates. Quaternion
+order is ``wxyz``.
 
-We can also set initial joint positions through ``set_qpos(qpos=...)``.
-The ``qpos`` should be a concatenation of the position of each joint.
-Its length is the degree of freedom, and its order is the same as that returned by ``robot.get_joints()``.
+.. code-block:: python
 
-.. note::
-   If the articulation is loaded from a URDF file, its joints are in preorder (DFS preorder traversal over the articulation tree).
-   If the articulation is built programmatically (refer to :ref:`create_articulations`), its joints are in the order when they are built.
+   robot.set_root_pose(sapien.Pose([0, 0, 0]))
+
+   qpos = np.zeros(robot.dof, dtype=np.float32)
+   qvel = np.zeros(robot.dof, dtype=np.float32)
+   robot.set_qpos(qpos)
+   robot.set_qvel(qvel)
+
+   print([joint.name for joint in robot.active_joints])
+   print(robot.qlimits)
+
+For URDF-loaded robots, joint order follows the loaded articulation order. Use
+joint names when possible instead of hard-coded indices.
 
 Compute dense Jacobians
 --------------------------------------
 
-For robotics applications, it is often useful to map generalized velocities to the
-spatial velocity of each link. SAPIEN provides ``compute_dense_jacobian()`` for CPU
-articulations to compute this world-space dense Jacobian directly from PhysX.
+``robot.compute_dense_jacobian()`` computes a world-space dense Jacobian for CPU
+articulations. The row order is ``[vx, vy, vz, wx, wy, wz]`` for each link. Use
+``robot.get_jacobian_shape()`` to slice the valid region.
 
-The row order is ``[vx, vy, vz, wx, wy, wz]`` for each link. The valid matrix size is
-available from ``robot.get_jacobian_shape()``. For a fixed-base robot, the shape is
-``((link_count - 1) * 6, dof)``. For a floating-base robot, the shape is
-``(6 + (link_count - 1) * 6, 6 + dof)`` and the first six columns correspond to the
-root link's linear and angular velocity in the world frame.
+.. code-block:: python
 
-For GPU simulation, the corresponding API is ``scene.physx_system.gpu_compute_articulation_jacobian()``.
-You can also pass a CUDA int32 array of articulation ``gpu_index`` values to update only a
-subset of robots. The result is written to ``scene.physx_system.cuda_articulation_jacobian`` as
-a padded tensor of shape ``(articulation_count, max_rows, max_cols)``. Use ``robot.gpu_index``
-to select a robot and ``robot.get_jacobian_shape()`` to extract the valid submatrix.
+   jacobian = robot.compute_dense_jacobian()
+   rows, cols = robot.get_jacobian_shape()
+   jacobian = jacobian[:rows, :cols]
 
-Direct GPU simulation can also apply world-space external forces and torques to individual robot
-links. Write ``physx_system.cuda_articulation_link_force`` and/or
-``physx_system.cuda_articulation_link_torque`` with shape ``(articulation_count, max_links, 4)``
-(the first three channels are the vector and the fourth is padding), then call
-``gpu_apply_articulation_link_force()`` and/or ``gpu_apply_articulation_link_torque()``.
+For a fixed-base robot, the shape is ``((link_count - 1) * 6, dof)``. For a
+floating-base robot, it is ``(6 + (link_count - 1) * 6, 6 + dof)``; the first
+six columns correspond to the root link's linear and angular velocity in world
+coordinates.
 
-Compensate passive forces (e.g. gravity)
+Compensate passive forces
 -----------------------------------------
 
-You may find that even if you run the example with ``fix_root_link=True``, the robot still can not maintain its initial joint positions.
-It is due to gravitational force and other possible passive forces, like Coriolis and Centrifugal force.
+Use ``compute_passive_force`` to compute generalized forces that compensate
+gravity and optionally Coriolis/centrifugal terms.
 
-.. figure:: assets/robot_fix.gif
-    :width: 640px
-    :align: center
-    :figclass: align-center
+.. code-block:: python
 
-    The root link (base) of the robot is fixed, but it still falls down due to passive forces.
+   for _ in range(240):
+      qf = robot.compute_passive_force(
+         gravity=True,
+         coriolis_and_centrifugal=True,
+      )
+      robot.set_qf(qf)
+      scene.step()
 
-For a real robot, gravity compensation is done by an internal controller hardware.
-So it is usually desirable to skip this troublesome calculation of how to compensate gravity.
-SAPIEN provides ``compute_passive_force`` to compute desired forces or torques on joints to compensate passive forces.
-In this example, we only consider gravity as well as coriolis and centrifugal force.
+``qf`` has length ``robot.dof`` and follows the same order as
+``robot.active_joints``.
 
-.. literalinclude:: ../../../../examples/robotics/basic_robot.py
-   :dedent: 0
-   :lines: 36-46
+Drive joints
+-----------------------------------------
 
-We recompute the compensative torque every step and control the robot by ``set_qf(qf)``.
-``qf`` should be a concatenation of the force or torque to apply on each joint.
-Its length is the degree of freedom, and its order is the same as that returned by ``robot.get_joints()``.
-Note that when ``qf`` is set, it will be applied every simulation step.
-You can call ``robot.get_qf()`` to acquire its current value.
+PhysX drives live on active joints. The current API sets targets per joint.
 
-In Direct GPU simulation, avoid calling ``robot.compute_passive_force()`` in the step loop.
-Instead, call ``physx_system.gpu_compute_articulation_gravity_compensation()`` and
-``physx_system.gpu_compute_articulation_coriolis_and_centrifugal_compensation()``. Their output
-CUDA arrays are padded to ``(articulation_count, max_dofs)`` and match
-``cuda_articulation_qf``. Both methods accept a CUDA int32 array of articulation
-``gpu_index`` values to update only a subset. After applying any GPU qpos/qvel updates, call
-``gpu_update_articulation_kinematics()`` before computing compensation. In a control loop,
-cache the ``.torch()`` views once after ``gpu_init()`` instead of recreating them every step.
+.. code-block:: python
+
+   for joint in robot.active_joints:
+      joint.set_drive_property(stiffness=1000, damping=100, force_limit=1000)
+      joint.set_drive_target(0.0)
+      joint.set_drive_velocity_target(0.0)
+
+There is no articulation-level ``robot.set_drive_target`` helper in the current
+API.
+
+GPU articulation workflow
+-----------------------------------------
+
+For batched robotics, create a shared ``PhysxGpuSystem`` after enabling GPU
+PhysX. Configure global PhysX before system creation, then initialize GPU after
+all bodies are added.
+
+.. code-block:: python
+
+   sapien.physx.enable_gpu()
+
+   config = sapien.physx.PhysxSceneConfig()
+   config.gpu_broadphase_env_id_bits = 8
+   sapien.physx.set_scene_config(config)
+
+   device = sapien.Device("cuda")
+   physx_system = sapien.physx.PhysxGpuSystem(device)
+   render_system = sapien.render.RenderSystem(device)
+   scene = sapien.Scene([physx_system, render_system])
+   scene.set_environment_id(0)
+
+   # load/build robots here, then:
+   physx_system.gpu_init()
+
+GPU Jacobians are computed with
+``physx_system.gpu_compute_articulation_jacobian()`` and stored in the padded
+``physx_system.cuda_articulation_jacobian`` tensor. Use ``robot.gpu_index`` and
+``robot.get_jacobian_shape()`` to select the valid submatrix.
+
+For passive-force compensation in GPU simulation, avoid calling
+``robot.compute_passive_force()`` inside the step loop. Use the GPU buffers:
 
 .. code-block:: python
 
@@ -165,18 +175,6 @@ cache the ``.torch()`` views once after ``gpu_init()`` instead of recreating the
    qf[:] = gravity + coriolis
    physx_system.gpu_apply_articulation_qf()
 
-Now, if you run the example with ``demo(fix_root_link=True, balance_passive_force=True)``, it is observed that the robot can stay at the target pose for a short period.
-However, it will then deviate from this pose gradually due to numerical error.
-
-.. figure:: assets/robot_fix_balance.gif
-    :width: 640px
-    :align: center
-    :figclass: align-center
-
-    The robot arm is able to stay at the target pose, but might deviate gradually due to numerical error.
-    The animation is accelerated.
-
-.. note::
-   To avoid deviating from the target pose gradually,
-   either we specify the damping (resistence proportional to velocity) of each joint in the URDF XML, or a controller can be used to compute desired extra forces or torques to keep the robot around the target pose.
-   :ref:`pid` will elaborate how to control the robot with a controller.
+Cache CUDA views and GPU indices once after ``gpu_init()``. If qpos/qvel were
+modified through GPU buffers, apply them and call
+``gpu_update_articulation_kinematics()`` before computing compensation.

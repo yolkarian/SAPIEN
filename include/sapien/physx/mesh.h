@@ -3,6 +3,7 @@
 #include "sapien/physx/physx_default.h"
 #include <Eigen/Eigen>
 #include <PxPhysicsAPI.h>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -14,6 +15,7 @@ class PhysxEngine;
 
 using Vertices = Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor>;
 using Triangles = Eigen::Matrix<uint32_t, Eigen::Dynamic, 3, Eigen::RowMajor>;
+using HeightFieldSamples = Eigen::Matrix<int16_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
 class PhysxConvexMesh {
 public:
@@ -63,6 +65,29 @@ private:
   AABB mAABB;
 
   PhysxConvexMesh() {}
+};
+
+class PhysxHeightField {
+public:
+  PhysxHeightField(HeightFieldSamples const &samples);
+
+  ::physx::PxHeightField *getPxHeightField() const { return mHeightField; }
+  HeightFieldSamples getSamples() const { return mSamples; }
+  uint32_t getRows() const { return mSamples.rows(); }
+  uint32_t getColumns() const { return mSamples.cols(); }
+  int16_t getMinHeight() const { return mSamples.minCoeff(); }
+  int16_t getMaxHeight() const { return mSamples.maxCoeff(); }
+
+  ~PhysxHeightField() {
+    if (mHeightField) {
+      mHeightField->release();
+    }
+  }
+
+private:
+  std::shared_ptr<PhysxEngine> mEngine;
+  ::physx::PxHeightField *mHeightField{};
+  HeightFieldSamples mSamples;
 };
 
 class PhysxTriangleMesh {

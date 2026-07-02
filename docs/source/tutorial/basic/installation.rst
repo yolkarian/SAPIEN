@@ -5,102 +5,105 @@ Installation
 
 .. highlight:: python
 
-SAPIEN is distributed via `PyPI <https://pypi.org/project/sapien/>`_.
+SAPIEN is distributed as the ``sapien`` Python package on
+`PyPI <https://pypi.org/project/sapien/>`_.
 
-Currently supported Python versions:
+The checked-in build automation currently builds Linux wheels for Python 3.9,
+3.10, 3.11, 3.12, and 3.13, and Windows wheels for Python 3.9, 3.10, 3.11,
+and 3.12. Prefer these versions when installing released or nightly wheels.
 
-* Python 3.7, 3.8, 3.9, 3.10, 3.11
+Supported platforms and hardware depend on which SAPIEN features you use:
 
-Supported operating systems:
+* Physics-only CPU simulation: Linux or Windows wheel matching your Python ABI.
+* Rasterized rendering: a Vulkan-capable NVIDIA, AMD, or Intel GPU.
+* PhysX GPU simulation: NVIDIA GPU with a driver/runtime stack compatible with
+  CUDA ``>= 12.8``. Source builds with GPU support also need a matching CUDA
+  toolkit.
+* Ray tracing: a GPU and driver with Vulkan ray-tracing support.
+* Denoising: ``oidn`` is available through the packaged renderer; ``optix``
+  requires a compatible NVIDIA RTX stack.
 
-* Linux: Ubuntu 18.04+, Centos 7+, Arch
-
-System requirements:
-
-* Rendering: NVIDIA or AMD GPU
-* Ray tracing: NVIDIA RTX GPU or AMD equivalent
-* Denoising: NVIDIA RTX GPU
-
-Software requirements:
-
-* Ray tracing: NVIDIA Driver >= 470
-* Denoising: NVIDIA Driver >= 522 (earlier version may work but is not officially supported)
-
-Pip(PyPI) or Conda
+Install from PyPI
 -----------------------
 
 .. code-block:: shell
 
-  pip install sapien
+   python -m pip install -U pip
+   python -m pip install sapien
 
-.. note::
-   ``pip >= 19.3`` is required for installation. Upgrade pip with
+Verify installation
+-----------------------
 
-  .. code-block:: shell
+Server or headless machine
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-     pip install -U pip
+The packaged offscreen example renders a red cube and writes
+``sapien_offscreen.png`` to the current working directory.
+
+.. code-block:: shell
+
+   python -m sapien.example.offscreen
+
+On a server without a display, Vulkan/EGL may print display-related warnings.
+They can be ignored if the script exits successfully and the image is produced.
+
+.. figure:: assets/example.offscreen.png
+   :width: 120px
+   :align: center
+   :figclass: align-center
+
+Desktop with display
+^^^^^^^^^^^^^^^^^^^^^^^
+
+The packaged viewer example opens a window showing a red cube on the ground.
+
+.. code-block:: shell
+
+   python -m sapien.example.hello_world
+
+You can learn more about this scene in :ref:`hello_world`.
 
 Build from source
 -----------------------
 
-You may build SAPIEN from source to access latest features under development in
-the `dev <https://github.com/haosulab/SAPIEN/tree/dev>`_ branch, and/or
-contribute to the project.
+Initialize submodules before any source build:
 
-Clone SAPIEN
-^^^^^^^^^^^^^^^^^^^^^^
 .. code-block:: shell
 
-   git clone --recursive https://github.com/haosulab/SAPIEN.git
+   git submodule update --init --recursive
 
 Build in Docker
 ^^^^^^^^^^^^^^^^^^^^^^
 
-While it is possible to build SAPIEN natively on Linux. We strongly recommend
-building using `Docker <https://docs.docker.com/get-started/overview/>`_.
-
-PhysX is currently built against ``107.3-physx-5.6.1``. GPU-enabled builds
-require a CUDA toolkit and driver stack compatible with CUDA ``>= 12.8``.
+The CI and helper scripts use ``yolkarian/sapien-build-env:0.3.1``. This is the
+recommended Linux build environment.
 
 .. code-block:: shell
 
-   cd SAPIEN
-   ./scripts/docker_build_wheels.sh
+   CMAKE_BUILD_PARALLEL_LEVEL=4 ./scripts/docker_build_wheels.sh 311
 
-.. note::
+If the image is not available locally, pull it first:
 
-   ``scripts/docker_build_wheels.sh`` builds all supported wheel variants by
-   default. Pass an explicit Python ABI such as ``310`` or ``311`` to build a
-   single wheel.
+.. code-block:: shell
 
-.. note::
+   docker pull yolkarian/sapien-build-env:0.3.1
 
-   To verify against a local PhysX SDK instead of downloading it through
-   CMake, set ``SAPIEN_PHYSX5_DIR`` to the extracted CPU SDK root and set
-   ``SAPIEN_PHYSX5_GPU_DIR`` to the extracted GPU SDK root before invoking the
-   build script. The Docker helper forwards these environment variables into the
-   container.
+``scripts/docker_build_wheels.sh`` forwards ``SAPIEN_PHYSX5_DIR``,
+``SAPIEN_PHYSX5_GPU_DIR``, and ``SAPIEN_PHYSX5_VERSION`` into the container. Use
+these variables when verifying against local PhysX SDK archives instead of the
+CMake download path.
 
-   .. code-block:: shell
+.. code-block:: shell
 
-      export SAPIEN_PHYSX5_DIR=/path/to/physxcpu-linux-clang
-      export SAPIEN_PHYSX5_GPU_DIR=/path/to/physxgpu-linux-clang
-      ./scripts/docker_build_wheels.sh 310
-
-.. note::
-
-   Building may fail if you have previously built SAPIEN with Docker due to an
-   update to the Docker image. Pull the latest Docker image with
-
-   .. code-block:: shell
-
-      docker pull fxiangucsd/sapien-build-env
+   export SAPIEN_PHYSX5_DIR=/path/to/physxcpu-linux-clang
+   export SAPIEN_PHYSX5_GPU_DIR=/path/to/physxgpu-linux-clang
+   CMAKE_BUILD_PARALLEL_LEVEL=4 ./scripts/docker_build_wheels.sh 311
 
 Build without Docker
 ^^^^^^^^^^^^^^^^^^^^^^
 
 Native builds should use the same PhysX and CUDA toolchain versions as the
-Docker image.
+Docker image. SAPIEN currently targets PhysX ``107.3-physx-5.6.1``.
 
 .. code-block:: shell
 
@@ -109,50 +112,25 @@ Docker image.
    export SAPIEN_PHYSX5_GPU_DIR=/path/to/physxgpu-linux-clang
    python setup.py bdist_wheel --build-dir=sapien_build
 
+For a direct CI-style build, use ``scripts/build.sh`` and limit parallelism on
+shared machines:
 
-Verify Installation
+.. code-block:: shell
+
+   ./scripts/build.sh 311 --jobs 4
+
+Validation
 -----------------------
 
-Server (no display)
-^^^^^^^^^^^^^^^^^^^^^^^
-.. warning::
-
-   This script will generate ``output.png`` at the current working directory.
-
-You may test the offscreen rendering of SAPIEN with the following command
+After building a wheel, install it in a clean Python environment and run the
+narrowest matching tests. For PhysX-focused changes, the repository test suite
+is:
 
 .. code-block:: shell
 
-   python -m sapien.example.offscreen
+   cd unittest
+   python -m unittest discover -s test_physx -p 'test_*.py'
 
-On a server without display. It may generate errors about the display. You can
-ignore these warnings.
-
-If SAPIEN is installed properly. The following image will be generated at the
-current working directory, named ``output.png``.
-
-.. figure:: assets/example.offscreen.png
-    :width: 120px
-    :align: center
-    :figclass: align-center
-
-Desktop (with display)
-^^^^^^^^^^^^^^^^^^^^^^^
-
-You may test the onscreen rendering of SAPIEN with the following command
-
-.. code-block:: shell
-
-   python -m sapien.example.hello_world
-
-This command should open a viewer window showing a red cube on the ground.
-You can learn more about this scene in :ref:`hello_world`.
-
-.. note::
-
-   During the PhysX 5.6.1 migration, the PhysX-specific Python verification
-   suite passes with ``python -m unittest discover -s test_physx -p 'test_*.py'``
-   from the ``unittest`` directory. The monolithic C++ ``sapien_test`` target
-   is currently blocked by unrelated renderer test API drift in
-   ``test/sapien_renderer/material.cpp`` and
-   ``test/sapien_renderer/texture.cpp``.
+The documentation API pages are generated from an installed ``sapien`` package,
+so ``make -C docs html`` assumes the package imports successfully and that the
+Sphinx tools are installed.

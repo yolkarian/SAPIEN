@@ -5,89 +5,122 @@ Physics
 
 .. highlight:: python
 
-Since SAPIEN is a physical simulation framework, we would like to showcase how to change physical properties which lead to different behaviors.
+This section describes the current PhysX-facing Python API for configuring a
+scene and changing rigid-body properties.
 
-In this tutorial, you will learn the following:
+In this tutorial, you will learn how to:
 
-* Use ``SceneConfig`` to initialize default physical properties
-* Use ``PhysicalMaterial`` to set different physical materials
-* Create kinematic actors
-* Enable damping for actors
-* Get kinematic quantities (pose, velocity, angular velocity) of an actor
-
-The example illustrates an object sliding down the slope.
-You can run the script with different arguments.
-``transforms3d`` is required to compute poses, which can be installed by ``pip install transforms3d``.
+* configure global PhysX defaults before creating a scene;
+* assign ``PhysxMaterial`` objects to collision shapes;
+* create kinematic bodies;
+* set damping and velocities on rigid components;
+* read pose and velocity from entities and components.
 
 .. figure:: assets/physics.gif
-    :width: 640px
-    :align: center
-    :figclass: align-center
+   :width: 640px
+   :align: center
+   :figclass: align-center
 
-The full script can be downloaded here :download:`physics.py <../../../../examples/basic/physics.py>`
-
-Set default physical properties
+Configure default PhysX properties
 -------------------------------------
 
-Default physical properties can be specified when a scene is created.
-Those properties include gravity, static and dynamic friction, as well as `restitution <https://en.wikipedia.org/wiki/Coefficient_of_restitution>`_ (elasticity of collision).
+PhysX defaults are configured through ``sapien.physx`` before the scene/system is
+created. ``PhysxSceneConfig`` controls scene-level settings such as gravity,
+CCD, TGS, CPU worker count, and GPU broadphase environment-id bits. Default
+contact material is configured separately.
 
-.. literalinclude:: ../../../../examples/basic/physics.py
-   :dedent: 0
-   :lines: 99-114
+.. code-block:: python
 
-``SceneConfig`` describes default physical properties, and can be passed to ``Scene``.
+   import sapien
+
+   scene_config = sapien.physx.PhysxSceneConfig()
+   scene_config.gravity = [0, 0, -9.81]
+   scene_config.enable_ccd = True
+   sapien.physx.set_scene_config(scene_config)
+
+   sapien.physx.set_default_material(
+      static_friction=0.5,
+      dynamic_friction=0.5,
+      restitution=0.0,
+   )
+
+   scene = sapien.Scene()
+   scene.set_timestep(1 / 240)
+
+``sapien.SceneConfig`` is kept as an alias of ``sapien.physx.PhysxSceneConfig``
+for compatibility, but new code should use the ``sapien.physx`` namespace.
 
 Set physical materials
 -------------------------------------
 
-``PhysicalMaterial`` describes physical (contact) properties (friction and restitution) of the material of an actor.
-It can be specified when an actor is created.
-If not provided, the default physical material, induced by the scene's default physical properties, will be used.
-Note that ``PhysicalMaterial`` can only be created by ``create_physical_material(...)``.
+``sapien.physx.PhysxMaterial`` stores contact friction and restitution. Pass it
+to collision-shape builder methods.
 
-.. literalinclude:: ../../../../examples/basic/physics.py
-   :dedent: 0
-   :lines: 119-123
+.. code-block:: python
 
-Some other physical properties, like density, are directly provided to collision shapes. We update ``create_sphere`` function in :ref:`create_actors`.
+   slippery = sapien.physx.PhysxMaterial(
+      static_friction=0.05,
+      dynamic_friction=0.03,
+      restitution=0.0,
+   )
 
-.. literalinclude:: ../../../../examples/basic/physics.py
-   :dedent: 0
-   :lines: 60-75
-   :emphasize-lines: 6,7,12
+   builder = scene.create_actor_builder()
+   builder.add_sphere_collision(radius=0.2, material=slippery, density=500)
+   builder.add_sphere_visual(radius=0.2, material=[0.2, 0.4, 1.0])
+   ball = builder.build(name="slippery_ball")
 
-.. note::
-   The rolling resistance (friction) is not modeled in SAPIEN currently.
+Density, patch radius, minimum patch radius, contact offset, rest offset, and
+collision groups live on collision shapes, not on the render material.
 
-Create a kinematic actor
+Create a kinematic body
 -------------------------------------
 
-Now, let's create a slope.
-The slope should be a **kinematic** object, rather than a **dynamic** object.
-In other words, it can not be affected by external forces.
-We can set ``is_kinematic=True`` when building the actor.
+Kinematic bodies are dynamic PhysX bodies whose motion is driven by the user
+rather than by forces. Use ``build_kinematic`` or set the builder body type to
+``"kinematic"``.
 
-.. literalinclude:: ../../../../examples/basic/physics.py
-   :dedent: 0
-   :lines: 23-57
-   :emphasize-lines: 6,30,31
+.. code-block:: python
 
-Set damping for the actor
+   builder = scene.create_actor_builder()
+   builder.add_box_collision(half_size=[1.0, 0.5, 0.05])
+   builder.add_box_visual(half_size=[1.0, 0.5, 0.05], material=[0.6, 0.6, 0.6])
+   slope = builder.build_kinematic(name="slope")
+   slope.set_pose(sapien.Pose([0, 0, 0.5]))
+
+   slope_body = slope.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+   slope_body.set_kinematic_target(sapien.Pose([0.1, 0, 0.5]))
+
+For static world geometry that never moves, prefer ``build_static``.
+
+Set damping and velocities
 -------------------------------------
 
-Sometimes, you might model some resistance proportional to (linear or angular) velocity, like air resistance.
-It can be achieved by setting the **damping** of an actor.
+Actor-builder damping fields are applied when the PhysX component is created.
+You can also edit the component after building.
 
-.. literalinclude:: ../../../../examples/basic/physics.py
-   :dedent: 0
-   :lines: 185
+.. code-block:: python
 
-Get kinematic quantities (pose, velocity) of an actor
+   builder = scene.create_actor_builder()
+   builder.linear_damping = 0.1
+   builder.angular_damping = 0.05
+   builder.add_box_collision(half_size=[0.2, 0.2, 0.2])
+   body_entity = builder.build(name="damped_box")
+
+   body = body_entity.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+   body.set_linear_velocity([0, 1, 0])
+   body.set_angular_velocity([0, 0, 2])
+
+Read kinematic quantities
 ------------------------------------------------------------
 
-We can acquire kinematic quantities (pose, linear velocity, angular velocity) of an actor through ``get_pose()``, ``get_velocity()``, ``get_angular_velocity()``.
+The world pose belongs to the entity. Linear and angular velocity belong to the
+rigid body component.
 
-.. literalinclude:: ../../../../examples/basic/physics.py
-   :dedent: 0
-   :lines: 210-212
+.. code-block:: python
+
+   pose = body_entity.get_pose()
+   linear_velocity = body.get_linear_velocity()
+   angular_velocity = body.get_angular_velocity()
+
+   print(pose.p, pose.q)  # quaternion order is wxyz
+   print(linear_velocity, angular_velocity)

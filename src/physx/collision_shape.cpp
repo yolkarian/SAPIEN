@@ -230,6 +230,41 @@ PhysxCollisionShapeConvexMesh::LoadMultiple(std::string const &filename, Vec3 sc
   return result;
 }
 
+PhysxCollisionShapeHeightField::PhysxCollisionShapeHeightField(
+    HeightFieldSamples const &samples, float rowScale, float columnScale, float heightScale,
+    std::shared_ptr<PhysxMaterial> material)
+    : PhysxCollisionShapeHeightField(std::make_shared<PhysxHeightField>(samples), rowScale,
+                                     columnScale, heightScale, material) {}
+
+PhysxCollisionShapeHeightField::PhysxCollisionShapeHeightField(
+    std::shared_ptr<PhysxHeightField> heightField, float rowScale, float columnScale,
+    float heightScale, std::shared_ptr<PhysxMaterial> material) {
+  if (rowScale <= 0.f || columnScale <= 0.f || heightScale <= 0.f) {
+    throw std::runtime_error("height field scales must be positive");
+  }
+
+  mEngine = PhysxEngine::Get();
+  mPhysicalMaterial = material ? material : PhysxDefault::GetDefaultMaterial();
+  mHeightField = heightField;
+  mRowScale = rowScale;
+  mColumnScale = columnScale;
+  mHeightScale = heightScale;
+
+  mPxShape = mEngine->getPxPhysics()->createShape(
+      PxHeightFieldGeometry(mHeightField->getPxHeightField(), PxMeshGeometryFlags(), heightScale,
+                            rowScale, columnScale),
+      *getPhysicalMaterial()->getPxMaterial(), true);
+  if (!mPxShape) {
+    throw std::runtime_error("failed to create height field collision shape");
+  }
+  setDefaultProperties();
+
+  mLocalAABB = {{0.f, static_cast<float>(mHeightField->getMinHeight()) * heightScale, 0.f},
+                {static_cast<float>(mHeightField->getRows() - 1) * rowScale,
+                 static_cast<float>(mHeightField->getMaxHeight()) * heightScale,
+                 static_cast<float>(mHeightField->getColumns() - 1) * columnScale}};
+}
+
 PhysxCollisionShapeTriangleMesh::PhysxCollisionShapeTriangleMesh(
     std::string const &filename, Vec3 const &scale, std::shared_ptr<PhysxMaterial> material,
     bool sdf, std::optional<PhysxSDFShapeConfig> sdfConfig) {
@@ -361,6 +396,10 @@ PhysxCollisionShapeConvexMesh::getTriangles() const {
       indices.data(), indices.size() / 3, 3);
 }
 
+HeightFieldSamples PhysxCollisionShapeHeightField::getSamples() const {
+  return mHeightField->getSamples();
+}
+
 Vec3 PhysxCollisionShapeTriangleMesh::getScale() const {
   auto &g = mPxShape->getGeometry();
   assert(g.getType() == PxGeometryType::eTRIANGLEMESH);
@@ -455,6 +494,14 @@ AABB PhysxCollisionShapeConvexMesh::computeGlobalAABBTight() const {
   return computeAABB(getVertices(), getScale(), mParent->getPose() * getLocalPose());
 }
 
+AABB PhysxCollisionShapeHeightField::getLocalAABB() const { return mLocalAABB; }
+AABB PhysxCollisionShapeHeightField::computeGlobalAABBTight() const {
+  if (!mParent) {
+    throw std::runtime_error("failed to get global AABB: shape is not attached to a component");
+  }
+  return getTransformedAABB(mLocalAABB, mParent->getPose() * getLocalPose());
+}
+
 AABB PhysxCollisionShapeTriangleMesh::getLocalAABB() const { return mLocalAABB; }
 AABB PhysxCollisionShapeTriangleMesh::computeGlobalAABBTight() const {
   if (!mParent) {
@@ -498,6 +545,13 @@ std::shared_ptr<PhysxCollisionShape> PhysxCollisionShapeCylinder::clone() const 
 std::shared_ptr<PhysxCollisionShape> PhysxCollisionShapeConvexMesh::clone() const {
   auto shape = std::make_shared<PhysxCollisionShapeConvexMesh>(getMesh(), getScale(),
                                                                getPhysicalMaterial());
+  return shape;
+}
+
+std::shared_ptr<PhysxCollisionShape> PhysxCollisionShapeHeightField::clone() const {
+  auto shape = std::make_shared<PhysxCollisionShapeHeightField>(
+      getHeightField(), getRowScale(), getColumnScale(), getHeightScale(), getPhysicalMaterial());
+  copyProperties(*shape);
   return shape;
 }
 

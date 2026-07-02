@@ -15,7 +15,7 @@ pip install sapien
 It requires Linux with NVIDIA, AMD, or Intel GPU to run. Verify installation with
 
 ```shell
-python -m sapien.exapmle.hello_world
+python -m sapien.example.hello_world
 ```
 
 Next, follow our tutorial at:
@@ -45,7 +45,7 @@ x11vnc -create -env FD_PROG=/usr/bin/fluxbox  -env X11VNC_FINDDISPLAY_ALWAYS_FAI
 ```
 Now you can connect to the server at port 5900. SAPIEN should be fully functional, test with
 ```shell
-python -m sapien.exapmle.hello_world
+python -m sapien.example.hello_world
 ```
 
 ## Change Log

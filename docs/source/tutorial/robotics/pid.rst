@@ -1,96 +1,104 @@
 .. _pid:
 
-Drive Robot with PID Controller
-=================================
+Drive Robots with PD/PID Controllers
+====================================
 
 .. highlight:: python
 
 .. note::
-   Please first complete :ref:`basic_robot` before continuing.
 
-A fundamental problem  in robotics is how to apply forces on the joints of a robot to drive them to target positions.
-Such low-level control is the basis for applications, e.g., following a trajectory.
+   Please complete :ref:`basic_robot` before continuing.
 
-In this tutorial, you will learn the following:
+A common robotics task is to drive joints to target positions or velocities.
+SAPIEN exposes PhysX's implicit PD drives on each active joint, and you can also
+write external controllers that set generalized forces with ``robot.set_qf``.
 
-* Drive the robot with the PhysX internal PD controller
-* Write your own PID controller
-
-.. figure:: assets/pid_internal.gif
-    :width: 640px
-    :align: center
-    :figclass: align-center
-    
-    Drive the robot with the internal PD controller
-
-The full script can be downloaded here :download:`pid.py <../../../../examples/robotics/pid.py>`
-
-Setup
-----------------------------------
-
-As before, we first set up the simulation world.
-Note that we decrease the timestep, which is helpful for the simple PID controller implemented in this example.
-
-.. literalinclude:: ../../../../examples/robotics/pid.py
-   :dedent: 0
-   :lines: 37-69
-
-Drive the robot with the PhysX internal PD controller
+PhysX internal PD drive
 ------------------------------------------------------
 
-.. literalinclude:: ../../../../examples/robotics/pid.py
-   :dedent: 0
-   :lines: 71,75-80
+Configure each active joint's drive properties and targets.
 
-SAPIEN provides builtin PhysX **drives** (controllers) to control either the position or speed of a joint.
-For each active joint (with non-zero degree of freedom), we can call ``set_drive_property(...)`` to set its drive properties: ``stiffness`` and ``damping``.
-The drive is a **proportional derivative drive**, which applies a force as follows: 
+.. code-block:: python
+
+   for joint in robot.active_joints:
+      joint.set_drive_property(
+         stiffness=1000.0,
+         damping=100.0,
+         force_limit=1000.0,
+         mode="force",  # or "acceleration"
+      )
+      joint.set_drive_target(0.0)
+      joint.set_drive_velocity_target(0.0)
+
+   target_qpos = [0.2] * robot.dof
+   for joint, target in zip(robot.active_joints, target_qpos):
+      joint.set_drive_target(target)
+
+The drive behaves like a proportional-derivative controller:
 
 .. centered:: *force = stiffness * (targetPosition - position) + damping * (targetVelocity - velocity)*
 
-The ``stiffness`` and ``damping`` can be regarded as the *P* and *D* term in a typical `PID controller <https://en.wikipedia.org/wiki/PID_controller>`_.
-They implies the extent to which the drive attempts to achieve the target position and velocity respectively.
+PhysX solves the drive implicitly during simulation, so it is usually more
+stable than a naive explicit controller. The current API does not provide an
+articulation-level ``robot.set_drive_target``; set targets on joints or use the
+GPU target buffers.
 
-.. note::
-   The PhysX backend in fact integrates the drive into the PhysX solver.
-   The force applied will be computed implicitly every simulation step.
+Compensate passive forces
+------------------------------------------------------
 
-The initial target position and velocity of a joint are zero by default.
-You can call ``joint.set_drive_target(...)`` to set the target position of a joint, or ``robot.set_drive_target(...)`` to set the target positions of all the joints of the robot.
-Similarly, you can also call ``set_drive_velocity_target(...)`` to set the target velocity.
+A PD drive may have steady-state error under gravity. Add passive-force
+compensation when needed.
 
-.. note::
-   If you do not balance the passive force, e.g. gravity, the robot can never reach the desired pose (but maybe a close pose) given in ``set_drive_target`` due to steady-state-error.
+.. code-block:: python
 
-Write your own PID controller
------------------------------
+   for _ in range(240):
+      qf = robot.compute_passive_force(
+         gravity=True,
+         coriolis_and_centrifugal=True,
+      )
+      robot.set_qf(qf)
+      scene.step()
 
-You can write your own PID controller, if you need an integrator term *I* to compensate some steady-state-error which can not be compensated by ``compensate_passive_force``.
+For GPU simulation, use
+``physx_system.gpu_compute_articulation_gravity_compensation()`` and
+``physx_system.gpu_compute_articulation_coriolis_and_centrifugal_compensation()``
+instead of CPU ``compute_passive_force``.
 
-.. literalinclude:: ../../../../examples/robotics/pid.py
-   :dedent: 0
-   :lines: 6-25
+External PID controller
+-----------------------
 
-.. literalinclude:: ../../../../examples/robotics/pid.py
-   :dedent: 0
-   :lines: 71,82-91
+If you need an integral term, compute generalized forces yourself and assign
+``qf``. Clamp forces to reasonable limits to avoid unstable simulation.
 
-We provide a very simple implementation here, the parameters of which are not carefully tuned.
-You can try to add extra tricks for integration or error propagation, to improve the stability of your own controller.
+.. code-block:: python
 
-.. literalinclude:: ../../../../examples/robotics/pid.py
-   :dedent: 0
-   :lines: 93-110
+   class PID:
+      def __init__(self, kp, ki, kd, force_limit):
+         self.kp = kp
+         self.ki = ki
+         self.kd = kd
+         self.force_limit = force_limit
+         self.integral = None
 
-.. figure:: assets/pid_external.gif
-   :align: center
-   :figclass: align-center
-   
-   Drive the robot with the simple PID controller
+      def reset(self, dof):
+         self.integral = np.zeros(dof, dtype=np.float32)
 
-.. note::
-   In most cases, it is recommended to use the internal drive rather than your own PID.
-   The PhysX internal drive is much more efficient and stable when the parameters are not carefully tuned.
+      def compute(self, target_qpos, qpos, qvel, dt):
+         if self.integral is None:
+            self.reset(len(qpos))
 
-.. warning::
-   The parameters (``stiffness`` and ``damping``) for the internal drive in this example can not be directly used for downstream tasks like manipulation. 
+         error = target_qpos - qpos
+         self.integral += error * dt
+         qf = self.kp * error + self.ki * self.integral - self.kd * qvel
+         return np.clip(qf, -self.force_limit, self.force_limit)
+
+   controller = PID(kp=200.0, ki=10.0, kd=20.0, force_limit=100.0)
+   target_qpos = np.zeros(robot.dof, dtype=np.float32)
+
+   for _ in range(240):
+      qf = controller.compute(target_qpos, robot.qpos, robot.qvel, scene.timestep)
+      robot.set_qf(qf)
+      scene.step()
+
+In most cases, prefer PhysX's internal drive. Use an external PID only when you
+need behavior that the built-in drive cannot express.

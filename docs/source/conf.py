@@ -18,11 +18,11 @@
 # -- Project information -----------------------------------------------------
 
 project = 'sapien'
-copyright = '2020-2023, SAPIEN-TEAM'
+copyright = '2020-2026, SAPIEN-TEAM'
 author = 'SAPIEN-TEAM'
 
 # The full version, including alpha/beta/rc tags
-release = '2.2'
+release = '3.0'
 
 # -- General configuration ---------------------------------------------------
 

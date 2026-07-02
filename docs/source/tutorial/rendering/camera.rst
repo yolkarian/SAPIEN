@@ -5,181 +5,153 @@ Camera
 
 .. highlight:: python
 
-In this tutorial, you will learn the following:
+SAPIEN cameras are ``sapien.render.RenderCameraComponent`` objects attached to
+entities. The old ``CameraEntity`` name and ``get_float_texture`` /
+``get_uint32_texture`` accessors are obsolete; use ``camera.get_picture(name)``
+or ``camera.get_picture_cuda(name)``.
 
-* Create a camera ``CameraEntity`` and mount it to an actor
-* Off-screen rendering for RGB, depth, point cloud and segmentation
+In this tutorial, you will learn how to:
 
-The full script can be downloaded here :download:`camera.py <../../../../examples/rendering/camera.py>`
+* create free and mounted cameras;
+* render RGB images offscreen;
+* read depth/position and segmentation render targets;
+* convert the position target to a world-space point cloud.
 
-Create and mount a camera
+Create a scene and camera
 ------------------------------------------------------------
 
-First of all, let's set up the engine, renderer, scene, lighting, and load a URDF file.
+``sapien.Scene()`` already contains a render system. ``SapienRenderer`` is no
+longer required for normal Python usage.
 
-.. literalinclude:: ../../../../examples/rendering/camera.py
-   :dedent: 0
-   :lines: 17-36
+.. code-block:: python
 
-We create the Vulkan-based renderer by calling ``sapien.SapienRenderer(offscreen_only=...)``.
-If ``offscreen_only=True``, the on-screen display is disabled. 
-It works without a window server like x-server.
-You can forget about all the difficulties working with x-server and OpenGL!
+   import numpy as np
+   import sapien
 
-..
-   Next, you can create a camera and mount it somewhere as follows:
+   scene = sapien.Scene()
+   scene.add_ground(0)
+   scene.set_ambient_light([0.5, 0.5, 0.5])
+   scene.add_directional_light([0, 1, -1], [0.5, 0.5, 0.5])
 
-   .. literalinclude:: ../../../../examples/rendering/camera.py
-       :dedent: 0
-       :lines: 41-66
+   width, height = 640, 480
+   camera = scene.add_camera(
+      name="camera",
+      width=width,
+      height=height,
+      fovy=np.deg2rad(60),
+      near=0.01,
+      far=100.0,
+   )
+   camera.local_pose = sapien.Pose([-3, 0, 1.0])
 
-Next, you can create a camera as follows:
+The camera component's local pose is relative to its owning entity. For a camera
+created by ``scene.add_camera``, the owning entity is created for you and starts
+at identity, so setting ``camera.local_pose`` places the camera in the world.
 
-   .. literalinclude:: ../../../../examples/rendering/camera.py
-       :dedent: 0
-       :lines: 41-51
+Mount a camera to an entity
+------------------------------------------------------------
 
-This camera is now placed at coordinate `[1, 0, 0]` without rotation.
+To make a camera follow a body, attach it to that body's entity. The helper
+``scene.add_mounted_camera`` creates and attaches the camera component.
 
-An camera can also be mounted onto an ``Actor`` to keep a pose relative to the
-actor as follows:
+.. code-block:: python
 
-   .. literalinclude:: ../../../../examples/rendering/camera.py
-       :dedent: 0
-       :lines: 55-67
+   mount = scene.create_actor_builder().build_kinematic(name="camera_mount")
+   mount.set_pose(sapien.Pose([-3, 0, 1.0]))
 
-The camera is mounted on the the ``camera_mount_actor`` through ``set_parent``. The
-pose of the camera relative to the mount is specified through ``set_local_pose``.
+   camera = scene.add_mounted_camera(
+      name="mounted_camera",
+      mount=mount,
+      pose=sapien.Pose(),
+      width=640,
+      height=480,
+      fovy=np.deg2rad(60),
+      near=0.01,
+      far=100.0,
+   )
 
-.. note::
-   Calling ``set_local_pose`` without a parent sets the global pose of the camera.
-   Callling ``set_pose`` with a parent results in an error, as it is ambiguous.
+If the mount entity moves, the camera's global pose changes with it. Camera axes
+follow SAPIEN's robotics convention: x forward, y left, z up. Rendered position
+images are in the renderer/OpenGL camera space, where -z is forward.
 
-The process of adding and mounting a camera can be achieved through the
-convenience function ``add_mounted_camera`` (which used to be the only way to
-add a camera).
+Intrinsic parameters
+------------------------------------------------------------
 
-   .. literalinclude:: ../../../../examples/rendering/camera_old.py
-       :dedent: 0
-       :lines: 41-53
+Use field-of-view helpers or set full OpenCV-style intrinsics.
 
-If the mounted actor is kinematic (or static), the camera moves along
-with the actor when the actor of the actor is changed through ``set_pose``. If
-the actor is dynamic, the camera moves along with it during dynamic simulation.
+.. code-block:: python
 
-.. note::
-    Note that the axes conventions for SAPIEN follow the conventions for robotics,
-    while they are different from those for many graphics softwares (like OpenGL and Blender).
-    For a SAPIEN camera, the x-axis points forward, the y-axis left, and the z-axis upward.
+   camera.set_fovy(np.deg2rad(60), compute_x=True)
+   camera.set_focal_lengths(fx=600, fy=600)
+   camera.set_principal_point(cx=320, cy=240)
+   camera.skew = 0
 
-    However, do note that the "position" texture (camera-space point cloud)
-    obtained from the camera still follows the graphics convention (x-axis
-    right, y-axis upward, z-axis backward). This maintains consistency of SAPIEN
-    with most other graphics software. This will be further discussed below.
-
+   camera.set_perspective_parameters(
+      near=0.01,
+      far=100.0,
+      fx=600,
+      fy=600,
+      cx=320,
+      cy=240,
+      skew=0,
+   )
 
 Render an RGB image
 ------------------------------------------------------------
 
-To render from a camera, you need to first update all object states to the renderer.
-Then, you should call ``take_picture()`` to start the rendering task on the GPU.
+Update render poses, render the camera, then read the ``"Color"`` picture.
 
-.. literalinclude:: ../../../../examples/rendering/camera.py
-    :dedent: 0
-    :lines: 69-71
+.. code-block:: python
 
-Now, we can acquire the RGB image rendered by the camera.
-To save the image, we use `pillow <https://pillow.readthedocs.io/en/stable/>`_ here, which can be installed by ``pip install pillow``.
+   scene.update_render()
+   camera.take_picture()
+   rgba = camera.get_picture("Color")  # float array, H x W x 4
+   rgb_u8 = (rgba[..., :3].clip(0, 1) * 255).astype(np.uint8)
 
-.. literalinclude:: ../../../../examples/rendering/camera.py
-    :dedent: 0
-    :lines: 76-81
+``camera.get_picture_names()`` lists the render targets produced by the current
+shader pack. CUDA-capable builds can avoid a CPU copy with
+``camera.get_picture_cuda("Color")``, which returns a ``sapien.CudaArray`` with
+``torch()``, ``cupy()``, ``jax()``, and ``dlpack()`` adapters.
 
-.. figure:: assets/color.png
-   :width: 1080px
-   :align: center
-
-Generate point cloud
+Generate a point cloud
 ------------------------------------------------------------
 
-Point cloud is a common representation of 3D scenes.
-The following code showcases how to acquire the point cloud in SAPIEN.
+The default shader pack exposes a ``"Position"`` render target. Its first three
+channels are camera-space coordinates and its fourth channel is the depth buffer
+value; pixels at the far plane have depth close to 1.
 
-.. literalinclude:: ../../../../examples/rendering/camera.py
-    :dedent: 0
-    :lines: 86-87
+.. code-block:: python
 
-We acquire a "position" image with 4 channels. The first 3 channels represent
-the 3D position of each pixel in the OpenGL camera space, and the last channel
-stores the z-buffer value commonly used in rendering. When is value is 1, the
-position of this pixel is beyond the far plane of the camera frustum.
+   position = camera.get_picture("Position")
+   valid = position[..., 3] < 1
+   points_camera = position[..., :3][valid]
 
-.. literalinclude:: ../../../../examples/rendering/camera.py
-    :dedent: 0
-    :lines: 89-95
+   # camera.get_model_matrix() maps renderer camera coordinates to world space
+   model = camera.get_model_matrix()
+   points_h = np.concatenate(
+      [points_camera, np.ones((points_camera.shape[0], 1))],
+      axis=1,
+   )
+   points_world = (model @ points_h.T).T[:, :3]
 
-Note that the position is represented in the OpenGL camera space, where the negative z-axis points forward and the y-axis is upward.
-Thus, to acquire a point cloud in the SAPIEN world space (x forward and z up), 
-we provide ``get_model_matrix()``, which returns the transformation from the OpenGL camera space to the SAPIEN world space.
-
-We visualize the point cloud by `Open3D <http://www.open3d.org/>`_, which can be installed by ``pip install open3d``.
-
-.. figure:: assets/point_cloud.png
-   :width: 1080px
-   :align: center
-
-Besides, the depth map can be obtained as well.
-
-.. literalinclude:: ../../../../examples/rendering/camera.py
-    :dedent: 0
-    :lines: 107-110
-
-.. figure:: assets/depth.png
-   :width: 1080px
-   :align: center
-
-Visualize segmentation
+Segmentation
 ------------------------------------------------------------
 
-SAPIEN provides the interfaces to acquire object-level segmentation.
+Shader packs define which segmentation targets are available. With the default
+shader pack, inspect available names first, then read the desired target.
 
-.. literalinclude:: ../../../../examples/rendering/camera.py
-    :dedent: 0
-    :lines: 117-129
+.. code-block:: python
 
-There are two levels of segmentation.
-The first one is mesh-level, and the other one is actor-level.
-The examples are illustrated below.
+   print(camera.get_picture_names())
+   segmentation = camera.get_picture("Segmentation")
 
-.. figure:: assets/label0.png
-   :width: 1080px
-   :align: center
+Some display-oriented targets, such as ``"SegmentationView0"`` and
+``"SegmentationView1"``, are colorized for visualization. Raw segmentation
+targets store integer identifiers.
 
-   Mesh-level segmentation
-
-.. figure:: assets/label1.png
-   :width: 1080px
-   :align: center
-
-   Actor-level segmentation
-
-Take a screenshot from the viewer
+Screenshots from the viewer
 ------------------------------------------------------------
 
-The viewer provides a `Take Screenshot` button, which saves the current viewer
-image to `sapien_screenshot_x.png`, where `x` is an integer that automatically
-increases starting from 0.
-
-The ``Window`` of the viewer also provides the same interfaces as
-``CameraEntity``, ``get_float_texture`` and ``get_uint32_texture``, to allow
-taking screenshots programmatically. Thus, you could take a screenshot by
-calling them. Notice the definition of ``rpy`` (roll, yaw, pitch) when you set
-the viewer camera.
-
-.. literalinclude:: ../../../../examples/rendering/camera.py
-    :dedent: 0
-    :lines: 134-155
-
-.. figure:: assets/screenshot.png
-    :width: 1080px
-    :align: center
+The viewer exposes a ``Screenshot`` button in the ``Control`` window. For
+programmatic screenshots, use the viewer window's picture methods after
+``viewer.render()`` or use an offscreen camera as shown above.

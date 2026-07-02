@@ -886,12 +886,43 @@ void PhysxSystemGpu::gpuFetchArticulationQacc() {
 }
 
 void PhysxSystemGpu::gpuUpdateArticulationKinematics() {
+  gpuUpdateArticulationKinematics(mCudaArticulationIndexBuffer.handle());
+}
+
+void PhysxSystemGpu::gpuUpdateArticulationKinematics(CudaArrayHandle const &indices) {
   checkGpuInitialized();
+  indices.checkCongiguous();
+  indices.checkShape({-1});
+  indices.checkStride({sizeof(int)});
+
+  if (mGpuArticulationCount == 0) {
+    return;
+  }
 
   ensureCudaDevice();
+  auto count = static_cast<PxU32>(indices.shape.at(0));
+  if (count == 0) {
+    return;
+  }
+
+  void *gpuIndices = mCudaArticulationGpuIndexBuffer.ptr;
+  CUevent startEvent = nullptr;
+  if (indices.ptr != mCudaArticulationIndexBuffer.ptr) {
+    gather_blocks(mCudaArticulationIndexScratch.ptr, mCudaArticulationGpuIndexBuffer.ptr,
+                  indices.ptr, 1, count, mCudaStream);
+    gpuIndices = mCudaArticulationIndexScratch.ptr;
+    mCudaEventRecord.record(mCudaStream);
+    startEvent = mCudaEventRecord.event;
+  }
+
+  if (!mCudaEventWait.event) {
+    mCudaEventWait.init();
+  }
   mPxScene->getDirectGPUAPI().computeArticulationData(
-      nullptr, (PxArticulationGPUIndex *)mCudaArticulationGpuIndexBuffer.ptr,
-      PxArticulationGPUAPIComputeType::eUPDATE_KINEMATIC, mGpuArticulationCount);
+      nullptr, (PxArticulationGPUIndex *)gpuIndices,
+      PxArticulationGPUAPIComputeType::eUPDATE_KINEMATIC, count, startEvent,
+      mCudaEventWait.event);
+  mCudaEventWait.wait(mCudaStream);
 }
 
 void PhysxSystemGpu::gpuApplyRigidDynamicData() {

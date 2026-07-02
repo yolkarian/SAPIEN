@@ -5,82 +5,95 @@ Hello World
 
 .. highlight:: python
 
-SAPIEN provides APIs to build physical simulation environments.
+SAPIEN 3 creates scenes directly. You no longer need to create an ``Engine`` or
+bind a ``SapienRenderer`` before making a scene; both classes are kept only as
+compatibility wrappers.
 
-In this tutorial, you will learn the following:
+In this tutorial, you will learn how to:
 
-* Create a simulation engine ``Engine``
-* Create a simulation scene ``Scene``
-* Setup a renderer to visualize
-* Run a simulation loop
+* create a ``sapien.Scene``;
+* add a ground plane and a dynamic rigid body;
+* add lights and a viewer;
+* run a simulation/render loop.
 
 .. figure:: assets/hello_world.png
-    :width: 640px
-    :align: center
-    :figclass: align-center
+   :width: 640px
+   :align: center
+   :figclass: align-center
 
-The full script can be downloaded here :download:`hello_world.py <../../../../examples/basic/hello_world.py>`
+The same example is installed with the package and can be run with:
 
-Simulation engine and scene
+.. code-block:: shell
+
+   python -m sapien.example.hello_world
+
+Create a scene
 -------------------------------------
 
-To simulate with SAPIEN, you need to first create a simulation engine, and then create a simulation scene by the engine.
+``sapien.Scene()`` creates a simulation world with a CPU PhysX system and a
+render system by default.
 
-.. literalinclude:: ../../../../examples/basic/hello_world.py
-   :dedent: 0
-   :lines: 18-23
+.. code-block:: python
 
-``Engine`` is the physical simulation engine connected to the `PhysX
-<https://gameworksdocs.nvidia.com/PhysX/4.1/documentation/physxguide/Manual/Index.html>`_
-backend. One engine per process is allowed. Creating additional engines without deleting (overwriting the variable, letting it go out of scope) a previous one will result in the same Engine being returned.
+   import numpy as np
+   import sapien
 
-``Scene`` is an instance of the simulation world.
-Multiple scenes can be created through ``create_scene``, and they are independent.
+   scene = sapien.Scene()
+   scene.set_timestep(1 / 100.0)
 
-``SapienRenderer`` is the rendering engine connected to our `Vulkan <https://www.khronos.org/vulkan/>`_-based renderer.
-the renderer should first be bound with an engine, and then all the scenes created by the engine will be bound with the renderer.
+For physics-only workloads, construct the scene with only the systems you need,
+for example ``sapien.Scene([sapien.physx.PhysxCpuSystem()])``.
 
 Add rigid bodies
 -------------------
 
-So far, our scene is empty.
+Rigid bodies are represented as ``sapien.Entity`` objects with PhysX and, when
+rendering is enabled, render components attached to them. The convenience
+``ActorBuilder`` still exists and returns such an entity.
 
-In SAPIEN, a simulated rigid body is named an ``Actor``.
-Let's add two actors, a ground and a box, to the scene.
-Actor creation will be elaborated in :ref:`create_actors`.
+.. code-block:: python
 
-.. literalinclude:: ../../../../examples/basic/hello_world.py
-   :dedent: 0
-   :lines: 26-31
+   scene.add_ground(altitude=0)
 
-Viewer
+   builder = scene.create_actor_builder()
+   builder.add_box_collision(half_size=[0.5, 0.5, 0.5])
+   builder.add_box_visual(half_size=[0.5, 0.5, 0.5], material=[1.0, 0.0, 0.0])
+   box = builder.build(name="box")
+   box.set_pose(sapien.Pose(p=[0, 0, 0.5]))
+
+Lighting and viewer
 -------------------------------------------
 
-``Viewer`` creates a window (GUI) to render the simulation world.
-It is only available with a connected display (e.g. monitor).
-Usage of the GUI will be elaborated in :ref:`viewer`.
+Use light helpers on ``Scene`` and create the viewer from the scene.
 
-.. literalinclude:: ../../../../examples/basic/hello_world.py
-   :dedent: 0
-   :lines: 33-47
+.. code-block:: python
 
-.. note::
-   The GUI is not necessary when you only need physical simulation, e.g. collecting experiences for policy learning.
+   scene.set_ambient_light([0.5, 0.5, 0.5])
+   scene.add_directional_light([0, 1, -1], [0.5, 0.5, 0.5])
+
+   viewer = scene.create_viewer()
+   viewer.set_camera_xyz(x=-4, y=0, z=2)
+   viewer.set_camera_rpy(r=0, p=-np.arctan2(2, 4), y=0)
+   viewer.window.set_camera_parameters(near=0.05, far=100, fovy=1)
+
+The GUI is optional. For offscreen rendering, create a camera and call
+``camera.take_picture()`` as shown in :ref:`camera`.
 
 Simulation loop
 ---------------
 
-After setting up the simulation world, the actual simulation happens in a loop.
-For each iteration, the scene simulates for one step and updates the world to the renderer.
-The viewer calls ``render`` to update the results on the screen.
+``scene.step()`` advances PhysX. ``scene.update_render()`` uploads CPU-side
+entity poses to the renderer. The viewer's ``render`` call draws the frame.
 
-.. literalinclude:: ../../../../examples/basic/hello_world.py
-   :dedent: 0
-   :lines: 49-52
+.. code-block:: python
 
-Full script
-----------------
+   while not viewer.closed:
+      scene.step()
+      scene.update_render()
+      viewer.render()
 
-.. literalinclude:: ../../../../examples/basic/hello_world.py
-    :linenos:
-    :lines: 12-
+Full packaged script
+--------------------
+
+.. literalinclude:: ../../../../python/py_package/example/hello_world.py
+   :linenos:

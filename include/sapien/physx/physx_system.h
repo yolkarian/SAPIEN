@@ -275,6 +275,7 @@ public:
   void gpuApplyArticulationQTargetVel();
 
   void gpuUpdateArticulationKinematics();
+  void gpuUpdateArticulationKinematics(CudaArrayHandle const &indices);
 
   std::shared_ptr<PhysxGpuContactPairImpulseQuery> gpuCreateContactPairImpulseQuery(
       std::vector<std::pair<std::shared_ptr<PhysxRigidBaseComponent>,

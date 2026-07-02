@@ -323,6 +323,38 @@ static float computeSDFSpacing(AABB const &aabb, PhysxSDFShapeConfig const &conf
   return maxExtent / static_cast<float>(config.resolution);
 }
 
+PhysxHeightField::PhysxHeightField(HeightFieldSamples const &samples) {
+  if (samples.rows() < 2 || samples.cols() < 2) {
+    throw std::runtime_error("height field must have at least two rows and two columns");
+  }
+
+  mEngine = PhysxEngine::Get();
+  mSamples = samples;
+
+  std::vector<PxHeightFieldSample> physxSamples(samples.rows() * samples.cols());
+  for (Eigen::Index row = 0; row < samples.rows(); ++row) {
+    for (Eigen::Index col = 0; col < samples.cols(); ++col) {
+      auto &sample = physxSamples[row * samples.cols() + col];
+      sample.height = samples(row, col);
+      sample.materialIndex0 = PxBitAndByte(0);
+      sample.materialIndex1 = PxBitAndByte(0);
+      sample.clearTessFlag();
+    }
+  }
+
+  PxHeightFieldDesc desc;
+  desc.nbRows = static_cast<PxU32>(samples.rows());
+  desc.nbColumns = static_cast<PxU32>(samples.cols());
+  desc.format = PxHeightFieldFormat::eS16_TM;
+  desc.samples.data = physxSamples.data();
+  desc.samples.stride = sizeof(PxHeightFieldSample);
+
+  mHeightField = PxCreateHeightField(desc, mEngine->getPxPhysics()->getPhysicsInsertionCallback());
+  if (!mHeightField) {
+    throw std::runtime_error("failed to create height field");
+  }
+}
+
 void PhysxConvexMesh::loadMesh(Vertices const &vertices) {
   mEngine = PhysxEngine::Get();
 

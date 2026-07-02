@@ -1,125 +1,104 @@
- .. _plan_a_path:
+.. _plan_a_path:
 
 Plan a Path
 ==================
 
 .. highlight:: python
 
-In this tutorial, we will talk about how to plan paths for the agent. As shown in the demo, the robot needs to move the three boxes a bit forward. The full script can be downloaded here :download:`demo.py <../../../../examples/motion_planning/demo.py>`.
-
-.. figure:: assets/RRT.gif
-    :width: 320px
-    :align: left
-    :figclass: align-left
-
-    plan with RRTConnect
-
-.. figure:: assets/screw.gif
-    :width: 320px
-    :align: right
-    :figclass: align-right
-
-    plan with screw motion
-
-.. note::
-    This tutorial only talks about the basic usages, and the robot only avoids self-collisions (i.e., collisions between the robot links) in this demo. Please refer to :ref:`collision_avoidance` to include the environment model and other advanced usages. 
+This page shows the SAPIEN-side workflow for executing a path produced by
+``mplib``. It avoids references to old repository example files that are no
+longer shipped in the current tree.
 
 Plan with sampling-based algorithms
 --------------------------------------
 
-``mplib`` supports state-of-the-art sampling-based motion planning algorithms by leveraging `OMPL <https://github.com/ompl/ompl>`_. You can call ``planner.plan()`` to plan a path for moving the ``move_group`` link to a target pose: 
+``mplib`` planners accept an end-effector target pose and the current active
+joint positions. A target pose is commonly represented as
+``[x, y, z, qw, qx, qy, qz]`` in the robot root frame.
 
-.. literalinclude:: ../../../../examples/motion_planning/demo.py
-   :dedent: 0
-   :lines: 127-133
-   :emphasize-lines: 2
+.. code-block:: python
 
-Specifically, ``planner.plan()`` takes two required arguments as input. The first one is the target pose of the ``move_group`` link. It's a 7-dim list, where the first three elements describe the position part, and the remaining four elements describe the quaternion (wxyz) for the rotation part. **Note that the pose is relative to the frame of the robot's root link**. The second argument is the current joint positions of all the active joints (e.g., given by SAPIEN). The ``planner.plan()`` function first solves the inverse kinematics to get the joint positions for the target pose. It then calls the RRTConnect algorithm to find a path in the joint space. Finally, it parameterizes the path to generate time, velocity, and acceleration information.
+   target_pose = [0.4, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0]
+   current_qpos = robot.qpos.copy()
 
-``planner.plan()`` returns a dict which includes:   
+   result = planner.plan(
+      target_pose,
+      current_qpos,
+      time_step=scene.timestep,
+      planning_time=1.0,
+   )
 
-- ``status``: a string indicates the status:
+Typical result dictionaries include:
 
-    - ``Success``: planned a path successfully.
-    - ``IK Failed``: failed to solve the inverse kinematics. This may happen when the target pose is not reachable.
-    - ``RRT Failed``: failed to find a valid path in the joint space. This may happen when there is no valid path or the task is too complicated.
-- ``position``: a NumPy array of shape :math:`(n \times m)` describes the joint positions of the waypoints. :math:`n` is the number of waypoints in the path, and each row describes a waypoint. :math:`m` is the number of active joints that affect the pose of the ``move_group`` link. For example, for our panda robot arm, each row includes the positions for the first seven joints. 
-- ``duration``: a scalar indicates the duration of the output path. ``mplib`` returns the optimal duration considering the velocity and acceleration constraints. 
-- ``time``: a NumPy array of shape :math:`(n)` describes the time step of each waypoint. The first element is equal to 0, and the last one is equal to the ``duration``. Argument ``time_step`` determines the interval of the elements.
-- ``velocity``: a NumPy array of shape :math:`(n \times m)` describes the joint velocities of the waypoints. 
-- ``acceleration``: a NumPy array of shape :math:`(n \times m)` describing the joint accelerations of the waypoints. 
+* ``status``: e.g. ``"Success"``, ``"IK Failed"``, or ``"RRT Failed"``;
+* ``position``: waypoint joint positions, shape ``(n, m)``;
+* ``velocity``: waypoint joint velocities, shape ``(n, m)``;
+* ``acceleration``: waypoint joint accelerations, shape ``(n, m)``;
+* ``time`` and ``duration``.
 
+Consult the installed ``mplib`` version for the exact set of supported keyword
+arguments.
 
-``planner.plan()`` also takes other optional arguments with default values:
-
-- ``time_step = 0.1``: ``time_step`` specify the time interval between the waypoints. The larger the value, the sparser the output waypoints. In this demo, we align the ``time_step`` with SAPIEN's time step.
-- ``rrt_range = 0.1``: the incremental distance in the RRTConnect algorithm.  The larger the value, the sparser the sampled waypoints (before time parameterization).
-- ``planning_time=1``: time limit for RRTConnect algorithm, in seconds.
-- ``fix_joint_limits=True``: whether to clip the current joint positions if they are out of the joint limits.
-- ``verbose=False``: whether to display some internal outputs.
-- ``use_point_cloud=False`` and ``use_attach=False``: related to collision avoidance, will be discussed in :ref:`collision_avoidance`.
-
-
-
-Follow a path
+Follow a path in SAPIEN
 --------------------------------------
-``plan()`` outputs a time-parameterized path, and we need to drive the robot to follow the path. See :ref:`pid` for some basic usages. Depending on your controller, you may only use the returned position information, or use the velocity and acceleration information as well.
 
-In this demo, we use the PhysX internal PD controller. We first need to set the drive properties of the active joints at the very beginning:
+Configure PhysX drives on the active joints that the planner controls. The
+current SAPIEN API sets targets per joint.
 
-.. literalinclude:: ../../../../examples/motion_planning/demo.py
-   :dedent: 0
-   :lines: 43-44
+.. code-block:: python
 
-To follow a path, at each time step, we set the target position and target velocity according to the returned path. Please note that since we aligned the time step of the returned path with the SAPIEN time step, we don’t need to interpolate the returned path.
+   if result["status"] == "Success":
+      controlled_joints = robot.active_joints[: result["position"].shape[1]]
+      for joint in controlled_joints:
+         joint.set_drive_property(stiffness=1000, damping=100, force_limit=1000)
 
-.. literalinclude:: ../../../../examples/motion_planning/demo.py
-   :dedent: 0
-   :lines: 86-99
-   :emphasize-lines: 8-10
+      for qpos, qvel in zip(result["position"], result["velocity"]):
+         for joint, p, v in zip(controlled_joints, qpos, qvel):
+            joint.set_drive_target(float(p))
+            joint.set_drive_velocity_target(float(v))
 
-We also compensate the passive forces through ``set_qf()`` (see :ref:`basic_robot` for details).
+         qf = robot.compute_passive_force(True, True)
+         robot.set_qf(qf)
+         scene.step()
+         scene.update_render()
 
-You can also use your own controller.
-
-.. note::
-    If you find your robot doesn't move as expected, please **double-check** your controller, especially the controller's parameters. In many cases, the planner finds a good path while the controller fails to follow the path.
-
+If the robot does not follow the path, first check the drive stiffness, damping,
+force limits, timestep, and whether passive forces are compensated.
 
 Plan with screw motion
 --------------------------------------
-Besides using the sampling-based algorithms, we also provide another simple way (trick) to plan a path. For some tasks, we can directly move the ``move_group`` link towards the target pose. It's internally achieved by first calculating the relative transformation from its current pose to the target pose, then calculating the relative transformation's exponential coordinates, and finally calculating the joint velocities with the Jacobian matrix.
 
-Compared to the sampling-based algorithms, planning with screw motion has the following pros:
+Some ``mplib`` versions provide ``plan_screw`` for direct Cartesian motion of the
+``move_group`` link. It can be faster than sampling-based planning but usually
+fails if the straight motion is in collision.
 
-- faster: since it doesn't need to sample lots of states in the joint space, planning with screw motion can save lots of planning time.
-- `straighter` path: there is no guarantee for sampling-based algorithms to generate `straight` paths even it's a simple lifting task since it connects states in the joint space. In contrast, the returned path by the exponential coordinates and the Jacobian matrix can sometimes be more reasonable. See the above figures for comparison. 
+.. code-block:: python
 
+   result = planner.plan_screw(
+      target_pose,
+      robot.qpos.copy(),
+      time_step=scene.timestep,
+      use_point_cloud=True,
+      use_attach=True,
+   )
 
-You can call ``planner.plan_screw()`` to plan a path with screw motion. Similar to ``planner.plan()``, it also takes two required arguments: target pose and current joint positions, and returns a dict containing the same set of elements. 
+   if result["status"] != "Success":
+      result = planner.plan(target_pose, robot.qpos.copy(), time_step=scene.timestep)
 
-.. literalinclude:: ../../../../examples/motion_planning/demo.py
-   :dedent: 0
-   :lines: 135-143
-   :emphasize-lines: 2
-
-However, planning with screw motion only succeeds when there is no collision during the planning since it can not detour or replan. We thus recommend use ``planner.plan_screw()`` for some simple tasks or combined with ``planner.plan()``. As shown in the code, we first try ``planner.plan_screw()``, if it fails (e.g., collision during the planning), we then turn to the sampling-based algorithms. Other arguments are the same with ``planner.plan()``.
-
-``planner.plan_screw()`` also takes ``qpos_step = 0.1``, ``time_step = 0.1``, ``use_point_cloud = False``, ``use_attach = False``, and ``verbose = False`` as optional arguments, where ``qpos_step`` specifies the incremental distance of the joint positions during the path generation (before time paramtertization).
-
-
-Move the boxes
+Gripper control
 --------------------------------------
 
-In this example, we manually mark some landmark poses to move the boxes:
+For grippers with active finger joints, set their drive targets just like arm
+joints.
 
-.. literalinclude:: ../../../../examples/motion_planning/demo.py
-   :dedent: 0
-   :lines: 151-172
+.. code-block:: python
 
-To control the gripper, we use ``set_drive_target()`` to set target positions for the two gripper joints:
+   finger_joints = robot.active_joints[-2:]
 
-.. literalinclude:: ../../../../examples/motion_planning/demo.py
-   :dedent: 0
-   :lines: 101-125
-   :emphasize-lines: 3, 16
+   def set_gripper(width):
+      half_width = width / 2
+      for joint in finger_joints:
+         joint.set_drive_property(stiffness=500, damping=50, force_limit=100)
+         joint.set_drive_target(half_width)
+
+Collision-aware planning is covered in :ref:`collision_avoidance`.

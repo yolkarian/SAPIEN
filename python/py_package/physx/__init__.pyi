@@ -1,6 +1,7 @@
 from __future__ import annotations
 import numpy
 import pybind11_stubgen.typing_ext
+import torch
 import sapien.pysapien
 import sapien.pysapien_pinocchio
 import typing
@@ -20,6 +21,7 @@ from sapien.pysapien.physx import PhysxCollisionShapeBox as PhysxCollisionShapeB
 from sapien.pysapien.physx import PhysxCollisionShapeCapsule as PhysxCollisionShapeCapsule
 from sapien.pysapien.physx import PhysxCollisionShapeConvexMesh as PhysxCollisionShapeConvexMesh
 from sapien.pysapien.physx import PhysxCollisionShapeCylinder as PhysxCollisionShapeCylinder
+from sapien.pysapien.physx import PhysxCollisionShapeHeightField as PhysxCollisionShapeHeightField
 from sapien.pysapien.physx import PhysxCollisionShapePlane as PhysxCollisionShapePlane
 from sapien.pysapien.physx import PhysxCollisionShapeSphere as PhysxCollisionShapeSphere
 from sapien.pysapien.physx import PhysxCollisionShapeTriangleMesh as PhysxCollisionShapeTriangleMesh
@@ -63,3 +65,39 @@ if platform.system() != "Darwin":
 
 # Additional function defined in sapien.physx (not from pysapien.physx)
 def enable_gpu() -> None: ...
+
+class GpuInverseKinematicsSolver:
+    def __init__(
+        self,
+        system: PhysxGpuSystem,
+        articulations: typing.Sequence[PhysxArticulation],
+        link_indices: typing.Sequence[int | PhysxArticulationLinkComponent],
+        *,
+        active_qmask: typing.Any | None = None,
+        qlimits: typing.Any | None = None,
+        set_cuda_stream: bool = True,
+    ) -> None: ...
+    def solve(
+        self,
+        target_poses: typing.Any,
+        *,
+        initial_qpos: typing.Any | None = None,
+        max_iterations: int = 100,
+        eps: float = 1e-4,
+        damping: float = 1e-5,
+        step_size: float = 0.5,
+        position_weight: float | typing.Sequence[float] = 1.0,
+        rotation_weight: float | typing.Sequence[float] = 1.0,
+        return_best: bool = True,
+        apply_result: bool = True,
+        fetch_initial_qpos: bool = True,
+        early_stop: bool = False,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...
+
+def gpu_inverse_kinematics(
+    system: PhysxGpuSystem,
+    articulations: typing.Sequence[PhysxArticulation],
+    link_indices: typing.Sequence[int | PhysxArticulationLinkComponent],
+    target_poses: typing.Any,
+    **kwargs: typing.Any,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]: ...

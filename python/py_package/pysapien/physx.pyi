@@ -7,9 +7,9 @@ import typing
 
 import platform
 if platform.system() == "Darwin":
-    __all__ = ['PhysxArticulation', 'PhysxArticulationJoint', 'PhysxArticulationLinkComponent', 'PhysxBaseComponent', 'PhysxBodyConfig', 'PhysxCollisionShape', 'PhysxCollisionShapeBox', 'PhysxCollisionShapeCapsule', 'PhysxCollisionShapeConvexMesh', 'PhysxCollisionShapeCylinder', 'PhysxCollisionShapePlane', 'PhysxCollisionShapeSphere', 'PhysxCollisionShapeTriangleMesh', 'PhysxContact', 'PhysxContactPoint', 'PhysxCpuSystem', 'PhysxDistanceJointComponent', 'PhysxDriveComponent', 'PhysxEngine', 'PhysxGearComponent', 'PhysxGpuSystem', 'PhysxJointComponent', 'PhysxMaterial', 'PhysxRayHit', 'PhysxRigidBaseComponent', 'PhysxRigidBodyComponent', 'PhysxRigidDynamicComponent', 'PhysxRigidStaticComponent', 'PhysxSDFConfig', 'PhysxSceneConfig', 'PhysxShapeConfig', 'PhysxSystem', 'get_body_config', 'get_default_material', 'get_scene_config', 'get_sdf_config', 'get_shape_config', 'is_gpu_enabled', 'set_body_config', 'set_default_material', 'set_gpu_memory_config', 'set_scene_config', 'set_sdf_config', 'set_shape_config', 'version']
+    __all__ = ['PhysxArticulation', 'PhysxArticulationJoint', 'PhysxArticulationLinkComponent', 'PhysxBaseComponent', 'PhysxBodyConfig', 'PhysxCollisionShape', 'PhysxCollisionShapeBox', 'PhysxCollisionShapeCapsule', 'PhysxCollisionShapeConvexMesh', 'PhysxCollisionShapeCylinder', 'PhysxCollisionShapeHeightField', 'PhysxCollisionShapePlane', 'PhysxCollisionShapeSphere', 'PhysxCollisionShapeTriangleMesh', 'PhysxContact', 'PhysxContactPoint', 'PhysxCpuSystem', 'PhysxDistanceJointComponent', 'PhysxDriveComponent', 'PhysxEngine', 'PhysxGearComponent', 'PhysxGpuSystem', 'PhysxJointComponent', 'PhysxMaterial', 'PhysxRayHit', 'PhysxRigidBaseComponent', 'PhysxRigidBodyComponent', 'PhysxRigidDynamicComponent', 'PhysxRigidStaticComponent', 'PhysxSDFConfig', 'PhysxSceneConfig', 'PhysxShapeConfig', 'PhysxSystem', 'get_body_config', 'get_default_material', 'get_scene_config', 'get_sdf_config', 'get_shape_config', 'is_gpu_enabled', 'set_body_config', 'set_default_material', 'set_gpu_memory_config', 'set_scene_config', 'set_sdf_config', 'set_shape_config', 'version']
 else:
-    __all__ = ['PhysxArticulation', 'PhysxArticulationJoint', 'PhysxArticulationLinkComponent', 'PhysxBaseComponent', 'PhysxBodyConfig', 'PhysxCollisionShape', 'PhysxCollisionShapeBox', 'PhysxCollisionShapeCapsule', 'PhysxCollisionShapeConvexMesh', 'PhysxCollisionShapeCylinder', 'PhysxCollisionShapePlane', 'PhysxCollisionShapeSphere', 'PhysxCollisionShapeTriangleMesh', 'PhysxContact', 'PhysxContactPoint', 'PhysxCpuSystem', 'PhysxDistanceJointComponent', 'PhysxDriveComponent', 'PhysxEngine', 'PhysxGearComponent', 'PhysxGpuContactBodyImpulseQuery', 'PhysxGpuContactPairImpulseQuery', 'PhysxGpuSystem', 'PhysxJointComponent', 'PhysxMaterial', 'PhysxRayHit', 'PhysxRigidBaseComponent', 'PhysxRigidBodyComponent', 'PhysxRigidDynamicComponent', 'PhysxRigidStaticComponent', 'PhysxSDFConfig', 'PhysxSceneConfig', 'PhysxShapeConfig', 'PhysxSystem', 'get_body_config', 'get_default_material', 'get_scene_config', 'get_sdf_config', 'get_shape_config', 'is_gpu_enabled', 'set_body_config', 'set_default_material', 'set_gpu_memory_config', 'set_scene_config', 'set_sdf_config', 'set_shape_config', 'version']
+    __all__ = ['PhysxArticulation', 'PhysxArticulationJoint', 'PhysxArticulationLinkComponent', 'PhysxBaseComponent', 'PhysxBodyConfig', 'PhysxCollisionShape', 'PhysxCollisionShapeBox', 'PhysxCollisionShapeCapsule', 'PhysxCollisionShapeConvexMesh', 'PhysxCollisionShapeCylinder', 'PhysxCollisionShapeHeightField', 'PhysxCollisionShapePlane', 'PhysxCollisionShapeSphere', 'PhysxCollisionShapeTriangleMesh', 'PhysxContact', 'PhysxContactPoint', 'PhysxCpuSystem', 'PhysxDistanceJointComponent', 'PhysxDriveComponent', 'PhysxEngine', 'PhysxGearComponent', 'PhysxGpuContactBodyImpulseQuery', 'PhysxGpuContactPairImpulseQuery', 'PhysxGpuSystem', 'PhysxJointComponent', 'PhysxMaterial', 'PhysxRayHit', 'PhysxRigidBaseComponent', 'PhysxRigidBodyComponent', 'PhysxRigidDynamicComponent', 'PhysxRigidStaticComponent', 'PhysxSDFConfig', 'PhysxSceneConfig', 'PhysxShapeConfig', 'PhysxSystem', 'get_body_config', 'get_default_material', 'get_scene_config', 'get_sdf_config', 'get_shape_config', 'is_gpu_enabled', 'set_body_config', 'set_default_material', 'set_gpu_memory_config', 'set_scene_config', 'set_sdf_config', 'set_shape_config', 'version']
 M = typing.TypeVar("M", bound=int)
 class PhysxArticulation:
     name: str
@@ -422,6 +422,29 @@ class PhysxCollisionShapeCylinder(PhysxCollisionShape):
     @property
     def radius(self) -> float:
         ...
+class PhysxCollisionShapeHeightField(PhysxCollisionShape):
+    def __init__(self, height_field: numpy.ndarray | list | tuple, row_scale: float, column_scale: float, height_scale: float, material: PhysxMaterial | None = None) -> None:
+        ...
+    def get_column_scale(self) -> float:
+        ...
+    def get_height_field(self) -> numpy.ndarray:
+        ...
+    def get_height_scale(self) -> float:
+        ...
+    def get_row_scale(self) -> float:
+        ...
+    @property
+    def column_scale(self) -> float:
+        ...
+    @property
+    def height_field(self) -> numpy.ndarray:
+        ...
+    @property
+    def height_scale(self) -> float:
+        ...
+    @property
+    def row_scale(self) -> float:
+        ...
 class PhysxCollisionShapePlane(PhysxCollisionShape):
     def __init__(self, material: PhysxMaterial) -> None:
         ...
@@ -740,7 +763,11 @@ if platform.system() != "Darwin":
             Args:
                 stream: integer representation of a cuda stream pointer
             """
+        @typing.overload
         def gpu_update_articulation_kinematics(self) -> None:
+            ...
+        @typing.overload
+        def gpu_update_articulation_kinematics(self, index_buffer: sapien.pysapien.CudaArray) -> None:
             ...
         def set_scene_offset(self, scene: sapien.pysapien.Scene, offset: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple) -> None:
             """
