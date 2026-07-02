@@ -212,6 +212,11 @@ public:
     return mCudaArticulationJacobianHandle;
   }
 
+  /** Valid dense Jacobian shape per articulation, [rows, cols], indexed by gpu_index. */
+  CudaArrayHandle gpuGetArticulationJacobianShapeCudaHandle() const {
+    return mCudaArticulationJacobianShapeBuffer.handle();
+  }
+
   CudaArrayHandle gpuGetArticulationLinkIncomingJointForceHandle() const {
     return mCudaArticulationLinkIncomingJointForceBuffer.handle();
   }

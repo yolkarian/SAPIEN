@@ -7,13 +7,22 @@ from sapien.wrapper.urdf_loader import URDFLoader
 
 
 class TestURDFLoaderSDF(unittest.TestCase):
-    def _parse_urdf(self, urdf_text: str, *, multiple_convex: bool = False):
+    def _parse_urdf(
+        self,
+        urdf_text: str,
+        *,
+        multiple_convex: bool = False,
+        load_visuals: bool = True,
+        load_collisions: bool = True,
+    ):
         with tempfile.TemporaryDirectory() as tempdir:
             urdf_path = Path(tempdir) / "robot.urdf"
             urdf_path.write_text(urdf_text)
 
             loader = URDFLoader()
             loader.load_multiple_collisions_from_file = multiple_convex
+            loader.load_visuals = load_visuals
+            loader.load_collisions = load_collisions
             return loader.parse(str(urdf_path))
 
     def test_collision_sdf_auto_enables_nonconvex(self):
@@ -89,6 +98,36 @@ class TestURDFLoaderSDF(unittest.TestCase):
         self.assertIsNotNone(records[1].sdf_config)
         self.assertEqual(records[1].sdf_config.resolution, 128)
         self.assertTrue(records[1].sdf_config.enable_remeshing)
+
+    def test_physics_only_skips_visual_and_collision_records(self):
+        urdf = """<?xml version="1.0"?>
+<robot name="physics_only_test">
+  <link name="base">
+    <visual name="visual_box">
+      <geometry>
+        <box size="1 1 1"/>
+      </geometry>
+    </visual>
+    <collision name="collision_box">
+      <geometry>
+        <box size="1 1 1"/>
+      </geometry>
+    </collision>
+  </link>
+</robot>
+"""
+
+        articulations, actors, cameras = self._parse_urdf(
+            urdf,
+            load_visuals=False,
+            load_collisions=False,
+        )
+
+        self.assertEqual(len(articulations), 0)
+        self.assertEqual(len(cameras), 0)
+        self.assertEqual(len(actors), 1)
+        self.assertEqual(len(actors[0].visual_records), 0)
+        self.assertEqual(len(actors[0].collision_records), 0)
 
 
 if __name__ == "__main__":

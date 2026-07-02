@@ -487,6 +487,10 @@ Generator<int> init_physx(py::module &sapien) {
           py::arg("data"));
 
 #ifdef SAPIEN_CUDA
+  auto asCudaIndexBuffer = [](py::object indexBuffer) {
+    return CudaArrayHandleFromPython(indexBuffer);
+  };
+
   PyPhysxSystemGpu
       .def(py::init([](std::string const &device) {
              return std::make_shared<PhysxSystemGpu>(findDevice(device));
@@ -571,7 +575,20 @@ Args:
       .def_property_readonly("cuda_rigid_dynamic_data",
                              &PhysxSystemGpu::gpuGetRigidDynamicCudaHandle)
       .def_property_readonly("cuda_articulation_link_data",
-                             &PhysxSystemGpu::gpuGetArticulationLinkCudaHandle)
+                             &PhysxSystemGpu::gpuGetArticulationLinkCudaHandle,
+                             R"doc(Padded articulation link pose and velocity buffer.
+
+The tensor shape is ``(articulation_count, max_links, 13)``. Rows are indexed by
+``articulation.gpu_index`` and low-level ``link.index``. Channels are:
+
+- ``0:3``: world position ``xyz``
+- ``3:7``: world quaternion ``wxyz``
+- ``7:10``: world linear velocity
+- ``10:13``: world angular velocity
+
+The root pose is ``cuda_articulation_link_data[:, 0, 0:7]`` and the root
+velocity is ``cuda_articulation_link_data[:, 0, 7:13]``.
+)doc")
 
       .def_property_readonly("cuda_rigid_body_force",
                              &PhysxSystemGpu::gpuGetRigidBodyForceCudaHandle)
@@ -641,6 +658,18 @@ The row order within each valid submatrix is ``[vx, vy, vz, wx, wy, wz]`` for
 each link in low-level link index order. For fixed-base articulations, the root
 link rows are omitted. For floating-base articulations, the first six columns
 correspond to root linear and angular velocity in world coordinates.
+
+PhysX reports the linear component at the link center of mass. If your task
+frame is the link frame origin, shift the linear Jacobian rows accordingly in
+application code.
+)doc")
+      .def_property_readonly("cuda_articulation_jacobian_shape",
+                             &PhysxSystemGpu::gpuGetArticulationJacobianShapeCudaHandle,
+                             R"doc(Valid dense Jacobian shape for each articulation.
+
+The tensor shape is ``(articulation_count, 2)`` with dtype ``uint32``. Rows are
+indexed by ``articulation.gpu_index`` and columns are ``[rows, cols]`` for the
+valid submatrix inside ``cuda_articulation_jacobian``.
 )doc")
       .def_property_readonly("cuda_articulation_link_incoming_joint_forces",
                              &PhysxSystemGpu::gpuGetArticulationLinkIncomingJointForceHandle)
@@ -684,6 +713,18 @@ left unchanged.
 
 The updated entries use the same padded layout as `cuda_articulation_jacobian`.
 )doc")
+      .def("gpu_compute_articulation_jacobian",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object gpuIndices) {
+             system.gpuComputeArticulationJacobian(asCudaIndexBuffer(gpuIndices));
+           },
+           py::arg("gpu_indices"),
+           R"doc(Compute dense articulation Jacobians for selected articulations on the GPU.
+
+`gpu_indices` may be a `sapien.CudaArray` or any object exposing
+`__cuda_array_interface__`. It must be a contiguous CUDA int32 array containing
+SAPIEN articulation `gpu_index` values, not PhysX `PxArticulationGPUIndex`
+values.
+)doc")
       .def("gpu_compute_articulation_gravity_compensation",
            py::overload_cast<>(
                &PhysxSystemGpu::gpuComputeArticulationGravityCompensation),
@@ -701,6 +742,18 @@ tensor with shape `(articulation_count, max_dofs)`.
 `gpu_indices` must be a contiguous CUDA int32 array containing articulation
 `gpu_index` values. Only selected rows inside
 `cuda_articulation_gravity_compensation` are updated.
+)doc")
+      .def("gpu_compute_articulation_gravity_compensation",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object gpuIndices) {
+             system.gpuComputeArticulationGravityCompensation(asCudaIndexBuffer(gpuIndices));
+           },
+           py::arg("gpu_indices"),
+           R"doc(Compute joint gravity compensation for selected articulations on the GPU.
+
+`gpu_indices` may be a `sapien.CudaArray` or any object exposing
+`__cuda_array_interface__`. It must be a contiguous CUDA int32 array containing
+SAPIEN articulation `gpu_index` values, not PhysX `PxArticulationGPUIndex`
+values.
 )doc")
       .def("gpu_compute_articulation_coriolis_and_centrifugal_compensation",
            py::overload_cast<>(
@@ -720,6 +773,19 @@ with shape `(articulation_count, max_dofs)`.
 `gpu_indices` must be a contiguous CUDA int32 array containing articulation
 `gpu_index` values. Only selected rows inside
 `cuda_articulation_coriolis_and_centrifugal_compensation` are updated.
+)doc")
+      .def("gpu_compute_articulation_coriolis_and_centrifugal_compensation",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object gpuIndices) {
+             system.gpuComputeArticulationCoriolisAndCentrifugalCompensation(
+                 asCudaIndexBuffer(gpuIndices));
+           },
+           py::arg("gpu_indices"),
+           R"doc(Compute joint Coriolis and centrifugal compensation for selected articulations.
+
+`gpu_indices` may be a `sapien.CudaArray` or any object exposing
+`__cuda_array_interface__`. It must be a contiguous CUDA int32 array containing
+SAPIEN articulation `gpu_index` values, not PhysX `PxArticulationGPUIndex`
+values.
 )doc")
       .def("gpu_fetch_articulation_link_incoming_joint_forces",
            &PhysxSystemGpu::gpuFetchArticulationLinkIncomingJointForce)
@@ -754,6 +820,17 @@ for all articulations.)doc")
 
 `index_buffer` must be a contiguous CUDA int32 array containing SAPIEN
 articulation `gpu_index` values.
+)doc")
+      .def("gpu_update_articulation_kinematics",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuUpdateArticulationKinematics(asCudaIndexBuffer(indexBuffer));
+           },
+           py::arg("index_buffer"),
+           R"doc(Update link poses and velocities for selected articulations.
+
+`index_buffer` may be a `sapien.CudaArray` or any object exposing
+`__cuda_array_interface__`. It must be a contiguous CUDA int32 array containing
+SAPIEN articulation `gpu_index` values.
 )doc")
 
       // TODO apply force torque
@@ -818,6 +895,57 @@ articulation `gpu_index` values.
       .def("gpu_apply_articulation_target_velocity",
            py::overload_cast<CudaArrayHandle const &>(
                &PhysxSystemGpu::gpuApplyArticulationQTargetVel),
+           py::arg("index_buffer"))
+
+      .def("gpu_apply_rigid_dynamic_data",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuApplyRigidDynamicData(asCudaIndexBuffer(indexBuffer));
+           },
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_root_pose",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuApplyArticulationRootPose(asCudaIndexBuffer(indexBuffer));
+           },
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_root_velocity",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuApplyArticulationRootVel(asCudaIndexBuffer(indexBuffer));
+           },
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_qpos",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuApplyArticulationQpos(asCudaIndexBuffer(indexBuffer));
+           },
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_qvel",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuApplyArticulationQvel(asCudaIndexBuffer(indexBuffer));
+           },
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_qf",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuApplyArticulationQf(asCudaIndexBuffer(indexBuffer));
+           },
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_link_force",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuApplyArticulationLinkForce(asCudaIndexBuffer(indexBuffer));
+           },
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_link_torque",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuApplyArticulationLinkTorque(asCudaIndexBuffer(indexBuffer));
+           },
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_target_position",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuApplyArticulationQTargetPos(asCudaIndexBuffer(indexBuffer));
+           },
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_target_velocity",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuApplyArticulationQTargetVel(asCudaIndexBuffer(indexBuffer));
+           },
            py::arg("index_buffer"))
 
       .def("sync_poses_gpu_to_cpu", &PhysxSystemGpu::syncPosesGpuToCpu,

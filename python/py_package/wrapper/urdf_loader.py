@@ -49,6 +49,8 @@ class URDFLoader:
         self.fix_root_link = True
         self.load_multiple_collisions_from_file = False
         self.load_nonconvex_collision_from_file = False
+        self.load_visuals = True
+        self.load_collisions = True
         self.multiple_collisions_decomposition:Literal["none", "coacd"] = "none"
         self.multiple_collisions_decomposition_params = dict()
 
@@ -302,7 +304,7 @@ class URDFLoader:
             )
 
         # visual shapes
-        for visual in link.visuals:
+        for visual in (link.visuals if self.load_visuals else []):
             material = None
             if visual.material:
                 material = RenderMaterial()
@@ -368,7 +370,7 @@ class URDFLoader:
                 )
 
         # collision shapes
-        for cid, collision in enumerate(link.collisions):
+        for cid, collision in enumerate(link.collisions if self.load_collisions else []):
             collision: Collision
             t_collision2link = self._pose_from_origin(collision.origin, self.scale)
 
@@ -386,7 +388,7 @@ class URDFLoader:
                     patch_radius=patch_radius,
                     min_patch_radius=min_patch_radius,
                 )
-                if self.collision_is_visual:
+                if self.load_visuals and self.collision_is_visual:
                     link_builder.add_box_visual(
                         t_collision2link,
                         collision.geometry.box.size * self.scale / 2.0,
@@ -400,7 +402,7 @@ class URDFLoader:
                     patch_radius=patch_radius,
                     min_patch_radius=min_patch_radius,
                 )
-                if self.collision_is_visual:
+                if self.load_visuals and self.collision_is_visual:
                     link_builder.add_sphere_visual(
                         t_collision2link,
                         collision.geometry.sphere.radius * self.scale,
@@ -415,7 +417,7 @@ class URDFLoader:
                     patch_radius=patch_radius,
                     min_patch_radius=min_patch_radius,
                 )
-                if self.collision_is_visual:
+                if self.load_visuals and self.collision_is_visual:
                     link_builder.add_capsule_visual(
                         t_collision2link * Pose(q=[0.7071068, 0, 0.7071068, 0]),
                         collision.geometry.capsule.radius * self.scale,
@@ -431,7 +433,7 @@ class URDFLoader:
                     patch_radius=patch_radius,
                     min_patch_radius=min_patch_radius,
                 )
-                if self.collision_is_visual:
+                if self.load_visuals and self.collision_is_visual:
                     link_builder.add_cylinder_visual(
                         t_collision2link * Pose(q=[0.7071068, 0, 0.7071068, 0]),
                         collision.geometry.cylinder.radius * self.scale,
@@ -491,7 +493,7 @@ class URDFLoader:
                         min_patch_radius=min_patch_radius,
                     )
 
-                if self.collision_is_visual:
+                if self.load_visuals and self.collision_is_visual:
                     link_builder.add_visual_from_file(
                         filename,
                         t_collision2link,

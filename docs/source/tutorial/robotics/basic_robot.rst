@@ -38,6 +38,17 @@ Load a robot URDF
 link is allowed to move. For URDFs that contain single rigid bodies or multiple
 root objects, use ``loader.load_multiple(...)``.
 
+For kinematics-only or IK-only GPU workflows, geometry loading can be disabled:
+
+.. code-block:: python
+
+   loader.load_visuals = False
+   loader.load_collisions = False
+
+``load_visuals=False`` avoids creating render shapes and does not require a
+render system. ``load_collisions=False`` skips collision shape creation while
+preserving the articulation topology, joints, and inertial data.
+
 The packaged command-line smoke example demonstrates URDF loading:
 
 .. code-block:: shell
@@ -156,10 +167,25 @@ all bodies are added.
    # load/build robots here, then:
    physx_system.gpu_init()
 
+Link poses and velocities are stored in
+``physx_system.cuda_articulation_link_data`` with shape
+``(articulation_count, max_links, 13)``. Rows are indexed by
+``robot.gpu_index`` and low-level ``link.index``. Channels ``0:3`` are world
+position, ``3:7`` are quaternion ``wxyz``, ``7:10`` are linear velocity, and
+``10:13`` are angular velocity.
+
 GPU Jacobians are computed with
 ``physx_system.gpu_compute_articulation_jacobian()`` and stored in the padded
 ``physx_system.cuda_articulation_jacobian`` tensor. Use ``robot.gpu_index`` and
-``robot.get_jacobian_shape()`` to select the valid submatrix.
+``physx_system.cuda_articulation_jacobian_shape`` or
+``robot.get_jacobian_shape()`` to select the valid submatrix. PhysX reports the
+linear Jacobian component at the link center of mass; shift it in application
+code if your task frame is the link origin.
+
+Indexed GPU APIs accept ``sapien.CudaArray`` and CUDA-array-interface objects as
+1D contiguous CUDA ``int32`` arrays containing SAPIEN ``articulation.gpu_index``
+values. Keep the owner of an external index tensor alive until the SAPIEN CUDA
+stream has finished using it.
 
 For passive-force compensation in GPU simulation, avoid calling
 ``robot.compute_passive_force()`` inside the step loop. Use the GPU buffers:

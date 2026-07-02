@@ -638,61 +638,61 @@ if platform.system() != "Darwin":
         def gpu_apply_articulation_qf(self) -> None:
             ...
         @typing.overload
-        def gpu_apply_articulation_qf(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+        def gpu_apply_articulation_qf(self, index_buffer: typing.Any) -> None:
             ...
         @typing.overload
         def gpu_apply_articulation_link_force(self) -> None:
             ...
         @typing.overload
-        def gpu_apply_articulation_link_force(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+        def gpu_apply_articulation_link_force(self, index_buffer: typing.Any) -> None:
             ...
         @typing.overload
         def gpu_apply_articulation_link_torque(self) -> None:
             ...
         @typing.overload
-        def gpu_apply_articulation_link_torque(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+        def gpu_apply_articulation_link_torque(self, index_buffer: typing.Any) -> None:
             ...
         @typing.overload
         def gpu_apply_articulation_qpos(self) -> None:
             ...
         @typing.overload
-        def gpu_apply_articulation_qpos(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+        def gpu_apply_articulation_qpos(self, index_buffer: typing.Any) -> None:
             ...
         @typing.overload
         def gpu_apply_articulation_qvel(self) -> None:
             ...
         @typing.overload
-        def gpu_apply_articulation_qvel(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+        def gpu_apply_articulation_qvel(self, index_buffer: typing.Any) -> None:
             ...
         @typing.overload
         def gpu_apply_articulation_root_pose(self) -> None:
             ...
         @typing.overload
-        def gpu_apply_articulation_root_pose(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+        def gpu_apply_articulation_root_pose(self, index_buffer: typing.Any) -> None:
             ...
         @typing.overload
         def gpu_apply_articulation_root_velocity(self) -> None:
             ...
         @typing.overload
-        def gpu_apply_articulation_root_velocity(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+        def gpu_apply_articulation_root_velocity(self, index_buffer: typing.Any) -> None:
             ...
         @typing.overload
         def gpu_apply_articulation_target_position(self) -> None:
             ...
         @typing.overload
-        def gpu_apply_articulation_target_position(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+        def gpu_apply_articulation_target_position(self, index_buffer: typing.Any) -> None:
             ...
         @typing.overload
         def gpu_apply_articulation_target_velocity(self) -> None:
             ...
         @typing.overload
-        def gpu_apply_articulation_target_velocity(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+        def gpu_apply_articulation_target_velocity(self, index_buffer: typing.Any) -> None:
             ...
         @typing.overload
         def gpu_apply_rigid_dynamic_data(self) -> None:
             ...
         @typing.overload
-        def gpu_apply_rigid_dynamic_data(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+        def gpu_apply_rigid_dynamic_data(self, index_buffer: typing.Any) -> None:
             ...
         def gpu_apply_rigid_dynamic_force(self) -> None:
             ...
@@ -703,11 +703,17 @@ if platform.system() != "Darwin":
         def gpu_create_contact_pair_impulse_query(self, body_pairs: list[tuple[PhysxRigidBaseComponent, PhysxRigidBaseComponent]]) -> PhysxGpuContactPairImpulseQuery:
             ...
         @typing.overload
+        def gpu_compute_articulation_jacobian(self) -> None:
+            ...
+        @typing.overload
+        def gpu_compute_articulation_jacobian(self, gpu_indices: typing.Any) -> None:
+            ...
+        @typing.overload
         def gpu_compute_articulation_gravity_compensation(self) -> None:
             ...
         @typing.overload
         def gpu_compute_articulation_gravity_compensation(
-            self, gpu_indices: sapien.pysapien.CudaArray
+            self, gpu_indices: typing.Any
         ) -> None:
             ...
         @typing.overload
@@ -715,7 +721,7 @@ if platform.system() != "Darwin":
             ...
         @typing.overload
         def gpu_compute_articulation_coriolis_and_centrifugal_compensation(
-            self, gpu_indices: sapien.pysapien.CudaArray
+            self, gpu_indices: typing.Any
         ) -> None:
             ...
         def gpu_fetch_articulation_link_incoming_joint_forces(self) -> None:
@@ -767,7 +773,7 @@ if platform.system() != "Darwin":
         def gpu_update_articulation_kinematics(self) -> None:
             ...
         @typing.overload
-        def gpu_update_articulation_kinematics(self, index_buffer: sapien.pysapien.CudaArray) -> None:
+        def gpu_update_articulation_kinematics(self, index_buffer: typing.Any) -> None:
             ...
         def set_scene_offset(self, scene: sapien.pysapien.Scene, offset: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple) -> None:
             """
@@ -824,6 +830,12 @@ if platform.system() != "Darwin":
             ...
         @property
         def cuda_articulation_target_qvel(self) -> sapien.pysapien.CudaArray:
+            ...
+        @property
+        def cuda_articulation_jacobian(self) -> sapien.pysapien.CudaArray:
+            ...
+        @property
+        def cuda_articulation_jacobian_shape(self) -> sapien.pysapien.CudaArray:
             ...
         @property
         def cuda_rigid_body_data(self) -> sapien.pysapien.CudaArray:

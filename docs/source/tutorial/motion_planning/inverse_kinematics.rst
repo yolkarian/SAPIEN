@@ -39,42 +39,47 @@ state for initialization:
 For controlled motion, prefer setting drive targets on each active joint rather
 than teleporting with ``set_qpos`` during simulation.
 
-Batched GPU IK without Pinocchio
---------------------------------
+GPU articulation data for custom batched IK
+-------------------------------------------
 
-SAPIEN also provides a batched GPU Jacobian IK helper for articulations running
-in ``PhysxGpuSystem``. It uses PhysX dense articulation Jacobians and PyTorch
-CUDA tensors, and does not depend on Pinocchio.
+SAPIEN does not provide a built-in batched IK policy. For custom GPU IK,
+construct articulations in ``PhysxGpuSystem`` and use the low-level GPU buffers
+and PhysX dense Jacobians.
 
-.. code-block:: python
+``cuda_articulation_link_data`` stores link pose and velocity as a padded tensor:
 
-   import torch
+.. code-block:: text
 
-   # After all articulations are built and physx_system.gpu_init() has run:
-   robots = [robot0, robot1, robot2]
-   ee_links = [robot.find_link_by_name("tool") for robot in robots]
+   shape: (articulation_count, max_links, 13)
+   row index: articulation.gpu_index
+   link index: low-level link.index
 
-   solver = sapien.physx.GpuInverseKinematicsSolver(
-      physx_system,
-      robots,
-      ee_links,
-   )
+   channels 0:3    world position xyz
+   channels 3:7    world quaternion wxyz
+   channels 7:10   world linear velocity
+   channels 10:13  world angular velocity
 
-   # shape: (batch, 7), ordered as xyz + quaternion wxyz, in each scene frame
-   target_poses = torch.tensor(
-      [
-         [0.4, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
-         [0.5, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
-         [0.6, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0],
-      ],
-      device="cuda",
-   )
+The root pose is ``cuda_articulation_link_data[:, 0, 0:7]`` and the root
+velocity is ``cuda_articulation_link_data[:, 0, 7:13]``.
 
-   ik_qpos, success, error = solver.solve(target_poses, max_iterations=100)
+Dense Jacobians are available through ``cuda_articulation_jacobian`` after
+calling ``gpu_compute_articulation_jacobian()``. The valid matrix size for each
+articulation is available from ``cuda_articulation_jacobian_shape`` or
+``articulation.get_jacobian_shape()``.
 
-``ik_qpos`` is a padded CUDA tensor with shape ``(batch, max_dof)`` in the same
-joint order as SAPIEN active joints. By default, the solver applies the result
-back to ``physx_system.cuda_articulation_qpos``, calls
-``gpu_apply_articulation_qpos()``, updates articulation kinematics, and fetches
-link poses. Use ``rotation_weight=0.0`` for position-only IK, or pass
-``active_qmask`` to the solver constructor to freeze selected DOFs.
+.. code-block:: text
+
+   dense_jacobian row order: [vx, vy, vz, wx, wy, wz]
+
+   fixed-base articulation:
+      rows = (link_count - 1) * 6
+      cols = dof
+
+   floating-base articulation:
+      rows = 6 + (link_count - 1) * 6
+      cols = 6 + dof
+
+For floating-base articulations, the first six columns correspond to root
+linear and angular velocity in world coordinates. PhysX reports the linear
+Jacobian component at the link center of mass. If your task frame is the link
+frame origin, shift the linear rows in application code before solving IK.
