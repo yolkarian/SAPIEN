@@ -24,7 +24,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-22.04
+    # The published Linux wheels currently depend on glibc symbols newer than
+    # Ubuntu 22.04 provides, so build docs on Ubuntu 24.04 where they import.
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,6 +59,7 @@ jobs:
             --pattern 'sapien-*-cp311-cp311-manylinux_2_28_x86_64.whl' \
             --dir wheelhouse
           python -m pip install wheelhouse/sapien-*-cp311-cp311-manylinux_2_28_x86_64.whl
+          python -c 'import sapien, os; print(os.path.dirname(sapien.__file__))'
 
       - name: Build documentation
         run: make -C docs html

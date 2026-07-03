@@ -11,6 +11,7 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 - Updated agent instructions to use the current MyST tutorial index paths and dropped the deleted serialization note reference.
 - Narrowed PhysX environment-id render synchronization error handling to only ignore scenes without render systems.
 - Clarified render-shape GPU transform-index overload usage for owning scenes and scene groups.
+- Moved the documentation Pages build job to Ubuntu 24.04 so the published release wheel imports with the required glibc symbols.
 
 ## 3.0.0+fork.8 - 2026-07-03
 
