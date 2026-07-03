@@ -145,9 +145,6 @@ def build_sapien(sapien_source_dir, sapien_build_dir):
         "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
     ]
     
-    if platform.system() == "Darwin":
-        cmake_args += ["-DCMAKE_TOOLCHAIN_FILE=toolchains/macos.toolchain.cmake"]
-
     if sys.platform == "win32":
         cmake_args += [f"-DBUILD_TESTING=Off"]
 
@@ -261,9 +258,6 @@ class CMakeBuild(build_ext):
             "-Dsapien_DIR=" + os.path.join(sapien_install_dir, "lib/cmake/sapien")
         ]
         
-        if platform.system() == "Darwin":
-            cmake_args += ["-DCMAKE_TOOLCHAIN_FILE=../toolchains/macos.toolchain.cmake"]
-
         env = os.environ.copy()
         subprocess.check_call(
             ["cmake", os.path.join(ext.sourcedir, "python")] + cmake_args,
@@ -319,22 +313,8 @@ class CMakeBuild(build_ext):
         assert os.path.exists(source_path)
         shutil.copytree(source_path, vulkan_shader_path)
 
-        # copy dynamic libs
-        if platform.system() == "Darwin":
-            sapien_install_dir = os.path.join(self.sapien_build_dir, "_sapien_install")
-            dy_libs_path = os.path.join(self.build_lib, "sapien", "libs")
-            dy_source_paths = [
-                os.path.join(sapien_install_dir, "lib/libsapien.dylib"),
-                os.path.join(sapien_install_dir, "lib/libsvulkan2.dylib"),
-            ]
-            if os.path.exists(dy_libs_path):
-                shutil.rmtree(dy_libs_path)
-            os.makedirs(dy_libs_path)
-            for lib in dy_source_paths:
-                shutil.copy(lib, dy_libs_path)
-                
         # provide Vulkan libraries for linux
-        if platform.system() == "Linux" or platform.system() == "Darwin":
+        if platform.system() == "Linux":
             vulkan_library_path = os.path.join(
                 self.build_lib, "sapien", "vulkan_library"
             )

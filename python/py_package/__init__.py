@@ -2,7 +2,6 @@ from warnings import warn
 from importlib.resources import files
 import os
 from pathlib import Path
-import platform
 from .version import __version__
 
 os.environ["SAPIEN_PACKAGE_PATH"] = os.path.dirname(__file__)
@@ -15,9 +14,7 @@ from .pysapien import profile
 from .pysapien import set_log_level
 from .pysapien import math
 
-import platform
-if platform.system() != "Darwin":
-    from .pysapien import simsense
+from .pysapien import simsense
 
 from . import physx
 from . import render

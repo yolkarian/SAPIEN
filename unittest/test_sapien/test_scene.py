@@ -44,6 +44,103 @@ class TestScene(unittest.TestCase):
         self.assertIsNotNone(render_body)
         self.assertEqual(len(render_body.render_shapes), 1)
 
+        render_part = render_body.render_shapes[0].parts[0]
+        np.testing.assert_allclose(
+            render_part.vertices,
+            np.array(
+                [
+                    [0.0, 0.0, 0.0],
+                    [0.0, 0.2, 0.01],
+                    [0.0, 0.4, 0.02],
+                    [0.1, 0.0, 0.03],
+                    [0.1, 0.2, 0.04],
+                    [0.1, 0.4, 0.05],
+                ],
+                dtype=np.float32,
+            ),
+        )
+        # Keep the render mesh split aligned with PhysX heightfield tessellation.
+        np.testing.assert_array_equal(
+            render_part.triangles,
+            np.array(
+                [
+                    [0, 3, 4],
+                    [0, 4, 1],
+                    [1, 4, 5],
+                    [1, 5, 2],
+                ],
+                dtype=np.uint32,
+            ),
+        )
+
+    def test_viewer_collision_visual_heightfield(self):
+        from sapien.utils.viewer.entity_window import EntityWindow
+
+        class DummyViewer:
+            def __init__(self):
+                self.notified = False
+                self.selected_entity = None
+
+            def notify_render_update(self):
+                self.notified = True
+
+        scene = sapien.Scene()
+        height_field = np.array([[0, 1, 2], [3, 4, 5]], dtype=np.int16)
+        terrain = scene.add_heightfield(
+            height_field,
+            row_scale=0.1,
+            column_scale=0.2,
+            height_scale=0.01,
+            render=False,
+        )
+        body = terrain.find_component_by_type(sapien.physx.PhysxRigidStaticComponent)
+        collision_shape = body.collision_shapes[0]
+
+        plugin = EntityWindow()
+        viewer = DummyViewer()
+        plugin.viewer = viewer
+        plugin.enable_collision_visual(terrain)
+
+        self.assertTrue(viewer.notified)
+        collision_bodies = [
+            component
+            for component in terrain.components
+            if isinstance(component, sapien.render.RenderBodyComponent)
+            and component.name == "Collision"
+        ]
+        self.assertEqual(len(collision_bodies), 1)
+        self.assertEqual(len(collision_bodies[0].render_shapes), 1)
+
+        render_shape = collision_bodies[0].render_shapes[0]
+        self.assertTrue(pose_equal(render_shape.local_pose, collision_shape.local_pose))
+        render_part = render_shape.parts[0]
+        np.testing.assert_allclose(
+            render_part.vertices,
+            np.array(
+                [
+                    [0.0, 0.02, 0.0],
+                    [0.0, 0.01, 0.2],
+                    [0.0, 0.0, 0.4],
+                    [0.1, 0.05, 0.0],
+                    [0.1, 0.04, 0.2],
+                    [0.1, 0.03, 0.4],
+                ],
+                dtype=np.float32,
+            ),
+        )
+        np.testing.assert_array_equal(
+            render_part.triangles,
+            np.array(
+                [
+                    [0, 4, 3],
+                    [0, 1, 4],
+                    [1, 5, 4],
+                    [1, 2, 5],
+                ],
+                dtype=np.uint32,
+            ),
+        )
+
     def test_clear(self):
         scene = sapien.Scene()
         scene.add_entity(sapien.Entity())

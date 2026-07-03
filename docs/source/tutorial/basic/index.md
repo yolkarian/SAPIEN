@@ -1,11 +1,10 @@
-.. _basic_index:
+(basic_index)=
 
-Basics
-===================================================================
+# Basics
 
 This tutorial focuses on the basic usage of SAPIEN Python APIs.
 
-
+```{eval-rst}
 .. toctree::
 
    installation
@@ -15,3 +14,4 @@ This tutorial focuses on the basic usage of SAPIEN Python APIs.
    create_articulations
    viewer
    contact
+```

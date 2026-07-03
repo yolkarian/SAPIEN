@@ -227,6 +227,17 @@ void SapienRenderCameraComponent::setAutoUpload(bool enable) {
   }
 }
 
+void SapienRenderCameraComponent::internalSetRenderScene(
+    std::shared_ptr<svulkan2::scene::Scene> scene) {
+  if (!mCamera) {
+    throw std::runtime_error("failed to set camera render scene: camera is not added to scene");
+  }
+  if (!scene) {
+    throw std::runtime_error("failed to set camera render scene: scene is null");
+  }
+  mCamera->mRenderer->setScene(scene);
+}
+
 svulkan2::core::Image &SapienRenderCameraComponent::getInternalImage(std::string const &name) {
   if (!mGpuInitialized) {
     throw std::runtime_error("The camera needs to be initialized");

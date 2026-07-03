@@ -1,12 +1,13 @@
-.. _motion_planning_index:
+(motion_planning_index)=
 
-Motion Planning
-===================================================================
+# Motion Planning
 
 This tutorial focuses on how to solve motion planning in SAPIEN.
 
+```{eval-rst}
 .. toctree::
     getting_started
     plan_a_path
     inverse_kinematics
     collision_avoidance
+```

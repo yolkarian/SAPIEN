@@ -3,7 +3,6 @@ from __future__ import annotations
 from _warnings import warn as warn
 from pathlib import Path as Path
 import os as os
-import platform as platform
 
 from sapien import ActorBuilder as ActorBuilder
 from sapien import ArticulationBuilder as ArticulationBuilder
@@ -33,73 +32,37 @@ from sapien import version as version
 from sapien import wrapper as wrapper
 from sapien.version import __version__ as __version__
 
-if platform.system() != "Darwin":
-    from sapien import simsense as simsense
+from sapien import simsense as simsense
 
-if platform.system() == "Darwin":
-    __all__ = [
-        "ActorBuilder",
-        "ArticulationBuilder",
-        "Component",
-        "CudaArray",
-        "Device",
-        "Engine",
-        "Entity",
-        "Path",
-        "PinocchioModel",
-        "Pose",
-        "SapienRenderer",
-        "Scene",
-        "SceneConfig",
-        "System",
-        "Widget",
-        "asset",
-        "internal_renderer",
-        "math",
-        "os",
-        "physx",
-        "platform",
-        "profile",
-        "pysapien",
-        "pysapien_pinocchio",
-        "render",
-        "set_log_level",
-        "utils",
-        "version",
-        "warn",
-        "wrapper",
-    ]
-else:
-    __all__ = [
-        "ActorBuilder",
-        "ArticulationBuilder",
-        "Component",
-        "CudaArray",
-        "Device",
-        "Engine",
-        "Entity",
-        "Path",
-        "PinocchioModel",
-        "Pose",
-        "SapienRenderer",
-        "Scene",
-        "SceneConfig",
-        "System",
-        "Widget",
-        "asset",
-        "internal_renderer",
-        "math",
-        "os",
-        "physx",
-        "platform",
-        "profile",
-        "pysapien",
-        "pysapien_pinocchio",
-        "render",
-        "set_log_level",
-        "simsense",
-        "utils",
-        "version",
-        "warn",
-        "wrapper",
-    ]
+__all__ = [
+    "ActorBuilder",
+    "ArticulationBuilder",
+    "Component",
+    "CudaArray",
+    "Device",
+    "Engine",
+    "Entity",
+    "Path",
+    "PinocchioModel",
+    "Pose",
+    "SapienRenderer",
+    "Scene",
+    "SceneConfig",
+    "System",
+    "Widget",
+    "asset",
+    "internal_renderer",
+    "math",
+    "os",
+    "physx",
+    "profile",
+    "pysapien",
+    "pysapien_pinocchio",
+    "render",
+    "set_log_level",
+    "simsense",
+    "utils",
+    "version",
+    "warn",
+    "wrapper",
+]

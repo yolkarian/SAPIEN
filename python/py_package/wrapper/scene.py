@@ -50,8 +50,11 @@ def _height_field_render_mesh(
         + np.arange(columns - 1, dtype=np.uint32)[None, :]
     ).reshape(-1)
     triangles = np.empty((2 * base.size, 3), dtype=np.uint32)
-    triangles[0::2] = np.stack([base, base + columns, base + 1], axis=1)
-    triangles[1::2] = np.stack([base + 1, base + columns, base + columns + 1], axis=1)
+    # PhysX height fields with PxHeightFieldSample::clearTessFlag() split each
+    # cell along the top-left -> bottom-right diagonal. Match that split so the
+    # render mesh is geometrically identical to the collision surface.
+    triangles[0::2] = np.stack([base, base + columns, base + columns + 1], axis=1)
+    triangles[1::2] = np.stack([base, base + columns + 1, base + 1], axis=1)
 
     face_vertices = vertices[triangles]
     face_normals = np.cross(

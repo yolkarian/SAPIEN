@@ -36,14 +36,19 @@ extensions = [
     'sphinx.ext.mathjax',
     'sphinx.ext.viewcode',
     'sphinx.ext.githubpages',
-    'sphinx.ext.todo'
+    'sphinx.ext.todo',
+    'myst_parser',
 ]
 todo_include_todos = True
 
-source_suffix = ['.rst', '.md']
-source_parsers = {
-    '.md': 'recommonmark.parser.CommonMarkParser',
+source_suffix = {
+    '.rst': 'restructuredtext',
+    '.md': 'markdown',
 }
+
+myst_enable_extensions = [
+    'colon_fence',
+]
 
 # The master toctree document.
 master_doc = 'index'

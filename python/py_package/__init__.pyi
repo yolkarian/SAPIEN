@@ -2,7 +2,6 @@ from __future__ import annotations
 from _warnings import warn as warn
 import os as os
 from pathlib import Path as Path
-import platform as platform
 from sapien.pysapien import Component as Component
 from sapien.pysapien import CudaArray as CudaArray
 from sapien.pysapien import Device as Device
@@ -21,8 +20,7 @@ from sapien.wrapper.renderer import SapienRenderer as SapienRenderer
 from sapien.wrapper.scene import Scene as Scene
 from sapien.wrapper.scene import Widget as Widget
 
-if platform.system() != "Darwin":
-    from sapien.pysapien import simsense as simsense
+from sapien.pysapien import simsense as simsense
 from . import _oidn_tricks as _oidn_tricks
 from . import _vulkan_tricks as _vulkan_tricks
 from . import asset as asset
@@ -35,9 +33,38 @@ from . import utils as utils
 from . import version as version
 from . import wrapper as wrapper
 
-if platform.system() == "Darwin":
-    __all__ = ['ActorBuilder', 'ArticulationBuilder', 'Component', 'CudaArray', 'Device', 'Engine', 'Entity', 'Path', 'PinocchioModel', 'Pose', 'SapienRenderer', 'Scene', 'SceneConfig', 'System', 'Widget', 'asset', 'internal_renderer', 'math', 'os', 'physx', 'platform', 'profile', 'pysapien', 'pysapien_pinocchio', 'render', 'set_log_level', 'utils', 'version', 'warn', 'wrapper']
-else:
-    __all__ = ['ActorBuilder', 'ArticulationBuilder', 'Component', 'CudaArray', 'Device', 'Engine', 'Entity', 'Path', 'PinocchioModel', 'Pose', 'SapienRenderer', 'Scene', 'SceneConfig', 'System', 'Widget', 'asset', 'internal_renderer', 'math', 'os', 'physx', 'platform', 'profile', 'pysapien', 'pysapien_pinocchio', 'render', 'set_log_level', 'simsense', 'utils', 'version', 'warn', 'wrapper']
+__all__ = [
+    "ActorBuilder",
+    "ArticulationBuilder",
+    "Component",
+    "CudaArray",
+    "Device",
+    "Engine",
+    "Entity",
+    "Path",
+    "PinocchioModel",
+    "Pose",
+    "SapienRenderer",
+    "Scene",
+    "SceneConfig",
+    "System",
+    "Widget",
+    "asset",
+    "internal_renderer",
+    "math",
+    "os",
+    "physx",
+    "profile",
+    "pysapien",
+    "pysapien_pinocchio",
+    "render",
+    "set_log_level",
+    "simsense",
+    "utils",
+    "version",
+    "warn",
+    "wrapper",
+]
+
 __version__: str = '3.0.0.dev20240521+6b6d61d2'
 __warningregistry__: dict = {'version': 0}

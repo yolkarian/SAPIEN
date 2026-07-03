@@ -1,229 +1,20 @@
 # SAPIEN
-SAPIEN is a realistic and physics-rich simulated environment that hosts a
-large-scale set for articulated objects. It enables various robotic vision and
-interaction tasks that require detailed part-level understanding. SAPIEN is a
-collaborative effort between researchers at UCSD, Stanford and SFU. The dataset
-is a continuation of ShapeNet and PartNet.
 
-## Getting Started
-SAPIEN is distributed via [PyPI](https://pypi.org/project/sapien/). Installation is just
+SAPIEN is a realistic, physics-rich simulation platform for robotics, embodied AI, and articulated-object interaction. It provides detailed dynamics, rendering, sensors, and Python bindings for working with articulated objects.
 
-```shell
-pip install sapien
-```
+SAPIEN is a collaborative effort between researchers at UCSD, Stanford, and SFU; the dataset continues the ShapeNet and PartNet efforts.
 
-It requires Linux with NVIDIA, AMD, or Intel GPU to run. Verify installation with
+## Documentation
 
-```shell
-python -m sapien.example.hello_world
-```
-
-Next, follow our tutorial at:
-[https://sapien-sim.github.io/docs/](https://sapien-sim.github.io/docs/).
-
-### Offscreen rendering on a server
-To use SAPIEN on a GPU server without display, the only system dependencies
-required are `libegl1` and `libxext6`. If using NVIDIA docker environment,
-enable graphics, utility, and compute by setting the environment variable in the
-Dockerfile.
-```Dockerfile
-ENV NVIDIA_DRIVER_CAPABILITIES graphics,utility,compute
-```
-
-### Virtual desktop on a server
-To use SAPIEN on a GPU server with virtual display, additionally install `xvfb`,
-`x11vnc`, and any window manager such as `fluxbox` or `xfce`. Add display
-capabilities for NVIDIA docker.
-```Dockerfile
-ENV NVIDIA_DRIVER_CAPABILITIES graphics,utility,compute,display
-```
-
-Assuming `fluxbox`, start a VNC server by 
-```shell
-x11vnc -create -env FD_PROG=/usr/bin/fluxbox  -env X11VNC_FINDDISPLAY_ALWAYS_FAILS=1 -env X11VNC_CREATE_GEOM=${99:-1920x1080x16} -gone 'pkill Xvfb' -nopw
-# Note: you should use a strong password and/or only allow local access
-```
-Now you can connect to the server at port 5900. SAPIEN should be fully functional, test with
-```shell
-python -m sapien.example.hello_world
-```
-
-## Change Log
-<details open> <summary>3.0</summary>
-
-- Major API & infrastructure overhaul
-
-<details> 
-<summary>2.2</summary>
-
-- Rename `VulkanRenderer` to `SapienRenderer` (VulkanRenderer is still an alias)
-- Support **ray tracing** in `SapienRenderer`
-- Deprecate `KuafuRenderer`, use the rt shader in `SapienRenderer` instead
-- **GPU-accelerated stereo depth sensor simulation**
-- **Render server**
-- Python 3.11
-- bug fixes
-  - Fix inverse kinematics default active joint mask (now defaults to all 1s)
-  - Fix incorrectly exported memory in Vulkan-Cuda interop
-  - Fix joint `get_global_pose`
-</details>
-
-<details>
-<summary>2.1</summary>
-
-- Python 3.10
-- Bug fixes
-  - crash when not using renderer
-  - joint force limit (was impulse limit)
-  - incorrect inertia computation in scaled URDF
-  - incorrect point-light shadow
-  - incorrect collision when loaded from dae
-- Utility improvements
-  - set_material
-  - active light
-  - flat shading
-  - dynamic point rendering
-  - envmap generation
-  - multi-thread envs
-
-</details>
-
-<details>
-<summary>2.1</summary>
-
-- Refactor light system
-  - Remove light functions on scene.renderer_scene
-- Refactor camera system
-  - Cameras no longer require mounts
-  - Camera can change its mount and mounted pose by `camera.set_parent` and
-    `camera.set_local_pose`.
-  - When camera is not mounted, setting local pose is setting its global pose.
-  - Add functions `scene.add_camera` and `scene.remove_camera`
-  - `add_mounted_camera` can be replaced with `add_camera` followed by
-    `camera.set_parent` and `camera.set_local_pose`. `add_mounted_camera` is
-    still provided but fovx should not longer be provided.
-  - Remove functions related to mount, including `find_camera_by_mount`.
-  - Cameras now support full camera parameters through `camera.near`,
-    `camera.far`, `camera.set_fovx`, `camera.set_fovy`,
-    `camera.set_focal_lengths`, `camera.set_principal_point`, `camera.skew`, and
-    the all-in-one method `camera.set_perspective_parameters`.
-- Refactor render shape system
-  - Originally, after `actor.get_visual_bodies()` and
-    `visual_body.get_render_shapes()`, users typically do `shape.scale` and
-    `shape.pose`. These are no longer valid. It is required to check
-    `visual_body.type`. When `type` is `mesh`, `shape.scale` is replaced with
-    `visual_body.scale` and `shape.pose` is replaced by
-    `visual_body.local_pose`. These changes are made to match `add_visual_shape`
-    functions when building the actor.
-</details>
-
-<details>
-<summary>pre2.0</summary>
-
-- Shader change: 4th component in default camera shader now gives the 0-1 depth value.
-- Add "critical" and "off" log levels.
-- Add support for pointcloud and line rendering (for visualizing camera and point cloud)
-- Performance: the same shader only compile once per process
-- Bug fix
-  - Articulation setDriveTarget was now correctly reversed for prismatic joint (joint setDriveTarget is not affected)
-  - Fix kinematic articulation loader
-</details>
-
-<details>
-<summary>1 to 2 migration</summary>
-
-- replace `scene.renderer_scene.add_xxx_light` with `scene.add_xxx_light`
-- replace `scene.remove_mounted_camera` with `scene.remove_camera`
-- optionally, remove `fovx` from `scene.add_mounted_camera`.
-</details>
-
-
-<details>
-<summary>1.1</summary>
-
-- Support nonconvex static/kinematic collision shape
-- Add warning for small mass/inertia
-- Introduce Entity as the base class of Actors
-- Add Light classes inherited from entity, allowing manipulate light objects in sapien scene
-- Updates to the viewer
-  - rename actor to entity when appropriate
-- Partial support the material tag in URDF loader (primitive shape, single color)
-- Bug fixes for the renderer
-- Support inner and outer FOV for spotlight
-</details>
-
-<details>
-<summary>1.0</summary>
-
-- Replace the old Vulkan based renderer completely
-  - See `sapien.core.renderer` for details
-- Expose GUI functionalities to Python
-- Reimplement Vulkan viewer in Python 
-- Expose PhysX shape wrapper to Python. For example,
-  - Collision shapes can be retrieved through `actor.get_collision_shapes`
-  - Collision groups on a shape can be set by `CollisionShape.set_collision_groups`
-  - Shapes are now also available in `Contact`.
-- API changes
-  - Render material creation is now `renderer.create_material()`
-  - in actor builder: `add_xxx_shape` is replaced with `add_xxx_collision`.
-  - move light functions from scene to `scene.renderer_scene`
-- Add centrifugal and Coriolis force.
-- Change default physical parameters for better stability.
-</details>
-
-## Website and Documentation
-SAPIEN Website: [https://sapien.ucsd.edu/](https://sapien.ucsd.edu/). SAPIEN
-Documentation:
-[https://sapien-sim.github.io/docs/](https://sapien-sim.github.io/docs/).
-
-## Build from source
-### Before build
-Make sure all submodules are initialized `git submodule update --init --recursive`.
-
-### Build with Docker
-To build SAPIEN, run `./scripts/docker_build_wheels.sh`. It is not recommended to
-build outside of our provided docker.
-
-SAPIEN currently targets PhysX `107.3-physx-5.6.1`. GPU-enabled builds require
-CUDA toolkit and driver support for CUDA `>= 12.8`.
-
-If you want to verify against locally extracted PhysX SDK archives, point the
-build at both the CPU and GPU packages before invoking the Docker helper:
-
-```shell
-export SAPIEN_PHYSX5_DIR=/path/to/physxcpu-linux-clang
-export SAPIEN_PHYSX5_GPU_DIR=/path/to/physxgpu-linux-clang
-./scripts/docker_build_wheels.sh 310
-```
-
-For reference, the Dockerfile is provided [here](/docker/Dockerfile). Note that
-PhysX needs to be compiled with clang-9 into static libraries before building
-the Docker image.
-
-### Build without Docker
-It can be tricky to setup all dependencies outside of a Docker environment. You
-need to install all dependencies according to the [Docker
-environment](/docker/Dockerfile). If all dependencies set up correctly, run
-`python setup.py bdist_wheel` to build the wheel.
-
-```shell
-export CUDA_PATH=/usr/local/cuda-12.8
-export SAPIEN_PHYSX5_DIR=/path/to/physxcpu-linux-clang
-export SAPIEN_PHYSX5_GPU_DIR=/path/to/physxgpu-linux-clang
-python setup.py bdist_wheel --build-dir=sapien_build
-```
-
-For the PhysX 5.6.1 migration, the focused verification path is the Python
-PhysX suite:
-
-```shell
-cd unittest
-python -m unittest discover -s test_physx -p 'test_*.py'
-```
-
-At the moment, the umbrella C++ `sapien_test` target is blocked by unrelated
-renderer test API drift in `test/sapien_renderer/material.cpp` and
-`test/sapien_renderer/texture.cpp`.
+- [Getting started](docs/getting-started.md)
+- [Server rendering](docs/server-rendering.md)
+- [Build from source](docs/source-installation.md)
+- [Changelog](CHANGELOG.md)
+- [Agent skills for maintainers](docs/skills/README.md)
+- [Sphinx documentation source](docs/source/index.md)
+- [Project website](https://sapien.ucsd.edu/)
+- [Current project GitHub Pages](https://yolkarian.github.io/SAPIEN/)
+- [Upstream published documentation](https://sapien-sim.github.io/docs/)
 
 ## Cite SAPIEN
 If you use SAPIEN and its assets, please cite the following works:
@@ -256,8 +47,8 @@ If you use SAPIEN Realistic Depth generated by SAPIEN's simulated depth sensor, 
 ```
 @ARTICLE{10027470,
   author={Zhang, Xiaoshuai and Chen, Rui and Li, Ang and Xiang, Fanbo and Qin, Yuzhe and Gu, Jiayuan and Ling, Zhan and Liu, Minghua and Zeng, Peiyu and Han, Songfang and Huang, Zhiao and Mu, Tongzhou and Xu, Jing and Su, Hao},
-  journal={IEEE Transactions on Robotics}, 
-  title={Close the Optical Sensing Domain Gap by Physics-Grounded Active Stereo Sensor Simulation}, 
+  journal={IEEE Transactions on Robotics},
+  title={Close the Optical Sensing Domain Gap by Physics-Grounded Active Stereo Sensor Simulation},
   year={2023},
   volume={},
   number={},

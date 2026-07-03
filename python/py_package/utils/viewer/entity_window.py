@@ -4,6 +4,34 @@ import sapien
 import numpy as np
 
 
+def _height_field_collision_visual_mesh(shape) -> tuple[np.ndarray, np.ndarray]:
+    """Create a render mesh in the PhysX heightfield local frame."""
+    height_field = np.ascontiguousarray(shape.height_field, dtype=np.int16)
+    rows, columns = height_field.shape
+    row_grid, column_grid = np.meshgrid(
+        np.arange(rows, dtype=np.float32),
+        np.arange(columns, dtype=np.float32),
+        indexing="ij",
+    )
+
+    vertices = np.empty((rows * columns, 3), dtype=np.float32)
+    vertices[:, 0] = (row_grid * shape.row_scale).reshape(-1)
+    vertices[:, 1] = (height_field.astype(np.float32) * shape.height_scale).reshape(-1)
+    vertices[:, 2] = (column_grid * shape.column_scale).reshape(-1)
+
+    base = (
+        np.arange(rows - 1, dtype=np.uint32)[:, None] * columns
+        + np.arange(columns - 1, dtype=np.uint32)[None, :]
+    ).reshape(-1)
+    triangles = np.empty((2 * base.size, 3), dtype=np.uint32)
+    # Match PhysX PxHeightFieldSample::clearTessFlag(): split each cell along
+    # the top-left -> bottom-right diagonal. Winding is chosen for +local-y
+    # normals because PhysX heightfields store height on the local y axis.
+    triangles[0::2] = np.stack([base, base + columns + 1, base + columns], axis=1)
+    triangles[1::2] = np.stack([base, base + 1, base + columns + 1], axis=1)
+    return vertices, triangles
+
+
 class EntityWindow(Plugin):
     def __init__(self):
         self.reset()
@@ -78,6 +106,16 @@ class EntityWindow(Plugin):
                             red_mat,
                         )
                         vs.scale = s.scale
+
+                    elif isinstance(s, sapien.physx.PhysxCollisionShapeHeightField):
+                        vertices, triangles = _height_field_collision_visual_mesh(s)
+                        vs = sapien.render.RenderShapeTriangleMesh(
+                            vertices,
+                            triangles,
+                            np.zeros((0, 3)),
+                            np.zeros((0, 2)),
+                            red_mat,
+                        )
 
                     elif isinstance(s, sapien.physx.PhysxCollisionShapePlane):
                         vs = sapien.render.RenderShapePlane([1, 1e4, 1e4], blue_mat)
@@ -391,6 +429,32 @@ class EntityWindow(Plugin):
                             R.UITreeNode()
                             .Label("Triangle Mesh")
                             .Id("collision{}".format(idx))
+                        )
+                    if s.__class__.__name__ == "PhysxCollisionShapeHeightField":
+                        height_field = s.height_field
+                        shape_info = (
+                            R.UITreeNode()
+                            .Label("Height Field")
+                            .Id("collision{}".format(idx))
+                            .append(
+                                R.UIDisplayText().Text(
+                                    "Samples: {} x {}".format(*height_field.shape)
+                                ),
+                                R.UIDisplayText().Text(
+                                    "Row scale: {:.3g}".format(s.row_scale)
+                                ),
+                                R.UIDisplayText().Text(
+                                    "Column scale: {:.3g}".format(s.column_scale)
+                                ),
+                                R.UIDisplayText().Text(
+                                    "Height scale: {:.3g}".format(s.height_scale)
+                                ),
+                                R.UIDisplayText().Text(
+                                    "Height range: {} to {}".format(
+                                        int(height_field.min()), int(height_field.max())
+                                    )
+                                ),
+                            )
                         )
 
                     s: sapien.physx.PhysxCollisionShape

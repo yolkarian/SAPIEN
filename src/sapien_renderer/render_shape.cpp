@@ -49,6 +49,14 @@ int RenderShape::getInternalGpuTransformIndex() {
   return mObject->getInternalGpuIndex();
 }
 
+int RenderShape::getInternalGpuTransformIndex(svulkan2::scene::Scene &scene) {
+  if (!mObject) {
+    throw std::runtime_error("the shape is not added to scene");
+  }
+  scene.prepareObjectTransformBuffer();
+  return mObject->getInternalGpuIndex();
+}
+
 Vec3 RenderShape::getGpuScale() { return mScale; }
 
 Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor>

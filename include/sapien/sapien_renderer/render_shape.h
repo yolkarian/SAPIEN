@@ -83,6 +83,7 @@ public:
   /** Get the index of this shape in the transform array of the render scene
    *  The index will change when any object is removed from the scene. */
   int getInternalGpuTransformIndex();
+  int getInternalGpuTransformIndex(svulkan2::scene::Scene &scene);
 
   /** Get the internal mesh scale
    *  For mesh, this is the same as getScale

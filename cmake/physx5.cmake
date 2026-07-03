@@ -47,15 +47,7 @@ if (IS_DIRECTORY "${SAPIEN_PHYSX5_DIR}")
   endif()
 else()
   include(FetchContent)
-  if (APPLE)
-    FetchContent_Declare(
-      physx5cpu
-      URL https://github.com/sapien-sim/physx-precompiled/releases/download/105.1-physx-5.3.1.patch0/macOS-universal-release.zip
-    )
-    FetchContent_MakeAvailable(physx5cpu)
-    _sapien_normalize_physx_root("${physx5cpu_SOURCE_DIR}" physx5_CPU_SOURCE_DIR)
-    set(physx5_GPU_SOURCE_DIR "${physx5_CPU_SOURCE_DIR}")
-  elseif (UNIX)
+  if (UNIX)
     FetchContent_Declare(
       physx5cpu
       URL https://github.com/yolkarian/physx-release/releases/download/${PHYSX_VERSION}/physxcpu-linux-clang.zip
@@ -104,18 +96,7 @@ endif()
 
 add_library(physx5 INTERFACE)
 
-if (APPLE)
-  if(CMAKE_SYSTEM_NAME MATCHES ".*Darwin.*" OR CMAKE_SYSTEM_NAME MATCHES ".*MacOS.*")
-    target_link_directories(physx5 INTERFACE $<BUILD_INTERFACE:${physx5_CPU_SOURCE_DIR}/bin/universal/release>)
-  endif()
-
-  target_link_libraries(physx5 INTERFACE
-    libPhysXCharacterKinematic_static_64.a libPhysXCommon_static_64.a
-    libPhysXCooking_static_64.a libPhysXExtensions_static_64.a
-    libPhysXFoundation_static_64.a libPhysXPvdSDK_static_64.a
-    libPhysX_static_64.a libPhysXVehicle2_static_64.a
-  )
-elseif(UNIX)
+if(UNIX)
   target_link_directories(physx5 INTERFACE $<BUILD_INTERFACE:${physx5_CPU_SOURCE_DIR}/bin/linux.x86_64/release>)
   target_link_libraries(physx5 INTERFACE
     -Wl,--start-group

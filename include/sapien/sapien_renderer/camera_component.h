@@ -87,6 +87,7 @@ public:
   void setGpuBatchedPoseIndex(int);
   int getGpuBatchedPoseIndex() const;
   void setAutoUpload(bool enable);
+  void internalSetRenderScene(std::shared_ptr<svulkan2::scene::Scene> scene);
   svulkan2::core::Image &getInternalImage(std::string const &name);
   svulkan2::renderer::RendererBase &getInternalRenderer();
   svulkan2::scene::Camera &getInternalCamera();

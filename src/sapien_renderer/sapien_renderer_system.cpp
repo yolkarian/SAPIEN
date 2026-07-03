@@ -104,6 +104,14 @@ SapienRendererSystem::SapienRendererSystem(std::shared_ptr<Device> device) {
   mScene = std::make_shared<svulkan2::scene::Scene>();
 }
 
+void SapienRendererSystem::setBatchedRenderShared(bool shared) {
+  mScene->setBatchedRenderShared(shared);
+}
+
+bool SapienRendererSystem::isBatchedRenderShared() const {
+  return mScene->isBatchedRenderShared();
+}
+
 std::shared_ptr<Device> SapienRendererSystem::getDevice() const { return mEngine->getDevice(); }
 
 Vec3 SapienRendererSystem::getAmbientLight() const {

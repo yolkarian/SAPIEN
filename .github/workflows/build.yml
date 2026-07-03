@@ -142,6 +142,6 @@ jobs:
           tag_name: nightly
           name: 'Nightly Release'
           prerelease: true
-          body: 'SAPIEN development nightly release. This release is mainly for internal testing. Stable releases are published to pypi https://pypi.org/project/sapien/'
+          body: 'SAPIEN development nightly release. This release is mainly for internal testing. Release wheels are published on GitHub Releases.'
           files: |
             ./wheelhouse/*.whl

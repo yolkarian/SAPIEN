@@ -21,27 +21,6 @@ def _ensure_libvulkan_linux():
     warn("Failed to find system libvulkan. Fallback to SAPIEN builtin libvulkan.")
     os.environ["SAPIEN_VULKAN_LIBRARY_PATH"] = vulkan_library_path
 
-def _ensure_libvulkan_mac():
-    # set MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS = 1 to fix the samplers limit issue
-    os.environ["MVK_CONFIG_USE_METAL_ARGUMENT_BUFFERS"] = "1"
-    # find and use system vulkan
-    LD_LIBRARY_PATH = os.environ.get("LD_LIBRARY_PATH", "")
-    link_paths = [x.strip() for x in LD_LIBRARY_PATH.split(":") if x.strip()]
-    DYLD_LIBRARY_PATH = os.environ.get("DYLD_LIBRARY_PATH", "")
-    link_paths += [x.strip() for x in DYLD_LIBRARY_PATH.split(":") if x.strip()]
-    extra_paths = ["/usr/lib", "/usr/local/lib"]
-    for path in link_paths + extra_paths:
-        libPath = os.path.join(path, "libvulkan.1.dylib")
-        if os.path.isfile(libPath):
-            os.environ["SAPIEN_VULKAN_LIBRARY_PATH"] = libPath
-            return
-    vulkan_library_path = str(
-        files("sapien").joinpath("vulkan_library", "libvulkan.1.3.290.dylib")
-    )
-
-    warn("Failed to find system libvulkan. Fallback to SAPIEN builtin libvulkan.")
-    os.environ["SAPIEN_VULKAN_LIBRARY_PATH"] = vulkan_library_path
-
 def _ensure_vulkan_icd():
     if os.system("nvidia-smi > /dev/null 2>&1") != 0:
         return
@@ -89,5 +68,3 @@ if platform.system() == "Linux":
     _ensure_libvulkan_linux()
     _ensure_vulkan_icd()
     _ensure_egl_icd()
-elif platform.system() == "Darwin":
-    _ensure_libvulkan_mac()

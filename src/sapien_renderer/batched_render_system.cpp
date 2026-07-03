@@ -1,9 +1,11 @@
 #include "sapien/sapien_renderer/batched_render_system.h"
 #include "./batched_render_system.cuh"
+#include "sapien/scene.h"
 #include "sapien/sapien_renderer/camera_component.h"
 #include "sapien/sapien_renderer/render_body_component.h"
 #include <svulkan2/renderer/renderer.h>
 #include <svulkan2/renderer/renderer_base.h>
+#include <svulkan2/scene/scene_group.h>
 
 #ifdef SAPIEN_CUDA
 #include "sapien/utils/cuda.h"
@@ -12,6 +14,32 @@
 
 namespace sapien {
 namespace sapien_renderer {
+
+namespace {
+
+bool isBatchedRenderShared(std::shared_ptr<SapienRendererSystem> const &system) {
+  return system->getScene()->isBatchedRenderShared();
+}
+
+CudaArrayHandle getTransformCudaArray(std::shared_ptr<svulkan2::scene::Scene> const &scene) {
+  scene->prepareObjectTransformBuffer();
+  int offset = scene->getGpuTransformBufferSize();
+
+  auto buffer = scene->getObjectTransformBuffer();
+#ifdef SAPIEN_CUDA
+  return CudaArrayHandle{.shape = {static_cast<int>(buffer->getSize() / offset), 4, 4},
+                         .strides = {offset, 16, 4},
+                         .type = "f4",
+                         .cudaId = buffer->getCudaDeviceId(),
+                         .ptr = buffer->getCudaPtr()};
+#else
+  return CudaArrayHandle{.shape = {static_cast<int>(buffer->getSize() / offset), 4, 4},
+                         .strides = {offset, 16, 4},
+                         .type = "f4"};
+#endif
+}
+
+} // namespace
 
 BatchedCamera::BatchedCamera(std::vector<std::shared_ptr<SapienRenderCameraComponent>> cameras,
                              std::vector<std::string> renderTargets)
@@ -161,18 +189,100 @@ void BatchedRenderSystem::init() {
   std::vector<void *> sceneTransformRefs;
 
   mSceneVersions = {};
+  mSharedSystems = {};
+  mRenderScenes = {};
+  mRenderSceneBySystem = {};
+  mTransformBufferElementByteOffset = 0;
+
+  for (auto &system : mSystems) {
+    if (isBatchedRenderShared(system)) {
+      mSharedSystems.push_back(system);
+    }
+  }
+  bool hasSharedSystems = !mSharedSystems.empty();
 
   // TODO ensure all cameras are valid
-  for (uint32_t sceneIndex = 0; sceneIndex < mSystems.size(); ++sceneIndex) {
-    auto system = mSystems[sceneIndex];
-
+  for (auto &system : mSystems) {
     // run a step
     system->step();
 
     // cache current versions
     mSceneVersions.push_back(system->getScene()->getVersion());
+  }
 
-    auto transformArray = system->getTransformCudaArray();
+  for (auto &system : mSystems) {
+    std::shared_ptr<svulkan2::scene::Scene> renderScene = system->getScene();
+    if (hasSharedSystems && !isBatchedRenderShared(system)) {
+      std::vector<std::shared_ptr<svulkan2::scene::Scene>> scenes{system->getScene()};
+      std::vector<svulkan2::scene::Transform> transforms(1);
+      for (auto &sharedSystem : mSharedSystems) {
+        if (sharedSystem == system) {
+          continue;
+        }
+        scenes.push_back(sharedSystem->getScene());
+        transforms.emplace_back();
+      }
+
+      auto group = std::make_shared<svulkan2::scene::SceneGroup>(scenes, transforms);
+      glm::vec4 ambient = system->getScene()->getAmbientLight();
+      for (auto &sharedSystem : mSharedSystems) {
+        if (sharedSystem != system) {
+          ambient += sharedSystem->getScene()->getAmbientLight();
+        }
+      }
+      group->setAmbientLight(ambient);
+
+      auto environmentMap = system->getScene()->getEnvironmentMap();
+      if (!environmentMap) {
+        for (auto &sharedSystem : mSharedSystems) {
+          environmentMap = sharedSystem->getScene()->getEnvironmentMap();
+          if (environmentMap) {
+            break;
+          }
+        }
+      }
+      group->setEnvironmentMap(environmentMap);
+      renderScene = group;
+    }
+    mRenderSceneBySystem[system.get()] = renderScene;
+    mRenderScenes.push_back(renderScene);
+  }
+
+  auto appendSystemShapeData = [&](std::shared_ptr<SapienRendererSystem> const &shapeSystem,
+                                   uint32_t renderSceneIndex,
+                                   std::shared_ptr<svulkan2::scene::Scene> const &renderScene) {
+    renderScene->prepareObjectTransformBuffer();
+    for (auto &body : shapeSystem->getRenderBodyComponents()) {
+      for (auto &shape : body->getRenderShapes()) {
+        int poseIndex = shape->getGpuBatchedPoseIndex();
+
+        if (poseIndex < 0) {
+          continue;
+        }
+
+        // TODO do range check
+        Pose localPose = shape->getLocalPose();
+        Vec3 scale = shape->getGpuScale();
+        int transformIndex = shape->getInternalGpuTransformIndex(*renderScene);
+
+        static_assert(sizeof(RenderShapeData) == 4 * 13);
+        RenderShapeData data;
+        data.localPose = localPose;
+        data.scale = scale;
+
+        data.poseIndex = poseIndex;
+        data.sceneIndex = renderSceneIndex;
+        data.transformIndex = transformIndex;
+
+        allShapeData.push_back(data);
+      }
+    }
+  };
+
+  for (uint32_t sceneIndex = 0; sceneIndex < mRenderScenes.size(); ++sceneIndex) {
+    auto system = mSystems[sceneIndex];
+    auto renderScene = mRenderScenes[sceneIndex];
+    auto transformArray = getTransformCudaArray(renderScene);
     sceneTransformRefs.push_back(transformArray.ptr);
 
     if (mTransformBufferElementByteOffset == 0) {
@@ -184,29 +294,12 @@ void BatchedRenderSystem::init() {
       throw std::runtime_error("corrupted transform array buffer");
     }
 
-    for (auto &body : system->getRenderBodyComponents()) {
-      for (auto &shape : body->getRenderShapes()) {
-        int poseIndex = shape->getGpuBatchedPoseIndex();
-
-        if (poseIndex < 0) {
-          continue;
+    appendSystemShapeData(system, sceneIndex, renderScene);
+    if (hasSharedSystems && !isBatchedRenderShared(system)) {
+      for (auto &sharedSystem : mSharedSystems) {
+        if (sharedSystem != system) {
+          appendSystemShapeData(sharedSystem, sceneIndex, renderScene);
         }
-
-        // TODO do range check
-        Pose localPose = shape->getLocalPose();
-        Vec3 scale = shape->getGpuScale();
-        int transformIndex = shape->getInternalGpuTransformIndex();
-
-        static_assert(sizeof(RenderShapeData) == 4 * 13);
-        RenderShapeData data;
-        data.localPose = localPose;
-        data.scale = scale;
-
-        data.poseIndex = poseIndex;
-        data.sceneIndex = sceneIndex;
-        data.transformIndex = transformIndex;
-
-        allShapeData.push_back(data);
       }
     }
   }
@@ -252,6 +345,18 @@ void BatchedRenderSystem::setPoseSource(CudaArrayHandle const &poses) {
 std::shared_ptr<BatchedCamera> BatchedRenderSystem::createCameraBatch(
     std::vector<std::shared_ptr<SapienRenderCameraComponent>> cameras,
     std::vector<std::string> renderTargets) {
+  for (auto &camera : cameras) {
+    auto scene = camera->getScene();
+    if (!scene) {
+      throw std::runtime_error(
+          "failed to create BatchedCamera: some camera is not added to scene");
+    }
+    auto system = scene->getSapienRendererSystem();
+    if (auto it = mRenderSceneBySystem.find(system.get()); it != mRenderSceneBySystem.end()) {
+      camera->internalSetRenderScene(it->second);
+    }
+  }
+
   auto cameraBatch = std::make_shared<BatchedCamera>(cameras, renderTargets);
   cameraBatch->setCudaStream(mCudaStream);
 

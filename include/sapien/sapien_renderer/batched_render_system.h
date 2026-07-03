@@ -1,6 +1,7 @@
 #pragma once
 
 #include "./sapien_renderer_system.h"
+#include <unordered_map>
 
 struct CUstream_st;
 
@@ -57,6 +58,10 @@ public:
 private:
   std::vector<std::shared_ptr<SapienRendererSystem>> mSystems;
   std::vector<uint64_t> mSceneVersions;
+  std::vector<std::shared_ptr<SapienRendererSystem>> mSharedSystems;
+  std::vector<std::shared_ptr<svulkan2::scene::Scene>> mRenderScenes;
+  std::unordered_map<SapienRendererSystem *, std::shared_ptr<svulkan2::scene::Scene>>
+      mRenderSceneBySystem;
 
   /** external poses array */
   CudaArrayHandle mCudaPoseHandle;

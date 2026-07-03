@@ -300,8 +300,8 @@ public:
   Vec3 getSceneOffset(std::shared_ptr<Scene> scene) const;
 
   /** Set the PhysX GPU broadphase environment ID for a SAPIEN scene.
-   *  envId == -1 maps to PX_INVALID_U32 (shared object, collides with all envs).
-   *  Non-shared env IDs must be in [0, 1 << 24).
+   *  envId == -1 or 0xffffffff maps to PX_INVALID_U32 internally (shared object, collides with all
+   *  envs). Non-shared env IDs must be in [0, 1 << 24).
    *  Must be called before adding PhysX bodies to the scene. */
   void setSceneEnvironmentId(std::shared_ptr<Scene> scene, int64_t envId,
                              bool allowDuplicate = false);

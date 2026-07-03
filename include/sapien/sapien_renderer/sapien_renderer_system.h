@@ -59,6 +59,8 @@ public:
   std::shared_ptr<Device> getDevice() const;
 
   std::shared_ptr<svulkan2::scene::Scene> getScene() { return mScene; }
+  void setBatchedRenderShared(bool shared);
+  bool isBatchedRenderShared() const;
 
   Vec3 getAmbientLight() const;
   void setAmbientLight(Vec3 l);

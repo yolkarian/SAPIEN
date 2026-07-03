@@ -5,8 +5,6 @@ import sapien.pysapien
 import sapien.pysapien_pinocchio
 import typing
 
-import platform
-
 M = typing.TypeVar("M", bound=int)
 
 # Re-exported from sapien.pysapien.physx
@@ -57,10 +55,9 @@ from sapien.pysapien.physx import set_sdf_config as set_sdf_config
 from sapien.pysapien.physx import set_shape_config as set_shape_config
 from sapien.pysapien.physx import version as version
 
-if platform.system() != "Darwin":
-    from sapien.pysapien.physx import PhysxGpuContactBodyImpulseQuery as PhysxGpuContactBodyImpulseQuery
-    from sapien.pysapien.physx import PhysxGpuContactPairImpulseQuery as PhysxGpuContactPairImpulseQuery
-    from sapien.pysapien.physx import PhysxGpuSystem as PhysxGpuSystem
+from sapien.pysapien.physx import PhysxGpuContactBodyImpulseQuery as PhysxGpuContactBodyImpulseQuery
+from sapien.pysapien.physx import PhysxGpuContactPairImpulseQuery as PhysxGpuContactPairImpulseQuery
+from sapien.pysapien.physx import PhysxGpuSystem as PhysxGpuSystem
 
 # Additional function defined in sapien.physx (not from pysapien.physx)
 def enable_gpu() -> None: ...

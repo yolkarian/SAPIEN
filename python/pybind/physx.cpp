@@ -1,6 +1,7 @@
 #include "sapien/physx/physx.h"
 #include "./array.hpp"
 #include "generator.hpp"
+#include "sapien/sapien_renderer/sapien_renderer_system.h"
 #include "sapien_type_caster.h"
 #include <pybind11/eigen.h>
 #include <pybind11/functional.h>
@@ -491,6 +492,23 @@ Generator<int> init_physx(py::module &sapien) {
     return CudaArrayHandleFromPython(indexBuffer);
   };
 
+  auto syncRenderShared = [](std::shared_ptr<Scene> const &scene, int64_t envId) {
+    try {
+      if (auto renderSystem = scene->getSapienRendererSystem()) {
+        renderSystem->setBatchedRenderShared(envId == -1 || envId == 0xffffffffll);
+      }
+    } catch (std::runtime_error const &) {
+    }
+  };
+  auto syncRenderSharedFromAssignedId = [](std::shared_ptr<Scene> const &scene, uint32_t envId) {
+    try {
+      if (auto renderSystem = scene->getSapienRendererSystem()) {
+        renderSystem->setBatchedRenderShared(envId == 0xffffffffu);
+      }
+    } catch (std::runtime_error const &) {
+    }
+  };
+
   PyPhysxSystemGpu
       .def(py::init([](std::string const &device) {
              return std::make_shared<PhysxSystemGpu>(findDevice(device));
@@ -512,8 +530,13 @@ Example: After calling `set_scene_offset([2, 1, 0])`, an SAPIEN object with
 position `[1, 1, 1]` will be at position `[1, 1, 1] + [2, 1, 0] = [3, 2, 1]` in
 PhysX scene.
 )doc")
-      .def("set_scene_environment_id", &PhysxSystemGpu::setSceneEnvironmentId, py::arg("scene"),
-           py::arg("env_id"), py::arg("allow_duplicate") = false,
+      .def("set_scene_environment_id",
+           [syncRenderShared](PhysxSystemGpu &system, std::shared_ptr<Scene> scene, int64_t envId,
+                              bool allowDuplicate) {
+             system.setSceneEnvironmentId(scene, envId, allowDuplicate);
+             syncRenderShared(scene, envId);
+           },
+           py::arg("scene"), py::arg("env_id"), py::arg("allow_duplicate") = false,
            R"doc(Set the PhysX GPU broadphase environment ID for a SAPIEN scene.
 
 In GPU mode, all SAPIEN scenes share one PhysX scene. The environment ID is
@@ -527,14 +550,25 @@ called BEFORE adding actors/articulations to the scene when overriding the
 automatic ID. Non-shared env IDs must be unique by default; pass
 allow_duplicate=True to intentionally share a non-shared env ID.
 )doc")
-      .def("get_scene_environment_id", &PhysxSystemGpu::getSceneEnvironmentId, py::arg("scene"),
+      .def("get_scene_environment_id",
+           [syncRenderSharedFromAssignedId](PhysxSystemGpu &system, std::shared_ptr<Scene> scene) {
+             uint32_t envId = system.getSceneEnvironmentId(scene);
+             syncRenderSharedFromAssignedId(scene, envId);
+             return envId;
+           },
+           py::arg("scene"),
            R"doc(Get or assign the scene's PhysX GPU broadphase environment ID.
 
 If no ID has been set explicitly, a unique non-shared ID is assigned
 automatically and returned. Use get_assigned_scene_environment_id() to inspect
 without assigning a new ID.
 )doc")
-      .def("get_or_assign_scene_environment_id", &PhysxSystemGpu::getSceneEnvironmentId,
+      .def("get_or_assign_scene_environment_id",
+           [syncRenderSharedFromAssignedId](PhysxSystemGpu &system, std::shared_ptr<Scene> scene) {
+             uint32_t envId = system.getSceneEnvironmentId(scene);
+             syncRenderSharedFromAssignedId(scene, envId);
+             return envId;
+           },
            py::arg("scene"),
            R"doc(Get or assign the scene's PhysX GPU broadphase environment ID.
 
@@ -547,7 +581,16 @@ automatically and returned.
 
 Returns None if no ID has been assigned yet. This method has no side effects.
 )doc")
-      .def("set_scene_environment_ids", &PhysxSystemGpu::setSceneEnvironmentIds,
+      .def("set_scene_environment_ids",
+           [syncRenderShared](PhysxSystemGpu &system,
+                              std::vector<std::pair<std::shared_ptr<Scene>, int64_t>> const
+                                  &mapping,
+                              bool allowDuplicate) {
+             system.setSceneEnvironmentIds(mapping, allowDuplicate);
+             for (auto const &[scene, envId] : mapping) {
+               syncRenderShared(scene, envId);
+             }
+           },
            py::arg("mapping"), py::arg("allow_duplicate") = false,
            R"doc(Set environment IDs for multiple scenes at once.
 

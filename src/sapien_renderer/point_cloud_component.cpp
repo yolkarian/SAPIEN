@@ -48,8 +48,9 @@ void PointCloudComponent::onRemoveFromScene(Scene &scene) {
 // called by system to sync pose
 void PointCloudComponent::internalUpdate() {
   auto pose = getEntity()->getPose();
-  mObject->setPosition({pose.p.x, pose.p.y, pose.p.z});
-  mObject->setRotation({pose.q.w, pose.q.x, pose.q.y, pose.q.z});
+  mObject->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
+                         .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z},
+                         .scale = mObject->getScale()});
 }
 
 CudaArrayHandle PointCloudComponent::getCudaArray() const {

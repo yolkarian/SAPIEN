@@ -106,6 +106,27 @@ class TestEnvironmentIDGPU(unittest.TestCase):
         scene.set_environment_id(-1)
         self.assertEqual(scene.get_environment_id(), PX_INVALID_U32)
 
+    def test_shared_environment_id_sets_render_shared_flag(self):
+        system = sapien.physx.PhysxGpuSystem()
+        try:
+            render_system = sapien.render.RenderSystem(system.device)
+        except Exception as exc:
+            raise unittest.SkipTest(f"RenderSystem not available: {exc}")
+        scene = sapien.Scene([system, render_system])
+
+        self.assertFalse(render_system.batched_render_shared)
+        scene.set_environment_id(-1)
+        self.assertTrue(render_system.batched_render_shared)
+        self.assertEqual(scene.get_or_assign_environment_id(), PX_INVALID_U32)
+        self.assertTrue(render_system.batched_render_shared)
+        scene.set_environment_id(3)
+        self.assertFalse(render_system.batched_render_shared)
+
+        system.set_scene_environment_id(scene, PX_INVALID_U32)
+        self.assertTrue(render_system.batched_render_shared)
+        system.set_scene_environment_ids([(scene, 5)], allow_duplicate=True)
+        self.assertFalse(render_system.batched_render_shared)
+
     def test_gpu_system_rejects_duplicate_scene_environment_ids_by_default(self):
         system = sapien.physx.PhysxGpuSystem()
         scene0 = sapien.Scene([system])
@@ -155,7 +176,7 @@ class TestEnvironmentIDGPU(unittest.TestCase):
         system = sapien.physx.PhysxGpuSystem()
         scene = sapien.Scene([system])
 
-        for env_id in (-2, 1 << 24, 1 << 32):
+        for env_id in (-2, 1 << 24, 0xFFFFFFFE, 1 << 32):
             with self.subTest(env_id=env_id):
                 with self.assertRaises(Exception):
                     scene.set_environment_id(env_id)

@@ -1,6 +1,6 @@
-Welcome to sapien's documentation!
-==================================
+# Welcome to sapien's documentation!
 
+```{eval-rst}
 .. toctree::
    :maxdepth: 3
    :caption: Tutorial
@@ -11,16 +11,18 @@ Welcome to sapien's documentation!
    tutorial/rl/index
    tutorial/motion_planning/index
    tutorial/migration/index
+```
 
+```{eval-rst}
 .. toctree::
    :maxdepth: 6
    :caption: API Doc
 
    apidoc/modules.rst
+```
 
-Indices and tables
-==================
+# Indices and tables
 
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+- {ref}`genindex`
+- {ref}`modindex`
+- {ref}`search`

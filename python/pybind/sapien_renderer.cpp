@@ -615,6 +615,12 @@ This function waits for any pending CUDA operations on cuda stream provided by :
       .def("get_cubemap", &SapienRendererSystem::getCubemap)
       .def("set_cubemap", &SapienRendererSystem::setCubemap, py::arg("cubemap"))
 
+      .def_property("batched_render_shared", &SapienRendererSystem::isBatchedRenderShared,
+                    &SapienRendererSystem::setBatchedRenderShared)
+      .def("get_batched_render_shared", &SapienRendererSystem::isBatchedRenderShared)
+      .def("set_batched_render_shared", &SapienRendererSystem::setBatchedRenderShared,
+           py::arg("shared"))
+
       // .def("disable_auto_upload", &SapienRendererSystem::disableAutoUpload)
 
       .def_property_readonly("cuda_object_transforms",

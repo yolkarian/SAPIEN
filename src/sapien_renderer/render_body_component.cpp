@@ -167,8 +167,9 @@ void SapienRenderBodyComponent::setTextureArray(
 
 void SapienRenderBodyComponent::internalUpdate() {
   auto pose = getEntity()->getPose();
-  mNode->setPosition({pose.p.x, pose.p.y, pose.p.z});
-  mNode->setRotation({pose.q.w, pose.q.x, pose.q.y, pose.q.z});
+  mNode->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
+                       .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z},
+                       .scale = mNode->getScale()});
 }
 
 SapienRenderBodyComponent::~SapienRenderBodyComponent() {
