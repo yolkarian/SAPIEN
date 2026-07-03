@@ -27,8 +27,8 @@ Run shell commands from the repository root unless a command says otherwise.
    gh auth status
    ```
 
-2. Confirm the release target is pushed and fetch remote release tags. Do not
-   rely on the moving `nightly` tag for release-note ranges:
+2. Fetch remote refs and release tags. Do not rely on the moving `nightly` tag
+   for release-note ranges:
 
    ```bash
    git fetch origin
@@ -36,12 +36,17 @@ Run shell commands from the repository root unless a command says otherwise.
    ((${#TAG_REFS[@]} == 0)) || git fetch origin "${TAG_REFS[@]}"
    ```
 
-3. Choose release inputs. Unless the user specifies a version tag, default
-   `RELEASE_TAG` to the latest numeric release tag with its final number
-   incremented by one, e.g. `3.0.0+fork.7` becomes `3.0.0+fork.8`:
+3. Choose release inputs. Unless the user clearly specifies the commit,
+   branch, or ref to release, default `GIT_REF` to the current commit (`HEAD`).
+   Unless the user specifies a version tag, default `RELEASE_TAG` to the latest
+   numeric release tag with its final number incremented by one, e.g.
+   `3.0.0+fork.7` becomes `3.0.0+fork.8`:
 
    ```bash
-   export GIT_REF=${GIT_REF:-dev}
+   if [ -z "${GIT_REF:-}" ]; then
+     GIT_REF=$(git rev-parse HEAD)
+     export GIT_REF
+   fi
    export WORKFLOW_REF=${WORKFLOW_REF:-dev}
    export PRERELEASE=${PRERELEASE:-true}
 
@@ -62,7 +67,9 @@ Run shell commands from the repository root unless a command says otherwise.
    ```
 
    `RELEASE_TAG` must be a valid Python package version. Override it when the
-   user explicitly requests a specific version.
+   user explicitly requests a specific version. `GIT_REF` may be a branch, tag,
+   or commit SHA. When it is not specified explicitly, it is the local `HEAD`
+   commit and must be pushed before dispatch.
 
 4. Identify the previous release tag and inspect the change range:
 
@@ -109,13 +116,13 @@ Run shell commands from the repository root unless a command says otherwise.
 
 7. Update `CHANGELOG.md` before publishing when the release includes changes not yet recorded there. Add a dated section for the release tag and summarize notable user-facing or developer-facing changes. Keep the changelog curated and concise; it does not need to mirror the full release description.
 
-8. Commit and push any release-preparation changes that must be included in the target ref before dispatching the workflow. Do not release from a local-only commit unless the user explicitly confirms.
+8. Commit and push any release-preparation changes that must be included in the target ref before dispatching the workflow. If `GIT_REF` defaulted to `HEAD`, re-run `git rev-parse HEAD` and ensure it still matches the intended release commit. Do not release from a local-only commit unless the user explicitly confirms.
 
 9. Trigger the tagged release workflow with the reviewed release notes as the release description:
 
    ```bash
-   export WORKFLOW_REF=dev
-   export PRERELEASE=true
+   export WORKFLOW_REF=${WORKFLOW_REF:-dev}
+   export PRERELEASE=${PRERELEASE:-true}
    python -c 'import json, os; from pathlib import Path; print(json.dumps({"git_ref": os.environ["GIT_REF"], "release_tag": os.environ["RELEASE_TAG"], "prerelease": os.environ.get("PRERELEASE", "true").lower() == "true", "release_notes": Path(os.environ["RELEASE_NOTES_FILE"]).read_text()}))' \
      | gh workflow run build-tagged-release.yml --ref "${WORKFLOW_REF}" --json
    ```
@@ -135,6 +142,7 @@ Run shell commands from the repository root unless a command says otherwise.
 - Do not publish raw commit logs as release descriptions unless the user explicitly asks.
 - Do not overwrite or delete an existing GitHub release or stable release tag without explicit user approval.
 - Ignore `nightly` when computing the previous release tag; it is a moving test release.
+- If the user does not clearly specify the release commit/ref (`GIT_REF`), use the current `HEAD` commit, not `dev`, `main`, or another moving branch.
 - If the user does not specify `RELEASE_TAG`, use the latest numeric release tag and increment its final number by one.
 - Prefer version tags that start with a digit, such as `3.0.0+fork.8`.
 - Keep `CHANGELOG.md` curated and human-readable.

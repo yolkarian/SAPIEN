@@ -15,6 +15,8 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ### Changed
 
+- Switched the current Sphinx documentation to the Furo theme for automatic light/dark mode support.
+- Updated the release skill to default unspecified release targets to the current `HEAD` commit.
 - Limited push-triggered nightly builds to the `main` branch.
 - Moved the historical changelog out of `readme.md` and into this file.
 - Moved detailed README setup, server rendering, build, and validation notes into Markdown files under `docs/`.
