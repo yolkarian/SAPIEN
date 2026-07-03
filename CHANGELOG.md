@@ -5,6 +5,10 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
+No notable changes yet.
+
+## 3.0.0+fork.8 - 2026-07-03
+
 ### Added
 
 - Added a required Markdown release notes input to the tagged release workflow.
