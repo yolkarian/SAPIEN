@@ -4,13 +4,12 @@
 If the user has not identified a concrete subsystem, read `readme.md` first, then ask which area to work on.
 
 When the area is clear, read the relevant docs in parallel before editing:
-- Basics: `docs/source/tutorial/basic/index.rst`
-- Rendering: `docs/source/tutorial/rendering/index.rst`
-- Robotics: `docs/source/tutorial/robotics/index.rst`
-- Reinforcement learning: `docs/source/tutorial/rl/index.rst`
-- Motion planning: `docs/source/tutorial/motion_planning/index.rst`
-- Migration and compatibility: `docs/source/tutorial/migration/index.rst`
-- Serialization work: `serialization.md`
+- Basics: `docs/source/tutorial/basic/index.md`
+- Rendering: `docs/source/tutorial/rendering/index.md`
+- Robotics: `docs/source/tutorial/robotics/index.md`
+- Reinforcement learning: `docs/source/tutorial/rl/index.md`
+- Motion planning: `docs/source/tutorial/motion_planning/index.md`
+- Migration and compatibility: `docs/source/tutorial/migration/index.md`
 
 If documentation and checked-in automation disagree, prefer the repository scripts and CI workflow over prose in `readme.md`.
 

@@ -80,9 +80,15 @@ public:
   void setGpuBatchedPoseIndex(int);
   int getGpuBatchedPoseIndex() const;
 
-  /** Get the index of this shape in the transform array of the render scene
-   *  The index will change when any object is removed from the scene. */
+  /** Get the index of this shape in the transform array of its owning render scene.
+   *  The index will change when any object is removed from the scene.
+   *  Batched rendering with scene groups should pass the scene/group explicitly.
+   */
   int getInternalGpuTransformIndex();
+
+  /** Get the index of this shape in the transform array of the specified render scene.
+   *  Use this overload when the shape is queried through a scene group.
+   */
   int getInternalGpuTransformIndex(svulkan2::scene::Scene &scene);
 
   /** Get the internal mesh scale

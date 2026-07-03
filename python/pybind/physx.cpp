@@ -9,6 +9,7 @@
 #include <pybind11/smart_holder.h>
 #include <pybind11/stl.h>
 #include <algorithm>
+#include <string_view>
 
 namespace py = pybind11;
 using namespace sapien;
@@ -492,21 +493,28 @@ Generator<int> init_physx(py::module &sapien) {
     return CudaArrayHandleFromPython(indexBuffer);
   };
 
-  auto syncRenderShared = [](std::shared_ptr<Scene> const &scene, int64_t envId) {
+  auto syncRenderSharedWithOptionalRenderer = [](std::shared_ptr<Scene> const &scene,
+                                                 bool shared) {
     try {
       if (auto renderSystem = scene->getSapienRendererSystem()) {
-        renderSystem->setBatchedRenderShared(envId == -1 || envId == 0xffffffffll);
+        renderSystem->setBatchedRenderShared(shared);
       }
-    } catch (std::runtime_error const &) {
+    } catch (std::runtime_error const &error) {
+      // Env-id APIs are valid for pure PhysX scenes. getSapienRendererSystem()
+      // throws when no render system exists; do not hide renderer sync failures.
+      if (!std::string_view(error.what())
+               .starts_with("failed to get system: no system with name [render]")) {
+        throw;
+      }
     }
   };
-  auto syncRenderSharedFromAssignedId = [](std::shared_ptr<Scene> const &scene, uint32_t envId) {
-    try {
-      if (auto renderSystem = scene->getSapienRendererSystem()) {
-        renderSystem->setBatchedRenderShared(envId == 0xffffffffu);
-      }
-    } catch (std::runtime_error const &) {
-    }
+  auto syncRenderShared = [syncRenderSharedWithOptionalRenderer](
+                              std::shared_ptr<Scene> const &scene, int64_t envId) {
+    syncRenderSharedWithOptionalRenderer(scene, envId == -1 || envId == 0xffffffffll);
+  };
+  auto syncRenderSharedFromAssignedId = [syncRenderSharedWithOptionalRenderer](
+                                           std::shared_ptr<Scene> const &scene, uint32_t envId) {
+    syncRenderSharedWithOptionalRenderer(scene, envId == 0xffffffffu);
   };
 
   PyPhysxSystemGpu

@@ -19,35 +19,28 @@ Paths below are relative to this skill directory:
 
 Run shell commands from the repository root unless a command says otherwise.
 
-## Release workflow
+## Optimized release workflow
 
-1. Confirm `gh` is installed and authenticated for the target repository:
+Use one preflight snippet to authenticate, fetch tags, choose defaults, inspect
+the release range, and verify that the target commit is visible to GitHub. If
+you later create a changelog/release-prep commit, rerun this snippet so
+`GIT_REF` still points at the intended final commit.
+
+1. Run preflight and inspect the release range:
 
    ```bash
    gh auth status
-   ```
-
-2. Fetch remote refs and release tags. Do not rely on the moving `nightly` tag
-   for release-note ranges:
-
-   ```bash
    git fetch origin
    mapfile -t TAG_REFS < <(git ls-remote --tags --refs origin | awk '$2 ~ /^refs\/tags\/[0-9]/ { print $2 ":" $2 }')
-   ((${#TAG_REFS[@]} == 0)) || git fetch origin "${TAG_REFS[@]}"
-   ```
+   if ((${#TAG_REFS[@]})); then
+     git fetch origin "${TAG_REFS[@]}"
+   fi
 
-3. Choose release inputs. Unless the user clearly specifies the commit,
-   branch, or ref to release, default `GIT_REF` to the current commit (`HEAD`).
-   Unless the user specifies a version tag, default `RELEASE_TAG` to the latest
-   numeric release tag with its final number incremented by one, e.g.
-   `3.0.0+fork.7` becomes `3.0.0+fork.8`:
-
-   ```bash
    if [ -z "${GIT_REF:-}" ]; then
      GIT_REF=$(git rev-parse HEAD)
      export GIT_REF
    fi
-   export WORKFLOW_REF=${WORKFLOW_REF:-dev}
+   export WORKFLOW_REF=${WORKFLOW_REF:-$(git symbolic-ref --quiet --short HEAD || echo dev)}
    export PRERELEASE=${PRERELEASE:-true}
 
    if [ -z "${RELEASE_TAG:-}" ]; then
@@ -62,18 +55,12 @@ Run shell commands from the repository root unless a command says otherwise.
      export RELEASE_TAG
    fi
 
-   printf 'git ref: %s\nworkflow ref: %s\nrelease tag: %s\nprerelease: %s\n' \
-     "${GIT_REF}" "${WORKFLOW_REF}" "${RELEASE_TAG}" "${PRERELEASE}"
-   ```
+   if git rev-parse --verify --quiet "refs/tags/${RELEASE_TAG}" >/dev/null \
+       || git ls-remote --exit-code --tags --refs origin "${RELEASE_TAG}" >/dev/null 2>&1; then
+     echo "Release tag already exists: ${RELEASE_TAG}" >&2
+     exit 1
+   fi
 
-   `RELEASE_TAG` must be a valid Python package version. Override it when the
-   user explicitly requests a specific version. `GIT_REF` may be a branch, tag,
-   or commit SHA. When it is not specified explicitly, it is the local `HEAD`
-   commit and must be pushed before dispatch.
-
-4. Identify the previous release tag and inspect the change range:
-
-   ```bash
    TARGET_COMMIT=$(git rev-parse "${GIT_REF}^{commit}")
    PREVIOUS_TAG=$(git for-each-ref --merged "${TARGET_COMMIT}" --sort=-v:refname --format='%(refname:short)' refs/tags \
      | grep -E '^[0-9]' \
@@ -84,7 +71,15 @@ Run shell commands from the repository root unless a command says otherwise.
    else
      RANGE="${TARGET_COMMIT}"
    fi
-   printf 'previous tag: %s\ntarget commit: %s\nrange: %s\n' "${PREVIOUS_TAG:-<none>}" "${TARGET_COMMIT}" "${RANGE}"
+
+   if ! git ls-remote --exit-code --heads --tags origin "${GIT_REF}" >/dev/null 2>&1 \
+       && ! git branch -r --contains "${TARGET_COMMIT}" | grep -q .; then
+     echo "Target commit is not visible on fetched remote refs; push it before dispatch." >&2
+     exit 1
+   fi
+
+   printf 'git ref: %s\nworkflow ref: %s\nrelease tag: %s\nprerelease: %s\nprevious tag: %s\ntarget commit: %s\nrange: %s\n' \
+     "${GIT_REF}" "${WORKFLOW_REF}" "${RELEASE_TAG}" "${PRERELEASE}" "${PREVIOUS_TAG:-<none>}" "${TARGET_COMMIT}" "${RANGE}"
    git log --reverse --oneline "${RANGE}"
    if [ -n "${PREVIOUS_TAG}" ]; then
      git diff --stat "${RANGE}"
@@ -93,9 +88,19 @@ Run shell commands from the repository root unless a command says otherwise.
    fi
    ```
 
-5. Read and analyze the commits before writing release notes.
+   Defaults:
 
-   Use commit messages as a starting point, but do not publish a raw script-generated list. For vague, large, or user-facing commits, inspect details:
+   - `GIT_REF`: current `HEAD` commit unless the user clearly specifies a commit,
+     branch, or ref to release.
+   - `WORKFLOW_REF`: current branch, falling back to `dev` for detached HEAD.
+   - `PRERELEASE`: `true`.
+   - `RELEASE_TAG`: latest numeric release tag with its final number incremented
+     by one, for example `3.0.0+fork.7` -> `3.0.0+fork.8`.
+
+2. Read and analyze commits before writing release notes.
+
+   The preflight log and stat are usually enough for small, clear commits. For
+   vague, large, or user-facing commits, inspect details before summarizing:
 
    ```bash
    git show --stat --summary <commit-sha>
@@ -103,34 +108,45 @@ Run shell commands from the repository root unless a command says otherwise.
    git diff "${PREVIOUS_TAG}..${TARGET_COMMIT}" -- <important-path>
    ```
 
-   Summarize the release in human-facing Markdown. Prefer grouped bullets such as `Highlights`, `Fixes`, `Build and packaging`, `Documentation`, and `Validation` when applicable. Mention commit hashes only when they help traceability. Do not include private paths, temporary files, or unrelated local validation details.
+   Summarize in human-facing Markdown. Prefer grouped bullets such as
+   `Highlights`, `Fixes`, `Build and packaging`, `Documentation`, and
+   `Validation` when applicable. Do not publish a raw commit log, private paths,
+   temporary files, or unrelated local validation details.
 
-6. Write the summarized release notes to a temporary file and review them:
+3. Write release notes and update the changelog if needed:
 
    ```bash
-   export RELEASE_NOTES_FILE
-   RELEASE_NOTES_FILE=$(mktemp)
+   export RELEASE_NOTES_FILE=${RELEASE_NOTES_FILE:-$(mktemp)}
    "$EDITOR" "$RELEASE_NOTES_FILE"
-   sed -n '1,160p' "$RELEASE_NOTES_FILE"
+   sed -n '1,180p' "$RELEASE_NOTES_FILE"
    ```
 
-7. Update `CHANGELOG.md` before publishing when the release includes changes not yet recorded there. Add a dated section for the release tag and summarize notable user-facing or developer-facing changes. Keep the changelog curated and concise; it does not need to mirror the full release description.
+   Update `CHANGELOG.md` before dispatch when the release includes changes not
+   yet recorded there. Add a dated section for `RELEASE_TAG` and keep the
+   changelog curated and concise. Commit and push that release-preparation
+   change, then rerun step 1 so `GIT_REF`, `TARGET_COMMIT`, and `RANGE` reflect
+   the final pushed commit.
 
-8. Commit and push any release-preparation changes that must be included in the target ref before dispatching the workflow. If `GIT_REF` defaulted to `HEAD`, re-run `git rev-parse HEAD` and ensure it still matches the intended release commit. Do not release from a local-only commit unless the user explicitly confirms.
-
-9. Trigger the tagged release workflow with the reviewed release notes as the release description:
+4. Dispatch the workflow with the reviewed notes:
 
    ```bash
-   export WORKFLOW_REF=${WORKFLOW_REF:-dev}
-   export PRERELEASE=${PRERELEASE:-true}
-   python -c 'import json, os; from pathlib import Path; print(json.dumps({"git_ref": os.environ["GIT_REF"], "release_tag": os.environ["RELEASE_TAG"], "prerelease": os.environ.get("PRERELEASE", "true").lower() == "true", "release_notes": Path(os.environ["RELEASE_NOTES_FILE"]).read_text()}))' \
+   python -c 'import json, os; from pathlib import Path; print(json.dumps({"git_ref": os.environ["GIT_REF"], "release_tag": os.environ["RELEASE_TAG"], "prerelease": os.environ.get("PRERELEASE", "true"), "release_notes": Path(os.environ["RELEASE_NOTES_FILE"]).read_text()}))' \
      | gh workflow run build-tagged-release.yml --ref "${WORKFLOW_REF}" --json
    ```
 
-10. Watch the run and report the result:
+   `gh workflow run --json` expects workflow input values as strings. Keep
+   `prerelease` as the string `true` or `false`; do not JSON-encode it as a
+   boolean.
+
+5. Report the run URL/status without waiting for the long build by default:
 
    ```bash
    gh run list --workflow build-tagged-release.yml --limit 5
+   ```
+
+   Only watch the run when the user explicitly asks:
+
+   ```bash
    gh run watch <run-id> --exit-status
    ```
 
@@ -143,6 +159,10 @@ Run shell commands from the repository root unless a command says otherwise.
 - Do not overwrite or delete an existing GitHub release or stable release tag without explicit user approval.
 - Ignore `nightly` when computing the previous release tag; it is a moving test release.
 - If the user does not clearly specify the release commit/ref (`GIT_REF`), use the current `HEAD` commit, not `dev`, `main`, or another moving branch.
+- Before dispatch, ensure the target commit is pushed and visible from remote refs.
+- If a changelog or release-prep commit is created, rerun preflight and release the new final `HEAD`.
 - If the user does not specify `RELEASE_TAG`, use the latest numeric release tag and increment its final number by one.
 - Prefer version tags that start with a digit, such as `3.0.0+fork.8`.
+- Pass boolean workflow inputs to `gh workflow run --json` as strings.
+- Do not watch long release builds by default; report the run URL/status and wait only when asked.
 - Keep `CHANGELOG.md` curated and human-readable.
