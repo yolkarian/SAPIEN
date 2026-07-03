@@ -42,10 +42,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
-| `cm` | `np.ndarray[tuple[Literal[3], Literal[1]], np.dtype[np.float32]]` | Property: cm. |  |
-| `cm_inertia` | `np.ndarray[tuple[Literal[3], Literal[3]], np.dtype[np.float32]]` | Property: cm inertia. |  |
-| `mass` | `float` | Property: mass. |  |
-| `origin_inertia` | `np.ndarray[tuple[Literal[3], Literal[3]], np.dtype[np.float32]]` | Property: origin inertia. |  |
+| `cm` | `np.ndarray[tuple[Literal[3], Literal[1]], np.dtype[np.float32]]` |  |  |
+| `cm_inertia` | `np.ndarray[tuple[Literal[3], Literal[3]], np.dtype[np.float32]]` |  |  |
+| `mass` | `float` |  |  |
+| `origin_inertia` | `np.ndarray[tuple[Literal[3], Literal[3]], np.dtype[np.float32]]` |  |  |
 
 ### Methods/properties
 
@@ -55,7 +55,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `scale_mass` | method | `scale_mass(self, scale: float) -> MassProperties` | compute new mass properties as if the object density is scaled uniformly |  |
 | `scale_size` | method | `scale_size(self, scale: np.ndarray[Literal[3], np.dtype[np.float32]] \| list[float] \| tuple) -> MassProperties` | compute new mass properties as if the object volume is scaled around the origin while keeping density the same |  |
 | `transform` | method | `transform(self, pose: sapien.Pose) -> MassProperties` | compute new mass properties as if the origin of the current object is moved to given pose |  |
-| `__add__` | method | `__add__(self, other: MassProperties) -> MassProperties` | Python special method. |  |
+| `__add__` | method | `__add__(self, other: MassProperties) -> MassProperties` |  |  |
 | `__init__` | method | `__init__(self, mass: float, cm: np.ndarray[tuple[Literal[3], Literal[1]], np.dtype[np.float32]] \| list \| tuple, inertia: np.ndarray[tuple[Literal[3], Literal[3]], np.dtype[np.float32]] \| list \| tuple) -> None<br>__init__(self, mass: float, cmass_local_pose: sapien.Pose, inertia: np.ndarray[Literal[3], np.dtype[np.float32]] \| list[float] \| tuple) -> None` | construct inertia from mass, center of mass, inertia at center of mass |  |
 
 ## SimSense pybind API (`sapien.simsense`)
@@ -80,20 +80,20 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `compute` | method | `compute(self, left_array: np.ndarray[np.uint8], right_array: np.ndarray[np.uint8], bbox: bool=False, bbox_start_x: int=0, bbox_start_y: int=0, bbox_width: int=0, bbox_height: int=0) -> None<br>compute(self, left_cuda: sapien.CudaArray, right_cuda: sapien.CudaArray, bbox: bool=False, bbox_start_x: int=0, bbox_start_y: int=0, bbox_width: int=0, bbox_height: int=0) -> None` | Call compute. |  |
-| `get_cuda` | method | `get_cuda(self) -> sapien.CudaArray` | Get cuda. |  |
-| `get_ndarray` | method | `get_ndarray(self) -> np.ndarray[Any, np.dtype[np.float32]]` | Get ndarray. |  |
-| `get_point_cloud_cuda` | method | `get_point_cloud_cuda(self) -> sapien.CudaArray` | Get point cloud cuda. |  |
-| `get_point_cloud_ndarray` | method | `get_point_cloud_ndarray(self) -> np.ndarray[Any, np.dtype[np.float32]]` | Get point cloud ndarray. |  |
-| `get_rgb_point_cloud_cuda` | method | `get_rgb_point_cloud_cuda(self, arg0: sapien.CudaArray) -> sapien.CudaArray` | Get rgb point cloud cuda. |  |
-| `get_rgb_point_cloud_ndarray` | method | `get_rgb_point_cloud_ndarray(self, arg0: sapien.CudaArray) -> np.ndarray[Any, np.dtype[np.float32]]` | Get rgb point cloud ndarray. |  |
-| `set_census_window_size` | method | `set_census_window_size(self, arg0: int, arg1: int) -> None` | Set census window size. |  |
-| `set_ir_noise_parameters` | method | `set_ir_noise_parameters(self, arg0: float, arg1: float, arg2: float, arg3: float) -> None` | Set ir noise parameters. |  |
-| `set_lr_max_diff` | method | `set_lr_max_diff(self, arg0: int) -> None` | Set lr max diff. |  |
-| `set_matching_block_size` | method | `set_matching_block_size(self, arg0: int, arg1: int) -> None` | Set matching block size. |  |
-| `set_penalties` | method | `set_penalties(self, arg0: int, arg1: int) -> None` | Set penalties. |  |
-| `set_uniqueness_ratio` | method | `set_uniqueness_ratio(self, arg0: int) -> None` | Set uniqueness ratio. |  |
-| `__init__` | method | `__init__(self, arg0: int, arg1: int, arg2: int, arg3: int, arg4: float, arg5: float, arg6: float, arg7: float, arg8: int, arg9: float, arg10: float, arg11: float, arg12: float, arg13: bool, arg14: int, arg15: int, arg16: int, arg17: int, arg18: int, arg19: int, arg20: int, arg21: int, arg22: int, arg23: int, arg24: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg25: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg26: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg27: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg28: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg29: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg30: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg31: float, arg32: float, arg33: float, arg34: bool, arg35: float, arg36: float, arg37: float, arg38: float, arg39: float) -> None` | Python special method. |  |
+| `compute` | method | `compute(self, left_array: np.ndarray[np.uint8], right_array: np.ndarray[np.uint8], bbox: bool=False, bbox_start_x: int=0, bbox_start_y: int=0, bbox_width: int=0, bbox_height: int=0) -> None<br>compute(self, left_cuda: sapien.CudaArray, right_cuda: sapien.CudaArray, bbox: bool=False, bbox_start_x: int=0, bbox_start_y: int=0, bbox_width: int=0, bbox_height: int=0) -> None` |  |  |
+| `get_cuda` | method | `get_cuda(self) -> sapien.CudaArray` |  |  |
+| `get_ndarray` | method | `get_ndarray(self) -> np.ndarray[Any, np.dtype[np.float32]]` |  |  |
+| `get_point_cloud_cuda` | method | `get_point_cloud_cuda(self) -> sapien.CudaArray` |  |  |
+| `get_point_cloud_ndarray` | method | `get_point_cloud_ndarray(self) -> np.ndarray[Any, np.dtype[np.float32]]` |  |  |
+| `get_rgb_point_cloud_cuda` | method | `get_rgb_point_cloud_cuda(self, arg0: sapien.CudaArray) -> sapien.CudaArray` |  |  |
+| `get_rgb_point_cloud_ndarray` | method | `get_rgb_point_cloud_ndarray(self, arg0: sapien.CudaArray) -> np.ndarray[Any, np.dtype[np.float32]]` |  |  |
+| `set_census_window_size` | method | `set_census_window_size(self, arg0: int, arg1: int) -> None` |  |  |
+| `set_ir_noise_parameters` | method | `set_ir_noise_parameters(self, arg0: float, arg1: float, arg2: float, arg3: float) -> None` |  |  |
+| `set_lr_max_diff` | method | `set_lr_max_diff(self, arg0: int) -> None` |  |  |
+| `set_matching_block_size` | method | `set_matching_block_size(self, arg0: int, arg1: int) -> None` |  |  |
+| `set_penalties` | method | `set_penalties(self, arg0: int, arg1: int) -> None` |  |  |
+| `set_uniqueness_ratio` | method | `set_uniqueness_ratio(self, arg0: int) -> None` |  |  |
+| `__init__` | method | `__init__(self, arg0: int, arg1: int, arg2: int, arg3: int, arg4: float, arg5: float, arg6: float, arg7: float, arg8: int, arg9: float, arg10: float, arg11: float, arg12: float, arg13: bool, arg14: int, arg15: int, arg16: int, arg17: int, arg18: int, arg19: int, arg20: int, arg21: int, arg22: int, arg23: int, arg24: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg25: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg26: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg27: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg28: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg29: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg30: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg31: float, arg32: float, arg33: float, arg34: bool, arg35: float, arg36: float, arg37: float, arg38: float, arg39: float) -> None` |  |  |
 
 ## StereoDepthSensor API
 
@@ -118,16 +118,16 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `compute_depth` | method | `compute_depth(self, bbox_start: tuple=None, bbox_size: tuple=None)` | Compute depth. |  |
-| `get_config` | method | `get_config(self)` | Get config. |  |
+| `compute_depth` | method | `compute_depth(self, bbox_start: tuple=None, bbox_size: tuple=None)` |  |  |
+| `get_config` | method | `get_config(self)` |  |  |
 | `get_depth` | method | `get_depth(self)` | Note: Returned depth map will be of the same resolution and frame of RGB camera. |  |
 | `get_depth_cuda` | method | `get_depth_cuda(self)` | Note: Returned depth map will be of the same resolution and frame of RGB camera. |  |
 | `get_ir` | method | `get_ir(self)` | Note: Noise simulation won't be reflected here. |  |
 | `get_pointcloud` | method | `get_pointcloud(self, with_rgb: bool=False)` | Note: Returned point cloud is from RGB camera's with x rightward, y downward, z forward. |  |
 | `get_pointcloud_cuda` | method | `get_pointcloud_cuda(self, with_rgb: bool=False)` | Note: Returned point cloud is from RGB camera's with x rightward, y downward, z forward. |  |
-| `get_pose` | method | `get_pose(self)` | Get pose. |  |
-| `get_rgb` | method | `get_rgb(self)` | Get rgb. |  |
-| `get_rgba_cuda` | method | `get_rgba_cuda(self)` | Get rgba cuda. |  |
+| `get_pose` | method | `get_pose(self)` |  |  |
+| `get_rgb` | method | `get_rgb(self)` |  |  |
+| `get_rgba_cuda` | method | `get_rgba_cuda(self)` |  |  |
 | `set_census_window_size` | method | `set_census_window_size(self, census_width: int, census_height: int)` | :param census_width: Width of the center-symmetric census transform window. This must be an odd number. :param census_height: Height of the center-symmetric census tra... |  |
 | `set_ir_noise` | method | `set_ir_noise(self, ir_speckle_noise: float, ir_thermal_noise: float)` | :param ir_speckle_noise: Scale for simulating infrared speckle noise. Set to 0 will disable noise simulation. :param ir_thermal_noise: Scale for simulating infrared th... |  |
 | `set_local_pose` | method | `set_local_pose(self, pose: Pose)` | Set local pose of the sensor relative to mounted actor. |  |
@@ -139,8 +139,8 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `__init__` | method | `__init__(self, config: StereoDepthSensorConfig, mount_entity: Entity, pose: Optional[Pose]=None)` | :param config: configuration of the sensor. :param mount_entity: entity that the sensor is mounted to. :param pose: local pose relative to the mounted entity. If not g... |  |
 | `_create_cameras` | method | `_create_cameras(self)` | Call create cameras. |  |
 | `_create_light` | method | `_create_light(self)` | Call create light. |  |
-| `_ir_mode` | method | `_ir_mode(self)` | Call ir mode. |  |
-| `_normal_mode` | method | `_normal_mode(self)` | Call normal mode. |  |
+| `_ir_mode` | method | `_ir_mode(self)` |  |  |
+| `_normal_mode` | method | `_normal_mode(self)` |  |  |
 
 ## `sapien.sensor.stereodepth.StereoDepthSensorConfig`
 
@@ -151,7 +151,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
-| `SUPPORTED_MODELS` | `` | Property: SUPPORTED MODELS. |  |
+| `SUPPORTED_MODELS` | `` |  |  |
 
 ### Methods/properties
 
@@ -181,7 +181,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `__init__` | method | `__init__(self)` | Python special method. |  |
+| `__init__` | method | `__init__(self)` |  |  |
 
 ## ActiveLightSensor API
 
@@ -206,22 +206,22 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
 | `clear_cache` | method | `clear_cache(self)` | Call clear cache. |  |
-| `get_depth` | method | `get_depth(self)` | Get depth. |  |
-| `get_ir` | method | `get_ir(self)` | Get ir. |  |
-| `get_pointcloud` | method | `get_pointcloud(self, frame='camera', with_rgb=False)` | Get pointcloud. |  |
-| `get_pose` | method | `get_pose(self)` | Get pose. |  |
-| `get_rgb` | method | `get_rgb(self)` | Get rgb. |  |
-| `set_pose` | method | `set_pose(self, pose: Pose)` | Set pose. |  |
+| `get_depth` | method | `get_depth(self)` |  |  |
+| `get_ir` | method | `get_ir(self)` |  |  |
+| `get_pointcloud` | method | `get_pointcloud(self, frame='camera', with_rgb=False)` |  |  |
+| `get_pose` | method | `get_pose(self)` |  |  |
+| `get_rgb` | method | `get_rgb(self)` |  |  |
+| `set_pose` | method | `set_pose(self, pose: Pose)` |  |  |
 | `take_picture` | method | `take_picture(self)` | Note: we expect one scene.update_render() call before calling take_picture(). |  |
 | `__init__` | method | `__init__(self, sensor_name: str, renderer: Renderer, scene: Scene, sensor_type: Optional[str]='d415', rgb_resolution: Tuple[int, int]=None, ir_resolution: Tuple[int, int]=None, rgb_intrinsic: Optional[np.ndarray]=None, ir_intrinsic: Optional[np.ndarray]=None, trans_pose_l: Optional[Pose]=None, trans_pose_r: Optional[Pose]=None, light_pattern: Optional[str]=None, max_depth: float=10.0, min_depth: float=0.2, ir_ambient_strength: float=0.002, ir_light_dim_factor: float=0.05)` | :param sensor_name: Name of the sensor. :param renderer: Renderer used in the scene. :param scene: Scene that the sensor is attached to. :param sensor_type: If this is... |  |
 | `_create_cameras` | method | `_create_cameras(self)` | Call create cameras. |  |
-| `_depth2pts_np` | staticmethod | `_depth2pts_np(depth_map, cam_intrinsic, cam_extrinsic=np.eye(4))` | Call depth2pts np. |  |
-| `_fetch` | method | `_fetch(self, mod)` | Call fetch. |  |
-| `_float2uint8` | staticmethod | `_float2uint8(x)` | Call float2uint8. |  |
+| `_depth2pts_np` | staticmethod | `_depth2pts_np(depth_map, cam_intrinsic, cam_extrinsic=np.eye(4))` |  |  |
+| `_fetch` | method | `_fetch(self, mod)` |  |  |
+| `_float2uint8` | staticmethod | `_float2uint8(x)` |  |  |
 | `_get_pixel_grids_np` | staticmethod | `_get_pixel_grids_np(height, width)` | Call get pixel grids np. |  |
-| `_ir_mode` | method | `_ir_mode(self)` | Call ir mode. |  |
-| `_normal_mode` | method | `_normal_mode(self)` | Call normal mode. |  |
-| `_pose2cv2ex` | staticmethod | `_pose2cv2ex(pose)` | Call pose2cv2ex. |  |
+| `_ir_mode` | method | `_ir_mode(self)` |  |  |
+| `_normal_mode` | method | `_normal_mode(self)` |  |  |
+| `_pose2cv2ex` | staticmethod | `_pose2cv2ex(pose)` |  |  |
 | `_set_sensor_parameters` | method | `_set_sensor_parameters(self, sensor_type)` | Call set sensor parameters. |  |
 
 ## SimSenseComponent API
@@ -246,18 +246,18 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `compute` | method | `compute(self, left: Union[np.ndarray, CudaArray], right: Union[np.ndarray, CudaArray], bbox_start: tuple=None, bbox_size: tuple=None) -> None` | Call compute. |  |
-| `get_cuda` | method | `get_cuda(self) -> CudaArray` | Get cuda. |  |
-| `get_ndarray` | method | `get_ndarray(self) -> np.ndarray` | Get ndarray. |  |
-| `get_point_cloud_cuda` | method | `get_point_cloud_cuda(self) -> CudaArray` | Get point cloud cuda. |  |
-| `get_point_cloud_ndarray` | method | `get_point_cloud_ndarray(self) -> np.ndarray` | Get point cloud ndarray. |  |
-| `get_rgb_point_cloud_cuda` | method | `get_rgb_point_cloud_cuda(self, rgba_cuda: CudaArray) -> CudaArray` | Get rgb point cloud cuda. |  |
-| `get_rgb_point_cloud_ndarray` | method | `get_rgb_point_cloud_ndarray(self, rgba_cuda: CudaArray) -> np.ndarray` | Get rgb point cloud ndarray. |  |
+| `compute` | method | `compute(self, left: Union[np.ndarray, CudaArray], right: Union[np.ndarray, CudaArray], bbox_start: tuple=None, bbox_size: tuple=None) -> None` |  |  |
+| `get_cuda` | method | `get_cuda(self) -> CudaArray` |  |  |
+| `get_ndarray` | method | `get_ndarray(self) -> np.ndarray` |  |  |
+| `get_point_cloud_cuda` | method | `get_point_cloud_cuda(self) -> CudaArray` |  |  |
+| `get_point_cloud_ndarray` | method | `get_point_cloud_ndarray(self) -> np.ndarray` |  |  |
+| `get_rgb_point_cloud_cuda` | method | `get_rgb_point_cloud_cuda(self, rgba_cuda: CudaArray) -> CudaArray` |  |  |
+| `get_rgb_point_cloud_ndarray` | method | `get_rgb_point_cloud_ndarray(self, rgba_cuda: CudaArray) -> np.ndarray` |  |  |
 | `on_add_to_scene` | method | `on_add_to_scene(self, scene)` | Call on add to scene. |  |
 | `on_remove_from_scene` | method | `on_remove_from_scene(self, scene)` | Call on remove from scene. |  |
-| `__init__` | method | `__init__(self, rgb_resolution: tuple, ir_resolution: tuple, rgb_intrinsic: np.ndarray, ir_intrinsic: np.ndarray, trans_pose_l: Pose, trans_pose_r: Pose, min_depth: float, max_depth: float, ir_noise_seed: int, ir_speckle_noise: float, ir_thermal_noise: float, rectified: bool, census_width: int, census_height: int, max_disp: int, block_width: int, block_height: int, p1_penalty: int, p2_penalty: int, uniqueness_ratio: int, lr_max_diff: int, median_filter_size: int, depth_dilation: bool)` | Python special method. |  |
+| `__init__` | method | `__init__(self, rgb_resolution: tuple, ir_resolution: tuple, rgb_intrinsic: np.ndarray, ir_intrinsic: np.ndarray, trans_pose_l: Pose, trans_pose_r: Pose, min_depth: float, max_depth: float, ir_noise_seed: int, ir_speckle_noise: float, ir_thermal_noise: float, rectified: bool, census_width: int, census_height: int, max_disp: int, block_width: int, block_height: int, p1_penalty: int, p2_penalty: int, uniqueness_ratio: int, lr_max_diff: int, median_filter_size: int, depth_dilation: bool)` |  |  |
 | `_get_registration_mat` | staticmethod | `_get_registration_mat(ir_size, ir_intrinsic, rgb_intrinsic, ir2rgb)` | Call get registration mat. |  |
-| `_pose2cv2ex` | staticmethod | `_pose2cv2ex(pose)` | Call pose2cv2ex. |  |
+| `_pose2cv2ex` | staticmethod | `_pose2cv2ex(pose)` |  |  |
 
 ## Asset helpers
 

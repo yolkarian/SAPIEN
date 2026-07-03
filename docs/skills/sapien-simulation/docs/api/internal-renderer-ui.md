@@ -101,7 +101,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
-| `line_width` | `float` | Property: line width. |  |
+| `line_width` | `float` |  |  |
 
 ## `sapien.internal_renderer.Material`
 
@@ -112,13 +112,13 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `set_base_color` | method | `set_base_color(self, rgba: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` | Set base color. |  |
-| `set_emission` | method | `set_emission(self, emission: float) -> None` | Set emission. |  |
-| `set_metallic` | method | `set_metallic(self, metallic: float) -> None` | Set metallic. |  |
-| `set_roughness` | method | `set_roughness(self, roughness: float) -> None` | Set roughness. |  |
-| `set_specular` | method | `set_specular(self, specular: float) -> None` | Set specular. |  |
-| `set_textures` | method | `set_textures(self, base_color: Texture \| None=None, roughness: Texture \| None=None, normal: Texture \| None=None, metallic: Texture \| None=None, emission: Texture \| None=None, transmission: Texture \| None=None) -> None` | Set textures. |  |
-| `set_transmission` | method | `set_transmission(self, transmission: float) -> None` | Set transmission. |  |
+| `set_base_color` | method | `set_base_color(self, rgba: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
+| `set_emission` | method | `set_emission(self, emission: float) -> None` |  |  |
+| `set_metallic` | method | `set_metallic(self, metallic: float) -> None` |  |  |
+| `set_roughness` | method | `set_roughness(self, roughness: float) -> None` |  |  |
+| `set_specular` | method | `set_specular(self, specular: float) -> None` |  |  |
+| `set_textures` | method | `set_textures(self, base_color: Texture \| None=None, roughness: Texture \| None=None, normal: Texture \| None=None, metallic: Texture \| None=None, emission: Texture \| None=None, transmission: Texture \| None=None) -> None` |  |  |
+| `set_transmission` | method | `set_transmission(self, transmission: float) -> None` |  |  |
 
 ## `sapien.internal_renderer.Mesh`
 
@@ -139,13 +139,13 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `children` | property | `children(self) -> list[Node]` | Property: children. |  |
-| `position` | property | `position(self) -> np.ndarray[Any, np.dtype[np.float32]]` | Property: position. |  |
-| `rotation` | property | `rotation(self) -> np.ndarray[Any, np.dtype[np.float32]]` | Property: rotation. |  |
-| `scale` | property | `scale(self) -> np.ndarray[Any, np.dtype[np.float32]]` | Property: scale. |  |
-| `set_position` | method | `set_position(self, position: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` | Set position. |  |
-| `set_rotation` | method | `set_rotation(self, quat: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` | Set rotation. |  |
-| `set_scale` | method | `set_scale(self, scale: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` | Set scale. |  |
+| `children` | property | `children(self) -> list[Node]` |  |  |
+| `position` | property | `position(self) -> np.ndarray[Any, np.dtype[np.float32]]` |  |  |
+| `rotation` | property | `rotation(self) -> np.ndarray[Any, np.dtype[np.float32]]` |  |  |
+| `scale` | property | `scale(self) -> np.ndarray[Any, np.dtype[np.float32]]` |  |  |
+| `set_position` | method | `set_position(self, position: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
+| `set_rotation` | method | `set_rotation(self, quat: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
+| `set_scale` | method | `set_scale(self, scale: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
 
 ## `sapien.internal_renderer.Object`
 
@@ -156,17 +156,17 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
-| `cast_shadow` | `bool` | Property: cast shadow. |  |
-| `shading_mode` | `int` | Property: shading mode. |  |
-| `transparency` | `float` | Property: transparency. |  |
+| `cast_shadow` | `bool` |  |  |
+| `shading_mode` | `int` |  |  |
+| `transparency` | `float` |  |  |
 
 ### Methods/properties
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `get_segmentation` | method | `get_segmentation(self) -> np.ndarray[np.uint32]` | Get segmentation. |  |
-| `model` | property | `model(self) -> Model` | Property: model. |  |
-| `set_segmentation` | method | `set_segmentation(self, arg0: np.ndarray[np.uint32]) -> None` | Set segmentation. |  |
+| `get_segmentation` | method | `get_segmentation(self) -> np.ndarray[np.uint32]` |  |  |
+| `model` | property | `model(self) -> Model` |  |  |
+| `set_segmentation` | method | `set_segmentation(self, arg0: np.ndarray[np.uint32]) -> None` |  |  |
 
 ## `sapien.internal_renderer.PointSet`
 
@@ -192,9 +192,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `set_custom_cubemap` | method | `set_custom_cubemap(self, name: str, texture: Cubemap) -> None` | Set custom cubemap. |  |
-| `set_custom_property` | method | `set_custom_property(self, name: str, value: float) -> None<br>set_custom_property(self, name: str, value: int) -> None` | Set custom property. |  |
-| `set_custom_texture` | method | `set_custom_texture(self, name: str, texture: Texture) -> None` | Set custom texture. |  |
+| `set_custom_cubemap` | method | `set_custom_cubemap(self, name: str, texture: Cubemap) -> None` |  |  |
+| `set_custom_property` | method | `set_custom_property(self, name: str, value: float) -> None<br>set_custom_property(self, name: str, value: int) -> None` |  |  |
+| `set_custom_texture` | method | `set_custom_texture(self, name: str, texture: Texture) -> None` |  |  |
 
 ## `sapien.internal_renderer.Scene`
 
@@ -205,15 +205,15 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `add_line_set` | method | `add_line_set(self, line_set: PointSet, parent: Node \| None=None) -> LineSetObject` | Add/create line set. |  |
-| `add_node` | method | `add_node(self, parent: Node \| None=None) -> Node` | Add/create node. |  |
-| `add_object` | method | `add_object(self, model: Model, parent: Node \| None=None) -> Object` | Add/create object. |  |
-| `add_point_set` | method | `add_point_set(self, point_set: LineSet, parent: Node \| None=None) -> PointSetObject` | Add/create point set. |  |
-| `force_rebuild` | method | `force_rebuild(self) -> None` | Call force rebuild. |  |
-| `force_update` | method | `force_update(self) -> None` | Call force update. |  |
-| `remove_node` | method | `remove_node(self, node: Node) -> None` | Remove node. |  |
-| `set_ambient_light` | method | `set_ambient_light(self, arg0: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` | Set ambient light. |  |
-| `set_cubemap` | method | `set_cubemap(self, arg0: Cubemap) -> None` | Set cubemap. |  |
+| `add_line_set` | method | `add_line_set(self, line_set: PointSet, parent: Node \| None=None) -> LineSetObject` |  |  |
+| `add_node` | method | `add_node(self, parent: Node \| None=None) -> Node` |  |  |
+| `add_object` | method | `add_object(self, model: Model, parent: Node \| None=None) -> Object` |  |  |
+| `add_point_set` | method | `add_point_set(self, point_set: LineSet, parent: Node \| None=None) -> PointSetObject` |  |  |
+| `force_rebuild` | method | `force_rebuild(self) -> None` |  |  |
+| `force_update` | method | `force_update(self) -> None` |  |  |
+| `remove_node` | method | `remove_node(self, node: Node) -> None` |  |  |
+| `set_ambient_light` | method | `set_ambient_light(self, arg0: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
+| `set_cubemap` | method | `set_cubemap(self, arg0: Cubemap) -> None` |  |  |
 
 ## `sapien.internal_renderer.Shape`
 
@@ -234,11 +234,11 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Callback` | method | `Callback(self, func: Callable[[UIButton], None]) -> UIButton` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UIButton` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIButton` | Call Label. |  |
-| `Width` | method | `Width(self, width: float) -> UIButton` | Call Width. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIButton], None]) -> UIButton` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIButton` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIButton` |  |  |
+| `Width` | method | `Width(self, width: float) -> UIButton` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UICheckbox`
 
@@ -249,13 +249,13 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UICheckbox<br>Bind(self, arg0: Any, arg1: int) -> UICheckbox` | Call Bind. |  |
-| `Callback` | method | `Callback(self, func: Callable[[UICheckbox], None]) -> UICheckbox` | Call Callback. |  |
-| `Checked` | method | `Checked(self, checked: bool) -> UICheckbox` | Call Checked. |  |
-| `Id` | method | `Id(self, id: str) -> UICheckbox` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UICheckbox` | Call Label. |  |
-| `checked` | property | `checked(self) -> bool` | Property: checked. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UICheckbox<br>Bind(self, arg0: Any, arg1: int) -> UICheckbox` |  |  |
+| `Callback` | method | `Callback(self, func: Callable[[UICheckbox], None]) -> UICheckbox` |  |  |
+| `Checked` | method | `Checked(self, checked: bool) -> UICheckbox` |  |  |
+| `Id` | method | `Id(self, id: str) -> UICheckbox` |  |  |
+| `Label` | method | `Label(self, label: str) -> UICheckbox` |  |  |
+| `checked` | property | `checked(self) -> bool` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIConditional`
 
@@ -266,9 +266,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIConditional<br>Bind(self, arg0: Callable[[], bool]) -> UIConditional` | Call Bind. |  |
-| `append` | method | `append(self, *args) -> UIConditional` | Call append. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIConditional<br>Bind(self, arg0: Callable[[], bool]) -> UIConditional` |  |  |
+| `append` | method | `append(self, *args) -> UIConditional` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIDisplayText`
 
@@ -279,9 +279,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIDisplayText<br>Bind(self, arg0: Callable[[], str]) -> UIDisplayText` | Call Bind. |  |
-| `Text` | method | `Text(self, text: str) -> UIDisplayText` | Call Text. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIDisplayText<br>Bind(self, arg0: Callable[[], str]) -> UIDisplayText` |  |  |
+| `Text` | method | `Text(self, text: str) -> UIDisplayText` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIDummy`
 
@@ -292,9 +292,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Height` | method | `Height(self, arg0: float) -> UIDummy` | Call Height. |  |
-| `Width` | method | `Width(self, arg0: float) -> UIDummy` | Call Width. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Height` | method | `Height(self, arg0: float) -> UIDummy` |  |  |
+| `Width` | method | `Width(self, arg0: float) -> UIDummy` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIDuration`
 
@@ -305,10 +305,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `keyframe0` | method | `keyframe0(self) -> UIKeyframe` | Call keyframe0. |  |
-| `keyframe1` | method | `keyframe1(self) -> UIKeyframe` | Call keyframe1. |  |
-| `name` | method | `name(self) -> str` | Call name. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `keyframe0` | method | `keyframe0(self) -> UIKeyframe` |  |  |
+| `keyframe1` | method | `keyframe1(self) -> UIKeyframe` |  |  |
+| `name` | method | `name(self) -> str` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIFileChooser`
 
@@ -319,15 +319,15 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Callback` | method | `Callback(self, func: Callable[[UIFileChooser, str, str], None]) -> UIFileChooser` | Call Callback. |  |
-| `Filter` | method | `Filter(self, filter: str) -> UIFileChooser` | Call Filter. |  |
-| `Id` | method | `Id(self, id: str) -> UIFileChooser` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIFileChooser` | Call Label. |  |
-| `Path` | method | `Path(self, path: str) -> UIFileChooser` | Call Path. |  |
-| `Title` | method | `Title(self, title: str) -> UIFileChooser` | Call Title. |  |
-| `close` | method | `close(self) -> None` | Call close. |  |
-| `open` | method | `open(self) -> None` | Call open. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIFileChooser, str, str], None]) -> UIFileChooser` |  |  |
+| `Filter` | method | `Filter(self, filter: str) -> UIFileChooser` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIFileChooser` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIFileChooser` |  |  |
+| `Path` | method | `Path(self, path: str) -> UIFileChooser` |  |  |
+| `Title` | method | `Title(self, title: str) -> UIFileChooser` |  |  |
+| `close` | method | `close(self) -> None` |  |  |
+| `open` | method | `open(self) -> None` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIGizmo`
 
@@ -338,11 +338,11 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIGizmo` | Call Bind. |  |
-| `CameraMatrices` | method | `CameraMatrices(self, arg0: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg1: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` | Call CameraMatrices. |  |
-| `Matrix` | method | `Matrix(self, matrix: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> UIGizmo` | Call Matrix. |  |
-| `matrix` | property | `matrix(self) -> np.ndarray[Any, np.dtype[np.float32]]` | Property: matrix. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIGizmo` |  |  |
+| `CameraMatrices` | method | `CameraMatrices(self, arg0: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, arg1: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
+| `Matrix` | method | `Matrix(self, matrix: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> UIGizmo` |  |  |
+| `matrix` | property | `matrix(self) -> np.ndarray[Any, np.dtype[np.float32]]` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIInputFloat`
 
@@ -353,15 +353,15 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputFloat` | Call Bind. |  |
-| `Callback` | method | `Callback(self, func: Callable[[UIInputFloat], None]) -> UIInputFloat` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UIInputFloat` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIInputFloat` | Call Label. |  |
-| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputFloat` | Call ReadOnly. |  |
-| `Value` | method | `Value(self, value: float) -> UIInputFloat` | Call Value. |  |
-| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputFloat` | Call WidthRatio. |  |
-| `value` | property | `value(self) -> float` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputFloat` |  |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIInputFloat], None]) -> UIInputFloat` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIInputFloat` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIInputFloat` |  |  |
+| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputFloat` |  |  |
+| `Value` | method | `Value(self, value: float) -> UIInputFloat` |  |  |
+| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputFloat` |  |  |
+| `value` | property | `value(self) -> float` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIInputFloat2`
 
@@ -372,15 +372,15 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputFloat2` | Call Bind. |  |
-| `Callback` | method | `Callback(self, func: Callable[[UIInputFloat2], None]) -> UIInputFloat2` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UIInputFloat2` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIInputFloat2` | Call Label. |  |
-| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputFloat2` | Call ReadOnly. |  |
-| `Value` | method | `Value(self, value: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> UIInputFloat2` | Call Value. |  |
-| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputFloat2` | Call WidthRatio. |  |
-| `value` | property | `value(self) -> np.ndarray[Any, np.dtype[np.float32]]` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputFloat2` |  |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIInputFloat2], None]) -> UIInputFloat2` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIInputFloat2` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIInputFloat2` |  |  |
+| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputFloat2` |  |  |
+| `Value` | method | `Value(self, value: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> UIInputFloat2` |  |  |
+| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputFloat2` |  |  |
+| `value` | property | `value(self) -> np.ndarray[Any, np.dtype[np.float32]]` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIInputFloat3`
 
@@ -391,15 +391,15 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputFloat3` | Call Bind. |  |
-| `Callback` | method | `Callback(self, func: Callable[[UIInputFloat3], None]) -> UIInputFloat3` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UIInputFloat3` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIInputFloat3` | Call Label. |  |
-| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputFloat3` | Call ReadOnly. |  |
-| `Value` | method | `Value(self, value: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> UIInputFloat3` | Call Value. |  |
-| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputFloat3` | Call WidthRatio. |  |
-| `value` | property | `value(self) -> np.ndarray[Any, np.dtype[np.float32]]` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputFloat3` |  |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIInputFloat3], None]) -> UIInputFloat3` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIInputFloat3` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIInputFloat3` |  |  |
+| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputFloat3` |  |  |
+| `Value` | method | `Value(self, value: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> UIInputFloat3` |  |  |
+| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputFloat3` |  |  |
+| `value` | property | `value(self) -> np.ndarray[Any, np.dtype[np.float32]]` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIInputFloat4`
 
@@ -410,15 +410,15 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputFloat4` | Call Bind. |  |
-| `Callback` | method | `Callback(self, func: Callable[[UIInputFloat4], None]) -> UIInputFloat4` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UIInputFloat4` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIInputFloat4` | Call Label. |  |
-| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputFloat4` | Call ReadOnly. |  |
-| `Value` | method | `Value(self, value: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> UIInputFloat4` | Call Value. |  |
-| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputFloat4` | Call WidthRatio. |  |
-| `value` | property | `value(self) -> np.ndarray[Any, np.dtype[np.float32]]` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputFloat4` |  |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIInputFloat4], None]) -> UIInputFloat4` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIInputFloat4` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIInputFloat4` |  |  |
+| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputFloat4` |  |  |
+| `Value` | method | `Value(self, value: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> UIInputFloat4` |  |  |
+| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputFloat4` |  |  |
+| `value` | property | `value(self) -> np.ndarray[Any, np.dtype[np.float32]]` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIInputInt`
 
@@ -429,15 +429,15 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputInt` | Call Bind. |  |
-| `Callback` | method | `Callback(self, func: Callable[[UIInputInt], None]) -> UIInputInt` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UIInputInt` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIInputInt` | Call Label. |  |
-| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputInt` | Call ReadOnly. |  |
-| `Value` | method | `Value(self, value: int) -> UIInputInt` | Call Value. |  |
-| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputInt` | Call WidthRatio. |  |
-| `value` | property | `value(self) -> int` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputInt` |  |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIInputInt], None]) -> UIInputInt` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIInputInt` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIInputInt` |  |  |
+| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputInt` |  |  |
+| `Value` | method | `Value(self, value: int) -> UIInputInt` |  |  |
+| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputInt` |  |  |
+| `value` | property | `value(self) -> int` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIInputInt2`
 
@@ -448,15 +448,15 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputInt2` | Call Bind. |  |
-| `Callback` | method | `Callback(self, func: Callable[[UIInputInt2], None]) -> UIInputInt2` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UIInputInt2` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIInputInt2` | Call Label. |  |
-| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputInt2` | Call ReadOnly. |  |
-| `Value` | method | `Value(self, value: np.ndarray[Any, np.dtype[np.int32]] \| list \| tuple) -> UIInputInt2` | Call Value. |  |
-| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputInt2` | Call WidthRatio. |  |
-| `value` | property | `value(self) -> np.ndarray[Any, np.dtype[np.int32]]` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputInt2` |  |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIInputInt2], None]) -> UIInputInt2` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIInputInt2` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIInputInt2` |  |  |
+| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputInt2` |  |  |
+| `Value` | method | `Value(self, value: np.ndarray[Any, np.dtype[np.int32]] \| list \| tuple) -> UIInputInt2` |  |  |
+| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputInt2` |  |  |
+| `value` | property | `value(self) -> np.ndarray[Any, np.dtype[np.int32]]` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIInputInt3`
 
@@ -467,15 +467,15 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputInt3` | Call Bind. |  |
-| `Callback` | method | `Callback(self, func: Callable[[UIInputInt3], None]) -> UIInputInt3` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UIInputInt3` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIInputInt3` | Call Label. |  |
-| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputInt3` | Call ReadOnly. |  |
-| `Value` | method | `Value(self, value: np.ndarray[Any, np.dtype[np.int32]] \| list \| tuple) -> UIInputInt3` | Call Value. |  |
-| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputInt3` | Call WidthRatio. |  |
-| `value` | property | `value(self) -> np.ndarray[Any, np.dtype[np.int32]]` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputInt3` |  |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIInputInt3], None]) -> UIInputInt3` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIInputInt3` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIInputInt3` |  |  |
+| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputInt3` |  |  |
+| `Value` | method | `Value(self, value: np.ndarray[Any, np.dtype[np.int32]] \| list \| tuple) -> UIInputInt3` |  |  |
+| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputInt3` |  |  |
+| `value` | property | `value(self) -> np.ndarray[Any, np.dtype[np.int32]]` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIInputInt4`
 
@@ -486,15 +486,15 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputInt4` | Call Bind. |  |
-| `Callback` | method | `Callback(self, func: Callable[[UIInputInt4], None]) -> UIInputInt4` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UIInputInt4` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIInputInt4` | Call Label. |  |
-| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputInt4` | Call ReadOnly. |  |
-| `Value` | method | `Value(self, value: np.ndarray[Any, np.dtype[np.int32]] \| list \| tuple) -> UIInputInt4` | Call Value. |  |
-| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputInt4` | Call WidthRatio. |  |
-| `value` | property | `value(self) -> np.ndarray[Any, np.dtype[np.int32]]` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UIInputInt4` |  |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIInputInt4], None]) -> UIInputInt4` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIInputInt4` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIInputInt4` |  |  |
+| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputInt4` |  |  |
+| `Value` | method | `Value(self, value: np.ndarray[Any, np.dtype[np.int32]] \| list \| tuple) -> UIInputInt4` |  |  |
+| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputInt4` |  |  |
+| `value` | property | `value(self) -> np.ndarray[Any, np.dtype[np.int32]]` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIInputText`
 
@@ -505,15 +505,15 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Callback` | method | `Callback(self, func: Callable[[UIInputText], None]) -> UIInputText` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UIInputText` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIInputText` | Call Label. |  |
-| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputText` | Call ReadOnly. |  |
-| `Size` | method | `Size(self, size: int) -> UIInputText` | Call Size. |  |
-| `Value` | method | `Value(self, value: str) -> UIInputText` | Call Value. |  |
-| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputText` | Call WidthRatio. |  |
-| `value` | property | `value(self) -> str` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIInputText], None]) -> UIInputText` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIInputText` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIInputText` |  |  |
+| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputText` |  |  |
+| `Size` | method | `Size(self, size: int) -> UIInputText` |  |  |
+| `Value` | method | `Value(self, value: str) -> UIInputText` |  |  |
+| `WidthRatio` | method | `WidthRatio(self, width: float) -> UIInputText` |  |  |
+| `value` | property | `value(self) -> str` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIInputTextMultiline`
 
@@ -524,14 +524,14 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Callback` | method | `Callback(self, func: Callable[[UIInputTextMultiline], None]) -> UIInputTextMultiline` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UIInputTextMultiline` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIInputTextMultiline` | Call Label. |  |
-| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputTextMultiline` | Call ReadOnly. |  |
-| `Size` | method | `Size(self, size: int) -> UIInputTextMultiline` | Call Size. |  |
-| `Value` | method | `Value(self, value: str) -> UIInputTextMultiline` | Call Value. |  |
-| `value` | property | `value(self) -> str` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIInputTextMultiline], None]) -> UIInputTextMultiline` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIInputTextMultiline` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIInputTextMultiline` |  |  |
+| `ReadOnly` | method | `ReadOnly(self, read_only: bool) -> UIInputTextMultiline` |  |  |
+| `Size` | method | `Size(self, size: int) -> UIInputTextMultiline` |  |  |
+| `Value` | method | `Value(self, value: str) -> UIInputTextMultiline` |  |  |
+| `value` | property | `value(self) -> str` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIKeyframe`
 
@@ -542,8 +542,8 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `frame` | method | `frame(self) -> int` | Call frame. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `frame` | method | `frame(self) -> int` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIKeyframeEditor`
 
@@ -554,22 +554,22 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `AddDurationCallback` | method | `AddDurationCallback(self, func: Callable[[UIKeyframe, UIKeyframe], None]) -> UIKeyframeEditor` | Call AddDurationCallback. |  |
-| `AddKeyframeCallback` | method | `AddKeyframeCallback(self, func: Callable[[int], None]) -> UIKeyframeEditor` | Call AddKeyframeCallback. |  |
-| `BindCurrentFrame` | method | `BindCurrentFrame(self, arg0: Any, arg1: str) -> UIKeyframeEditor` | Call BindCurrentFrame. |  |
-| `BindTotalFrames` | method | `BindTotalFrames(self, arg0: Any, arg1: str) -> UIKeyframeEditor` | Call BindTotalFrames. |  |
-| `DoubleClickDurationCallback` | method | `DoubleClickDurationCallback(self, func: Callable[[UIDuration], None]) -> UIKeyframeEditor` | Call DoubleClickDurationCallback. |  |
-| `DoubleClickKeyframeCallback` | method | `DoubleClickKeyframeCallback(self, func: Callable[[UIKeyframe], None]) -> UIKeyframeEditor` | Call DoubleClickKeyframeCallback. |  |
-| `MoveKeyframeCallback` | method | `MoveKeyframeCallback(self, func: Callable[[UIKeyframe, int], None]) -> UIKeyframeEditor` | Call MoveKeyframeCallback. |  |
-| `add_duration` | method | `add_duration(self, duration: UIDuration) -> None` | Add/create duration. |  |
-| `add_keyframe` | method | `add_keyframe(self, keyframe: UIKeyframe) -> None` | Add/create keyframe. |  |
-| `append` | method | `append(self, *args) -> UIKeyframeEditor` | Call append. |  |
-| `get_durations` | method | `get_durations(self) -> list[UIDuration]` | Get durations. |  |
-| `get_keyframes` | method | `get_keyframes(self) -> list[UIKeyframe]` | Get keyframes. |  |
-| `remove_duration` | method | `remove_duration(self, duration: UIDuration) -> None` | Remove duration. |  |
-| `remove_keyframe` | method | `remove_keyframe(self, keyframe: UIKeyframe) -> None` | Remove keyframe. |  |
-| `set_state` | method | `set_state(self, keyframes: list[UIKeyframe], durations: list[UIDuration]) -> None` | Set state. |  |
-| `__init__` | method | `__init__(self, content_scale: float) -> None` | Python special method. |  |
+| `AddDurationCallback` | method | `AddDurationCallback(self, func: Callable[[UIKeyframe, UIKeyframe], None]) -> UIKeyframeEditor` |  |  |
+| `AddKeyframeCallback` | method | `AddKeyframeCallback(self, func: Callable[[int], None]) -> UIKeyframeEditor` |  |  |
+| `BindCurrentFrame` | method | `BindCurrentFrame(self, arg0: Any, arg1: str) -> UIKeyframeEditor` |  |  |
+| `BindTotalFrames` | method | `BindTotalFrames(self, arg0: Any, arg1: str) -> UIKeyframeEditor` |  |  |
+| `DoubleClickDurationCallback` | method | `DoubleClickDurationCallback(self, func: Callable[[UIDuration], None]) -> UIKeyframeEditor` |  |  |
+| `DoubleClickKeyframeCallback` | method | `DoubleClickKeyframeCallback(self, func: Callable[[UIKeyframe], None]) -> UIKeyframeEditor` |  |  |
+| `MoveKeyframeCallback` | method | `MoveKeyframeCallback(self, func: Callable[[UIKeyframe, int], None]) -> UIKeyframeEditor` |  |  |
+| `add_duration` | method | `add_duration(self, duration: UIDuration) -> None` |  |  |
+| `add_keyframe` | method | `add_keyframe(self, keyframe: UIKeyframe) -> None` |  |  |
+| `append` | method | `append(self, *args) -> UIKeyframeEditor` |  |  |
+| `get_durations` | method | `get_durations(self) -> list[UIDuration]` |  |  |
+| `get_keyframes` | method | `get_keyframes(self) -> list[UIKeyframe]` |  |  |
+| `remove_duration` | method | `remove_duration(self, duration: UIDuration) -> None` |  |  |
+| `remove_keyframe` | method | `remove_keyframe(self, keyframe: UIKeyframe) -> None` |  |  |
+| `set_state` | method | `set_state(self, keyframes: list[UIKeyframe], durations: list[UIDuration]) -> None` |  |  |
+| `__init__` | method | `__init__(self, content_scale: float) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIOptions`
 
@@ -580,17 +580,17 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `BindIndex` | method | `BindIndex(self, arg0: Any, arg1: str) -> UIOptions` | Call BindIndex. |  |
-| `BindItems` | method | `BindItems(self, arg0: Any, arg1: str) -> UIOptions` | Call BindItems. |  |
-| `Callback` | method | `Callback(self, func: Callable[[UIOptions], None]) -> UIOptions` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UIOptions` | Call Id. |  |
-| `Index` | method | `Index(self, index: int) -> UIOptions` | Call Index. |  |
-| `Items` | method | `Items(self, items: list[str]) -> UIOptions` | Call Items. |  |
-| `Label` | method | `Label(self, label: str) -> UIOptions` | Call Label. |  |
-| `Style` | method | `Style(self, style: str) -> UIOptions` | Call Style. |  |
-| `index` | property | `index(self) -> int` | Property: index. |  |
-| `value` | property | `value(self) -> str` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `BindIndex` | method | `BindIndex(self, arg0: Any, arg1: str) -> UIOptions` |  |  |
+| `BindItems` | method | `BindItems(self, arg0: Any, arg1: str) -> UIOptions` |  |  |
+| `Callback` | method | `Callback(self, func: Callable[[UIOptions], None]) -> UIOptions` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIOptions` |  |  |
+| `Index` | method | `Index(self, index: int) -> UIOptions` |  |  |
+| `Items` | method | `Items(self, items: list[str]) -> UIOptions` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIOptions` |  |  |
+| `Style` | method | `Style(self, style: str) -> UIOptions` |  |  |
+| `index` | property | `index(self) -> int` |  |  |
+| `value` | property | `value(self) -> str` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIPicture`
 
@@ -601,10 +601,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Clear` | method | `Clear(self) -> UIPicture` | Call Clear. |  |
-| `Picture` | method | `Picture(self, renderer: Renderer, name: str) -> UIPicture` | Call Picture. |  |
-| `Size` | method | `Size(self, x: float, y: float) -> UIPicture` | Call Size. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Clear` | method | `Clear(self) -> UIPicture` |  |  |
+| `Picture` | method | `Picture(self, renderer: Renderer, name: str) -> UIPicture` |  |  |
+| `Size` | method | `Size(self, x: float, y: float) -> UIPicture` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIPopup`
 
@@ -615,11 +615,11 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `EscCallback` | method | `EscCallback(self, func: Callable[[], None]) -> UIPopup` | Call EscCallback. |  |
-| `Id` | method | `Id(self, id: str) -> UIPopup` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIPopup` | Call Label. |  |
-| `append` | method | `append(self, *args) -> UIPopup` | Call append. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `EscCallback` | method | `EscCallback(self, func: Callable[[], None]) -> UIPopup` |  |  |
+| `Id` | method | `Id(self, id: str) -> UIPopup` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIPopup` |  |  |
+| `append` | method | `append(self, *args) -> UIPopup` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UISameLine`
 
@@ -630,10 +630,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Offset` | method | `Offset(self, offset: float) -> UISameLine` | Call Offset. |  |
-| `Spacing` | method | `Spacing(self, spacing: float) -> UISameLine` | Call Spacing. |  |
-| `append` | method | `append(self, *args) -> UISameLine` | Call append. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Offset` | method | `Offset(self, offset: float) -> UISameLine` |  |  |
+| `Spacing` | method | `Spacing(self, spacing: float) -> UISameLine` |  |  |
+| `append` | method | `append(self, *args) -> UISameLine` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UISection`
 
@@ -644,11 +644,11 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Expanded` | method | `Expanded(self, expanded: bool) -> UISection` | Call Expanded. |  |
-| `Id` | method | `Id(self, id: str) -> UISection` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UISection` | Call Label. |  |
-| `append` | method | `append(self, *args) -> UISection` | Call append. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Expanded` | method | `Expanded(self, expanded: bool) -> UISection` |  |  |
+| `Id` | method | `Id(self, id: str) -> UISection` |  |  |
+| `Label` | method | `Label(self, label: str) -> UISection` |  |  |
+| `append` | method | `append(self, *args) -> UISection` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UISelectable`
 
@@ -659,12 +659,12 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Callback` | method | `Callback(self, func: Callable[[UISelectable], None]) -> UISelectable` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UISelectable` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UISelectable` | Call Label. |  |
-| `Selected` | method | `Selected(self, selected: bool) -> UISelectable` | Call Selected. |  |
-| `value` | property | `value(self) -> bool` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Callback` | method | `Callback(self, func: Callable[[UISelectable], None]) -> UISelectable` |  |  |
+| `Id` | method | `Id(self, id: str) -> UISelectable` |  |  |
+| `Label` | method | `Label(self, label: str) -> UISelectable` |  |  |
+| `Selected` | method | `Selected(self, selected: bool) -> UISelectable` |  |  |
+| `value` | property | `value(self) -> bool` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UISliderAngle`
 
@@ -675,16 +675,16 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UISliderAngle` | Call Bind. |  |
-| `Callback` | method | `Callback(self, func: Callable[[UISliderAngle], None]) -> UISliderAngle` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UISliderAngle` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UISliderAngle` | Call Label. |  |
-| `Max` | method | `Max(self, max: float) -> UISliderAngle` | Call Max. |  |
-| `Min` | method | `Min(self, min: float) -> UISliderAngle` | Call Min. |  |
-| `Value` | method | `Value(self, value: float) -> UISliderAngle` | Call Value. |  |
-| `WidthRatio` | method | `WidthRatio(self, width: float) -> UISliderAngle` | Call WidthRatio. |  |
-| `value` | property | `value(self) -> float` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UISliderAngle` |  |  |
+| `Callback` | method | `Callback(self, func: Callable[[UISliderAngle], None]) -> UISliderAngle` |  |  |
+| `Id` | method | `Id(self, id: str) -> UISliderAngle` |  |  |
+| `Label` | method | `Label(self, label: str) -> UISliderAngle` |  |  |
+| `Max` | method | `Max(self, max: float) -> UISliderAngle` |  |  |
+| `Min` | method | `Min(self, min: float) -> UISliderAngle` |  |  |
+| `Value` | method | `Value(self, value: float) -> UISliderAngle` |  |  |
+| `WidthRatio` | method | `WidthRatio(self, width: float) -> UISliderAngle` |  |  |
+| `value` | property | `value(self) -> float` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UISliderFloat`
 
@@ -695,16 +695,16 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UISliderFloat` | Call Bind. |  |
-| `Callback` | method | `Callback(self, func: Callable[[UISliderFloat], None]) -> UISliderFloat` | Call Callback. |  |
-| `Id` | method | `Id(self, id: str) -> UISliderFloat` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UISliderFloat` | Call Label. |  |
-| `Max` | method | `Max(self, max: float) -> UISliderFloat` | Call Max. |  |
-| `Min` | method | `Min(self, min: float) -> UISliderFloat` | Call Min. |  |
-| `Value` | method | `Value(self, value: float) -> UISliderFloat` | Call Value. |  |
-| `WidthRatio` | method | `WidthRatio(self, width: float) -> UISliderFloat` | Call WidthRatio. |  |
-| `value` | property | `value(self) -> float` | Property: value. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Bind` | method | `Bind(self, arg0: Any, arg1: str) -> UISliderFloat` |  |  |
+| `Callback` | method | `Callback(self, func: Callable[[UISliderFloat], None]) -> UISliderFloat` |  |  |
+| `Id` | method | `Id(self, id: str) -> UISliderFloat` |  |  |
+| `Label` | method | `Label(self, label: str) -> UISliderFloat` |  |  |
+| `Max` | method | `Max(self, max: float) -> UISliderFloat` |  |  |
+| `Min` | method | `Min(self, min: float) -> UISliderFloat` |  |  |
+| `Value` | method | `Value(self, value: float) -> UISliderFloat` |  |  |
+| `WidthRatio` | method | `WidthRatio(self, width: float) -> UISliderFloat` |  |  |
+| `value` | property | `value(self) -> float` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UITreeNode`
 
@@ -715,10 +715,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Id` | method | `Id(self, id: str) -> UITreeNode` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UITreeNode` | Call Label. |  |
-| `append` | method | `append(self, *args) -> UITreeNode` | Call append. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Id` | method | `Id(self, id: str) -> UITreeNode` |  |  |
+| `Label` | method | `Label(self, label: str) -> UITreeNode` |  |  |
+| `append` | method | `append(self, *args) -> UITreeNode` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIWidget`
 
@@ -729,9 +729,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `get_children` | method | `get_children(self) -> list[UIWidget]` | Get children. |  |
-| `remove` | method | `remove(self) -> None` | Call remove. |  |
-| `remove_children` | method | `remove_children(self) -> None` | Remove children. |  |
+| `get_children` | method | `get_children(self) -> list[UIWidget]` |  |  |
+| `remove` | method | `remove(self) -> None` |  |  |
+| `remove_children` | method | `remove_children(self) -> None` |  |  |
 
 ## `sapien.internal_renderer.UIWindow`
 
@@ -742,9 +742,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `Id` | method | `Id(self, id: str) -> UIWindow` | Call Id. |  |
-| `Label` | method | `Label(self, label: str) -> UIWindow` | Call Label. |  |
-| `Pos` | method | `Pos(self, x: float, y: float) -> UIWindow` | Call Pos. |  |
-| `Size` | method | `Size(self, x: float, y: float) -> UIWindow` | Call Size. |  |
-| `append` | method | `append(self, *args) -> UIWindow` | Call append. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `Id` | method | `Id(self, id: str) -> UIWindow` |  |  |
+| `Label` | method | `Label(self, label: str) -> UIWindow` |  |  |
+| `Pos` | method | `Pos(self, x: float, y: float) -> UIWindow` |  |  |
+| `Size` | method | `Size(self, x: float, y: float) -> UIWindow` |  |  |
+| `append` | method | `append(self, *args) -> UIWindow` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |

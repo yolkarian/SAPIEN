@@ -10,7 +10,7 @@ SAPIEN is a collaborative effort between researchers at UCSD, Stanford, and SFU;
 - [Server rendering](docs/server-rendering.md)
 - [Build from source](docs/source-installation.md)
 - [Changelog](CHANGELOG.md)
-- [Agent skills for maintainers](docs/skills/README.md)
+- [Quickstart with agents](docs/skills/README.md)
 - [Sphinx documentation source](docs/source/index.md)
 - [Project website](https://sapien.ucsd.edu/)
 - [Current project GitHub Pages](https://yolkarian.github.io/SAPIEN/)

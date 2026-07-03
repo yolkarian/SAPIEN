@@ -18,12 +18,11 @@
   - `sapien.physx.PhysxRigidDynamicComponent.get_gpu_pose_index()`
   - `sapien.physx.PhysxArticulationLinkComponent.get_gpu_pose_index()`
 - SAPIEN quaternion convention is `wxyz`.
-- SAPIEN no longer provides `GpuInverseKinematicsSolver` or `gpu_inverse_kinematics`. For custom batched GPU IK, build target articulations into a `Scene` owned by the `PhysxGpuSystem`, call `gpu_init()` so `articulation.gpu_index` and CUDA buffers are valid, then use `cuda_articulation_link_data`, `cuda_articulation_jacobian`, and `cuda_articulation_jacobian_shape` directly.
+- SAPIEN has no IK solver. It exposes PhysX GPU buffers `cuda_articulation_link_data`, `cuda_articulation_jacobian`, and `cuda_articulation_jacobian_shape`; build target articulations into a `Scene` owned by the `PhysxGpuSystem`, call `gpu_init()` so `articulation.gpu_index` and CUDA buffers are valid, then use those buffers directly.
 - Indexed GPU APIs accept only these Python argument types for selected-index buffers:
   - `sapien.CudaArray`
   - any CUDA object exposing `__cuda_array_interface__`, such as a CUDA `torch.Tensor`, `cupy.ndarray`, or Numba CUDA device array
   The underlying array must be 1D, contiguous, CUDA `int32`, on the same CUDA device as the PhysX system, and contain SAPIEN `gpu_index` values, not PhysX-internal GPU indices. NumPy arrays, Python lists, CPU tensors, `int64` tensors, non-contiguous views, and cross-device CUDA arrays are not valid. Keep the owner of an external index tensor alive until SAPIEN's CUDA stream has finished using it.
-- Custom IK writes shared PhysX GPU buffers when it applies qpos/root state and updates kinematics. Use a scratch physics-only scene/system when IK must not touch the main simulation buffers or concurrent GPU work.
 
 ## Docker Vulkan/EGL setup for SAPIEN rendering
 
@@ -212,9 +211,9 @@ PY
     - direct GPU sensors/offscreen cameras: use `sapien.render.RenderSystemGroup([...])`, `set_cuda_poses(physx_system.cuda_rigid_body_data)`, `create_camera_group(...)`, `update_render()`, `take_picture()`, and `get_picture_cuda(...)`.
     - for one rendered env, still prefer `RenderSystemGroup([scene.get_render_system()])` so dynamic body poses come directly from GPU buffers without `sync_poses_gpu_to_cpu()`.
 
-## Custom GPU IK workflow
+## GPU articulation link/Jacobian buffers
 
-SAPIEN does not provide a built-in batched IK policy. Build custom batched IK on top of PhysX GPU buffers and dense articulation Jacobians.
+SAPIEN has no IK solver. It exposes these PhysX GPU buffers and dense articulation Jacobians after `gpu_init()`.
 
 - Required setup:
   1. `sapien.physx.enable_gpu()` before creating the system.
@@ -228,9 +227,8 @@ SAPIEN does not provide a built-in batched IK policy. Build custom batched IK on
 - `gpu_compute_articulation_jacobian(...)` writes `cuda_articulation_jacobian`, a padded tensor with shape `(articulation_count, max_rows, max_cols)`, where `max_rows = 6 + (max_links - 1) * 6` and `max_cols = 6 + max_dofs`.
 - Slice each valid Jacobian with `physx_system.cuda_articulation_jacobian_shape[articulation.gpu_index]` or `articulation.get_jacobian_shape()`. For fixed-base articulations, valid shape is `((link_count - 1) * 6, dof)` and root rows are omitted. For floating-base articulations, valid shape is `(6 + (link_count - 1) * 6, 6 + dof)` and the first six columns are root linear/angular velocity.
 - Jacobian row order is `[vx, vy, vz, wx, wy, wz]` per link. PhysX reports the linear component at each link center of mass; shift the linear rows in application code when the task frame is the link origin.
-- A typical custom IK loop writes `cuda_articulation_qpos`, calls `gpu_apply_articulation_qpos(index_buffer)`, calls `gpu_update_articulation_kinematics(index_buffer)`, fetches link poses, calls `gpu_compute_articulation_jacobian(index_buffer)`, solves externally, and repeats.
 
-Minimal IK-only setup:
+Minimal buffer-access setup:
 
 ```python
 import sapien
@@ -247,7 +245,7 @@ jacobian = physx_system.cuda_articulation_jacobian
 jacobian_shape = physx_system.cuda_articulation_jacobian_shape
 
 # Create a CUDA int32 index buffer via sapien.CudaArray or a
-# CUDA-array-interface owner, then run custom IK math in the caller.
+# CUDA-array-interface owner to select articulations.
 physx_system.gpu_compute_articulation_jacobian(index_buffer)
 ```
 
@@ -335,7 +333,7 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
 - Calling `gpu_init()` before all bodies, articulations, and static terrain/height fields are built.
 - Creating a `RenderSystem` for pure physics environments.
 - Creating sensors outside the post-`gpu_init()` sensor/render phase.
-- Looking for `sapien.physx.GpuInverseKinematicsSolver` or `sapien.physx.gpu_inverse_kinematics`; these helpers were removed. Use low-level GPU buffers for custom IK.
+- Looking for `sapien.physx.GpuInverseKinematicsSolver` or `sapien.physx.gpu_inverse_kinematics`; SAPIEN has no IK solver and these do not exist.
 - Passing CPU, non-contiguous, non-`int32`, cross-device, or PhysX-internal GPU index buffers to indexed GPU APIs.
 - Treating the padded `cuda_articulation_jacobian.shape` as the valid matrix shape; use `cuda_articulation_jacobian_shape` or `articulation.get_jacobian_shape()` and account for link-COM linear rows.
 - Reading `cuda_*` buffers before fetch.

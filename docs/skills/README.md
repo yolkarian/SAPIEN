@@ -1,17 +1,23 @@
-# Agent Skills
+# Quickstart with Agents
 
-This directory contains convenience copies of agent skills that are useful when working with this repository.
+This directory helps users who build SAPIEN simulation environments get started fast *with an agent*. An agent reading these guides can quickly learn how to set up a SAPIEN simulation environment — GPU PhysX configuration, scene/build/render initialization order, batched rendering, the exposed PhysX GPU buffers, and where to find each API.
 
-These files are not SAPIEN runtime documentation. They are lightweight workflow guides for coding agents and maintainers, kept in the repository so they can be reviewed, shared, and used without relying on a local machine-specific skills checkout.
+These are practical, lookup-oriented references (not tutorial prose): workflow rules the agent follows, plus a grep-friendly map of the SAPIEN Python API it can consult instead of guessing names or signatures.
 
-## Included skills
+## Contents
 
-- `sapien-simulation`: SAPIEN simulation workflow guidance, including GPU PhysX setup, rendering, sensors, reset/step order, batched rendering, and container notes.
+- `sapien-simulation/SKILL.md` — workflow checklist an agent follows when creating, refactoring, or reviewing a SAPIEN simulation environment.
+- `sapien-simulation/docs/gpu-workflows.md` — GPU simulation workflows: PhysX GPU setup, env IDs, CUDA buffers, Docker Vulkan/EGL setup, exposed PhysX GPU articulation link/Jacobian buffers.
+- `sapien-simulation/docs/api/` — compact API tables covering core, scene/builders/loaders, PhysX CPU/GPU, rendering, sensors, math, and the low-level internal renderer/UI.
+
+## How to use it
+
+- Point your agent at `SKILL.md` and `gpu-workflows.md` first for the required initialization order and GPU rules, then let it use the API tables under `api/` as a fast lookup.
+- Install SAPIEN from the fork's GitHub release wheels at `https://github.com/yolkarian/SAPIEN/releases`; do not install SAPIEN from PyPI.
+- When the API tables and the checked-in source disagree, prefer the source/stubs/CI.
 
 ## Maintenance notes
 
-- Keep skill content free of local machine details, private paths, secrets, tokens, and temporary absolute paths.
+- Keep content free of local machine details, private paths, secrets, tokens, and temporary absolute paths.
 - Prefer repository-relative paths, environment variables, or placeholder names in examples.
-- When adding or syncing a skill, ask an agent to rewrite it for this repository instead of copying it verbatim.
-- During that rewrite, adapt links, paths, commands, and examples to this repository and remove any local-only information.
-- Review the copied diff before committing and sanitize any local-only information.
+- When syncing or adding a guide, adapt links, paths, commands, and examples to this repository and remove any local-only information before committing.

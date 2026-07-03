@@ -74,9 +74,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
-| `entity_pose` | `Pose` | Property: entity pose. |  |
-| `name` | `str` | Property: name. |  |
-| `pose` | `Pose` | Property: pose. |  |
+| `entity_pose` | `Pose` |  |  |
+| `name` | `str` |  |  |
+| `pose` | `Pose` |  |  |
 
 ### Methods/properties
 
@@ -84,16 +84,16 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 |---|---|---|---|---|
 | `disable` | method | `disable(self) -> None` | disable the component |  |
 | `enable` | method | `enable(self) -> None` | enable the component |  |
-| `entity` | property | `entity(self) -> Entity` | Property: entity. |  |
-| `get_entity` | method | `get_entity(self) -> Entity` | Get entity. |  |
-| `get_entity_pose` | method | `get_entity_pose(self) -> Pose` | Get entity pose. |  |
-| `get_name` | method | `get_name(self) -> str` | Get name. |  |
-| `get_pose` | method | `get_pose(self) -> Pose` | Get pose. |  |
-| `is_enabled` | property | `is_enabled(self) -> bool` | Bool: enabled. |  |
-| `set_entity_pose` | method | `set_entity_pose(self, pose: Pose) -> None` | Set entity pose. |  |
-| `set_name` | method | `set_name(self, name: str) -> None` | Set name. |  |
-| `set_pose` | method | `set_pose(self, pose: Pose) -> None` | Set pose. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `entity` | property | `entity(self) -> Entity` |  |  |
+| `get_entity` | method | `get_entity(self) -> Entity` |  |  |
+| `get_entity_pose` | method | `get_entity_pose(self) -> Pose` |  |  |
+| `get_name` | method | `get_name(self) -> str` |  |  |
+| `get_pose` | method | `get_pose(self) -> Pose` |  |  |
+| `is_enabled` | property | `is_enabled(self) -> bool` |  |  |
+| `set_entity_pose` | method | `set_entity_pose(self, pose: Pose) -> None` |  |  |
+| `set_name` | method | `set_name(self, name: str) -> None` |  |  |
+| `set_pose` | method | `set_pose(self, pose: Pose) -> None` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.CudaArray`
 
@@ -108,12 +108,12 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `cupy` | method | `cupy(self) -> cupy.ndarray` | Return a CuPy CUDA array view. |  |
 | `dlpack` | method | `dlpack(self) -> Any` | Return a DLPack capsule. |  |
 | `jax` | method | `jax(self) -> jax.Array` | Return a JAX CUDA array view. |  |
-| `ptr` | property | `ptr(self) -> int` | Property: ptr. |  |
-| `shape` | property | `shape(self) -> list[int]` | Property: shape. |  |
-| `strides` | property | `strides(self) -> list[int]` | Property: strides. |  |
+| `ptr` | property | `ptr(self) -> int` |  |  |
+| `shape` | property | `shape(self) -> list[int]` |  |  |
+| `strides` | property | `strides(self) -> list[int]` |  |  |
 | `torch` | method | `torch(self) -> torch.Tensor` | Return a torch CUDA tensor view; cache outside the loop. | Zero-copy view lifetime depends on the original CudaArray; do not create it in a loop. |
-| `typestr` | property | `typestr(self) -> str` | Property: typestr. |  |
-| `__init__` | method | `__init__(self, data: Any) -> None` | Python special method. |  |
+| `typestr` | property | `typestr(self) -> str` |  |  |
+| `__init__` | method | `__init__(self, data: Any) -> None` |  |  |
 
 ## `sapien.Device`
 
@@ -124,16 +124,16 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `can_present` | method | `can_present(self) -> bool` | Call can present. |  |
-| `can_render` | method | `can_render(self) -> bool` | Call can render. |  |
+| `can_present` | method | `can_present(self) -> bool` |  |  |
+| `can_render` | method | `can_render(self) -> bool` |  |  |
 | `cuda_id` | property | `cuda_id(self) -> int` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
-| `is_cpu` | method | `is_cpu(self) -> bool` | Bool: cpu. |  |
-| `is_cuda` | method | `is_cuda(self) -> bool` | Bool: cuda. |  |
-| `name` | property | `name(self) -> str` | Property: name. |  |
-| `pci_string` | property | `pci_string(self) -> str \| None` | Property: pci string. |  |
-| `__init__` | method | `__init__(self, alias: str) -> None` | Python special method. |  |
-| `__repr__` | method | `__repr__(self) -> str` | Python special method. |  |
-| `__str__` | method | `__str__(self) -> str` | Python special method. |  |
+| `is_cpu` | method | `is_cpu(self) -> bool` |  |  |
+| `is_cuda` | method | `is_cuda(self) -> bool` |  |  |
+| `name` | property | `name(self) -> str` |  |  |
+| `pci_string` | property | `pci_string(self) -> str \| None` |  |  |
+| `__init__` | method | `__init__(self, alias: str) -> None` |  |  |
+| `__repr__` | method | `__repr__(self) -> str` |  |  |
+| `__str__` | method | `__str__(self) -> str` |  |  |
 
 ## `sapien.Entity`
 
@@ -144,31 +144,31 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
-| `name` | `str` | Property: name. |  |
-| `pose` | `Pose` | Property: pose. |  |
+| `name` | `str` |  |  |
+| `pose` | `Pose` |  |  |
 
 ### Methods/properties
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `add_component` | method | `add_component(self, component: Component) -> Entity` | Add/create component. |  |
+| `add_component` | method | `add_component(self, component: Component) -> Entity` |  |  |
 | `add_to_scene` | method | `add_to_scene(self, scene: Scene) -> Entity` | Add/create to scene. |  |
-| `components` | property | `components(self) -> list[Component]` | Property: components. |  |
+| `components` | property | `components(self) -> list[Component]` |  |  |
 | `find_component_by_type` | method | `find_component_by_type(self, cls: Type[_T]) -> _T` | Call find component by type. |  |
-| `get_components` | method | `get_components(self) -> list[Component]` | Get components. |  |
-| `get_global_id` | method | `get_global_id(self) -> int` | Get global id. |  |
-| `get_name` | method | `get_name(self) -> str` | Get name. |  |
-| `get_per_scene_id` | method | `get_per_scene_id(self) -> int` | Get per scene id. |  |
-| `get_pose` | method | `get_pose(self) -> Pose` | Get pose. |  |
-| `get_scene` | method | `get_scene(self) -> Scene` | Get scene. |  |
-| `global_id` | property | `global_id(self) -> int` | Property: global id. |  |
-| `per_scene_id` | property | `per_scene_id(self) -> int` | Property: per scene id. |  |
-| `remove_component` | method | `remove_component(self, component: Component) -> None` | Remove component. |  |
+| `get_components` | method | `get_components(self) -> list[Component]` |  |  |
+| `get_global_id` | method | `get_global_id(self) -> int` |  |  |
+| `get_name` | method | `get_name(self) -> str` |  |  |
+| `get_per_scene_id` | method | `get_per_scene_id(self) -> int` |  |  |
+| `get_pose` | method | `get_pose(self) -> Pose` |  |  |
+| `get_scene` | method | `get_scene(self) -> Scene` |  |  |
+| `global_id` | property | `global_id(self) -> int` |  |  |
+| `per_scene_id` | property | `per_scene_id(self) -> int` |  |  |
+| `remove_component` | method | `remove_component(self, component: Component) -> None` |  |  |
 | `remove_from_scene` | method | `remove_from_scene(self) -> None` | Remove from scene. |  |
-| `scene` | property | `scene(self) -> Scene` | Property: scene. |  |
-| `set_name` | method | `set_name(self, name: str) -> None` | Set name. |  |
-| `set_pose` | method | `set_pose(self, pose: Pose) -> None` | Set pose. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `scene` | property | `scene(self) -> Scene` |  |  |
+| `set_name` | method | `set_name(self, name: str) -> None` |  |  |
+| `set_pose` | method | `set_pose(self, pose: Pose) -> None` |  |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.Pose`
 
@@ -179,27 +179,27 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
-| `p` | `np.ndarray[Literal[3], np.dtype[np.float32]]` | Property: p. |  |
-| `q` | `np.ndarray[Literal[4], np.dtype[np.float32]]` | Property: q. | Quaternion order is wxyz. |
-| `rpy` | `np.ndarray[Literal[3], np.dtype[np.float32]]` | Property: rpy. |  |
+| `p` | `np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |
+| `q` | `np.ndarray[Literal[4], np.dtype[np.float32]]` |  | Quaternion order is wxyz. |
+| `rpy` | `np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |
 
 ### Methods/properties
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `get_p` | method | `get_p(self) -> np.ndarray[Literal[3], np.dtype[np.float32]]` | Get p. |  |
-| `get_q` | method | `get_q(self) -> np.ndarray[Literal[4], np.dtype[np.float32]]` | Get q. | Quaternion order is wxyz. |
-| `get_rpy` | method | `get_rpy(self) -> np.ndarray[Literal[3], np.dtype[np.float32]]` | Get rpy. |  |
-| `inv` | method | `inv(self) -> Pose` | Call inv. |  |
-| `set_p` | method | `set_p(self, p: np.ndarray[Literal[3], np.dtype[np.float32]] \| list[float] \| tuple) -> None` | Set p. |  |
-| `set_q` | method | `set_q(self, q: np.ndarray[Literal[4], np.dtype[np.float32]] \| list[float] \| tuple) -> None` | Set q. | Quaternion order is wxyz. |
-| `set_rpy` | method | `set_rpy(self, rpy: np.ndarray[Literal[3], np.dtype[np.float32]] \| list[float] \| tuple) -> None` | Set rpy. |  |
+| `get_p` | method | `get_p(self) -> np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |
+| `get_q` | method | `get_q(self) -> np.ndarray[Literal[4], np.dtype[np.float32]]` |  | Quaternion order is wxyz. |
+| `get_rpy` | method | `get_rpy(self) -> np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |
+| `inv` | method | `inv(self) -> Pose` |  |  |
+| `set_p` | method | `set_p(self, p: np.ndarray[Literal[3], np.dtype[np.float32]] \| list[float] \| tuple) -> None` |  |  |
+| `set_q` | method | `set_q(self, q: np.ndarray[Literal[4], np.dtype[np.float32]] \| list[float] \| tuple) -> None` |  | Quaternion order is wxyz. |
+| `set_rpy` | method | `set_rpy(self, rpy: np.ndarray[Literal[3], np.dtype[np.float32]] \| list[float] \| tuple) -> None` |  |  |
 | `to_transformation_matrix` | method | `to_transformation_matrix(self) -> np.ndarray[tuple[Literal[4], Literal[4]], np.dtype[np.float32]]` | Call to transformation matrix. |  |
-| `__getstate__` | method | `__getstate__(self) -> tuple` | Python special method. |  |
-| `__init__` | method | `__init__(self, p: np.ndarray[Literal[3], np.dtype[np.float32]] \| list[float] \| tuple=..., q: np.ndarray[Literal[4], np.dtype[np.float32]] \| list[float] \| tuple=...) -> None<br>__init__(self, matrix: np.ndarray[tuple[Literal[4], Literal[4]], np.dtype[np.float32]] \| list \| tuple) -> None` | Python special method. |  |
-| `__mul__` | method | `__mul__(self, other: Pose) -> Pose` | Python special method. |  |
-| `__repr__` | method | `__repr__(self) -> str` | Python special method. |  |
-| `__setstate__` | method | `__setstate__(self, arg0: tuple) -> None` | Python special method. |  |
+| `__getstate__` | method | `__getstate__(self) -> tuple` |  |  |
+| `__init__` | method | `__init__(self, p: np.ndarray[Literal[3], np.dtype[np.float32]] \| list[float] \| tuple=..., q: np.ndarray[Literal[4], np.dtype[np.float32]] \| list[float] \| tuple=...) -> None<br>__init__(self, matrix: np.ndarray[tuple[Literal[4], Literal[4]], np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
+| `__mul__` | method | `__mul__(self, other: Pose) -> Pose` |  |  |
+| `__repr__` | method | `__repr__(self) -> str` |  |  |
+| `__setstate__` | method | `__setstate__(self, arg0: tuple) -> None` |  |  |
 
 ## `sapien.Profiler`
 
@@ -210,10 +210,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `__call__` | method | `__call__(self, func: Callable) -> Callable` | Python special method. |  |
-| `__enter__` | method | `__enter__(self) -> None` | Python special method. |  |
-| `__exit__` | method | `__exit__(self, exec_type: type \| None, exec_value: Any \| None, traceback: Any \| None) -> None` | Python special method. |  |
-| `__init__` | method | `__init__(self, name: str) -> None` | Python special method. |  |
+| `__call__` | method | `__call__(self, func: Callable) -> Callable` |  |  |
+| `__enter__` | method | `__enter__(self) -> None` |  |  |
+| `__exit__` | method | `__exit__(self, exec_type: type \| None, exec_value: Any \| None, traceback: Any \| None) -> None` |  |  |
+| `__init__` | method | `__init__(self, name: str) -> None` |  |  |
 
 ## `sapien.Scene`
 
@@ -224,22 +224,22 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `add_entity` | method | `add_entity(self, entity: Entity) -> None` | Add/create entity. |  |
-| `add_system` | method | `add_system(self, system: System) -> None` | Add/create system. |  |
-| `clear` | method | `clear(self) -> None` | Call clear. |  |
-| `entities` | property | `entities(self) -> list[Entity]` | Property: entities. |  |
-| `get_entities` | method | `get_entities(self) -> list[Entity]` | Get entities. |  |
-| `get_id` | method | `get_id(self) -> int` | Get id. |  |
-| `get_physx_system` | method | `get_physx_system(self) -> physx.PhysxSystem` | Get physx system. |  |
-| `get_render_system` | method | `get_render_system(self) -> render.RenderSystem` | Get render system. |  |
-| `get_system` | method | `get_system(self, name: str) -> System` | Get system. |  |
-| `id` | property | `id(self) -> int` | Property: id. |  |
-| `pack_poses` | method | `pack_poses(self) -> bytes` | Call pack poses. |  |
-| `physx_system` | property | `physx_system(self) -> physx.PhysxSystem` | Property: physx system. |  |
-| `remove_entity` | method | `remove_entity(self, entity: Entity) -> None` | Remove entity. |  |
-| `render_system` | property | `render_system(self) -> render.RenderSystem` | Property: render system. |  |
-| `unpack_poses` | method | `unpack_poses(self, data: bytes) -> None` | Call unpack poses. |  |
-| `__init__` | method | `__init__(self, systems: list[System]) -> None` | Python special method. |  |
+| `add_entity` | method | `add_entity(self, entity: Entity) -> None` |  |  |
+| `add_system` | method | `add_system(self, system: System) -> None` |  |  |
+| `clear` | method | `clear(self) -> None` |  |  |
+| `entities` | property | `entities(self) -> list[Entity]` |  |  |
+| `get_entities` | method | `get_entities(self) -> list[Entity]` |  |  |
+| `get_id` | method | `get_id(self) -> int` |  |  |
+| `get_physx_system` | method | `get_physx_system(self) -> physx.PhysxSystem` |  |  |
+| `get_render_system` | method | `get_render_system(self) -> render.RenderSystem` |  |  |
+| `get_system` | method | `get_system(self, name: str) -> System` |  |  |
+| `id` | property | `id(self) -> int` |  |  |
+| `pack_poses` | method | `pack_poses(self) -> bytes` |  |  |
+| `physx_system` | property | `physx_system(self) -> physx.PhysxSystem` |  |  |
+| `remove_entity` | method | `remove_entity(self, entity: Entity) -> None` |  |  |
+| `render_system` | property | `render_system(self) -> render.RenderSystem` |  |  |
+| `unpack_poses` | method | `unpack_poses(self, data: bytes) -> None` |  |  |
+| `__init__` | method | `__init__(self, systems: list[System]) -> None` |  |  |
 
 ## `sapien.System`
 
@@ -251,4 +251,4 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
 | `step` | method | `step(self) -> None` | Advance the system/scene one step. |  |
-| `__init__` | method | `__init__(self) -> None` | Python special method. |  |
+| `__init__` | method | `__init__(self) -> None` |  |  |
