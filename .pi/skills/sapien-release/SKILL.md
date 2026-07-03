@@ -1,12 +1,14 @@
 ---
 name: sapien-release
-description: Trigger SAPIEN tagged GitHub releases with gh after reviewing commits since the previous release tag, writing human-summarized release notes, and maintaining CHANGELOG.md.
+description: Manually trigger SAPIEN tagged GitHub releases with gh after reviewing commits since the previous release tag, writing human-summarized release notes, and maintaining CHANGELOG.md.
+disable-model-invocation: true
 ---
 
 # SAPIEN Release
 
-Use this skill when preparing or publishing a SAPIEN fork release through the
-manual GitHub Actions tagged release workflow.
+This skill is manual-only. Use `/skill:sapien-release` when preparing or
+publishing a SAPIEN fork release through the manual GitHub Actions tagged
+release workflow.
 
 ## Managed files
 
@@ -34,20 +36,39 @@ Run shell commands from the repository root unless a command says otherwise.
    ((${#TAG_REFS[@]} == 0)) || git fetch origin "${TAG_REFS[@]}"
    ```
 
-3. Choose release inputs:
+3. Choose release inputs. Unless the user specifies a version tag, default
+   `RELEASE_TAG` to the latest numeric release tag with its final number
+   incremented by one, e.g. `3.0.0+fork.7` becomes `3.0.0+fork.8`:
 
-   - `RELEASE_TAG`: package/release tag, e.g. `3.0.0+fork.8`; it must be a valid Python package version.
-   - `GIT_REF`: branch, tag, or commit SHA to build, e.g. `dev` or a full commit SHA.
-   - `WORKFLOW_REF`: branch containing the current workflow file, usually `dev`.
-   - `PRERELEASE`: `true` for fork/internal releases unless the user asks otherwise.
+   ```bash
+   export GIT_REF=${GIT_REF:-dev}
+   export WORKFLOW_REF=${WORKFLOW_REF:-dev}
+   export PRERELEASE=${PRERELEASE:-true}
+
+   if [ -z "${RELEASE_TAG:-}" ]; then
+     LAST_RELEASE_TAG=$(git for-each-ref --sort=-v:refname --format='%(refname:short)' refs/tags \
+       | grep -E '^[0-9]' \
+       | head -1)
+     if [ -z "${LAST_RELEASE_TAG}" ]; then
+       echo "No previous numeric release tag found; set RELEASE_TAG explicitly." >&2
+       exit 1
+     fi
+     RELEASE_TAG=$(python -c 'import re, sys; tag = sys.argv[1]; matches = list(re.finditer(r"\d+", tag)); m = matches[-1]; print(f"{tag[:m.start()]}{int(m.group()) + 1}{tag[m.end():]}")' "${LAST_RELEASE_TAG}")
+     export RELEASE_TAG
+   fi
+
+   printf 'git ref: %s\nworkflow ref: %s\nrelease tag: %s\nprerelease: %s\n' \
+     "${GIT_REF}" "${WORKFLOW_REF}" "${RELEASE_TAG}" "${PRERELEASE}"
+   ```
+
+   `RELEASE_TAG` must be a valid Python package version. Override it when the
+   user explicitly requests a specific version.
 
 4. Identify the previous release tag and inspect the change range:
 
    ```bash
-   export RELEASE_TAG=3.0.0+fork.8
-   export GIT_REF=dev
    TARGET_COMMIT=$(git rev-parse "${GIT_REF}^{commit}")
-   PREVIOUS_TAG=$(git for-each-ref --merged "${TARGET_COMMIT}" --sort=-creatordate --format='%(refname:short)' refs/tags \
+   PREVIOUS_TAG=$(git for-each-ref --merged "${TARGET_COMMIT}" --sort=-v:refname --format='%(refname:short)' refs/tags \
      | grep -E '^[0-9]' \
      | grep -vx "${RELEASE_TAG}" \
      | head -1)
@@ -108,10 +129,12 @@ Run shell commands from the repository root unless a command says otherwise.
 
 ## Guardrails
 
+- This skill is manual-only; invoke it explicitly with `/skill:sapien-release`.
 - The workflow only consumes `release_notes`; it must not generate final release notes itself.
 - Always read/analyze commits since the previous release tag before composing release notes.
 - Do not publish raw commit logs as release descriptions unless the user explicitly asks.
 - Do not overwrite or delete an existing GitHub release or stable release tag without explicit user approval.
 - Ignore `nightly` when computing the previous release tag; it is a moving test release.
+- If the user does not specify `RELEASE_TAG`, use the latest numeric release tag and increment its final number by one.
 - Prefer version tags that start with a digit, such as `3.0.0+fork.8`.
 - Keep `CHANGELOG.md` curated and human-readable.
