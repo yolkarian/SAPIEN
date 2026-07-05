@@ -13,6 +13,11 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 - Clarified render-shape GPU transform-index overload usage for owning scenes and scene groups.
 - Moved the documentation Pages build job to Ubuntu 24.04 so the published release wheel imports with the required glibc symbols.
 
+### Fixed
+
+- Implemented `Viewer.set_camera_xyz()` and `Viewer.set_camera_rpy()` as real public methods so scripted viewer camera setup works without relying on plugin monkey-patching.
+- Added shared `0xffff` scene/ignore ID semantics to collision-group filtering, matching PhysX GPU environment-ID shared-object behavior.
+
 ## 3.0.0+fork.8 - 2026-07-03
 
 ### Added

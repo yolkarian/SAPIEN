@@ -73,6 +73,38 @@ class TestScene(unittest.TestCase):
             ),
         )
 
+    def test_viewer_camera_setters_update_window_pose(self):
+        from sapien.utils.viewer.camera_control import FPSCameraController
+        from sapien.utils.viewer.viewer import Viewer
+
+        class DummyWindow:
+            def __init__(self):
+                self.pose = sapien.Pose([1, 2, 3], [1, 0, 0, 0])
+
+            def get_camera_pose(self):
+                return self.pose
+
+            def set_camera_pose(self, pose):
+                self.pose = pose
+
+        viewer = Viewer.__new__(Viewer)
+        viewer.window = DummyWindow()
+        viewer.plugins = []
+        viewer.render_updated = False
+
+        viewer.set_camera_xyz(4, 5, 6)
+        np.testing.assert_allclose(viewer.window.pose.p, [4, 5, 6])
+        np.testing.assert_allclose(viewer.window.pose.q, [1, 0, 0, 0])
+        self.assertTrue(viewer.render_updated)
+
+        viewer.render_updated = False
+        viewer.set_camera_rpy(0.1, -0.2, 0.3)
+        expected = FPSCameraController()
+        expected.setXYZ(4, 5, 6)
+        expected.setRPY(0.1, -0.2, 0.3)
+        self.assertTrue(pose_equal(viewer.window.pose, expected.pose))
+        self.assertTrue(viewer.render_updated)
+
     def test_viewer_collision_visual_heightfield(self):
         from sapien.utils.viewer.entity_window import EntityWindow
 

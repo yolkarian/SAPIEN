@@ -5,6 +5,33 @@ using namespace physx;
 namespace sapien {
 namespace physx {
 
+inline constexpr PxU32 kCollisionGroupSceneIdMask = 0xffff0000u;
+inline constexpr PxU32 kCollisionGroupIgnoreIdMask = 0x0000ffffu;
+inline constexpr PxU32 kCollisionGroupSharedId = 0xffffu;
+
+inline PxU32 getCollisionGroupSceneId(PxFilterData const &filterData) {
+  return (filterData.word3 & kCollisionGroupSceneIdMask) >> 16;
+}
+
+inline PxU32 getCollisionGroupIgnoreId(PxFilterData const &filterData) {
+  return filterData.word3 & kCollisionGroupIgnoreIdMask;
+}
+
+inline bool collisionGroupSceneIdsCanCollide(PxFilterData const &filterData0,
+                                             PxFilterData const &filterData1) {
+  PxU32 sceneId0 = getCollisionGroupSceneId(filterData0);
+  PxU32 sceneId1 = getCollisionGroupSceneId(filterData1);
+  return sceneId0 == sceneId1 || sceneId0 == kCollisionGroupSharedId ||
+         sceneId1 == kCollisionGroupSharedId;
+}
+
+inline bool collisionGroupIgnoreIdsMatch(PxFilterData const &filterData0,
+                                         PxFilterData const &filterData1) {
+  PxU32 ignoreId0 = getCollisionGroupIgnoreId(filterData0);
+  PxU32 ignoreId1 = getCollisionGroupIgnoreId(filterData1);
+  return ignoreId0 == ignoreId1 && ignoreId0 != kCollisionGroupSharedId;
+}
+
 inline PxFilterFlags
 TypeAffinityIgnoreFilterShader(PxFilterObjectAttributes attributes0, PxFilterData filterData0,
                                PxFilterObjectAttributes attributes1, PxFilterData filterData1,
@@ -16,17 +43,18 @@ TypeAffinityIgnoreFilterShader(PxFilterObjectAttributes attributes0, PxFilterDat
     return PxFilterFlag::eDEFAULT;
   }
 
-  // if top 16 bits of word3 are different, the shapes will never collide
-  // e.g. they are in different scenes
-  if ((filterData0.word3 & 0xffff0000) != (filterData1.word3 & 0xffff0000)) {
+  // If the top 16 bits of word3 are different, the shapes will never collide,
+  // e.g. they are in different scenes. Scene ID 0xffff is shared and collides
+  // with all scene IDs, matching PhysX GPU environment-ID shared semantics.
+  if (!collisionGroupSceneIdsCanCollide(filterData0, filterData1)) {
     return PxFilterFlag::eKILL;
   }
 
-  // if the lower 16 bits of word3 are the same (e.g. articulation id)
-  // if word2 has a matching bit (e.g. door and frame both set the same bit)
-  // the shapes will not collide (e.g. ignore collisions within each articulation)
+  // If the lower 16 bits of word3 are the same (e.g. articulation ID) and word2
+  // has a matching bit (e.g. door and frame both set the same bit), the shapes
+  // will not collide. Ignore ID 0xffff is shared and does not match any ID.
   if ((filterData0.word2 & filterData1.word2) &&
-      ((filterData0.word3 & 0xffff) == (filterData1.word3 & 0xffff))) {
+      collisionGroupIgnoreIdsMatch(filterData0, filterData1)) {
     return PxFilterFlag::eKILL;
   }
 
@@ -53,17 +81,18 @@ TypeAffinityIgnoreFilterShaderGpu(PxFilterObjectAttributes attributes0, PxFilter
     return PxFilterFlag::eDEFAULT;
   }
 
-  // if top 16 bits of word3 are different, the shapes will never collide
-  // e.g. they are in different scenes
-  if ((filterData0.word3 & 0xffff0000) != (filterData1.word3 & 0xffff0000)) {
+  // If the top 16 bits of word3 are different, the shapes will never collide,
+  // e.g. they are in different scenes. Scene ID 0xffff is shared and collides
+  // with all scene IDs, matching PhysX GPU environment-ID shared semantics.
+  if (!collisionGroupSceneIdsCanCollide(filterData0, filterData1)) {
     return PxFilterFlag::eKILL;
   }
 
-  // if the lower 16 bits of word3 are the same (e.g. articulation id)
-  // if word2 has a matching bit (e.g. door and frame both set the same bit)
-  // the shapes will not collide (e.g. ignore collisions within each articulation)
+  // If the lower 16 bits of word3 are the same (e.g. articulation ID) and word2
+  // has a matching bit (e.g. door and frame both set the same bit), the shapes
+  // will not collide. Ignore ID 0xffff is shared and does not match any ID.
   if ((filterData0.word2 & filterData1.word2) &&
-      ((filterData0.word3 & 0xffff) == (filterData1.word3 & 0xffff))) {
+      collisionGroupIgnoreIdsMatch(filterData0, filterData1)) {
     return PxFilterFlag::eKILL;
   }
 

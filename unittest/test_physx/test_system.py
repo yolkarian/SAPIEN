@@ -242,6 +242,60 @@ class TestSystem(unittest.TestCase):
         self.assertTrue(pose_equal(e1.pose, p1))
         self.assertTrue(np.allclose(c0.linear_velocity, v0, atol=1e-5))
 
+    def test_collision_group_scene_id_filtering(self):
+        def count_contacts(group0, group1):
+            system = sapien.physx.PhysxCpuSystem()
+            scene = sapien.Scene([system])
+            mat = sapien.physx.PhysxMaterial(0.2, 0.1, 0.05)
+
+            shape0 = sapien.physx.PhysxCollisionShapeBox([0.1, 0.2, 0.3], mat)
+            shape0.set_collision_groups(group0)
+            body0 = sapien.physx.PhysxRigidDynamicComponent()
+            body0.attach(shape0)
+            scene.add_entity(sapien.Entity().add_component(body0))
+
+            shape1 = sapien.physx.PhysxCollisionShapeBox([0.1, 0.2, 0.3], mat)
+            shape1.set_collision_groups(group1)
+            body1 = sapien.physx.PhysxRigidDynamicComponent()
+            body1.kinematic = True
+            body1.attach(shape1)
+            entity1 = sapien.Entity().add_component(body1)
+            entity1.set_pose(sapien.Pose([0.201, 0, 0]))
+            scene.add_entity(entity1)
+
+            system.step()
+            return len(system.get_contacts())
+
+        scene0 = 1 << 16
+        scene1 = 2 << 16
+        shared_scene = 0xFFFF << 16
+        self.assertEqual(count_contacts([1, 1, 0, scene0], [1, 1, 0, scene1]), 0)
+        self.assertEqual(count_contacts([1, 1, 0, shared_scene], [1, 1, 0, scene1]), 1)
+        self.assertEqual(count_contacts([1, 1, 0, scene0], [1, 1, 0, shared_scene]), 1)
+
+    def test_collision_group_shared_ignore_id(self):
+        system = sapien.physx.PhysxCpuSystem()
+        scene = sapien.Scene([system])
+        mat = sapien.physx.PhysxMaterial(0.2, 0.1, 0.05)
+
+        shape0 = sapien.physx.PhysxCollisionShapeBox([0.1, 0.2, 0.3], mat)
+        shape0.set_collision_groups([1, 1, 1, 0xFFFF])
+        body0 = sapien.physx.PhysxRigidDynamicComponent()
+        body0.attach(shape0)
+        scene.add_entity(sapien.Entity().add_component(body0))
+
+        shape1 = sapien.physx.PhysxCollisionShapeBox([0.1, 0.2, 0.3], mat)
+        shape1.set_collision_groups([1, 1, 1, 0xFFFF])
+        body1 = sapien.physx.PhysxRigidDynamicComponent()
+        body1.kinematic = True
+        body1.attach(shape1)
+        entity1 = sapien.Entity().add_component(body1)
+        entity1.set_pose(sapien.Pose([0.201, 0, 0]))
+        scene.add_entity(entity1)
+
+        system.step()
+        self.assertEqual(len(system.get_contacts()), 1)
+
     def test_raycast(self):
         system = sapien.physx.PhysxCpuSystem()
         scene = sapien.Scene([system])

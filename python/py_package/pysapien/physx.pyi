@@ -332,9 +332,11 @@ class PhysxCollisionShape:
         """
         collision groups determine the collision behavior of objects. Let A.gx denote the collision group x of collision shape A. Collision shape A and B will collide iff the following condition holds:
 
-        ((A.g0 & B.g1) or (A.g1 & B.g0)) and (not ((A.g2 & B.g2) and ((A.g3 & 0xffff) == (B.g3 & 0xffff))))
+        ((A.g3 >> 16) == (B.g3 >> 16) or (A.g3 >> 16) == 0xffff or (B.g3 >> 16) == 0xffff) and ((A.g0 & B.g1) or (A.g1 & B.g0)) and (not ((A.g2 & B.g2) and ((A.g3 & 0xffff) == (B.g3 & 0xffff)) and ((A.g3 & 0xffff) != 0xffff)))
 
-        Here is some explanation: g2 is the "ignore group" and g3 is the "id group". Only the lower 16 bits of the id group is used since the upper 16 bits are reserved for other purposes in the future. When 2 collision shapes have the same ID (g3), then if any of their g2 bits match, their collisions are always ignored.
+        Here is some explanation: the upper 16 bits of g3 are the scene ID. Different non-shared scene IDs never collide; scene ID 0xffff is shared and collides with all scene IDs.
+
+        g2 is the "ignore group" and the lower 16 bits of g3 are the "ignore ID". When two collision shapes have the same non-shared ignore ID, then if any of their g2 bits match, their collisions are always ignored. Ignore ID 0xffff is shared and does not match any ignore ID.
 
         If after testing g2 and g3, the objects may collide, g0 and g1 come into play. g0 is the "contact type group" and g1 is the "contact affinity group". Collision shapes collide only when a bit in the contact type of the first shape matches a bit in the contact affinity of the second shape.
         """

@@ -287,7 +287,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_patch_radius` | method | `get_patch_radius(self) -> float` |  |  |
 | `get_physical_material` | method | `get_physical_material(self) -> PhysxMaterial` |  |  |
 | `get_rest_offset` | method | `get_rest_offset(self) -> float` |  |  |
-| `set_collision_groups` | method | `set_collision_groups(self, groups: Annotated[list[int], FixedSize(4)]) -> None` | collision groups determine the collision behavior of objects. Let A.gx denote the collision group x of collision shape A. Collision shape A and B will collide iff the... |  |
+| `set_collision_groups` | method | `set_collision_groups(self, groups: Annotated[list[int], FixedSize(4)]) -> None` | Shape filtering via `[contact_type, contact_affinity, ignore_group, packed_id]`; `packed_id` upper 16 bits are scene ID and lower 16 bits are ignore ID. | Scene/ignore ID `0xffff` is shared. |
 | `set_contact_offset` | method | `set_contact_offset(self, offset: float) -> None` |  |  |
 | `set_density` | method | `set_density(self, density: float) -> None` |  |  |
 | `set_local_pose` | method | `set_local_pose(self, pose: sapien.Pose) -> None` |  |  |

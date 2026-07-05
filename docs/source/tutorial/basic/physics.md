@@ -72,6 +72,26 @@ ball = builder.build(name="slippery_ball")
 Density, patch radius, minimum patch radius, contact offset, rest offset, and
 collision groups live on collision shapes, not on the render material.
 
+## Collision groups
+
+Collision groups are stored as four 32-bit words `[g0, g1, g2, g3]` on each
+collision shape.
+
+- `g0` is the contact type bit mask.
+- `g1` is the contact affinity bit mask.
+- `g2` is the ignore-group bit mask.
+- The upper 16 bits of `g3` are a scene ID. Different non-shared scene IDs do
+  not collide. Scene ID `0xffff` is shared and collides with all scene IDs,
+  matching PhysX GPU environment-ID shared-object behavior.
+- The lower 16 bits of `g3` are an ignore ID. Shapes with matching non-shared
+  ignore IDs and overlapping `g2` bits do not collide. Ignore ID `0xffff` is
+  shared and does not match any ignore ID.
+
+```python
+shape.set_collision_groups([1, 1, 0, 0x00010000])  # scene ID 1
+shared_shape.set_collision_groups([1, 1, 0, 0xFFFF0000])  # shared scene ID
+```
+
 ## Create a kinematic body
 
 Kinematic bodies are dynamic PhysX bodies whose motion is driven by the user

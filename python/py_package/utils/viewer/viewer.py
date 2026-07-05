@@ -342,10 +342,26 @@ class Viewer:
         ...
 
     def set_camera_xyz(self, x, y, z):
-        ...
+        control_window = self.control_window
+        if control_window is not None:
+            control_window.set_camera_xyz(x, y, z)
+            return
+
+        pose = self.window.get_camera_pose()
+        self.set_camera_pose(sapien.Pose([x, y, z], pose.q))
 
     def set_camera_rpy(self, r, p, y):
-        ...
+        control_window = self.control_window
+        if control_window is not None:
+            control_window.set_camera_rpy(r, p, y)
+            return
+
+        from .camera_control import FPSCameraController
+
+        controller = FPSCameraController()
+        controller.setXYZ(*self.window.get_camera_pose().p)
+        controller.setRPY(r, p, y)
+        self.set_camera_pose(controller.pose)
 
     def focus_entity(self, entity):
         ...

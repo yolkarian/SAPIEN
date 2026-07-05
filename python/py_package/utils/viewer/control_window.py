@@ -18,8 +18,6 @@ class ControlWindow(Plugin):
 
     def init(self, viewer):
         super().init(viewer)
-        self.viewer.set_camera_xyz = self.set_camera_xyz
-        self.viewer.set_camera_rpy = self.set_camera_rpy
         self.viewer.focus_entity = self.focus_entity
         self.viewer.focus_camera = self.focus_camera
         self.viewer.register_click_handler = self.register_click_handler
@@ -352,11 +350,20 @@ class ControlWindow(Plugin):
                 R.UIDisplayText().Bind(lambda: "FPS: {:.2f}".format(self.window.fps)),
             )
 
+    def _activate_free_camera(self):
+        self.focused_entity = None
+        self.focused_camera = None
+        self._camera_index = 0
+
     def set_camera_xyz(self, x, y, z):
+        self._activate_free_camera()
+        self._sync_fps_camera_controller()
         self.fps_camera_controller.setXYZ(x, y, z)
         self.viewer.set_camera_pose(self.fps_camera_controller.pose)
 
     def set_camera_rpy(self, r, p, y):
+        self._activate_free_camera()
+        self._sync_fps_camera_controller()
         self.fps_camera_controller.setRPY(r, p, y)
         self.viewer.set_camera_pose(self.fps_camera_controller.pose)
 

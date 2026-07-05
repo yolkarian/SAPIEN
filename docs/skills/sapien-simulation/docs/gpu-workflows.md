@@ -324,9 +324,11 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
 - `PhysxGpuSystem.set_scene_offset(scene, offset)` offsets bodies in the shared PhysX scene; call it before adding bodies when you need spatial separation or when env IDs are unavailable.
 - Use `sapien.physx.PhysxCollisionShape.set_collision_groups([word0, word1, word2, word3])` for shape-level type/affinity or ignore filtering, not as the primary env-isolation mechanism when env IDs exist.
 - In SAPIEN GPU collision-group filtering:
-  - `word2` is ignore group.
   - `word0` and `word1` are contact type and affinity.
-  - Older SAPIEN env-isolation code may also use `word3`; prefer PhysX env IDs on current builds.
+  - `word2` is ignore group.
+  - `word3` packs a scene ID in the upper 16 bits and an ignore ID in the lower 16 bits.
+  - ID `0xffff` is shared: as a scene ID it collides with all scene IDs, and as an ignore ID it does not suppress collisions.
+  - Older SAPIEN env-isolation code may use `word3`; prefer PhysX env IDs on current builds.
 
 ## Common mistakes
 

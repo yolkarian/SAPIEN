@@ -141,6 +141,11 @@ shapes = body.get_collision_shapes()
 shapes[0].set_collision_groups([1, 1, 0, 0])
 ```
 
+`collision_groups[3]` packs a scene ID in the upper 16 bits and an ignore ID in
+lower 16 bits. ID `0xffff` is shared: as a scene ID it collides with all scene
+IDs, and as an ignore ID it does not suppress collisions with matching ignore
+IDs.
+
 ## Remove a body
 
 After a body is built, remove it with `scene.remove_actor(entity)` or
