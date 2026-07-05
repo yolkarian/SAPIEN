@@ -5,6 +5,10 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
+No notable changes yet.
+
+## 3.0.0+fork.9 - 2026-07-05
+
 ### Changed
 
 - Streamlined the release skill preflight and dispatch flow, including string-based `gh workflow run --json` boolean inputs and no default long-running watch.
