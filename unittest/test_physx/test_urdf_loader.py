@@ -3,6 +3,7 @@ import unittest
 import warnings
 from pathlib import Path
 
+import sapien
 from sapien.wrapper.urdf_loader import URDFLoader
 
 
@@ -14,12 +15,14 @@ class TestURDFLoaderSDF(unittest.TestCase):
         multiple_convex: bool = False,
         load_visuals: bool = True,
         load_collisions: bool = True,
+        scale: float = 1.0,
     ):
         with tempfile.TemporaryDirectory() as tempdir:
             urdf_path = Path(tempdir) / "robot.urdf"
             urdf_path.write_text(urdf_text)
 
             loader = URDFLoader()
+            loader.scale = scale
             loader.load_multiple_collisions_from_file = multiple_convex
             loader.load_visuals = load_visuals
             loader.load_collisions = load_collisions
@@ -98,6 +101,87 @@ class TestURDFLoaderSDF(unittest.TestCase):
         self.assertIsNotNone(records[1].sdf_config)
         self.assertEqual(records[1].sdf_config.resolution, 128)
         self.assertTrue(records[1].sdf_config.enable_remeshing)
+
+    def test_joint_velocity_limit_reaches_physx(self):
+        urdf = """<?xml version="1.0"?>
+<robot name="velocity_limit_test">
+  <link name="base"/>
+  <link name="leg"/>
+  <link name="slider"/>
+  <joint name="hip" type="revolute">
+    <parent link="base"/>
+    <child link="leg"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="-1" upper="1" effort="10" velocity="20"/>
+  </joint>
+  <joint name="extension" type="prismatic">
+    <parent link="leg"/>
+    <child link="slider"/>
+    <axis xyz="1 0 0"/>
+    <limit lower="0" upper="1" effort="10" velocity="3"/>
+  </joint>
+</robot>
+"""
+
+        articulations, actors, cameras = self._parse_urdf(urdf, scale=0.1)
+        self.assertEqual(len(articulations), 1)
+        self.assertEqual(len(actors), 0)
+        self.assertEqual(len(cameras), 0)
+
+        builder = articulations[0]
+        self.assertEqual(builder.link_builders[1].joint_record.velocity_limit, 20)
+        self.assertAlmostEqual(
+            builder.link_builders[2].joint_record.velocity_limit, 0.3
+        )
+
+        scene = sapien.Scene()
+        robot = builder.set_scene(scene).build()
+        hip = robot.find_joint_by_name("hip")
+        extension = robot.find_joint_by_name("extension")
+        self.assertAlmostEqual(hip.max_joint_velocity[0], 20)
+        self.assertAlmostEqual(extension.max_joint_velocity[0], 0.3)
+
+    def test_zero_joint_velocity_limit_uses_physx_default(self):
+        urdf = """<?xml version="1.0"?>
+<robot name="zero_velocity_placeholder_test">
+  <link name="base"/>
+  <link name="hinge"/>
+  <link name="slider"/>
+  <link name="spinner"/>
+  <joint name="rotation" type="revolute">
+    <parent link="base"/>
+    <child link="hinge"/>
+    <limit lower="-1" upper="1" effort="10" velocity="0"/>
+  </joint>
+  <joint name="extension" type="prismatic">
+    <parent link="hinge"/>
+    <child link="slider"/>
+    <limit lower="-1" upper="1" effort="10" velocity="0"/>
+  </joint>
+  <joint name="spin" type="continuous">
+    <parent link="slider"/>
+    <child link="spinner"/>
+    <limit effort="10" velocity="0"/>
+  </joint>
+</robot>
+"""
+
+        articulations, _, _ = self._parse_urdf(urdf, scale=0.1)
+        builder = articulations[0]
+        for link_builder in builder.link_builders[1:]:
+            self.assertIsNone(link_builder.joint_record.velocity_limit)
+
+        scene = sapien.Scene()
+        robot = builder.set_scene(scene).build(fix_root_link=True)
+        for link in robot.links:
+            link.disable_gravity = True
+        for joint in robot.active_joints:
+            self.assertAlmostEqual(joint.max_joint_velocity[0], 100.0)
+
+        robot.set_qvel([5.0, 5.0, 5.0])
+        scene.step()
+        for velocity in robot.get_qvel():
+            self.assertGreater(abs(velocity), 1.0)
 
     def test_physics_only_skips_visual_and_collision_records(self):
         urdf = """<?xml version="1.0"?>

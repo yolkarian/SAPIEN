@@ -4,6 +4,7 @@ import ctypes
 import ctypes.util
 import gc
 import unittest
+from typing import Optional
 
 import numpy as np
 import sapien
@@ -133,7 +134,9 @@ class TestGpuArticulationBuffers(unittest.TestCase):
         scene = sapien.Scene([system])
         return system, scene
 
-    def _build_prismatic_articulation(self, scene, y: float):
+    def _build_prismatic_articulation(
+        self, scene, y: float, velocity_limit: Optional[float] = None
+    ):
         builder = scene.create_articulation_builder()
         builder.set_initial_pose(sapien.Pose([0.0, y, 0.0]))
 
@@ -152,12 +155,33 @@ class TestGpuArticulationBuffers(unittest.TestCase):
             pose_in_child=sapien.Pose(),
             friction=0.0,
             damping=0.0,
+            velocity_limit=velocity_limit,
         )
 
         articulation = builder.build(fix_root_link=True)
         for link in articulation.links:
             link.disable_gravity = True
         return articulation, articulation.links[1]
+
+    def test_max_joint_velocity(self):
+        system, scene = self._create_scene()
+        articulation, _ = self._build_prismatic_articulation(
+            scene, y=0.0, velocity_limit=0.25
+        )
+        system.gpu_init()
+
+        qvel = system.cuda_articulation_qvel
+        _write_float_values(qvel, (articulation.gpu_index, 0), [5.0])
+        _cuda_synchronize()
+        system.gpu_apply_articulation_qvel()
+        system.step()
+        system.gpu_fetch_articulation_qvel()
+        _cuda_synchronize()
+
+        velocity = _read_values(
+            qvel, (articulation.gpu_index, 0), 1, np.float32
+        )[0]
+        self.assertAlmostEqual(abs(velocity), 0.25, places=5)
 
     def test_cuda_array_protocol_indices_for_apply_update_and_jacobian(self):
         system, scene = self._create_scene()

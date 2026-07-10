@@ -173,6 +173,8 @@ PY
 7. Build all actors, articulations, and static terrain:
    - For identical URDF robots, parse the URDF once. Before each build, call `builder.set_scene(scene)`, restore the cached initial pose, apply any per-env pose/offset, then call `builder.build()`.
    - For kinematics-only or IK-only URDF workflows, set `loader.load_visuals = False` and `loader.load_collisions = False` before parsing/loading when geometry is unnecessary.
+   - Positive URDF `<limit velocity="...">` values populate `PhysxArticulationJoint.max_joint_velocity`; non-positive placeholders retain the PhysX default. Set any overrides before `gpu_init()` so PhysX GPU copies the limits into its articulation data.
+   - PhysX 5.6.1 has no maximum joint-acceleration constraint API; enforce acceleration bounds in the controller.
    - Do not call `loader.parse(...)` once per env for thousands of identical robots.
    - Add `scene.add_heightfield(...)` terrain before `gpu_init()`; its public coordinates are z-up with rows to +x, columns to +y, and samples to +z.
    - If not using env IDs, set scene/env collision groups on the builder or collision shapes before each build.

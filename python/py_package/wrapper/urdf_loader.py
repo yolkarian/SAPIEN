@@ -565,6 +565,14 @@ class URDFLoader:
                 t_axis2joint = Pose(t_axis2joint)
                 t_axis2parent = t_joint2parent * t_axis2joint
 
+                velocity_limit = (
+                    None if joint.limit is None else joint.limit.velocity
+                )
+                if velocity_limit is not None and velocity_limit <= 0:
+                    # Zero is commonly used as a required URDF placeholder rather than
+                    # an instruction to freeze the joint.
+                    velocity_limit = None
+
                 if joint.joint_type == "revolute":
                     link_builder.set_joint_properties(
                         "revolute_unwrapped",
@@ -573,7 +581,8 @@ class URDFLoader:
                         t_axis2joint,
                         friction,
                         damping,
-                        effort_limit=joint.limit.effort
+                        effort_limit=joint.limit.effort,
+                        velocity_limit=velocity_limit,
                     )
                 elif joint.joint_type == "continuous":
                     link_builder.set_joint_properties(
@@ -583,7 +592,8 @@ class URDFLoader:
                         t_axis2joint,
                         friction,
                         damping,
-                        effort_limit=joint.limit.effort
+                        effort_limit=joint.limit.effort,
+                        velocity_limit=velocity_limit,
                     )
                 elif joint.joint_type == "prismatic":
                     link_builder.set_joint_properties(
@@ -598,7 +608,12 @@ class URDFLoader:
                         t_axis2joint,
                         friction,
                         damping,
-                        effort_limit=joint.limit.effort
+                        effort_limit=joint.limit.effort,
+                        velocity_limit=(
+                            None
+                            if velocity_limit is None
+                            else velocity_limit * self.scale
+                        ),
                     )
                 elif joint.joint_type == "fixed":
                     link_builder.set_joint_properties(

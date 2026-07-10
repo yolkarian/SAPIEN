@@ -77,17 +77,19 @@ def export_joint(joint: PhysxArticulationJoint):
     ET.SubElement(elem_joint, "axis", {"xyz": "1 0 0"})
     ET.SubElement(elem_joint, "parent", {"link": f"link_{joint.parent_link.index}"})
     ET.SubElement(elem_joint, "child", {"link": f"link_dummy_{joint.child_link.index}"})
-    if type == "prismatic" or type.startswith("revolute"):
-        ET.SubElement(
-            elem_joint,
-            "limit",
-            {
-                "effort": "0",
-                "velocity": "0",
-                "lower": str(max(joint.limit[0][0], -1e5)),
-                "upper": str(min(joint.limit[0][1], 1e5)),
-            },
-        )
+    if type in ["prismatic", "revolute", "continuous"]:
+        limit = {
+            "effort": "0",
+            "velocity": str(joint.max_joint_velocity[0]),
+        }
+        if type != "continuous":
+            limit.update(
+                {
+                    "lower": str(max(joint.limit[0][0], -1e5)),
+                    "upper": str(min(joint.limit[0][1], 1e5)),
+                }
+            )
+        ET.SubElement(elem_joint, "limit", limit)
 
     # fixed joint connecting dummy and child
     elem_dummy_joint = ET.Element(

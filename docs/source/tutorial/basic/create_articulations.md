@@ -69,6 +69,7 @@ arm.set_joint_properties(
    pose_in_child=sapien.Pose([-0.35, 0, 0]),
    friction=0.0,
    damping=0.1,
+   velocity_limit=2.0,
 )
 
 articulation = builder.build(fix_root_link=True)
@@ -77,7 +78,8 @@ articulation.name = "single_hinge"
 
 Supported joint types include `"fixed"`, `"revolute"`,
 `"revolute_unwrapped"`, `"continuous"`, and `"prismatic"`. The root joint
-is fixed when `fix_root_link=True`.
+is fixed when `fix_root_link=True`. `velocity_limit` configures PhysX's
+per-axis maximum joint velocity; omit it to retain the PhysX default.
 
 ## Control an articulation with drives
 

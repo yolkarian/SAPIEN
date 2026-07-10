@@ -90,6 +90,24 @@ print(robot.qlimits)
 For URDF-loaded robots, joint order follows the loaded articulation order. Use
 joint names when possible instead of hard-coded indices.
 
+Positive URDF `<limit velocity="...">` values are applied to PhysX as per-axis
+maximum joint velocities. Revolute values use radians per second; prismatic
+values use linear scene units per second and follow `loader.scale`. Non-positive
+values are treated as unspecified because many URDFs use zero as a placeholder;
+such joints retain the PhysX default limit. To intentionally use a zero limit,
+call `joint.set_max_joint_velocity(0.0)` after loading.
+
+```python
+hip = robot.find_joint_by_name("hip")
+print(hip.max_joint_velocity)
+hip.set_max_joint_velocity(20.0)  # scalar applies to every DOF of this joint
+```
+
+On CPU, change joint limits only while simulation is not running. In GPU
+workflows, set them before `gpu_init()`. PhysX 5.6.1 does not provide a maximum joint-acceleration
+constraint API. `robot.qacc` reports or sets articulation state; it is not an
+acceleration limit. Enforce acceleration bounds in the controller when needed.
+
 ## Compute dense Jacobians
 
 `robot.compute_dense_jacobian()` computes a world-space dense Jacobian for CPU

@@ -33,6 +33,9 @@ TEST(PhysxArticulationLinkComponent, Create) {
     Eigen::VectorXf a(1);
     a << 0.6f;
     l1->getJoint()->setArmature(a);
+    Eigen::VectorXf maxJointVelocity(1);
+    maxJointVelocity << 0.8f;
+    l1->getJoint()->setMaxJointVelocity(maxJointVelocity);
   }
 
   l1->getJoint()->setDriveProperties(1000, 100, 10000,
@@ -52,6 +55,12 @@ TEST(PhysxArticulationLinkComponent, Create) {
 
   EXPECT_EQ(l1->getJoint()->getArmature().size(), 1);
   EXPECT_FLOAT_EQ(l1->getJoint()->getArmature()(0), 0.6f);
+
+  EXPECT_EQ(l1->getJoint()->getMaxJointVelocity().size(), 1);
+  EXPECT_FLOAT_EQ(l1->getJoint()->getMaxJointVelocity()(0), 0.8f);
+  l1->getJoint()->setMaxJointVelocity(0.9f);
+  EXPECT_FLOAT_EQ(l1->getJoint()->getMaxJointVelocity()(0), 0.9f);
+  EXPECT_THROW(l1->getJoint()->setMaxJointVelocity(-1.f), std::runtime_error);
 
   EXPECT_FLOAT_EQ(l1->getJoint()->getDriveStiffness(), 1000);
   EXPECT_FLOAT_EQ(l1->getJoint()->getDriveDamping(), 100);

@@ -154,6 +154,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `friction` | `float` |  |  |
 | `limit` | `np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]]` |  |  |
 | `limits` | `np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]]` |  |  |
+| `max_joint_velocity` | `np.ndarray[tuple[M, Literal[1]], np.dtype[np.float32]]` | Per-DOF PhysX velocity limit. | Change only while simulation is not running; set before GPU initialization. |
 | `name` | `str` |  |  |
 | `pose_in_child` | `sapien.Pose` |  |  |
 | `pose_in_parent` | `sapien.Pose` |  |  |
@@ -180,6 +181,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_global_pose` | method | `get_global_pose(self) -> sapien.Pose` |  |  |
 | `get_limit` | method | `get_limit(self) -> np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]]` | same as get_limits |  |
 | `get_limits` | method | `get_limits(self) -> np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]]` |  |  |
+| `get_max_joint_velocity` | method | `get_max_joint_velocity(self) -> np.ndarray[tuple[M, Literal[1]], np.dtype[np.float32]]` | Read the enforced per-DOF maximum joint velocity. |  |
 | `get_name` | method | `get_name(self) -> str` |  |  |
 | `get_parent_link` | method | `get_parent_link(self) -> PhysxArticulationLinkComponent` |  |  |
 | `get_pose_in_child` | method | `get_pose_in_child(self) -> sapien.Pose` |  |  |
@@ -196,6 +198,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `set_friction` | method | `set_friction(self, friction: float) -> None` |  |  |
 | `set_limit` | method | `set_limit(self, limit: np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]] \| list \| tuple) -> None` | same as set_limits |  |
 | `set_limits` | method | `set_limits(self, limit: np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
+| `set_max_joint_velocity` | method | `set_max_joint_velocity(self, velocity: float) -> None`<br>`set_max_joint_velocity(self, velocity: np.ndarray[tuple[M, Literal[1]], np.dtype[np.float32]] \| list \| tuple) -> None` | Set PhysX's enforced per-axis joint velocity limit. | PhysX 5.6.1 has no corresponding maximum joint-acceleration constraint API. |
 | `set_name` | method | `set_name(self, name: str) -> None` |  |  |
 | `set_pose_in_child` | method | `set_pose_in_child(self, pose: sapien.Pose) -> None` |  |  |
 | `set_pose_in_parent` | method | `set_pose_in_parent(self, pose: sapien.Pose) -> None` |  |  |

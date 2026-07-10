@@ -135,6 +135,7 @@ class PhysxArticulationJoint:
     friction: float
     limit: numpy.ndarray[tuple[M, typing.Literal[2]], numpy.dtype[numpy.float32]]
     limits: numpy.ndarray[tuple[M, typing.Literal[2]], numpy.dtype[numpy.float32]]
+    max_joint_velocity: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]]
     name: str
     pose_in_child: sapien.pysapien.Pose
     pose_in_parent: sapien.pysapien.Pose
@@ -165,6 +166,8 @@ class PhysxArticulationJoint:
         """
     def get_limits(self) -> numpy.ndarray[tuple[M, typing.Literal[2]], numpy.dtype[numpy.float32]]:
         ...
+    def get_max_joint_velocity(self) -> numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]]:
+        """Return the per-DOF maximum velocity enforced by PhysX."""
     def get_name(self) -> str:
         ...
     def get_parent_link(self) -> PhysxArticulationLinkComponent:
@@ -205,6 +208,12 @@ class PhysxArticulationJoint:
         """
     def set_limits(self, limit: numpy.ndarray[tuple[M, typing.Literal[2]], numpy.dtype[numpy.float32]] | list | tuple) -> None:
         ...
+    @typing.overload
+    def set_max_joint_velocity(self, velocity: float) -> None:
+        """Set one PhysX maximum velocity for every DOF of this joint."""
+    @typing.overload
+    def set_max_joint_velocity(self, velocity: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]] | list | tuple) -> None:
+        """Set the per-DOF maximum velocities enforced by PhysX."""
     def set_name(self, name: str) -> None:
         ...
     def set_pose_in_child(self, pose: sapien.pysapien.Pose) -> None:

@@ -5,7 +5,10 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
-No notable changes yet.
+### Added
+
+- Exposed PhysX per-axis maximum articulation-joint velocity limits through `PhysxArticulationJoint.max_joint_velocity` and `get/set_max_joint_velocity()`.
+- Applied positive URDF `<limit velocity="...">` values to PhysX joints, treated non-positive placeholders as unspecified, and preserved effective limits when exporting URDFs.
 
 ## 3.0.0+fork.9 - 2026-07-05
 

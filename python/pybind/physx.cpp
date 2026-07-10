@@ -1382,6 +1382,21 @@ Example:
       .def("get_armature", &PhysxArticulationJoint::getArmature)
       .def("set_armature", &PhysxArticulationJoint::setArmature, py::arg("armature"))
 
+      .def_property(
+          "max_joint_velocity", &PhysxArticulationJoint::getMaxJointVelocity,
+          py::overload_cast<Eigen::VectorXf const &>(&PhysxArticulationJoint::setMaxJointVelocity))
+      .def("get_max_joint_velocity", &PhysxArticulationJoint::getMaxJointVelocity,
+           R"doc(Return the per-DOF maximum velocity enforced by PhysX.)doc")
+      .def("set_max_joint_velocity",
+           py::overload_cast<float>(&PhysxArticulationJoint::setMaxJointVelocity),
+           py::arg("velocity"),
+           R"doc(Set one PhysX maximum velocity for every DOF of this joint.)doc")
+      .def("set_max_joint_velocity",
+           py::overload_cast<Eigen::VectorXf const &>(
+               &PhysxArticulationJoint::setMaxJointVelocity),
+           py::arg("velocity"),
+           R"doc(Set the per-DOF maximum velocities enforced by PhysX.)doc")
+
       .def("set_drive_properties", &PhysxArticulationJoint::setDriveProperties,
            py::arg("stiffness"), py::arg("damping"), py::arg("force_limit") = PX_MAX_F32,
            py::arg("mode") = ::physx::PxArticulationDriveType::eFORCE)

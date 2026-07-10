@@ -1,11 +1,17 @@
-from .actor_builder import ActorBuilder
-from ..pysapien import Pose, Entity, Scene
-from ..pysapien.physx import PhysxArticulation, PhysxRigidDynamicComponent, PhysxArticulationLinkComponent
-from typing import Optional
+from dataclasses import dataclass
+from typing import List, Optional, Sequence, Union
+
 import numpy as np
 from numpy.typing import NDArray
-from dataclasses import dataclass
-from typing import List, Tuple, Union
+
+from ..pysapien import Entity, Pose, Scene
+from ..pysapien.physx import (
+    PhysxArticulation,
+    PhysxArticulationLinkComponent,
+    PhysxRigidDynamicComponent,
+)
+from .actor_builder import ActorBuilder
+
 
 @dataclass
 class MimicJointRecord:
@@ -18,12 +24,13 @@ class MimicJointRecord:
 @dataclass
 class JointRecord:
     joint_type: str = "undefined"  # "fixed", "prismatic", "revolute"
-    limits: Tuple[float,float] = (-np.inf, np.inf)
+    limits: Union[Sequence[float], Sequence[Sequence[float]]] = (-np.inf, np.inf)
     pose_in_parent: Pose = Pose()
     pose_in_child: Pose = Pose()
     friction: float = 0
     damping: float = 0
     effort_limit: Optional[float] = None
+    velocity_limit: Optional[float] = None
     armature: Union[NDArray[np.float32], float] = 0.01
     name: str = ""
 
@@ -40,8 +47,28 @@ class LinkBuilder(ActorBuilder):
         self.joint_record.name = name
 
     def set_joint_properties(
-        self, type:str, limits:Tuple[float,float], pose_in_parent:Pose, pose_in_child:Pose, friction:float=0, damping:float=0, effort_limit:Optional[float] = None
-    ):
+        self,
+        type: str,
+        limits: Union[Sequence[float], Sequence[Sequence[float]]],
+        pose_in_parent: Pose,
+        pose_in_child: Pose,
+        friction: float = 0,
+        damping: float = 0,
+        effort_limit: Optional[float] = None,
+        velocity_limit: Optional[float] = None,
+    ) -> None:
+        """Configure the inbound joint used when this link is built.
+
+        Args:
+            type: Joint type accepted by SAPIEN's articulation builder.
+            limits: One flat position limit pair or per-DOF limit pairs.
+            pose_in_parent: Joint frame expressed in the parent link.
+            pose_in_child: Joint frame expressed in this link.
+            friction: Joint friction coefficient.
+            damping: Drive damping.
+            effort_limit: Optional drive force or torque limit.
+            velocity_limit: Optional PhysX maximum joint velocity.
+        """
         self.joint_record = JointRecord(
             joint_type=type,
             limits=limits,
@@ -50,6 +77,7 @@ class LinkBuilder(ActorBuilder):
             friction=friction,
             damping=damping,
             effort_limit=effort_limit,
+            velocity_limit=velocity_limit,
             name=self.joint_record.name,
         )
 
@@ -120,10 +148,21 @@ class ArticulationBuilder:
             ]:
                 link_component.joint.limit = np.array(b.joint_record.limits).flatten()
                 if b.joint_record.effort_limit is not None:
-                    link_component.joint.set_drive_property(0, b.joint_record.damping, force_limit=b.joint_record.effort_limit)
+                    link_component.joint.set_drive_property(
+                        0,
+                        b.joint_record.damping,
+                        force_limit=b.joint_record.effort_limit,
+                    )
                 else:
                     link_component.joint.set_drive_property(0, b.joint_record.damping)
-                link_component.joint.set_armature(b.joint_record.armature * np.ones_like(link_component.joint.get_armature(), dtype=np.float32))
+                armature = b.joint_record.armature * np.ones_like(
+                    link_component.joint.get_armature(), dtype=np.float32
+                )
+                link_component.joint.set_armature(armature)
+                if b.joint_record.velocity_limit is not None:
+                    link_component.joint.set_max_joint_velocity(
+                        b.joint_record.velocity_limit
+                    )
 
             links.append(link_component)
             entities.append(entity)

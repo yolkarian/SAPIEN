@@ -34,6 +34,12 @@ public:
   Eigen::VectorXf getArmature() const;
   void setArmature(Eigen::VectorXf const &armature);
 
+  /** Per-DOF velocity limits enforced by the PhysX articulation solver. */
+  Eigen::VectorXf getMaxJointVelocity() const;
+  void setMaxJointVelocity(Eigen::VectorXf const &velocity);
+  /** Apply one velocity limit to every DOF of this joint. */
+  void setMaxJointVelocity(float velocity);
+
   void setDriveProperties(float stiffness, float damping, float maxForce,
                           ::physx::PxArticulationDriveType::Enum type);
 

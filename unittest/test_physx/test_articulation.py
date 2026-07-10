@@ -149,6 +149,61 @@ class TestArticulation(unittest.TestCase):
             ):
                 self.assertAlmostEqual(a, b)
 
+    def test_max_joint_velocity(self):
+        scene = sapien.Scene()
+        builder = scene.create_articulation_builder()
+
+        root = builder.create_link_builder()
+        root.add_box_collision(half_size=[0.05, 0.05, 0.05])
+
+        child = builder.create_link_builder(root)
+        child.add_box_collision(half_size=[0.05, 0.05, 0.05])
+        child.set_joint_properties(
+            "continuous",
+            limits=[[-np.inf, np.inf]],
+            pose_in_parent=sapien.Pose(),
+            pose_in_child=sapien.Pose(),
+            velocity_limit=0.25,
+        )
+
+        articulation = builder.build(fix_root_link=True)
+        for link in articulation.links:
+            link.disable_gravity = True
+        joint = articulation.active_joints[0]
+        self.assertAlmostEqual(joint.max_joint_velocity[0], 0.25)
+
+        joint.set_max_joint_velocity(0.5)
+        self.assertAlmostEqual(joint.get_max_joint_velocity()[0], 0.5)
+        joint.max_joint_velocity = [0.25]
+
+        cloned_links = articulation.clone_links()
+        self.assertAlmostEqual(cloned_links[1].joint.max_joint_velocity[0], 0.25)
+
+        from sapien.wrapper.urdf_exporter import export_kinematic_chain_urdf
+
+        exported = export_kinematic_chain_urdf(articulation)
+        self.assertIn('type="continuous"', exported)
+        self.assertIn('velocity="0.25"', exported)
+
+        with self.assertRaises(RuntimeError):
+            joint.set_max_joint_velocity(-1.0)
+        with self.assertRaises(RuntimeError):
+            joint.max_joint_velocity = [np.inf]
+        with self.assertRaises(RuntimeError):
+            joint.max_joint_velocity = [1.0, 2.0]
+
+        articulation.set_qvel([5.0])
+        scene.step()
+        self.assertAlmostEqual(abs(articulation.get_qvel()[0]), 0.25, places=5)
+
+        other_builder = scene.create_articulation_builder()
+        other_builder.create_link_builder().add_box_collision(
+            half_size=[0.05, 0.05, 0.05]
+        )
+        other = other_builder.build(fix_root_link=True)
+        joint.child_link.set_parent(other.root)
+        self.assertAlmostEqual(joint.max_joint_velocity[0], 0.25)
+
     def test_urdf_loader(self):
         scene = sapien.Scene()
         loader = scene.create_urdf_loader()

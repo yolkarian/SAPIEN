@@ -8,6 +8,7 @@
 #include "sapien/scene.h"
 
 #include "sapien/profiler.h"
+#include <cmath>
 
 using namespace physx;
 
@@ -137,6 +138,43 @@ void PhysxArticulationJoint::setArmature(Eigen::VectorXf const &armature) {
   for (uint32_t i = 0; i < mAxes.size(); ++i) {
     j->setArmature(mAxes[i], armature(i));
   }
+}
+
+Eigen::VectorXf PhysxArticulationJoint::getMaxJointVelocity() const {
+  Eigen::VectorXf result(mAxes.size());
+  auto j = getPxJoint();
+  for (uint32_t i = 0; i < mAxes.size(); ++i) {
+    result(i) = j->getMaxJointVelocity(mAxes[i]);
+  }
+  return result;
+}
+
+void PhysxArticulationJoint::setMaxJointVelocity(Eigen::VectorXf const &velocity) {
+  if (mAxes.size() != static_cast<size_t>(velocity.size())) {
+    throw std::runtime_error("max joint velocity must match joint dof");
+  }
+  for (Eigen::Index i = 0; i < velocity.size(); ++i) {
+    if (!std::isfinite(velocity(i)) || velocity(i) < 0.f) {
+      throw std::runtime_error("max joint velocity must contain finite non-negative values");
+    }
+  }
+
+  auto j = getPxJoint();
+  if (!j) {
+    return;
+  }
+  for (uint32_t i = 0; i < mAxes.size(); ++i) {
+    j->setMaxJointVelocity(mAxes[i], velocity(i));
+  }
+}
+
+void PhysxArticulationJoint::setMaxJointVelocity(float velocity) {
+  if (!std::isfinite(velocity) || velocity < 0.f) {
+    throw std::runtime_error("max joint velocity must be finite and non-negative");
+  }
+  Eigen::VectorXf values(mAxes.size());
+  values.setConstant(velocity);
+  setMaxJointVelocity(values);
 }
 
 void PhysxArticulationJoint::setLimit(
@@ -413,6 +451,7 @@ void PhysxArticulationLinkComponent::setParent(
     float jointPosition[6]{};
     float jointVelocity[6]{};
     float jointArmature[6]{};
+    float maxJointVelocity[6]{};
   };
 
   std::vector<LinkProperties> linkInfo;
@@ -451,6 +490,7 @@ void PhysxArticulationLinkComponent::setParent(
         property.jointPosition[i] = pxjoint->getJointPosition(axes[i]);
         property.jointVelocity[i] = pxjoint->getJointVelocity(axes[i]);
         property.jointArmature[i] = pxjoint->getArmature(axes[i]);
+        property.maxJointVelocity[i] = pxjoint->getMaxJointVelocity(axes[i]);
       }
     }
     linkInfo.push_back(property);
@@ -520,6 +560,7 @@ void PhysxArticulationLinkComponent::setParent(
         pxjoint->setJointPosition(axes[i], info.jointPosition[i]);
         pxjoint->setJointVelocity(axes[i], info.jointVelocity[i]);
         pxjoint->setArmature(axes[i], info.jointArmature[i]);
+        pxjoint->setMaxJointVelocity(axes[i], info.maxJointVelocity[i]);
       }
     } else {
       bool fixBase = info.jointType == PxArticulationJointType::eFIX;
@@ -627,6 +668,7 @@ PhysxArticulationLinkComponent::cloneArticulation(
     newJoint->setAnchorPoseInParent(joint->getAnchorPoseInParent());
     newJoint->setLimit(joint->getLimit());
     newJoint->setArmature(joint->getArmature());
+    newJoint->setMaxJointVelocity(joint->getMaxJointVelocity());
     newJoint->setFriction(joint->getFriction());
     newJoint->setDriveTargetPosition(joint->getDriveTargetPosition());
     newJoint->setDriveTargetVelocity(joint->getDriveTargetVelocity());
