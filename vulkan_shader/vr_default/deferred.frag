@@ -42,8 +42,13 @@ vec3 diffuseIBL(vec3 albedo, vec3 N) {
   return color * albedo;
 }
 
+vec3 fresnelSchlickRoughness(vec3 fresnel, float roughness, float dotNV) {
+  return fresnel + (max(vec3(1.0 - roughness), fresnel) - fresnel) *
+                       pow(1.0 - dotNV, 5.0);
+}
+
 vec3 specularIBL(vec3 fresnel, float roughness, vec3 N, vec3 V) {
-  float dotNV = max(dot(N, V), 0);
+  float dotNV = clamp(dot(N, V), 0.0, 1.0);
   vec3 R = 2 * dot(N, V) * N - V;
   R = R.xzy;
   vec3 color = textureLod(samplerEnvironment, R, roughness * 5).rgb;
@@ -54,9 +59,9 @@ vec3 specularIBL(vec3 fresnel, float roughness, vec3 N, vec3 V) {
 void main() {
   vec3 albedo = texture(samplerAlbedo, inUV).xyz;
   vec3 frm = texture(samplerSpecular, inUV).xyz;
-  float specular = frm.x;
-  float roughness = frm.y;
-  float metallic = frm.z;
+  float specular = max(frm.x, 0.0);
+  float roughness = clamp(frm.y, 0.045, 1.0);
+  float metallic = clamp(frm.z, 0.0, 1.0);
 
   vec3 normal = normalize(texture(samplerNormal, inUV).xyz);
   float depth = texture(samplerGbufferDepth, inUV).x;
@@ -69,7 +74,8 @@ void main() {
   vec3 diffuseAlbedo = albedo * (1 - metallic);
   vec3 fresnel = specular * (1 - metallic) + albedo * metallic;
 
-  vec3 color = texture(samplerEmission, inUV).rgb;
+  vec4 emission = texture(samplerEmission, inUV);
+  vec3 color = emission.rgb * emission.a;
 
   // point light
   for (int i = 0; i < NUM_POINT_LIGHT_SHADOWS; ++i) {
@@ -194,10 +200,11 @@ void main() {
 
   // environmental light
   vec3 wnormal = mat3(cameraBuffer.viewMatrixInverse) * normal;
-  color += diffuseIBL(diffuseAlbedo, wnormal);
-  color += specularIBL(fresnel, roughness,
-                       wnormal,
-                       mat3(cameraBuffer.viewMatrixInverse) * camDir);
+  vec3 worldCamDir = mat3(cameraBuffer.viewMatrixInverse) * camDir;
+  float dotNV = clamp(dot(wnormal, worldCamDir), 0.0, 1.0);
+  vec3 environmentFresnel = fresnelSchlickRoughness(fresnel, roughness, dotNV);
+  color += diffuseIBL((1.0 - environmentFresnel) * diffuseAlbedo, wnormal);
+  color += specularIBL(fresnel, roughness, wnormal, worldCamDir);
 
   color += sceneBuffer.ambientLight.rgb * albedo.rgb;
 

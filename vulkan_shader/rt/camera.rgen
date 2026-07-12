@@ -53,12 +53,12 @@ void main() {
   for (int i = 0; i < spp; ++i) {
     // sample point on aperture
     float at = rnd(ray.seed) * 2.0 * M_PI;
-    float ar = rnd(ray.seed) * aperture;
+    float ar = sqrt(rnd(ray.seed)) * aperture;
     float ax = ar * cos(at);
     float ay = ar * sin(at);
 
     // vec2 r = vec2(rnd(ray.seed), rnd(ray.seed));
-    vec2 r = halton2d(frameCount * spp + i, 2, 3);
+    vec2 r = halton2d(frameCount * spp + i + 1, 2, 3);
 
     vec2 d = pixel + r * invScreen;  // jittered pixel position
 
@@ -110,10 +110,10 @@ void main() {
                   0);
 
       radiance += ray.radiance * attenuation;
-      alpha += ray.alpha;
       attenuation *= ray.attenuation;
 
       if (first) {
+        alpha += ray.alpha;
         imageStore(outNormal, ivec2(gl_LaunchIDEXT.xy), vec4(mat3(cameraBuffer.viewMatrix) * ray.normal, 1.0));
         imageStore(outAlbedo, ivec2(gl_LaunchIDEXT.xy), vec4(ray.albedo, 1.0));
         imageStore(outSegmentation, ivec2(gl_LaunchIDEXT.xy), ray.segmentation);
@@ -121,6 +121,21 @@ void main() {
         vec4 position = cameraBuffer.viewMatrix * vec4(ray.origin, 1.0);
         vec4 ndc = cameraBuffer.projectionMatrix * position;
         imageStore(outPosition, ivec2(gl_LaunchIDEXT.xy), vec4(position.xyz, ndc.z / ndc.w));
+      }
+
+      if (any(isnan(attenuation)) || any(isinf(attenuation)) ||
+          max(max(attenuation.x, attenuation.y), attenuation.z) <= 1e-6) {
+        attenuation = vec3(0.0);
+        break;
+      }
+
+      if (russianRoulette != 0 && ray.depth >= russianRouletteMinBounces) {
+        float continuationProbability =
+            clamp(max(max(attenuation.x, attenuation.y), attenuation.z), 0.05, 0.95);
+        if (rnd(ray.seed) > continuationProbability) {
+          break;
+        }
+        attenuation /= continuationProbability;
       }
     }
     // TODO: implement unterminated ray properly

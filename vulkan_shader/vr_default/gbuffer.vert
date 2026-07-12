@@ -22,16 +22,45 @@ layout(location = 2) out flat uvec4 outSegmentation;
 layout(location = 3) out vec3 objectCoord;
 layout(location = 4) out mat3 outTbn;
 
+void ensureTbn(inout vec3 tangent, inout vec3 bitangent, inout vec3 normal) {
+  if (length(tangent) < 0.01 || length(bitangent) < 0.01) {
+    vec3 wx = vec3(1, 0, 0);
+    if (abs(dot(normal, vec3(1, 0, 0))) > 0.95) {
+      wx = vec3(0, 1, 0);
+    }
+    vec3 wy = normalize(cross(normal, wx));
+    wx = cross(wy, normal);
+    tangent = wx;
+    bitangent = wy;
+  }
+}
+
 void main() {
   outSegmentation = objectDataBuffer.segmentation;
   mat4 modelView = cameraBuffer.viewMatrix * objectTransformBuffer.modelMatrix;
-  mat3 normalMatrix = mat3(transpose(inverse(modelView)));
+  mat3 modelViewLinear = mat3(modelView);
+  mat3 normalMatrix = transpose(inverse(modelViewLinear));
+
+  vec3 T = tangent;
+  vec3 B = bitangent;
+  vec3 N = normal;
+  ensureTbn(T, B, N);
+
   objectCoord = position;
   outPositionRaw = modelView * vec4(position, 1);
   outUV = uv;
   gl_Position = cameraBuffer.projectionMatrix * outPositionRaw;
-  vec3 outTangent = normalize(normalMatrix * tangent);
-  vec3 outBitangent = normalize(normalMatrix * bitangent);
-  vec3 outNormal = normalize(normalMatrix * normal);
+
+  vec3 outNormal = normalize(normalMatrix * N);
+  vec3 transformedTangent = modelViewLinear * T;
+  transformedTangent -= outNormal * dot(outNormal, transformedTangent);
+  if (dot(transformedTangent, transformedTangent) < 1e-6) {
+    vec3 axis = abs(outNormal.x) < 0.95 ? vec3(1, 0, 0) : vec3(0, 1, 0);
+    transformedTangent = cross(axis, outNormal);
+  }
+  vec3 outTangent = normalize(transformedTangent);
+  vec3 transformedBitangent = modelViewLinear * B;
+  float handedness = dot(cross(outNormal, outTangent), transformedBitangent) < 0.0 ? -1.0 : 1.0;
+  vec3 outBitangent = handedness * normalize(cross(outNormal, outTangent));
   outTbn = mat3(outTangent, outBitangent, outNormal);
 }

@@ -19,14 +19,19 @@ float diffuse(float NoL) {
   return NoL / 3.141592653589793f;
 }
 
+vec3 fresnelSchlick(vec3 fresnel, float VoH) {
+  float exponent = ((-5.55473) * VoH - 6.98316) * VoH;
+  return fresnel + (1.0 - fresnel) * pow(2.0, exponent);
+}
+
 vec3 ggx(float NoL, float NoV, float NoH, float VoH, float roughness, vec3 fresnel) {
+  roughness = clamp(roughness, 0.045, 1.0);
   float alpha = roughness * roughness;
   float alpha2 = alpha * alpha;
 
   float k = (alpha + 2 * roughness + 1.0) / 8.0;
 
-  float FMi = ((-5.55473) * VoH - 6.98316) * VoH;
-  vec3 frac = (fresnel + (1 - fresnel) * pow(2.0, FMi)) * alpha2;
+  vec3 frac = fresnelSchlick(fresnel, VoH) * alpha2;
   float nom0 = NoH * NoH * (alpha2 - 1) + 1;
   float nom1 = NoV * (1 - k) + k;
   float nom2 = NoL * (1 - k) + k;
@@ -47,7 +52,8 @@ vec3 computeDirectionalLight(vec3 direction, vec3 emission, vec3 normal, vec3 ca
   float NoL = clamp(dot(normal, lightDir), 0, 1);
   float NoV = clamp(dot(normal, camDir), 1e-6, 1);
 
-  vec3 color = diffuseAlbedo * emission * diffuse(NoL);
+  vec3 F = fresnelSchlick(fresnel, VoH);
+  vec3 color = (1.0 - F) * diffuseAlbedo * emission * diffuse(NoL);
   color += emission * ggx(NoL, NoV, NoH, VoH, roughness, fresnel);
   return color;
 }
@@ -69,7 +75,8 @@ vec3 computePointLight(vec3 emission, vec3 l, vec3 normal, vec3 camDir, vec3 dif
   float NoL = clamp(dot(normal, lightDir), 0, 1);
   float NoV = clamp(dot(normal, camDir), 1e-6, 1);
 
-  vec3 color = diffuseAlbedo * emission * diffuse(NoL) / d / d;
+  vec3 F = fresnelSchlick(fresnel, VoH);
+  vec3 color = (1.0 - F) * diffuseAlbedo * emission * diffuse(NoL) / d / d;
   color += emission * ggx(NoL, NoV, NoH, VoH, roughness, fresnel) / d / d;
   return color;
 }
@@ -96,7 +103,8 @@ vec3 computeSpotLight(float fov1, float fov2, vec3 centerDir, vec3 emission, vec
   float NoL = clamp(dot(normal, lightDir), 0, 1);
   float NoV = clamp(dot(normal, camDir), 1e-6, 1);
 
-  vec3 color = diffuseAlbedo * emission * diffuse(NoL) / d / d;
+  vec3 F = fresnelSchlick(fresnel, VoH);
+  vec3 color = (1.0 - F) * diffuseAlbedo * emission * diffuse(NoL) / d / d;
   color += emission * ggx(NoL, NoV, NoH, VoH, roughness, fresnel) / d / d;
   return visibility * color;
 }
@@ -122,7 +130,8 @@ vec3 computeSpotLight2(float fov, vec3 centerDir, vec3 emission, vec3 l, vec3 no
   float NoL = clamp(dot(normal, lightDir), 0, 1);
   float NoV = clamp(dot(normal, camDir), 1e-6, 1);
 
-  vec3 color = diffuseAlbedo * emission * diffuse(NoL) / d / d;
+  vec3 F = fresnelSchlick(fresnel, VoH);
+  vec3 color = (1.0 - F) * diffuseAlbedo * emission * diffuse(NoL) / d / d;
   color += emission * ggx(NoL, NoV, NoH, VoH, roughness, fresnel) / d / d;
   return color;
 }

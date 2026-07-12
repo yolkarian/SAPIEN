@@ -133,7 +133,7 @@ float ggxNormalDistribution(float dotNH, float a2) {
 float smithGGXMaskingShadowing(float dotNL, float dotNV, float a2) {
   float A = dotNV * sqrt(a2 + (1.0 - a2) * dotNL * dotNL);
   float B = dotNL * sqrt(a2 + (1.0 - a2) * dotNV * dotNV);
-  return 2.0 * dotNL * dotNV / (A + B);
+  return 2.0 * dotNL * dotNV / max(A + B, 1e-6);
 }
 
 vec3 ggxBRDF(float dotNL, float dotNV, float dotNH, float dotVH, float roughness, vec3 F0) {
@@ -162,6 +162,7 @@ void sampleDiffuse(inout uint seed, in mat3 tbn, in vec3 V, in vec3 albedo, out 
 
 
 vec3 sampleNormalDistribution(inout uint seed, in float a2) {
+  a2 = max(a2, 1e-6);
   float u0 = rnd(seed);
   float u1 = rnd(seed);
 
@@ -188,18 +189,18 @@ void sampleGGXReflection(inout uint seed, in mat3 tbn, vec3 V, float roughness,v
 
   L = 2 * dot(V, H) * H - V;
 
+  float dotNL = dot(N, L);
+  float dotNV = dot(N, V);
+  if (dotNL <= 0.0 || dotNV <= 0.0) {
+    attenuation = vec3(0.0);
+    return;
+  }
+
   float dotNH = clamp(dot(N, H), 1e-6, 1.0);
   float dotVH = clamp(dot(V, H), 1e-6, 1.0);
-  float dotNL = clamp(dot(N, L), 1e-6, 1.0);
-  float dotNV = clamp(dot(N, V), 1e-6, 1.0);
-
-  if (dotNL >= 0) {
-    vec3 F = F0 + (1.0 - F0) * schlickFresnel(dotVH);
-    float G = smithGGXMaskingShadowing(dotNL, dotNV, a2);
-    attenuation = F * G * dotVH / (dotNH * dotNV);
-  } else {
-    attenuation = vec3(0.0);
-  }
+  vec3 F = F0 + (1.0 - F0) * schlickFresnel(dotVH);
+  float G = smithGGXMaskingShadowing(dotNL, dotNV, a2);
+  attenuation = F * G * dotVH / max(dotNH * dotNV, 1e-6);
 }
 
 
@@ -307,8 +308,13 @@ vec3 traceDirectionalLights(vec3 pos, vec3 normal, vec3 diffuseColor, vec3 specu
     vec3 emission = light.rgb;
     vec3 L = normalize(-light.direction);
     vec3 V = normalize(-ray.direction);
-    if (light.softness != 0) {
-      L = normalize(L + vec3(rnd(ray.seed), rnd(ray.seed), rnd(ray.seed)) * light.softness);
+    if (light.softness > 0.0) {
+      vec3 tangent = abs(L.z) < 0.999 ? normalize(cross(L, vec3(0, 0, 1)))
+                                     : vec3(1, 0, 0);
+      vec3 bitangent = cross(L, tangent);
+      float radius = sqrt(rnd(ray.seed)) * light.softness;
+      float angle = 2.0 * M_PI * rnd(ray.seed);
+      L = normalize(L + radius * (cos(angle) * tangent + sin(angle) * bitangent));
     }
 
     uint flags = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT;
@@ -390,7 +396,8 @@ vec3 traceParallelogramLights(vec3 pos, vec3 normal, vec3 diffuseColor, vec3 spe
       vec3 intensity = evalDiffuse(dotNL, dotNV, diffuseColor) * emission;  // diffuse
       intensity += evalGGXReflection(dotNL, dotNV, dotNH, dotVH, roughness, specularColor) * emission;  // specular
       if (transmissionWeight > 1e-5) {
-        intensity += evalGGXTransmission(normal, L, V, eta, roughness) * emission;
+        intensity += evalGGXTransmission(normal, L, V, eta, roughness) *
+                     emission * transmissionWeight;
       }
       resultNoShadow += intensity;
       if (!shadowRay.shadowed) {
@@ -409,7 +416,7 @@ vec3 tracePointLights(vec3 pos, vec3 normal, vec3 diffuseColor, vec3 specularCol
     PointLight light = pointLights.l[i];
     vec3 emission = light.rgb;
     vec3 d = light.position - pos;
-    float d2 = dot(d, d);
+    float d2 = max(dot(d, d), 1e-6);
     vec3 L = normalize(d);
     vec3 V = normalize(-ray.direction);
 
@@ -437,7 +444,8 @@ vec3 tracePointLights(vec3 pos, vec3 normal, vec3 diffuseColor, vec3 specularCol
     vec3 intensity = evalDiffuse(dotNL, dotNV, diffuseColor) * emission / d2;  // diffuse
     intensity += evalGGXReflection(dotNL, dotNV, dotNH, dotVH, roughness, specularColor) * emission / d2;  // specular
     if (transmissionWeight > 1e-5) {
-      intensity += evalGGXTransmission(normal, L, V, eta, roughness) * emission / d2;
+      intensity += evalGGXTransmission(normal, L, V, eta, roughness) *
+                   emission * transmissionWeight / d2;
     }
     resultNoShadow += intensity;
     if (!shadowRay.shadowed) {
@@ -504,7 +512,8 @@ vec3 traceSpotLights(vec3 pos, vec3 normal, vec3 diffuseColor, vec3 specularColo
         vec3 intensity = evalDiffuse(dotNL, dotNV, diffuseColor) * emission / d2 * visibility * texColor;  // diffuse
         intensity += evalGGXReflection(dotNL, dotNV, dotNH, dotVH, roughness, specularColor) * emission / d2 * visibility * texColor;  // specular
         if (transmissionWeight > 1e-5) {
-          intensity += evalGGXTransmission(normal, L, V, eta, roughness) * emission * visibility * texColor;
+          intensity += evalGGXTransmission(normal, L, V, eta, roughness) * emission *
+                       transmissionWeight * visibility * texColor / d2;
         }
         resultNoShadow += intensity;
         if (!shadowRay.shadowed) {
@@ -558,17 +567,26 @@ void main() {
   vec3 worldGeometricNormal = normalize(vec3(geometricNormal * gl_WorldToObjectEXT));
   vec3 worldShadingNormal = normalize(vec3(shadingNormal * gl_WorldToObjectEXT));
   vec3 worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
-  vec3 worldTangent = normalize(vec3(tangent * gl_WorldToObjectEXT));
+  vec3 worldTangent = normalize(vec3(gl_ObjectToWorldEXT * vec4(tangent, 0.0)));
+
+  bool isInside = gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT;
+  if (isInside) {
+    worldGeometricNormal = -worldGeometricNormal;
+    worldShadingNormal = -worldShadingNormal;
+  }
+  if (dot(worldShadingNormal, worldGeometricNormal) < 0.0) {
+    worldShadingNormal = -worldShadingNormal;
+  }
 
   Material mat = materials[nonuniformEXT(materialIndex)].m;
   TextureIndex ti = textureIndices.t[materialIndex];
 
   vec3 baseColor = mat.baseColor.rgb;
-  float alpha = 1.0;
+  float alpha = mat.baseColor.a;
   if (ti.diffuse >= 0) {
     vec4 baseColorAlpha = texture(textures[nonuniformEXT(ti.diffuse)], uv * mat.textureTransforms[0].zw + mat.textureTransforms[0].xy);
-    baseColor = baseColorAlpha.rgb;
-    alpha = baseColorAlpha.a;
+    baseColor *= baseColorAlpha.rgb;
+    alpha *= baseColorAlpha.a;
   }
 
   float metallic = mat.metallic;
@@ -580,7 +598,7 @@ void main() {
   if (ti.roughness >= 0) {
     roughness = texture(textures[nonuniformEXT(ti.roughness)], uv * mat.textureTransforms[1].zw + mat.textureTransforms[1].xy).x;
   }
-  float a2 = roughness * roughness;
+  roughness = clamp(roughness, 0.045, 1.0);
 
   vec3 texNormal = vec3(0.0, 0.0, 1.0);
   if (ti.normal >= 0) {
@@ -590,7 +608,7 @@ void main() {
   vec3 emission = mat.emission.rgb;
   float strength = mat.emission.a;
   if (ti.emission >= 0) {
-    emission = texture(textures[nonuniformEXT(ti.emission)], uv * mat.textureTransforms[4].zw + mat.textureTransforms[4].xy).rgb;
+    emission *= texture(textures[nonuniformEXT(ti.emission)], uv * mat.textureTransforms[4].zw + mat.textureTransforms[4].xy).rgb;
   }
   emission *= strength;
 
@@ -620,7 +638,6 @@ void main() {
 
   float diffuseWeight = (1.0 - metallic) * (1.0 - transmission);
   transmission = (1.0 - metallic) * transmission;
-  float specularWeight = 1.0 - transmission;
 
   vec3 specularColor = (specular * 0.08) * (1.0 - metallic) + baseColor * metallic;
   vec3 diffuseColor = baseColor * diffuseWeight;
@@ -630,46 +647,59 @@ void main() {
   float transmissionProb = transmission;
   float total = diffuseProb + specularProb + transmissionProb;
 
-  diffuseProb = diffuseProb / total;
-  specularProb = specularProb / total;
-  transmissionProb = transmissionProb / total;
+  if (total > 1e-6) {
+    diffuseProb /= total;
+    specularProb /= total;
+    transmissionProb /= total;
+  } else {
+    diffuseProb = 0.0;
+    specularProb = 0.0;
+    transmissionProb = 0.0;
+  }
 
-  // HACK: avoid extreme values to reduce fireflies
-  if (diffuseProb > 1e-6) {
-    diffuseProb += 0.1;
+  // Keep all valid lobes sufficiently likely to avoid extreme path weights.
+  if (total > 1e-6) {
+    if (diffuseProb > 1e-6) {
+      diffuseProb += 0.1;
+    }
+    if (specularProb > 1e-6) {
+      specularProb += 0.1;
+    }
+    if (transmissionProb > 1e-6) {
+      transmissionProb += 0.1;
+    }
+    total = diffuseProb + specularProb + transmissionProb;
+    diffuseProb /= total;
+    specularProb /= total;
+    transmissionProb /= total;
   }
-  if (specularProb > 1e-6) {
-    specularProb += 0.1;
-  }
-  if (transmissionProb > 1e-6) {
-    transmissionProb += 0.1;
-  }
-  total = diffuseProb + specularProb + transmissionProb;
-  diffuseProb = diffuseProb / total;
-  specularProb = specularProb / total;
-  transmissionProb = transmissionProb / total;
 
   float rand = rnd(ray.seed);
 
   vec3 V = normalize(-ray.direction);
 
-  bool isInside = gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT;
-
-  vec3 worldShadingBitangent = normalize(cross(worldShadingNormal, worldTangent));
-  mat3 tbn = mat3(cross(worldShadingBitangent, worldShadingNormal), worldShadingBitangent, worldShadingNormal);
-
-  // process normal map
-  worldShadingNormal = tbn * texNormal;
-  worldShadingBitangent = normalize(cross(worldShadingNormal, worldTangent));
-  tbn = mat3(cross(worldShadingBitangent, worldShadingNormal), worldShadingBitangent, worldShadingNormal);
-
-  if (isInside) {
-    tbn *= -1.0;
+  worldTangent -= worldShadingNormal * dot(worldShadingNormal, worldTangent);
+  if (dot(worldTangent, worldTangent) < 1e-6) {
+    vec3 axis = abs(worldShadingNormal.x) < 0.95 ? vec3(1, 0, 0) : vec3(0, 1, 0);
+    worldTangent = cross(axis, worldShadingNormal);
   }
+  worldTangent = normalize(worldTangent);
+  vec3 worldShadingBitangent = normalize(cross(worldShadingNormal, worldTangent));
+  mat3 tbn = mat3(worldTangent, worldShadingBitangent, worldShadingNormal);
+
+  // Keep normal maps in the same hemisphere as the geometric surface.
+  worldShadingNormal = normalize(tbn * texNormal);
+  if (dot(worldShadingNormal, worldGeometricNormal) <= 0.0) {
+    worldShadingNormal = worldGeometricNormal;
+  }
+  worldTangent -= worldShadingNormal * dot(worldShadingNormal, worldTangent);
+  worldTangent = normalize(worldTangent);
+  worldShadingBitangent = normalize(cross(worldShadingNormal, worldTangent));
+  tbn = mat3(worldTangent, worldShadingBitangent, worldShadingNormal);
   float eta = isInside ? ior : (1.0 / ior);
 
   vec3 attenuation = vec3(0.0);
-  vec3 L = vec3(0.0);
+  vec3 L = worldShadingNormal;
   if (diffuseProb > 1e-5 && rand <= diffuseProb) {
     sampleDiffuse(ray.seed, tbn, V, diffuseColor, L, attenuation);
     attenuation = attenuation / diffuseProb;
@@ -705,7 +735,6 @@ void main() {
                 1  // payload location
       );
 
-    vec3 envLight;
     if (envmap != 0) {
       elNoShadow = attenuation * clamp(texture(samplerEnvironment, L.xzy).rgb, vec3(0.0), vec3(100.0));
     } else {

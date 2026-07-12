@@ -1,6 +1,8 @@
 #version 450
 
 layout (constant_id = 0) const float exposure = 1.0;
+// 0: gamma 2.2, 1: sRGB OETF, 2: ACES filmic (default)
+layout (constant_id = 1) const int toneMapper = 2;
 
 layout(set = 0, binding = 0) uniform sampler2D samplerLighting;
 layout(set = 0, binding = 1) uniform usampler2D samplerSegmentation;
@@ -23,6 +25,8 @@ layout(location = 4) out vec4 outPosition;
 
 #define SET_NUM 1
 #include "./camera_set.glsl"
+
+#include "../common/tonemapping.glsl"
 
 vec4 colors[60] = {
   vec4(0.8,  0.4,  0.4 , 1 ),
@@ -87,43 +91,9 @@ vec4 colors[60] = {
   vec4(0.8,  0.24, 0.41, 1 )
 };
 
-vec3 sRGB(vec3 x) {
-  bvec3 cutoff = lessThan(x, vec3(0.0031308));
-  vec3 higher = vec3(1.055) * pow(x, vec3(1.0/2.4)) - vec3(0.055);
-  vec3 lower = x * vec3(12.92);
-  return clamp(mix(higher, lower, cutoff), 0.0, 1.0);
-}
-
-const mat3 ACESInputMat = mat3(
-    0.59719, 0.35458, 0.04823,
-    0.07600, 0.90834, 0.01566,
-    0.02840, 0.13383, 0.83777
-);
-
-const mat3 ACESOutputMat = mat3(
-     1.60475, -0.53108, -0.07367,
-    -0.10208,  1.10813, -0.00605,
-    -0.00327, -0.07276,  1.07602
-);
-
-vec3 RRTAndODTFit(vec3 v)
-{
-    vec3 a = v * (v + 0.0245786) - 0.000090537;
-    vec3 b = v * (0.983729 * v + 0.4329510) + 0.238081;
-    return a / b;
-}
-
-vec3 ACESsRGB(vec3 color) {
-    color = color * ACESInputMat;
-    color = RRTAndODTFit(color);
-    color = color * ACESOutputMat;
-    color = clamp(color, 0.0, 1.0);
-    return sRGB(color);
-}
-
 void main() {
   outColor = texture(samplerLighting, inUV);
-  outColor.rgb = pow((outColor.rgb) * exposure, vec3(1/2.2));
+  outColor.rgb = sapienToneMap(outColor.rgb, exposure, toneMapper);
   outColor = clamp(outColor, vec4(0), vec4(1));
 
   vec3 position = texture(samplerPositionRaw, inUV).xyz;

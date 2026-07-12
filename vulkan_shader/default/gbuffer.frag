@@ -38,10 +38,9 @@ void main() {
     outEmission.rgb *= texture(emissionTexture, inUV * materialBuffer.textureTransforms[4].zw + materialBuffer.textureTransforms[4].xy).rgb;
   }
 
+  outAlbedo = materialBuffer.baseColor;
   if ((materialBuffer.textureMask & 1) != 0) {
-    outAlbedo = texture(colorTexture, inUV * materialBuffer.textureTransforms[0].zw + materialBuffer.textureTransforms[0].xy);
-  } else {
-    outAlbedo = materialBuffer.baseColor;
+    outAlbedo *= texture(colorTexture, inUV * materialBuffer.textureTransforms[0].zw + materialBuffer.textureTransforms[0].xy);
   }
 
   if (outAlbedo.a == 0) {

@@ -41,6 +41,38 @@ sapien.render.set_viewer_shader_dir("rt")
 A relative name such as `"rt"` is resolved under the installed shader search
 path. A custom directory path can also be supplied.
 
+## Shader ownership
+
+The shader packs under SAPIEN's `vulkan_shader/` directory are the canonical
+runtime assets shipped in the `sapien` wheel. They define SAPIEN-specific render
+targets, material behavior, segmentation outputs, and visual defaults. The
+`svulkan2` library owns the generic shader-pack loader, renderer implementation,
+and its private `shader_internal/` compute shaders. Its top-level `shader/`
+directory is for standalone examples and is not a second source for SAPIEN's
+built-in packs.
+
+Keep product shader changes in SAPIEN unless they require a renderer capability
+or fix in `svulkan2`. This separation avoids two copies of the built-in packs
+drifting while still keeping renderer-internal shaders next to the code that
+uses them.
+
+## Color management
+
+Rasterization and ray tracing both shade in linear HDR and use the same display
+transform for the `Color` target. The default raster, VR, ray-tracing, and shadow
+catcher packs use ACES fitted tone mapping followed by the sRGB output transfer
+function. Gamma 2.2 and plain sRGB transforms remain available for compatibility
+and data inspection:
+
+```python
+camera.set_property("exposure", 1.0)
+camera.set_property("toneMapper", 2)  # 0: gamma 2.2, 1: sRGB, 2: ACES + sRGB
+```
+
+The viewer's Render panel exposes the same controls for both rasterization and
+ray tracing. Ray-tracing `HdrColor` and `Radiance` targets remain linear; use
+`Color` when saving a display-ready image.
+
 ## Rasterization pipeline
 
 A rasterization shader pack contains a required `gbuffer` pass and optional

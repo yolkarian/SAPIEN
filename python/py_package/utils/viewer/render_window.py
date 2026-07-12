@@ -107,7 +107,11 @@ class RenderOptionsWindow(Plugin):
 
     @property
     def exposure(self):
-        return self.window.get_camera_property_float("exposure")
+        try:
+            return self.window.get_camera_property_float("exposure")
+        except RuntimeError:
+            self.window.set_camera_property("exposure", 1.0)
+            return 1.0
 
     @exposure.setter
     def exposure(self, v):
@@ -117,8 +121,8 @@ class RenderOptionsWindow(Plugin):
     def tone_index(self):
         try:
             return self.viewer.window.get_camera_property_int("toneMapper")
-        except Exception:
-            self.viewer.window.set_camera_property("toneMapper", 0)
+        except RuntimeError:
+            self.viewer.window.set_camera_property("toneMapper", 2)
 
         return self.viewer.window.get_camera_property_int("toneMapper")
 
@@ -197,17 +201,17 @@ class RenderOptionsWindow(Plugin):
                     .Min(0)
                     .Max(0.1)
                     .Bind(self, "aperture"),
-                    R.UISliderFloat()
-                    .Label("Exposure")
-                    .Min(0)
-                    .Max(30)
-                    .Bind(self, "exposure"),
-                    R.UIOptions()
-                    .Style("select")
-                    .Label("Color Management")
-                    .Items(["Gamma", "sRGB", "Filmic"])
-                    .BindIndex(self, "tone_index"),
                 ),
+                R.UISliderFloat()
+                .Label("Exposure")
+                .Min(0)
+                .Max(30)
+                .Bind(self, "exposure"),
+                R.UIOptions()
+                .Style("select")
+                .Label("Color Management")
+                .Items(["Gamma", "sRGB", "ACES"])
+                .BindIndex(self, "tone_index"),
             )
 
     def get_ui_windows(self):

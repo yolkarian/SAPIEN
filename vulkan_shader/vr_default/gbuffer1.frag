@@ -34,8 +34,13 @@ vec3 diffuseIBL(vec3 albedo, vec3 N) {
   return color * albedo;
 }
 
+vec3 fresnelSchlickRoughness(vec3 fresnel, float roughness, float dotNV) {
+  return fresnel + (max(vec3(1.0 - roughness), fresnel) - fresnel) *
+                       pow(1.0 - dotNV, 5.0);
+}
+
 vec3 specularIBL(vec3 fresnel, float roughness, vec3 N, vec3 V) {
-  float dotNV = max(dot(N, V), 0);
+  float dotNV = clamp(dot(N, V), 0.0, 1.0);
   vec3 R = 2 * dot(N, V) * N - V;
   R = R.xzy;
   vec3 color = textureLod(samplerEnvironment, R, roughness * 5).rgb;
@@ -61,16 +66,14 @@ void main() {
   vec4 albedo;
   vec4 frm;
 
+  emission = materialBuffer.emission;
   if ((materialBuffer.textureMask & 16) != 0) {
-    emission = texture(emissionTexture, inUV * materialBuffer.textureTransforms[4].zw + materialBuffer.textureTransforms[4].xy);
-  } else {
-    emission = materialBuffer.emission;
+    emission.rgb *= texture(emissionTexture, inUV * materialBuffer.textureTransforms[4].zw + materialBuffer.textureTransforms[4].xy).rgb;
   }
 
+  albedo = materialBuffer.baseColor;
   if ((materialBuffer.textureMask & 1) != 0) {
-    albedo = texture(colorTexture, inUV * materialBuffer.textureTransforms[0].zw + materialBuffer.textureTransforms[0].xy);
-  } else {
-    albedo = materialBuffer.baseColor;
+    albedo *= texture(colorTexture, inUV * materialBuffer.textureTransforms[0].zw + materialBuffer.textureTransforms[0].xy);
   }
 
   albedo.a *=  (1.f - objectDataBuffer.transparency);
@@ -106,11 +109,13 @@ void main() {
     outNormal = vec4(normal, 0);
   }
 
+  outNormal.xyz = faceforward(outNormal.xyz, inPosition.xyz, outNormal.xyz);
+
   outPositionRaw = inPosition;
 
-  float specular = frm.x;
-  float roughness = frm.y;
-  float metallic = frm.z;
+  float specular = max(frm.x, 0.0);
+  float roughness = clamp(frm.y, 0.045, 1.0);
+  float metallic = clamp(frm.z, 0.0, 1.0);
 
   vec3 normal = outNormal.xyz;
   vec4 csPosition = inPosition;
@@ -121,7 +126,7 @@ void main() {
   vec3 diffuseAlbedo = albedo.rgb * (1 - metallic);
   vec3 fresnel = specular * (1 - metallic) + albedo.rgb * metallic;
 
-  vec3 color = emission.rgb;
+  vec3 color = emission.rgb * emission.a;
 
   for (int i = 0; i < NUM_POINT_LIGHTS; i++) {
     vec3 pos = world2camera(vec4(sceneBuffer.pointLights[i].position.xyz, 1.f)).xyz;
@@ -178,10 +183,11 @@ void main() {
   }
 
   vec3 wnormal = mat3(cameraBuffer.viewMatrixInverse) * normal;
-  color += diffuseIBL(diffuseAlbedo, wnormal);
-  color += specularIBL(fresnel, roughness,
-                       wnormal,
-                       mat3(cameraBuffer.viewMatrixInverse) * camDir);
+  vec3 worldCamDir = mat3(cameraBuffer.viewMatrixInverse) * camDir;
+  float dotNV = clamp(dot(wnormal, worldCamDir), 0.0, 1.0);
+  vec3 environmentFresnel = fresnelSchlickRoughness(fresnel, roughness, dotNV);
+  color += diffuseIBL((1.0 - environmentFresnel) * diffuseAlbedo, wnormal);
+  color += specularIBL(fresnel, roughness, wnormal, worldCamDir);
 
   color += sceneBuffer.ambientLight.rgb * albedo.rgb;
 

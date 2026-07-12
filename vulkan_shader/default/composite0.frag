@@ -1,6 +1,8 @@
 #version 450
 
 layout (constant_id = 0) const float exposure = 1.0;
+// 0: gamma 2.2, 1: sRGB OETF, 2: ACES filmic (default)
+layout (constant_id = 1) const int toneMapper = 2;
 
 layout(set = 0, binding = 0) uniform sampler2D samplerLighting;
 layout(set = 0, binding = 1) uniform usampler2D samplerSegmentation;
@@ -23,6 +25,8 @@ layout(location = 4) out vec4 outPosition;
 
 #define SET_NUM 1
 #include "./camera_set.glsl"
+
+#include "../common/tonemapping.glsl"
 
 vec4 colors[60] = {
   vec4(0.8,  0.4,  0.4 , 1 ),
@@ -90,7 +94,7 @@ vec4 colors[60] = {
 
 void main() {
   outColor = texture(samplerLighting, inUV);
-  outColor.rgb = pow(outColor.rgb * exposure, vec3(1/2.2));
+  outColor.rgb = sapienToneMap(outColor.rgb, exposure, toneMapper);
   outColor = clamp(outColor, vec4(0), vec4(1));
 
   vec3 position = texture(samplerPositionRaw, inUV).xyz;
@@ -101,15 +105,21 @@ void main() {
   outSegmentationView0 = mix(vec4(0,0,0,1), colors[seg.x % 60], sign(seg.x));
   outSegmentationView1 = mix(vec4(0,0,0,1), colors[seg.y % 60], sign(seg.y));
 
+  float surfaceDepth = texture(samplerGbufferDepth, inUV).x;
+  float visibleDepth = surfaceDepth;
+
   vec4 lineColor = texture(samplerLine, inUV);
-  if (texture(samplerLineDepth, inUV).x < 1) {
-    outColor = vec4(lineColor.xyz, 1);
+  float lineDepth = texture(samplerLineDepth, inUV).x;
+  if (lineDepth < visibleDepth) {
+    outColor = vec4(mix(outColor.rgb, lineColor.rgb, lineColor.a), 1);
+    visibleDepth = lineDepth;
   }
 
   vec4 pointColor = texture(samplerPoint, inUV);
-  if (texture(samplerPointDepth, inUV).x < 1) {
-    outColor = vec4(pointColor.xyz, 1);
+  float pointDepth = texture(samplerPointDepth, inUV).x;
+  if (pointDepth < visibleDepth) {
+    outColor = vec4(mix(outColor.rgb, pointColor.rgb, pointColor.a), 1);
   }
 
-  outPosition = vec4(position, texture(samplerGbufferDepth, inUV).x);
+  outPosition = vec4(position, surfaceDepth);
 }

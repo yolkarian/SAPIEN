@@ -33,20 +33,14 @@ void main() {
 
   outPositionRaw = inPosition;
 
-  vec4 p1 = cameraBuffer.projectionMatrix * inPosition;
-  p1 /= p1.w;
-  vec2 p1s = p1.xy / p1.z;
-
+  outEmission = materialBuffer.emission;
   if ((materialBuffer.textureMask & 16) != 0) {
-    outEmission = texture(emissionTexture, inUV * materialBuffer.textureTransforms[4].zw + materialBuffer.textureTransforms[4].xy);
-  } else {
-    outEmission = materialBuffer.emission;
+    outEmission.rgb *= texture(emissionTexture, inUV * materialBuffer.textureTransforms[4].zw + materialBuffer.textureTransforms[4].xy).rgb;
   }
 
+  outAlbedo = materialBuffer.baseColor;
   if ((materialBuffer.textureMask & 1) != 0) {
-    outAlbedo = texture(colorTexture, inUV * materialBuffer.textureTransforms[0].zw + materialBuffer.textureTransforms[0].xy);
-  } else {
-    outAlbedo = materialBuffer.baseColor;
+    outAlbedo *= texture(colorTexture, inUV * materialBuffer.textureTransforms[0].zw + materialBuffer.textureTransforms[0].xy);
   }
 
   if (outAlbedo.a == 0) {
@@ -79,4 +73,6 @@ void main() {
     vec3 normal = -normalize(cross(fdx.xyz, fdy.xyz));
     outNormal = vec4(normal, 0);
   }
+
+  outNormal.xyz = faceforward(outNormal.xyz, inPosition.xyz, outNormal.xyz);
 }

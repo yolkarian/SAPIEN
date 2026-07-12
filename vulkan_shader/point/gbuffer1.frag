@@ -67,10 +67,9 @@ void main() {
     emission = materialBuffer.emission;
   }
 
+  albedo = materialBuffer.baseColor;
   if ((materialBuffer.textureMask & 1) != 0) {
-    albedo = texture(colorTexture, inUV * materialBuffer.textureTransforms[0].zw + materialBuffer.textureTransforms[0].xy);
-  } else {
-    albedo = materialBuffer.baseColor;
+    albedo *= texture(colorTexture, inUV * materialBuffer.textureTransforms[0].zw + materialBuffer.textureTransforms[0].xy);
   }
 
   albedo.a *=  (1.f - objectDataBuffer.transparency);

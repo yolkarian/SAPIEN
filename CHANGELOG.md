@@ -5,7 +5,21 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
-No notable changes yet.
+### Changed
+
+- Unified rasterization and ray-tracing color management around an ACES-fitted, sRGB-encoded default while retaining gamma and plain sRGB display modes.
+- Improved raster PBR energy conservation, low-roughness stability, transformed tangent frames, transparent-material lighting/shadows, and viewer exposure/tone-mapping controls.
+- Improved ray-tracing path stability, normal handling, lens sampling, transmission weighting, and non-finite radiance handling.
+- Clarified that SAPIEN owns packaged shader packs while `svulkan2` owns the generic runtime and renderer-internal shaders.
+
+### Fixed
+
+- Fixed textured raster and ray-tracing materials ignoring the material base-color and alpha factors.
+- Fixed shadowed lights being associated with the wrong light when shadowed and unshadowed lights were mixed.
+- Fixed raster point and line overlays drawing through closer scene geometry.
+- Fixed ray-tracing alpha accumulating once per bounce, a GGX lower-hemisphere test that could never reject invalid samples, and biased directional-light softness sampling.
+- Fixed `svulkan2` crashes when clearing an environment map, Vec4 property type validation, the RT post-processing descriptor-pool type, and missing barriers between compute post-processing passes.
+- Fixed batched RT cameras building resources from their original scene instead of the assigned `SceneGroup`, including missing BLAS initialization and light data from shared scenes.
 
 ## 3.0.0+fork.10 - 2026-07-10
 
