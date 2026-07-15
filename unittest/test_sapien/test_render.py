@@ -1,6 +1,12 @@
+import ctypes
+import ctypes.util
 import unittest
-import sapien
+
 import numpy as np
+import sapien
+
+
+CUDA_MEMCPY_HOST_TO_DEVICE = 1
 
 
 class TestScene(unittest.TestCase):
@@ -90,6 +96,8 @@ class TestScene(unittest.TestCase):
                 [main_render, shared_render]
             )
             camera_group = group.create_camera_group([camera], ["Color"])
+            with self.assertRaisesRegex(RuntimeError, "GPU pose batch"):
+                _ = camera._cuda_buffer
             camera_group.take_picture()
             self.assertEqual(
                 camera_group.get_picture_cuda("Color").shape, [1, 64, 64, 4]
@@ -98,6 +106,142 @@ class TestScene(unittest.TestCase):
             camera.take_picture()
             color = camera.get_picture("Color")
             self.assertGreater(float(np.max(color[..., :3])), 0.01)
+        finally:
+            sapien.render.set_camera_shader_dir("default")
+
+
+class TestSceneGPU(unittest.TestCase):
+    def test_rt_batched_gpu_pose_updates(self) -> None:
+        # This is a required GPU test: CUDA or PhysX GPU initialization
+        # failures must fail the test instead of being converted to skips.
+        sapien.physx.enable_gpu()
+
+        cuda_runtime_library = ctypes.util.find_library("cudart")
+        if cuda_runtime_library is None:
+            raise RuntimeError("CUDA runtime not available")
+        cudart = ctypes.CDLL(cuda_runtime_library)
+        cudart.cudaMemcpy.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_size_t,
+            ctypes.c_int,
+        ]
+        cudart.cudaMemcpy.restype = ctypes.c_int
+
+        sapien.render.set_camera_shader_dir("rt")
+        sapien.render.set_ray_tracing_samples_per_pixel(4)
+        sapien.render.set_ray_tracing_path_depth(2)
+        sapien.render.set_ray_tracing_denoiser("none")
+
+        try:
+            device = sapien.Device("cuda")
+            physx = sapien.physx.PhysxGpuSystem(device)
+            physx.set_timestep(1 / 120)
+
+            main_render = sapien.render.RenderSystem(device)
+            main_scene = sapien.Scene([physx, main_render])
+            main_scene.set_ambient_light([0.5, 0.5, 0.5])
+
+            rig_builder = main_scene.create_actor_builder()
+            rig_builder.initial_pose = sapien.Pose([-3, 0, 1])
+            camera_rig = rig_builder.build_kinematic()
+            camera = main_scene.add_mounted_camera(
+                "camera",
+                camera_rig,
+                sapien.Pose(),
+                64,
+                64,
+                np.deg2rad(45),
+                0.05,
+                20,
+            )
+            camera.set_property("toneMapper", 1)
+
+            shared_render = sapien.render.RenderSystem(device)
+            shared_render.batched_render_shared = True
+            shared_scene = sapien.Scene([physx, shared_render])
+            builder = shared_scene.create_actor_builder()
+            builder.add_box_collision(half_size=[0.4, 0.4, 0.4])
+            builder.add_box_visual(
+                half_size=[0.4, 0.4, 0.4], material=[0.8, 0.05, 0.05]
+            )
+            builder.initial_pose = sapien.Pose([0, 0, 1])
+            actor = builder.build()
+
+            physx.gpu_init()
+            camera_body = camera_rig.find_component_by_type(
+                sapien.physx.PhysxRigidDynamicComponent
+            )
+            camera.set_gpu_pose_batch_index(camera_body.gpu_pose_index)
+
+            body = actor.find_component_by_type(
+                sapien.physx.PhysxRigidDynamicComponent
+            )
+            render_body = actor.find_component_by_type(
+                sapien.render.RenderBodyComponent
+            )
+            for shape in render_body.render_shapes:
+                shape.set_gpu_pose_batch_index(body.gpu_pose_index)
+
+            group = sapien.render.RenderSystemGroup(
+                [main_render, shared_render]
+            )
+            camera_group = group.create_camera_group([camera], ["Color"])
+            group.set_cuda_poses(physx.cuda_rigid_body_data)
+
+            def capture(*, fetch_physics: bool = True) -> np.ndarray:
+                if fetch_physics:
+                    physx.gpu_fetch_rigid_dynamic_data()
+                group.update_render()
+                camera_group.take_picture()
+                camera.take_picture()
+                return camera.get_picture("Color").copy()
+
+            def red_centroid(image: np.ndarray) -> np.ndarray:
+                mask = (image[..., 0] > image[..., 1] + 0.2) & (
+                    image[..., 0] > 0.2
+                )
+                coordinates = np.argwhere(mask)
+                self.assertGreater(coordinates.shape[0], 20)
+                return coordinates.mean(axis=0)
+
+            before = capture()
+
+            # Move only the CUDA pose consumed by RenderSystemGroup. The CPU
+            # entity pose intentionally remains unchanged, so the image shift
+            # directly verifies the RT camera buffer update.
+            camera_pose = np.array(
+                [-3.0, 0.75, 1.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float32
+            )
+            pose_buffer = physx.cuda_rigid_body_data
+            camera_pose_ptr = (
+                pose_buffer.ptr
+                + camera_body.gpu_pose_index * pose_buffer.strides[0]
+            )
+            cuda_status = cudart.cudaMemcpy(
+                ctypes.c_void_p(camera_pose_ptr),
+                ctypes.c_void_p(camera_pose.ctypes.data),
+                camera_pose.nbytes,
+                CUDA_MEMCPY_HOST_TO_DEVICE,
+            )
+            self.assertEqual(cuda_status, 0)
+
+            shifted_camera = capture(fetch_physics=False)
+            camera_image_shift = red_centroid(shifted_camera) - red_centroid(
+                before
+            )
+            self.assertGreater(abs(float(camera_image_shift[1])), 8.0)
+            self.assertLess(abs(float(camera_image_shift[0])), 3.0)
+
+            for _ in range(180):
+                physx.step()
+            after = capture()
+
+            before_center = before[32, 32]
+            after_center = after[32, 32]
+            self.assertGreater(before_center[0] - before_center[1], 0.3)
+            self.assertLess(after_center[0] - after_center[1], 0.1)
+            self.assertGreater(float(np.abs(before - after).mean()), 0.01)
         finally:
             sapien.render.set_camera_shader_dir("default")
 

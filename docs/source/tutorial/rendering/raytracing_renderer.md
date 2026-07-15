@@ -138,3 +138,39 @@ color = camera.get_picture("Color")
 
 Example result with the ray-tracing shader pack
 :::
+
+## Batched GPU rendering
+
+The `"rt"` shader pack supports `sapien.render.RenderSystemGroup`, including
+shared render scenes, rigid-body poses sourced directly from PhysX GPU, and
+mounted cameras with GPU pose batch indices. Configure the RT shader before
+creating cameras, then use the same batched workflow as rasterization:
+
+```python
+sapien.render.set_camera_shader_dir("rt")
+
+# After physx_system.gpu_init():
+for shape in render_body.render_shapes:
+   shape.set_gpu_pose_batch_index(rigid_body.gpu_pose_index)
+
+# For a camera mounted on a GPU rigid body or articulation link:
+camera.set_gpu_pose_batch_index(camera_mount.gpu_pose_index)
+
+group = sapien.render.RenderSystemGroup(render_systems)
+camera_group = group.create_camera_group([camera], ["Color"])
+group.set_cuda_poses(physx_system.cuda_rigid_body_data)
+
+physx_system.gpu_fetch_rigid_dynamic_data()
+group.update_render()  # updates RT instance transforms and the TLAS
+camera_group.take_picture()
+color = camera_group.get_picture_cuda("Color")
+```
+
+Each rigid-pose update requires a TLAS update and resets RT accumulation, so
+this path is more expensive than updating raster vertex transforms. SAPIEN does
+not currently provide deformable-body physics, although the separate
+render-only `RenderCudaMeshComponent` API exposes mutable CUDA mesh vertices.
+Supporting that component in batched RT would require synchronized BLAS
+updates or rebuilds, aggregation across shared `SceneGroup` scenes, and an RT
+accumulation reset after vertex changes; updating rigid TLAS instance
+transforms alone is not sufficient.

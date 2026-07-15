@@ -5,6 +5,10 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
+### Added
+
+- Added ray-tracing shader support to `RenderSystemGroup` CUDA pose updates, including mounted-camera buffers, rigid-instance transforms, per-frame TLAS updates, and accumulation resets.
+
 ### Changed
 
 - Unified rasterization and ray-tracing color management around an ACES-fitted, sRGB-encoded default while retaining gamma and plain sRGB display modes.
@@ -20,6 +24,7 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 - Fixed ray-tracing alpha accumulating once per bounce, a GGX lower-hemisphere test that could never reject invalid samples, and biased directional-light softness sampling.
 - Fixed `svulkan2` crashes when clearing an environment map, Vec4 property type validation, the RT post-processing descriptor-pool type, and missing barriers between compute post-processing passes.
 - Fixed batched RT cameras building resources from their original scene instead of the assigned `SceneGroup`, including missing BLAS initialization and light data from shared scenes.
+- Fixed CUDA batched RT support forcing ordinary RT camera and TLAS uploads through synchronous device-local staging copies.
 
 ## 3.0.0+fork.10 - 2026-07-10
 

@@ -9,6 +9,7 @@
 #include <numbers>
 #include <svulkan2/renderer/renderer.h>
 #include <svulkan2/renderer/renderer_base.h>
+#include <svulkan2/renderer/rt_renderer.h>
 
 #ifdef near
 #undef near
@@ -222,7 +223,9 @@ void SapienRenderCameraComponent::setAutoUpload(bool enable) {
 
   auto system = scene->getSapienRendererSystem();
   if (auto r = dynamic_cast<svulkan2::renderer::Renderer *>(&mCamera->getRenderer())) {
-    // TODO: do it for rt renderer
+    r->setAutoUploadEnabled(enable);
+  } else if (auto r =
+                 dynamic_cast<svulkan2::renderer::RTRenderer *>(&mCamera->getRenderer())) {
     r->setAutoUploadEnabled(enable);
   }
 }
@@ -492,22 +495,32 @@ CudaArrayHandle SapienRenderCameraComponent::getCudaBuffer() {
         "failed to access camera cuda buffer: the camera is not initialized on the GPU.");
   }
 
+  svulkan2::core::Buffer *buffer{};
   if (auto r = dynamic_cast<svulkan2::renderer::Renderer *>(&mCamera->getRenderer())) {
-    auto &buffer = r->getCameraBuffer();
-#ifdef SAPIEN_CUDA
-    return CudaArrayHandle{.shape = {static_cast<int>(buffer.getSize() / sizeof(float))},
-                           .strides = {4},
-                           .type = "f4",
-                           .cudaId = buffer.getCudaDeviceId(),
-                           .ptr = buffer.getCudaPtr()};
-#else
-    return CudaArrayHandle{.shape = {static_cast<int>(buffer.getSize() / sizeof(float))},
-                           .strides = {4},
-                           .type = "f4"};
-#endif
+    buffer = &r->getCameraBuffer();
+  } else if (auto r =
+                 dynamic_cast<svulkan2::renderer::RTRenderer *>(&mCamera->getRenderer())) {
+    if (!r->getExternalCameraUpdatesEnabled()) {
+      throw std::runtime_error(
+          "RT camera CUDA buffer is only available for cameras with GPU pose batch indices in "
+          "a RenderSystemGroup");
+    }
+    buffer = &r->getCameraBuffer();
   } else {
-    throw std::runtime_error("only rasterization renderer supports camera cuda buffer.");
+    throw std::runtime_error("renderer does not support a camera CUDA buffer");
   }
+
+#ifdef SAPIEN_CUDA
+  return CudaArrayHandle{.shape = {static_cast<int>(buffer->getSize() / sizeof(float))},
+                         .strides = {4},
+                         .type = "f4",
+                         .cudaId = buffer->getCudaDeviceId(),
+                         .ptr = buffer->getCudaPtr()};
+#else
+  return CudaArrayHandle{.shape = {static_cast<int>(buffer->getSize() / sizeof(float))},
+                         .strides = {4},
+                         .type = "f4"};
+#endif
 }
 
 void SapienRenderCameraComponent::setGpuBatchedPoseIndex(int index) { mGpuPoseIndex = index; }

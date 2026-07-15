@@ -35,11 +35,34 @@ inline CUDA_CALLABLE void PoseToMatrix(float *result, Pose const &pose, Vec3 con
   result[14] = pose.p.z;
   result[15] = 1.f;
 }
+
+inline CUDA_CALLABLE void PoseToRTInstance(float *result, Pose const &pose, Vec3 const &scale) {
+  Vec3 c0 = pose.q.rotate(Vec3(1, 0, 0));
+  Vec3 c1 = pose.q.rotate(Vec3(0, 1, 0));
+  Vec3 c2 = pose.q.rotate(Vec3(0, 0, 1));
+
+  // VkTransformMatrixKHR is a row-major 3x4 affine transform.
+  result[0] = c0.x * scale.x;
+  result[1] = c1.x * scale.y;
+  result[2] = c2.x * scale.z;
+  result[3] = pose.p.x;
+
+  result[4] = c0.y * scale.x;
+  result[5] = c1.y * scale.y;
+  result[6] = c2.y * scale.z;
+  result[7] = pose.p.y;
+
+  result[8] = c0.z * scale.x;
+  result[9] = c1.z * scale.y;
+  result[10] = c2.z * scale.z;
+  result[11] = pose.p.z;
+}
 } // namespace
 
 __global__ void update_object_transforms_kernel(
     float *__restrict__ *__restrict__ scene_transform_buffers, // output buffers
-    int transform_stride, RenderShapeData *__restrict__ shapes,
+    float *__restrict__ *__restrict__ rt_instance_buffers, int transform_stride,
+    RenderShapeData *__restrict__ shapes,
     float *__restrict__ poses, // parent pose array
     int pose_stride, int count) {
   int g = blockIdx.x * blockDim.x + threadIdx.x;
@@ -64,6 +87,12 @@ __global__ void update_object_transforms_kernel(
   int transform_index = shape.transformIndex;
 
   PoseToMatrix(scene_transform_buffers[scene_index] + transform_index * transform_stride, p, scale);
+
+  float *rt_instances = rt_instance_buffers[scene_index];
+  if (rt_instances) {
+    constexpr int RT_INSTANCE_STRIDE = 16;
+    PoseToRTInstance(rt_instances + transform_index * RT_INSTANCE_STRIDE, p, scale);
+  }
 }
 
 __global__ void update_camera_transforms_kernel(CameraData *cameras, float *poses, int pose_stride,
@@ -94,12 +123,13 @@ __global__ void update_camera_transforms_kernel(CameraData *cameras, float *pose
 
 constexpr int BLOCK_SIZE = 128;
 
-void update_object_transforms(float **scene_transform_buffers, int transform_stride,
-                              RenderShapeData *render_shapes, float *poses, int pose_stride,
-                              int count, CUstream_st *stream) {
+void update_object_transforms(float **scene_transform_buffers, float **rt_instance_buffers,
+                              int transform_stride, RenderShapeData *render_shapes, float *poses,
+                              int pose_stride, int count, CUstream_st *stream) {
   update_object_transforms_kernel<<<(count + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE, 0,
                                     (cudaStream_t)stream>>>(
-      scene_transform_buffers, transform_stride, render_shapes, poses, pose_stride, count);
+      scene_transform_buffers, rt_instance_buffers, transform_stride, render_shapes, poses,
+      pose_stride, count);
 }
 
 void update_camera_transforms(CameraData *cameras, float *poses, int pose_stride, int count,

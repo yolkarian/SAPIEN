@@ -73,7 +73,9 @@ private:
 
   int mShapeCount{0};
   CudaArray mCudaSceneTransformRefBuffer;
+  CudaArray mCudaRTInstanceRefBuffer;
   CudaArray mCudaShapeDataBuffer;
+  std::vector<bool> mRTSceneEnabled;
 
   int mCameraCount{0};
   CudaArray mCudaCameraDataBuffer;

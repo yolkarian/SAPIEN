@@ -11,6 +11,7 @@
 - Read state only after the needed `gpu_fetch_*()` calls.
 - `PhysxGpuSystem.sync_poses_gpu_to_cpu()` downloads all GPU poses to CPU SAPIEN entities; use it only for viewer/debug paths that need CPU entity poses, never for training, reset, step, sensors, video, or offscreen capture.
 - For direct GPU camera/offscreen rendering, use GPU pose batch indices with `sapien.render.RenderSystemGroup.set_cuda_poses(physx_system.cuda_rigid_body_data)` and read images through `get_picture_cuda(...)` instead of syncing poses to CPU.
+- `RenderSystemGroup` supports both raster and `"rt"` camera shader packs. RT rigid-pose updates also update the TLAS and reset accumulation. SAPIEN has no deformable-body physics, but it does expose a render-only `RenderCudaMeshComponent`; supporting that component in batched RT additionally requires synchronized BLAS updates or rebuilds, shared-`SceneGroup` aggregation, and accumulation resets after vertex changes.
 - Cache `sapien.CudaArray.torch()` views once after `gpu_init()`; do not recreate them in loops.
 - Cache common GPU indices once after `gpu_init()`:
   - `sapien.physx.PhysxArticulation.get_gpu_index()`

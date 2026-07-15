@@ -575,7 +575,7 @@ void init_sapien_renderer(py::module &sapien) {
       .def("update_render", &BatchedRenderSystem::update,
            R"doc(
 This function performs CUDA operations to transfer poses from the CUDA buffer provided by :func:`set_cuda_poses` into render systems.
-It updates the transformation matrices of objects and cameras.
+It updates the transformation matrices of objects and cameras. With a ray-tracing shader pack, it also updates rigid TLAS instances and resets accumulation.
 
 This function waits for any pending CUDA operations on cuda stream provided by :func:`set_cuda_stream`.
 )doc");

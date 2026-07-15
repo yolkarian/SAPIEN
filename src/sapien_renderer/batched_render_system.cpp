@@ -5,6 +5,7 @@
 #include "sapien/sapien_renderer/render_body_component.h"
 #include <svulkan2/renderer/renderer.h>
 #include <svulkan2/renderer/renderer_base.h>
+#include <svulkan2/renderer/rt_renderer.h>
 #include <svulkan2/scene/scene_group.h>
 
 #ifdef SAPIEN_CUDA
@@ -310,6 +311,9 @@ void BatchedRenderSystem::init() {
 #endif
   mCudaShapeDataBuffer = CudaArray::FromData(allShapeData);
   mCudaSceneTransformRefBuffer = CudaArray::FromData(sceneTransformRefs);
+  mCudaRTInstanceRefBuffer =
+      CudaArray::FromData(std::vector<void *>(mRenderScenes.size(), nullptr));
+  mRTSceneEnabled.assign(mRenderScenes.size(), false);
 
   // create semaphore
   auto context = SapienRenderEngine::Get()->getContext();
@@ -357,8 +361,34 @@ std::shared_ptr<BatchedCamera> BatchedRenderSystem::createCameraBatch(
     }
   }
 
+#ifdef SAPIEN_CUDA
+  for (auto &camera : cameras) {
+    if (auto renderer = dynamic_cast<svulkan2::renderer::RTRenderer *>(
+            &camera->getInternalRenderer())) {
+      renderer->setExternalTransformUpdatesEnabled(true);
+      renderer->setExternalCameraUpdatesEnabled(camera->getGpuBatchedPoseIndex() >= 0);
+    }
+  }
+#endif
+
   auto cameraBatch = std::make_shared<BatchedCamera>(cameras, renderTargets);
   cameraBatch->setCudaStream(mCudaStream);
+
+  static_assert(sizeof(vk::AccelerationStructureInstanceKHR) == sizeof(float) * 16);
+  std::vector<void *> rtInstanceRefs(mRenderScenes.size(), nullptr);
+  mRTSceneEnabled.assign(mRenderScenes.size(), false);
+  for (uint32_t i = 0; i < mRenderScenes.size(); ++i) {
+    auto tlas = mRenderScenes[i]->getTLAS();
+    if (!tlas) {
+      continue;
+    }
+#ifdef SAPIEN_CUDA
+    auto &buffer = tlas->getInstanceBuffer();
+    rtInstanceRefs[i] = buffer.getCudaPtr();
+    mRTSceneEnabled[i] = true;
+#endif
+  }
+  mCudaRTInstanceRefBuffer = CudaArray::FromData(rtInstanceRefs);
 
   mCameraBatches.push_back(cameraBatch);
 
@@ -415,14 +445,19 @@ void BatchedRenderSystem::update() {
   // upload data
 #ifdef SAPIEN_CUDA
   update_object_transforms(
-      (float **)mCudaSceneTransformRefBuffer.ptr, mTransformBufferElementByteOffset / 4,
-      (RenderShapeData *)mCudaShapeDataBuffer.ptr, (float *)mCudaPoseHandle.ptr,
-      mCudaPoseHandle.shape.at(1), mShapeCount, mCudaStream);
+      (float **)mCudaSceneTransformRefBuffer.ptr, (float **)mCudaRTInstanceRefBuffer.ptr,
+      mTransformBufferElementByteOffset / 4, (RenderShapeData *)mCudaShapeDataBuffer.ptr,
+      (float *)mCudaPoseHandle.ptr, mCudaPoseHandle.shape.at(1), mShapeCount, mCudaStream);
 
   update_camera_transforms((CameraData *)mCudaCameraDataBuffer.ptr, (float *)mCudaPoseHandle.ptr,
                            mCudaPoseHandle.shape.at(1), mCameraCount, mCudaStream);
 #endif
-  // TODO: uplaod camera
+
+  for (uint32_t i = 0; i < mRenderScenes.size(); ++i) {
+    if (mRTSceneEnabled[i]) {
+      mRenderScenes[i]->updateRenderVersion();
+    }
+  }
 
   // sync with renderer
   notifyUpdate();
