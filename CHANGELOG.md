@@ -5,6 +5,10 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
+No notable changes yet.
+
+## 3.0.0+fork.11 - 2026-07-15
+
 ### Added
 
 - Added ray-tracing shader support to `RenderSystemGroup` CUDA pose updates, including mounted-camera buffers, rigid-instance transforms, per-frame TLAS updates, and accumulation resets.
