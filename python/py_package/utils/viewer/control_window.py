@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 import numpy as np
 import sapien
@@ -13,6 +13,8 @@ from .plugin import Plugin, copy_to_clipboard
 
 
 class ControlWindow(Plugin):
+    focused_entity: Optional[sapien.Entity]
+
     def __init__(self):
         self.reset()
 
@@ -539,7 +541,7 @@ class ControlWindow(Plugin):
 
         self.ui_window = None
         self.focused_camera: sapien.CameraEntity = None
-        self.focused_entity: sapien.Entity = None
+        self.focused_entity = None
 
         self.ui_camera = None
         self.ui_camera_image = None
@@ -798,10 +800,6 @@ class ControlWindow(Plugin):
     def orthographic(self):
         return self.window.camera_mode == "orthographic"
 
-    @property
-    def _perspective(self):
-        return not self.orthographic
-
     @orthographic.setter
     def orthographic(self, v):
         if v:
@@ -812,6 +810,10 @@ class ControlWindow(Plugin):
             self.window.set_camera_parameters(
                 self.window.near, self.window.far, np.pi / 3
             )
+
+    @property
+    def _perspective(self):
+        return not self.orthographic
 
     @property
     def ortho_scale(self):

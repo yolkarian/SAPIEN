@@ -325,7 +325,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper source; verify pybind/C++ when behavior matters.
 
 - Preferred import prefix: `sapien.wrapper.pinocchio_model`
-- Source files: `python/py_package/wrapper/pinocchio_model.py`
+- Source files: `python/py_package/wrapper/pinocchio_model.py`, `python/py_package/wrapper/pinocchio_model.pyi`
 
 ## Class index
 
@@ -350,15 +350,15 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `compute_generalized_mass_matrix` | method | `compute_generalized_mass_matrix(self, qpos)` | Compute the generalized mass matrix. |  |
 | `compute_inverse_dynamics` | method | `compute_inverse_dynamics(self, qpos, qvel, qacc)` |  |  |
 | `compute_inverse_kinematics` | method | `compute_inverse_kinematics(self, link_index, pose, initial_qpos=None, active_qmask=None, eps=0.0001, max_iterations=1000, dt=0.1, damp=1e-06)` | Compute inverse kinematics with CLIK algorithm. Details see https://gepettoweb.laas.fr/doc/stack-of-tasks/pinocchio/master/doxygen-html/md_doc_b-examples_i-inverse-kin... |  |
-| `compute_single_link_local_jacobian` | method | `compute_single_link_local_jacobian(self, qpos, index)` | Compute the link(body) Jacobian for a single link. It is faster than compute_full_jacobian followed by get_link_jacobian |  |
-| `get_link_jacobian` | method | `get_link_jacobian(self, index, local=False)` | Given link index, get the Jacobian. Must be called after compute_full_jacobian. Args: link_index: index of the link local: True for world(spatial) frame; False for lin... |  |
-| `get_link_pose` | method | `get_link_pose(self, index)` | Given link index, get link pose (in articulation base frame) from forward kinematics. Must be called after compute_forward_kinematics. |  |
+| `compute_single_link_local_jacobian` | method | `compute_single_link_local_jacobian(self, qpos, link_index)` | Compute the link(body) Jacobian for a single link. It is faster than compute_full_jacobian followed by get_link_jacobian |  |
+| `get_link_jacobian` | method | `get_link_jacobian(self, link_index, local=False)` | Given link index, get the Jacobian. Must be called after compute_full_jacobian. `local=True` selects the link (body) frame; otherwise the world (spatial) frame is used. |  |
+| `get_link_pose` | method | `get_link_pose(self, link_index)` | Given link index, get link pose (in articulation base frame) from forward kinematics. Must be called after compute_forward_kinematics. |  |
 | `get_random_qpos` | method | `get_random_qpos(self)` |  |  |
 | `q_p2s` | method | `q_p2s(self, qint)` |  |  |
 | `q_s2p` | method | `q_s2p(self, qext)` |  |  |
 | `set_joint_order` | method | `set_joint_order(self, names)` |  |  |
 | `set_link_order` | method | `set_link_order(self, names)` |  |  |
-| `__init__` | method | `__init__(self, urdf_string, gravity)` |  |  |
+| `__init__` | method | `__init__(self, urdf, gravity)` |  |  |
 
 ## Utils re-exports
 

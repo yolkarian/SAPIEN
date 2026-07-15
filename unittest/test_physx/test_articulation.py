@@ -1,4 +1,7 @@
-import os
+import importlib.util
+import inspect
+import sys
+import types
 import unittest
 from pathlib import Path
 
@@ -233,8 +236,31 @@ class TestArticulation(unittest.TestCase):
         model.compute_forward_kinematics(q)
         for i, l in enumerate(robot.links):
             self.assertTrue(
-                pose_equal(l.pose, model.get_link_pose(i), rtol=1e-5, atol=1e-5)
+                pose_equal(
+                    l.pose,
+                    model.get_link_pose(link_index=i),
+                    rtol=1e-5,
+                    atol=1e-5,
+                )
             )
+
+        link_index = len(robot.links) - 1
+        target_pose = model.get_link_pose(link_index=link_index)
+        ik_qpos, ik_success, ik_error = model.compute_inverse_kinematics(
+            link_index=link_index, pose=target_pose, initial_qpos=q
+        )
+        self.assertTrue(ik_success)
+        self.assertTrue(np.allclose(ik_qpos, q, rtol=1e-5, atol=1e-5))
+        self.assertEqual(np.asarray(ik_error).shape, (6,))
+
+        model.compute_full_jacobian(q)
+        cached_jacobian = model.get_link_jacobian(link_index=link_index, local=True)
+        single_link_jacobian = model.compute_single_link_local_jacobian(
+            qpos=q, link_index=link_index
+        )
+        self.assertTrue(
+            np.allclose(cached_jacobian, single_link_jacobian, rtol=1e-5, atol=1e-5)
+        )
 
         self.assertTrue(
             np.allclose(
@@ -244,6 +270,43 @@ class TestArticulation(unittest.TestCase):
                 atol=1e-5,
             )
         )
+
+    def test_python_pinocchio_keyword_arguments(self):
+        from sapien.wrapper import pinocchio_model
+
+        module_name = "sapien.wrapper._pinocchio_model_test"
+        original_pinocchio = sys.modules.get("pinocchio")
+        original_create_model = sapien.physx.PhysxArticulation.__dict__[
+            "create_pinocchio_model"
+        ]
+        try:
+            sys.modules["pinocchio"] = types.ModuleType("pinocchio")
+            spec = importlib.util.spec_from_file_location(
+                module_name, pinocchio_model.__file__
+            )
+            assert spec is not None and spec.loader is not None
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            spec.loader.exec_module(module)
+
+            model_type = module.PinocchioModel
+            inspect.signature(model_type).bind(urdf="<robot/>", gravity=[0, 0, -9.81])
+            inspect.signature(model_type.get_link_pose).bind(None, link_index=0)
+            inspect.signature(model_type.get_link_jacobian).bind(
+                None, link_index=0, local=True
+            )
+            inspect.signature(model_type.compute_single_link_local_jacobian).bind(
+                None, qpos=np.zeros(1), link_index=0
+            )
+        finally:
+            sapien.physx.PhysxArticulation.create_pinocchio_model = (
+                original_create_model
+            )
+            sys.modules.pop(module_name, None)
+            if original_pinocchio is None:
+                sys.modules.pop("pinocchio", None)
+            else:
+                sys.modules["pinocchio"] = original_pinocchio
 
     def test_dense_jacobian(self):
         self._check_dense_jacobian(fix_root_link=True)

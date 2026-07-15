@@ -28,10 +28,10 @@ class RenderBodyComponent(sapien.pysapien.Component):
     def set_property(self, name: str, value: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple) -> None:
         ...
     @typing.overload
-    def set_property(self, name: str, value: float) -> None:
+    def set_property(self, name: str, value: int) -> None:
         ...
     @typing.overload
-    def set_property(self, name: str, value: int) -> None:
+    def set_property(self, name: str, value: float) -> None:
         ...
     def set_texture(self, name: str, texture: RenderTexture) -> None:
         ...
@@ -131,10 +131,10 @@ class RenderCameraComponent(sapien.pysapien.Component):
     def set_principal_point(self, cx: float, cy: float) -> None:
         ...
     @typing.overload
-    def set_property(self, name: str, value: float) -> None:
+    def set_property(self, name: str, value: int) -> None:
         ...
     @typing.overload
-    def set_property(self, name: str, value: int) -> None:
+    def set_property(self, name: str, value: float) -> None:
         ...
     def set_skew(self, skew: float) -> None:
         ...
@@ -288,7 +288,7 @@ class RenderLightComponent(sapien.pysapien.Component):
     def global_pose(self) -> sapien.pysapien.Pose:
         ...
 class RenderMaterial:
-    __hash__: typing.ClassVar[None] = None
+    __hash__: typing.ClassVar[None] = None  # type: ignore[assignment]
     base_color: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(4)]
     base_color_texture: RenderTexture2D
     diffuse_texture = ...
@@ -304,7 +304,7 @@ class RenderMaterial:
     transmission: float
     transmission_roughness: float
     transmission_texture: RenderTexture2D
-    def __eq__(self, arg0: RenderMaterial) -> bool:
+    def __eq__(self, arg0: RenderMaterial) -> bool:  # type: ignore[override]
         ...
     def __init__(self, emission: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(4)] = [0.0, 0.0, 0.0, 0.0], base_color: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(4)] = [1.0, 1.0, 1.0, 1.0], specular: float = 0.0, roughness: float = 1.0, metallic: float = 0.0, transmission: float = 0.0, ior: float = 1.4500000476837158, transmission_roughness: float = 0.0) -> None:
         ...
@@ -555,8 +555,8 @@ class RenderShapeTriangleMesh(RenderShape):
     def filename(self) -> str:
         ...
 class RenderShapeTriangleMeshPart:
-    __hash__: typing.ClassVar[None] = None
-    def __eq__(self, arg0: RenderShapeTriangleMeshPart) -> bool:
+    __hash__: typing.ClassVar[None] = None  # type: ignore[assignment]
+    def __eq__(self, arg0: RenderShapeTriangleMeshPart) -> bool:  # type: ignore[override]
         ...
     def get_cuda_triangles(self) -> sapien.pysapien.CudaArray:
         ...
@@ -672,8 +672,8 @@ class RenderSystemGroup:
         This function waits for any pending CUDA operations on cuda stream provided by :func:`set_cuda_stream`.
         """
 class RenderTexture:
-    __hash__: typing.ClassVar[None] = None
-    def __eq__(self, arg0: RenderTexture) -> bool:
+    __hash__: typing.ClassVar[None] = None  # type: ignore[assignment]
+    def __eq__(self, arg0: RenderTexture) -> bool:  # type: ignore[override]
         ...
     def __init__(self, array: numpy.ndarray[typing.Any, numpy.dtype[typing.Any]] | list | tuple, dim: int, format: str, mipmap_levels: int = 1, filter_mode: typing.Literal['nearest', 'linear'] = 'linear', address_mode: typing.Literal['repeat', 'border', 'edge', 'mirror'] = 'repeat', srgb: bool = False) -> None:
         ...
@@ -725,8 +725,8 @@ class RenderTexture:
     def width(self) -> int:
         ...
 class RenderTexture2D:
-    __hash__: typing.ClassVar[None] = None
-    def __eq__(self, arg0: RenderTexture2D) -> bool:
+    __hash__: typing.ClassVar[None] = None  # type: ignore[assignment]
+    def __eq__(self, arg0: RenderTexture2D) -> bool:  # type: ignore[override]
         ...
     @typing.overload
     def __init__(self, array: numpy.ndarray[typing.Any, numpy.dtype[typing.Any]] | list | tuple, format: str, mipmap_levels: int = 1, filter_mode: typing.Literal['nearest', 'linear'] = 'linear', address_mode: typing.Literal['repeat', 'border', 'edge', 'mirror'] = 'repeat', srgb: bool = False) -> None:
@@ -890,10 +890,10 @@ class RenderWindow:
     def set_camera_position(self, position: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] | list[float] | tuple) -> None:
         ...
     @typing.overload
-    def set_camera_property(self, key: str, value: float) -> None:
+    def set_camera_property(self, key: str, value: int) -> None:
         ...
     @typing.overload
-    def set_camera_property(self, key: str, value: int) -> None:
+    def set_camera_property(self, key: str, value: float) -> None:
         ...
     def set_camera_rotation(self, quat: numpy.ndarray[typing.Literal[4], numpy.dtype[numpy.float32]] | list[float] | tuple) -> None:
         ...

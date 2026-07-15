@@ -12,10 +12,10 @@ from sapien.pysapien import math as math
 from sapien.pysapien import profile as profile
 from sapien.pysapien import set_log_level as set_log_level
 from sapien.pysapien.physx import PhysxSceneConfig as SceneConfig
-from sapien.pysapien_pinocchio import PinocchioModel as PinocchioModel
 from sapien.wrapper.actor_builder import ActorBuilder as ActorBuilder
 from sapien.wrapper.articulation_builder import ArticulationBuilder as ArticulationBuilder
 from sapien.wrapper.engine import Engine as Engine
+from sapien.wrapper.pinocchio_model import PinocchioModel as PinocchioModel
 from sapien.wrapper.renderer import SapienRenderer as SapienRenderer
 from sapien.wrapper.scene import Scene as Scene
 from sapien.wrapper.scene import Widget as Widget
@@ -27,7 +27,6 @@ from . import asset as asset
 from . import internal_renderer as internal_renderer
 from . import physx as physx
 from . import pysapien as pysapien
-from . import pysapien_pinocchio as pysapien_pinocchio
 from . import render as render
 from . import utils as utils
 from . import version as version
@@ -56,7 +55,6 @@ __all__ = [
     "physx",
     "profile",
     "pysapien",
-    "pysapien_pinocchio",
     "render",
     "set_log_level",
     "simsense",

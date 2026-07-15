@@ -292,8 +292,9 @@ PYBIND11_MODULE(pysapien_pinocchio, m) {
       py::class_<PinocchioModel>(m, "PinocchioModel");
   PyPinocchioModel
       .def(py::init([](std::string urdf, Eigen::Vector3d gravity) {
-        return PinocchioModel::fromURDFXML(urdf, gravity);
-      }))
+             return PinocchioModel::fromURDFXML(urdf, gravity);
+           }),
+           py::arg("urdf"), py::arg("gravity"))
       .def("set_link_order", &PinocchioModel::setLinkOrder)
       .def("set_joint_order", &PinocchioModel::setJointOrder)
       .def("compute_forward_kinematics", &PinocchioModel::computeForwardKinematics,
@@ -319,7 +320,7 @@ Args:
 Returns:
     result: qpos from IK
     success: whether IK is successful
-    error: se3 norm error
+    error: SE(3) error vector for the best result
 )doc",
            py::arg("link_index"), py::arg("pose"), py::arg("initial_qpos") = Eigen::VectorXd{},
            py::arg("active_qmask") = Eigen::VectorXi{}, py::arg("eps") = 1e-4,
@@ -341,7 +342,7 @@ Given link index, get the Jacobian. Must be called after compute_full_jacobian.
 
 Args:
   link_index: index of the link
-  local: True for world(spatial) frame; False for link(body) frame
+  local: True for link (body) frame; False for world (spatial) frame
 )doc",
            py::arg("link_index"), py::arg("local") = false)
       .def("compute_single_link_local_jacobian", &PinocchioModel::computeSingleLinkLocalJacobian,

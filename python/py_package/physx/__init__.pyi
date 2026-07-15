@@ -2,7 +2,6 @@ from __future__ import annotations
 import numpy
 import pybind11_stubgen.typing_ext
 import sapien.pysapien
-import sapien.pysapien_pinocchio
 import typing
 
 M = typing.TypeVar("M", bound=int)

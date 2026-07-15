@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import List, Optional
 
 import numpy as np
 import sapien
@@ -68,7 +69,7 @@ class Viewer:
 
         resolution = np.array(resolutions).flatten()[:2]
 
-        self.scenes = []
+        self.scenes: List[Scene] = []
 
         self.window = RenderWindow(*resolution, self.shader_dir)
         self.window.set_focus_callback(self.focus_change)
@@ -87,7 +88,7 @@ class Viewer:
         return self.window._internal_scene
 
     @property
-    def scene(self) -> sapien.Scene:
+    def scene(self) -> Optional[Scene]:
         if len(self.scenes) == 1:
             return self.scenes[0]
         return None
@@ -321,7 +322,7 @@ class Viewer:
         self.update_bounding_box(aabb, pose, half_size)
 
     @property
-    def control_window(self) -> ControlWindow:
+    def control_window(self) -> Optional[ControlWindow]:
         for plugin in self.plugins:
             if isinstance(plugin, ControlWindow):
                 return plugin

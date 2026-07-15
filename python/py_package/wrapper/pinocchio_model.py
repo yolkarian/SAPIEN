@@ -9,8 +9,8 @@ try:
     import pinocchio
 
     class PinocchioModel:
-        def __init__(self, urdf_string, gravity):
-            self.model: pinocchio.Model = pinocchio.buildModelFromXML(urdf_string)
+        def __init__(self, urdf, gravity):
+            self.model: pinocchio.Model = pinocchio.buildModelFromXML(urdf)
             self.model.gravity.vector[:] = [*gravity, 0, 0, 0]
             self.data = pinocchio.Data(self.model)
 
@@ -104,12 +104,12 @@ try:
 
             pinocchio.forwardKinematics(self.model, self.data, self.q_s2p(qpos))
 
-        def get_link_pose(self, index):
+        def get_link_pose(self, link_index):
             """
             Given link index, get link pose (in articulation base frame) from forward kinematics. Must be called after compute_forward_kinematics.
             """
-            assert 0 <= index < len(self.link_id_to_frame_index)
-            frame = int(self.link_id_to_frame_index[index])
+            assert 0 <= link_index < len(self.link_id_to_frame_index)
+            frame = int(self.link_id_to_frame_index[link_index])
             parent_joint = self.model.frames[frame].parent
             link2joint = self.model.frames[frame].placement
             joint2world = self.data.oMi[parent_joint]
@@ -127,16 +127,16 @@ try:
             """
             pinocchio.computeJointJacobians(self.model, self.data, self.q_s2p(qpos))
 
-        def get_link_jacobian(self, index, local=False):
+        def get_link_jacobian(self, link_index, local=False):
             """
             Given link index, get the Jacobian. Must be called after compute_full_jacobian.
 
             Args:
               link_index: index of the link
-              local: True for world(spatial) frame; False for link(body) frame
+              local: True for link (body) frame; False for world (spatial) frame
             """
-            assert 0 <= index < len(self.link_id_to_frame_index)
-            frame = int(self.link_id_to_frame_index[index])
+            assert 0 <= link_index < len(self.link_id_to_frame_index)
+            frame = int(self.link_id_to_frame_index[link_index])
             parent_joint = self.model.frames[frame].parent
 
             link2joint = self.model.frames[frame].placement
@@ -151,12 +151,12 @@ try:
 
             return J[:, self.index_s2p]
 
-        def compute_single_link_local_jacobian(self, qpos, index):
+        def compute_single_link_local_jacobian(self, qpos, link_index):
             """
             Compute the link(body) Jacobian for a single link. It is faster than compute_full_jacobian followed by get_link_jacobian
             """
-            assert 0 <= index < len(self.link_id_to_frame_index)
-            frame = int(self.link_id_to_frame_index[index])
+            assert 0 <= link_index < len(self.link_id_to_frame_index)
+            frame = int(self.link_id_to_frame_index[link_index])
             joint = self.model.frames[frame].parent
             link2joint = self.model.frames[frame].placement
             J = pinocchio.computeJointJacobian(
@@ -219,7 +219,7 @@ try:
             Returns:
                 result: qpos from IK
                 success: whether IK is successful
-                error: se3 norm error
+                error: SE(3) error vector for the best result
             """
             assert 0 <= link_index < len(self.link_id_to_frame_index)
             if initial_qpos is None:
@@ -245,7 +245,8 @@ try:
             l2j = self.model.frames[frame].placement
             oMdes = l2w * l2j.inverse()
 
-            best_error = 1e10
+            best_error_norm = np.inf
+            best_error = np.zeros(6)
             best_q = np.array(q)
 
             for i in range(max_iterations):
@@ -253,9 +254,10 @@ try:
                 iMd = self.data.oMi[joint].actInv(oMdes)
                 err = pinocchio.log6(iMd).vector
                 err_norm = np.linalg.norm(err)
-                if err_norm < best_error:
-                    best_error = err_norm
-                    best_q = q
+                if err_norm < best_error_norm:
+                    best_error_norm = err_norm
+                    best_error = np.array(err)
+                    best_q = np.array(q)
 
                 if err_norm < eps:
                     success = True
@@ -302,7 +304,7 @@ def _create_pinocchio_model(
     articulation: PhysxArticulation, gravity=[0, 0, -9.81]
 ) -> PinocchioModel:
     xml = export_kinematic_chain_urdf(articulation, force_fix_root=True)
-    model = PinocchioModel(xml, gravity)
+    model = PinocchioModel(urdf=xml, gravity=gravity)
     model.set_joint_order(
         [f"joint_{j.child_link.index}" for j in articulation.active_joints]
     )

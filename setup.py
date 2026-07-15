@@ -365,11 +365,18 @@ package_data = {
         "pysapien/render.pyi",
         "pysapien/math.pyi",
         "pysapien/internal_renderer.pyi",
+        "wrapper/pinocchio_model.pyi",
         "physx/__init__.pyi",
         "render/__init__.pyi",
         "internal_renderer/__init__.pyi",
     ],
 }
+
+exclude_package_data = {}
+if platform.system() == "Linux":
+    package_data["sapien"].append("pysapien_pinocchio.pyi")
+else:
+    exclude_package_data["sapien"] = ["pysapien_pinocchio.pyi"]
 
 
 if not args.pybind_only:
@@ -433,6 +440,7 @@ setup(
     url="https://sapien.ucsd.edu",
     project_urls={"Documentation": "https://sapien.ucsd.edu/docs"},
     package_data=package_data,
+    exclude_package_data=exclude_package_data,
     package_dir={"sapien": project_python_home_dir},
     scripts=["python/py_package/scripts/sapien"],
 )

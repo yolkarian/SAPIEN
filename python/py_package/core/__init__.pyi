@@ -24,7 +24,6 @@ from sapien import math as math
 from sapien import physx as physx
 from sapien import profile as profile
 from sapien import pysapien as pysapien
-from sapien import pysapien_pinocchio as pysapien_pinocchio
 from sapien import render as render
 from sapien import set_log_level as set_log_level
 from sapien import utils as utils
@@ -57,7 +56,6 @@ __all__ = [
     "physx",
     "profile",
     "pysapien",
-    "pysapien_pinocchio",
     "render",
     "set_log_level",
     "simsense",

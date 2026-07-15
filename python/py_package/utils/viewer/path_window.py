@@ -1,4 +1,5 @@
 import json
+from typing import Optional
 
 import numpy as np
 import sapien
@@ -78,7 +79,7 @@ class PathWindow(Plugin):
         self.show_curve()
 
     @property
-    def current_path(self) -> Path:
+    def current_path(self) -> Optional[Path]:
         if self._current_path_index < 0 or self._current_path_index >= len(self._paths):
             return None
 
