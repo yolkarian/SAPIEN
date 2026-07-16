@@ -22,6 +22,29 @@ class TestScene(unittest.TestCase):
         cam.take_picture()
         color = cam.get_picture("Color")
 
+    def test_default_raster_style(self) -> None:
+        sapien.render.set_camera_shader_dir("default")
+        scene = sapien.Scene()
+        scene.add_ground(0.0, render_half_size=[3.0, 3.0])
+
+        builder = scene.create_actor_builder()
+        builder.add_box_visual(half_size=[0.5, 0.5, 0.5])
+        box = builder.build_kinematic()
+        box.pose = sapien.Pose([0.0, 0.0, 0.5])
+
+        camera = scene.add_camera("camera", 96, 96, np.deg2rad(50), 0.05, 20)
+        camera.pose = sapien.Pose([-3.0, 0.0, 0.7])
+        camera.set_property("ambientOcclusionStrength", 0.65)
+        camera.set_property("ambientOcclusionRadius", 0.3)
+
+        scene.update_render()
+        camera.take_picture()
+        color = camera.get_picture("Color")
+
+        self.assertGreater(float(np.max(color[..., :3])), 0.1)
+        self.assertGreater(float(color[48, 48, 3]), 0.95)
+        self.assertGreater(float(np.std(color[60:, :, :3])), 0.005)
+
     def test_texture_respects_base_color_and_alpha(self) -> None:
         sapien.render.set_camera_shader_dir("default")
 

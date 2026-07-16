@@ -25,8 +25,10 @@ import sapien
 scene = sapien.Scene()
 scene.set_timestep(1 / 240)
 scene.add_ground(0)
-scene.set_ambient_light([0.4, 0.4, 0.4])
-scene.add_directional_light([1, -1, -1], [0.5, 0.5, 0.5])
+scene.set_ambient_light([0.12, 0.12, 0.12])
+scene.add_directional_light(
+   [1, -1, -1], [2.0, 1.9, 1.8], shadow=True
+)
 
 loader = scene.create_urdf_loader()
 loader.fix_root_link = True

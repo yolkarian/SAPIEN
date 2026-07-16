@@ -5,8 +5,8 @@ namespace sapien {
 namespace sapien_renderer {
 
 SapienRenderMaterial::SapienRenderMaterial()
-    : SapienRenderMaterial({0.f, 0.f, 0.f, 1.f}, {1.f, 1.f, 1.f, 1.f}, 0.f, 1.f, 0.f, 0.f, 1.45f,
-                           0.f) {}
+    : SapienRenderMaterial({0.f, 0.f, 0.f, 0.f}, {1.f, 1.f, 1.f, 1.f}, 0.5f, 0.45f, 0.f,
+                           0.f, 1.45f, 0.f) {}
 
 SapienRenderMaterial::SapienRenderMaterial(std::array<float, 4> emission,
                                            std::array<float, 4> baseColor, float fresnel,

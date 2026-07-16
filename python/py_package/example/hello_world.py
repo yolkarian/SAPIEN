@@ -25,9 +25,11 @@ def main():
     box = actor_builder.build(name="box")  # Add a box
     box.set_pose(sapien.Pose(p=[0, 0, 0.5]))
 
-    # Add some lights so that you can observe the scene
-    scene.set_ambient_light([0.5, 0.5, 0.5])
-    scene.add_directional_light([0, 1, -1], [0.5, 0.5, 0.5])
+    # Add a soft fill and a shadow-casting key light.
+    scene.set_ambient_light([0.12, 0.12, 0.12])
+    scene.add_directional_light(
+        [1, 1, -1], [2.0, 1.9, 1.8], shadow=True
+    )
 
     viewer = scene.create_viewer()
 

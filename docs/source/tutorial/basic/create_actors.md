@@ -42,7 +42,9 @@ box.set_pose(sapien.Pose(p=[0, 0, 0.5]))
 ```
 
 `Pose` stores a position `p` and a quaternion `q` in `wxyz` order. It can
-also be constructed from a 4x4 transformation matrix.
+also be constructed from a 4x4 transformation matrix. If a primitive visual
+omits `material`, SAPIEN uses a light blue-gray dielectric with moderate
+roughness and specular response instead of a flat white surface.
 
 ## Create a body from multiple primitives
 
@@ -91,7 +93,8 @@ Use `scene.add_heightfield` for large static z-up terrain. Rows map to +x,
 columns map to +y, and int16 sample values map to +z after `height_scale` is
 applied. When `render=True`, SAPIEN also creates a triangle-mesh render shape
 for visualization. In `PhysxGpuSystem` / Direct GPU API workflows, add the
-height field before `gpu_init()`.
+height field before `gpu_init()`. Ground planes and height fields use a subtle,
+mipmapped checker material by default; pass `render_material` to replace it.
 
 ```python
 import numpy as np

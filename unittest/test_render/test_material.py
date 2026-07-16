@@ -6,6 +6,14 @@ import sapien
 
 
 class TestMaterial(unittest.TestCase):
+    def test_defaults(self):
+        material = sapien.render.RenderMaterial()
+
+        self.assertTrue(np.allclose(material.base_color, [1.0, 1.0, 1.0, 1.0]))
+        self.assertAlmostEqual(material.specular, 0.5)
+        self.assertAlmostEqual(material.roughness, 0.45)
+        self.assertAlmostEqual(material.metallic, 0.0)
+
     def test_creation(self):
         emission = np.random.rand(4) + 1.0
         base_color = np.random.rand(4) + [1, 1, 1, 0]

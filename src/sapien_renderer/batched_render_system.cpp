@@ -225,13 +225,8 @@ void BatchedRenderSystem::init() {
       }
 
       auto group = std::make_shared<svulkan2::scene::SceneGroup>(scenes, transforms);
+      // The primary camera scene owns global ambient light; shared geometry must not multiply it.
       glm::vec4 ambient = system->getScene()->getAmbientLight();
-      for (auto &sharedSystem : mSharedSystems) {
-        if (sharedSystem != system) {
-          ambient += sharedSystem->getScene()->getAmbientLight();
-        }
-      }
-      group->setAmbientLight(ambient);
 
       auto environmentMap = system->getScene()->getEnvironmentMap();
       if (!environmentMap) {
@@ -242,6 +237,8 @@ void BatchedRenderSystem::init() {
           }
         }
       }
+      ambient.a = environmentMap ? 0.f : 1.f;
+      group->setAmbientLight(ambient);
       group->setEnvironmentMap(environmentMap);
       renderScene = group;
     }

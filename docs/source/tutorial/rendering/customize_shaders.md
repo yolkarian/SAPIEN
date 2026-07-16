@@ -73,6 +73,47 @@ The viewer's Render panel exposes the same controls for both rasterization and
 ray tracing. Ray-tracing `HdrColor` and `Radiance` targets remain linear; use
 `Color` when saving a display-ready image.
 
+## Default visual style
+
+A newly created render system has a neutral ambient fill of `[0.12, 0.12,
+0.12]`. When no environment map is assigned, the default raster shader derives
+a neutral studio environment from that fill. It provides image-based diffuse
+lighting, visible dielectric reflections, and a sky/ground background instead
+of sampling the renderer's black placeholder cubemap. Calling
+`scene.set_environment_map(...)` replaces this fallback.
+
+The default raster shader also applies screen-space ambient occlusion (SSAO) to
+indirect light. Its camera properties can be tuned per camera, or the effect
+can be disabled by setting its strength to zero:
+
+```python
+camera.set_property("ambientOcclusionStrength", 0.65)
+camera.set_property("ambientOcclusionRadius", 0.3)  # scene units
+# camera.set_property("ambientOcclusionStrength", 0.0)
+```
+
+SSAO supplies local contact shading, but cast shadows still require a light
+created with `shadow=True`. A useful starting point for a meter-scale robotics
+scene is:
+
+```python
+scene.set_ambient_light([0.12, 0.12, 0.12])
+scene.add_directional_light(
+   [1, 1, -1], [2.0, 1.9, 1.8], shadow=True
+)
+```
+
+`RenderMaterial()` defaults to a neutral white dielectric with `specular=0.5`
+and `roughness=0.45`, so adding a color or color texture retains a useful PBR
+response. Primitive visuals that omit a material use a light blue-gray variant.
+`Scene.add_ground` and `Scene.add_heightfield` instead use a subtle mipmapped
+checker with `roughness=0.6` for scale cues and broader floor reflections.
+Explicit render materials are never modified.
+
+These raster effects approximate a polished real-time viewport. Use the `rt`
+shader pack when physically traced object-to-object reflection, refraction, or
+indirect lighting is required.
+
 ## Rasterization pipeline
 
 A rasterization shader pack contains a required `gbuffer` pass and optional

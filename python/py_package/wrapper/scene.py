@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, TypeVar, Union
+from typing import Optional, Sequence, TypeVar, Union
 from warnings import warn
 
 import numpy as np
@@ -9,6 +9,11 @@ from .. import pysapien as sapien
 from ..pysapien import Scene as _Scene
 from ..pysapien.physx import PhysxSceneConfig as SceneConfig
 from ..pysapien.render import RenderCameraComponent, RenderCubemap
+
+
+_DEFAULT_GROUND_TEXTURES: dict[
+    tuple[int, int, int], sapien.render.RenderTexture2D
+] = {}
 
 
 def _validate_height_field(height_field) -> np.ndarray:
@@ -22,9 +27,54 @@ def _validate_height_field(height_field) -> np.ndarray:
     return np.ascontiguousarray(samples, dtype=np.int16)
 
 
-def _height_field_render_material(material):
+def _default_ground_render_material(
+    full_size: tuple[float, float],
+) -> sapien.render.RenderMaterial:
+    """Create the subtle checker material used by default terrain visuals."""
+    tile_size = 0.5
+    tile_counts = np.maximum(np.ceil(np.asarray(full_size) / tile_size), 2).astype(int)
+    tile_counts = np.minimum(tile_counts + tile_counts % 2, 256)
+
+    pixels_per_tile = max(2, min(8, 512 // int(tile_counts.max())))
+    texture_width = int(tile_counts[0] * pixels_per_tile)
+    texture_height = int(tile_counts[1] * pixels_per_tile)
+    texture_key = (texture_width, texture_height, pixels_per_tile)
+    texture = _DEFAULT_GROUND_TEXTURES.get(texture_key)
+    if texture is None:
+        row_indices, column_indices = np.indices((texture_height, texture_width))
+        checker = (
+            row_indices // pixels_per_tile + column_indices // pixels_per_tile
+        ) % 2
+        colors = np.array(
+            [[112, 119, 128, 255], [145, 151, 160, 255]], dtype=np.uint8
+        )
+        texture_data = np.ascontiguousarray(colors[checker])
+        mipmap_levels = int(np.floor(np.log2(max(texture_width, texture_height)))) + 1
+        texture = sapien.render.RenderTexture2D(
+            texture_data,
+            "R8G8B8A8Unorm",
+            mipmap_levels=mipmap_levels,
+            filter_mode="linear",
+            address_mode="repeat",
+            srgb=True,
+        )
+        _DEFAULT_GROUND_TEXTURES[texture_key] = texture
+
+    material = sapien.render.RenderMaterial(
+        base_color=[1.0, 1.0, 1.0, 1.0],
+        specular=0.5,
+        roughness=0.6,
+    )
+    material.base_color_texture = texture
+    return material
+
+
+def _height_field_render_material(
+    material: sapien.render.RenderMaterial | Sequence[float] | None,
+    full_size: tuple[float, float],
+) -> sapien.render.RenderMaterial:
     if material is None:
-        return sapien.render.RenderMaterial()
+        return _default_ground_render_material(full_size)
     if isinstance(material, sapien.render.RenderMaterial):
         return material
     return sapien.render.RenderMaterial(base_color=(*material[:3], 1))
@@ -200,6 +250,10 @@ class Scene(_Scene):
 
         builder = self.create_actor_builder()
         if render:
+            if render_material is None:
+                render_material = _default_ground_render_material(
+                    (2.0 * render_half_size[0], 2.0 * render_half_size[1])
+                )
             builder.add_plane_visual(
                 sapien.Pose(p=[0, 0, altitude], q=[0.7071068, 0, -0.7071068, 0]),
                 [10, *render_half_size],
@@ -285,7 +339,10 @@ class Scene(_Scene):
                 triangles,
                 normals,
                 uvs,
-                _height_field_render_material(render_material),
+                _height_field_render_material(
+                    render_material,
+                    ((rows - 1) * row_scale, (columns - 1) * column_scale),
+                ),
             )
             render_shape.local_pose = sapien.Pose()
             render_shape.name = name

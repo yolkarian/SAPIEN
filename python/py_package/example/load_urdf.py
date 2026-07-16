@@ -7,8 +7,10 @@ def main(filename, package_dir):
     sapien.physx.set_scene_config(gravity=[0, 0, 0])
     scene = sapien.Scene()
     scene.set_timestep(1 / 125)
-    scene.set_ambient_light([0.4, 0.4, 0.4])
-    scene.add_directional_light([1, -1, -1], [0.5, 0.5, 0.5])
+    scene.set_ambient_light([0.12, 0.12, 0.12])
+    scene.add_directional_light(
+        [1, -1, -1], [2.0, 1.9, 1.8], shadow=True
+    )
     scene.add_point_light([2, 2, 2], [1, 1, 1])
     scene.add_point_light([2, -2, 2], [1, 1, 1])
     scene.add_point_light([-2, 0, 2], [1, 1, 1])

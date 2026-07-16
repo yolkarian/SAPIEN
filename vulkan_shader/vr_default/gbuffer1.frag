@@ -24,28 +24,10 @@ layout (constant_id = 6) const int NUM_SPOT_LIGHTS = 10;
 #include "./scene_set.glsl"
 #undef SET_NUM
 
+#include "../common/environment.glsl"
+
 vec4 world2camera(vec4 pos) {
   return cameraBuffer.viewMatrix * pos;
-}
-
-vec3 diffuseIBL(vec3 albedo, vec3 N) {
-  N = N.xzy;
-  vec3 color = textureLod(samplerEnvironment, N, 5).rgb;
-  return color * albedo;
-}
-
-vec3 fresnelSchlickRoughness(vec3 fresnel, float roughness, float dotNV) {
-  return fresnel + (max(vec3(1.0 - roughness), fresnel) - fresnel) *
-                       pow(1.0 - dotNV, 5.0);
-}
-
-vec3 specularIBL(vec3 fresnel, float roughness, vec3 N, vec3 V) {
-  float dotNV = clamp(dot(N, V), 0.0, 1.0);
-  vec3 R = 2 * dot(N, V) * N - V;
-  R = R.xzy;
-  vec3 color = textureLod(samplerEnvironment, R, roughness * 5).rgb;
-  vec2 envBRDF = texture(samplerBRDFLUT, vec2(roughness, dotNV)).xy;
-  return color * (fresnel * envBRDF.x + envBRDF.y);
 }
 
 layout(location = 0) in vec4 inPosition;
@@ -185,11 +167,13 @@ void main() {
   vec3 wnormal = mat3(cameraBuffer.viewMatrixInverse) * normal;
   vec3 worldCamDir = mat3(cameraBuffer.viewMatrixInverse) * camDir;
   float dotNV = clamp(dot(wnormal, worldCamDir), 0.0, 1.0);
-  vec3 environmentFresnel = fresnelSchlickRoughness(fresnel, roughness, dotNV);
-  color += diffuseIBL((1.0 - environmentFresnel) * diffuseAlbedo, wnormal);
-  color += specularIBL(fresnel, roughness, wnormal, worldCamDir);
+  vec3 environmentFresnel =
+      sapienFresnelSchlickRoughness(fresnel, roughness, dotNV);
+  color += sapienDiffuseIBL((1.0 - environmentFresnel) * diffuseAlbedo, wnormal);
+  color += sapienSpecularIBL(fresnel, roughness, wnormal, worldCamDir);
 
-  color += sceneBuffer.ambientLight.rgb * albedo.rgb;
+  color += sceneBuffer.ambientLight.rgb *
+           (1.0 - environmentFresnel) * diffuseAlbedo;
 
   outLighting = vec4(color, albedo.a);
 }

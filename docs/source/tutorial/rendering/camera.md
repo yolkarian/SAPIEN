@@ -29,8 +29,10 @@ import sapien
 
 scene = sapien.Scene()
 scene.add_ground(0)
-scene.set_ambient_light([0.5, 0.5, 0.5])
-scene.add_directional_light([0, 1, -1], [0.5, 0.5, 0.5])
+scene.set_ambient_light([0.12, 0.12, 0.12])
+scene.add_directional_light(
+   [1, 1, -1], [2.0, 1.9, 1.8], shadow=True
+)
 
 width, height = 640, 480
 camera = scene.add_camera(

@@ -14,8 +14,10 @@ class AnythingViewer:
         self._setup_lighting()
 
     def _setup_lighting(self):
-        self.scene.set_ambient_light([0.3, 0.3, 0.3])
-        self.scene.add_directional_light([1, 1, -1], [1, 1, 1])
+        self.scene.set_ambient_light([0.12, 0.12, 0.12])
+        self.scene.add_directional_light(
+            [1, 1, -1], [2.0, 1.9, 1.8], shadow=True
+        )
 
     def add_mesh_file(self, filename):
         entity = (

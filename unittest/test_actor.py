@@ -5,6 +5,20 @@ import numpy as np
 
 
 class TestActor(unittest.TestCase):
+    def test_default_visual_material(self):
+        scene = sapien.Scene()
+        builder = scene.create_actor_builder()
+        builder.add_box_visual()
+        actor = builder.build_kinematic()
+
+        render_body = actor.find_component_by_type(sapien.render.RenderBodyComponent)
+        material = render_body.render_shapes[0].material
+        self.assertTrue(
+            np.allclose(material.base_color, [0.72, 0.74, 0.78, 1.0])
+        )
+        self.assertAlmostEqual(material.specular, 0.5)
+        self.assertAlmostEqual(material.roughness, 0.45)
+
     def test_build_box(self):
         scene = sapien.Scene()
 

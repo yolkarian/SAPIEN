@@ -88,6 +88,12 @@ class VisualShapeRecord:
 Vec3 = Tuple
 
 
+def _create_default_visual_material() -> sapien.render.RenderMaterial:
+    return sapien.render.RenderMaterial(
+        base_color=[0.72, 0.74, 0.78, 1.0], specular=0.5, roughness=0.45
+    )
+
+
 class ActorBuilder:
     def __init__(self):
         self.collision_records: List[CollisionShapeRecord] = []
@@ -545,7 +551,7 @@ class ActorBuilder:
         name: str = "",
     ):
         if material is None:
-            material = sapien.render.RenderMaterial()
+            material = _create_default_visual_material()
         if not isinstance(material, sapien.render.RenderMaterial):
             material = sapien.render.RenderMaterial(base_color=(*material[:3], 1))
 
@@ -564,7 +570,7 @@ class ActorBuilder:
         name: str = "",
     ):
         if material is None:
-            material = sapien.render.RenderMaterial()
+            material = _create_default_visual_material()
         if not isinstance(material, sapien.render.RenderMaterial):
             material = sapien.render.RenderMaterial(base_color=(*material[:3], 1))
 
@@ -584,7 +590,7 @@ class ActorBuilder:
         name: str = "",
     ):
         if material is None:
-            material = sapien.render.RenderMaterial()
+            material = _create_default_visual_material()
         if not isinstance(material, sapien.render.RenderMaterial):
             material = sapien.render.RenderMaterial(base_color=(*material[:3], 1))
 
@@ -609,7 +615,7 @@ class ActorBuilder:
         name: str = "",
     ):
         if material is None:
-            material = sapien.render.RenderMaterial()
+            material = _create_default_visual_material()
         if not isinstance(material, sapien.render.RenderMaterial):
             material = sapien.render.RenderMaterial(base_color=(*material[:3], 1))
 
@@ -633,7 +639,7 @@ class ActorBuilder:
         name: str = "",
     ):
         if material is None:
-            material = sapien.render.RenderMaterial()
+            material = _create_default_visual_material()
         if not isinstance(material, sapien.render.RenderMaterial):
             material = sapien.render.RenderMaterial(base_color=(*material[:3], 1))
 

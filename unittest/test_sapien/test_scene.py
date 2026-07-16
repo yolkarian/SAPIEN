@@ -22,6 +22,27 @@ class TestScene(unittest.TestCase):
         scene.add_system(system)
         self.assertEqual(scene.get_system("physx"), system)
 
+    def test_default_ground_render_material(self):
+        scene = sapien.Scene()
+        ground = scene.add_ground(0.0, render_half_size=[2.0, 3.0])
+        render_body = ground.find_component_by_type(sapien.render.RenderBodyComponent)
+        material = render_body.render_shapes[0].material
+
+        self.assertIsNotNone(material.base_color_texture)
+        self.assertGreater(material.base_color_texture.mipmap_levels, 1)
+        self.assertTrue(np.allclose(material.base_color, [1.0, 1.0, 1.0, 1.0]))
+        self.assertAlmostEqual(material.specular, 0.5)
+        self.assertAlmostEqual(material.roughness, 0.6)
+
+        second_ground = scene.add_ground(-1.0, render_half_size=[2.0, 3.0])
+        second_render_body = second_ground.find_component_by_type(
+            sapien.render.RenderBodyComponent
+        )
+        second_material = second_render_body.render_shapes[0].material
+        self.assertEqual(
+            second_material.base_color_texture, material.base_color_texture
+        )
+
     def test_add_heightfield(self):
         scene = sapien.Scene()
         height_field = np.array([[0, 1, 2], [3, 4, 5]], dtype=np.int16)
@@ -45,6 +66,9 @@ class TestScene(unittest.TestCase):
         self.assertEqual(len(render_body.render_shapes), 1)
 
         render_part = render_body.render_shapes[0].parts[0]
+        self.assertIsNotNone(render_part.material.base_color_texture)
+        self.assertAlmostEqual(render_part.material.specular, 0.5)
+        self.assertAlmostEqual(render_part.material.roughness, 0.6)
         np.testing.assert_allclose(
             render_part.vertices,
             np.array(

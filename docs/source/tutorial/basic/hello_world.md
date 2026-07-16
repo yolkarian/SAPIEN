@@ -63,11 +63,15 @@ box.set_pose(sapien.Pose(p=[0, 0, 0.5]))
 
 ## Lighting and viewer
 
-Use light helpers on `Scene` and create the viewer from the scene.
+Use light helpers on `Scene` and create the viewer from the scene. A low
+ambient fill preserves contrast, while the directional key light casts a soft
+filtered shadow.
 
 ```python
-scene.set_ambient_light([0.5, 0.5, 0.5])
-scene.add_directional_light([0, 1, -1], [0.5, 0.5, 0.5])
+scene.set_ambient_light([0.12, 0.12, 0.12])
+scene.add_directional_light(
+   [1, 1, -1], [2.0, 1.9, 1.8], shadow=True
+)
 
 viewer = scene.create_viewer()
 viewer.set_camera_xyz(x=-4, y=0, z=2)

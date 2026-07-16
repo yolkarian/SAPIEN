@@ -102,6 +102,7 @@ SapienRenderEngine::~SapienRenderEngine() {}
 SapienRendererSystem::SapienRendererSystem(std::shared_ptr<Device> device) {
   mEngine = SapienRenderEngine::Get(device);
   mScene = std::make_shared<svulkan2::scene::Scene>();
+  mScene->setAmbientLight({0.12f, 0.12f, 0.12f, 1.f});
 }
 
 void SapienRendererSystem::setBatchedRenderShared(bool shared) {
@@ -120,11 +121,16 @@ Vec3 SapienRendererSystem::getAmbientLight() const {
 }
 
 void SapienRendererSystem::setAmbientLight(Vec3 l) {
-  mScene->setAmbientLight({l.x, l.y, l.z, 1.f});
+  // Alpha is an internal flag indicating whether the raster shader should use its fallback IBL.
+  auto ambient = mScene->getAmbientLight();
+  mScene->setAmbientLight({l.x, l.y, l.z, ambient.a});
 }
 
 void SapienRendererSystem::setCubemap(std::shared_ptr<SapienRenderCubemap> cubemap) {
   mScene->setEnvironmentMap(cubemap ? cubemap->getCubemap() : nullptr);
+  auto ambient = mScene->getAmbientLight();
+  ambient.a = cubemap ? 0.f : 1.f;
+  mScene->setAmbientLight(ambient);
   mCubemap = cubemap;
 }
 std::shared_ptr<SapienRenderCubemap> SapienRendererSystem::getCubemap() const { return mCubemap; }

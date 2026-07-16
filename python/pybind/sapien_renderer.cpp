@@ -709,7 +709,8 @@ This function waits for any pending CUDA operations on cuda stream provided by :
                     float>(),
            py::arg("emission") = std::array<float, 4>{0.f, 0.f, 0.f, 0.f},
            py::arg("base_color") = std::array<float, 4>{1.f, 1.f, 1.f, 1.f},
-           py::arg("specular") = 0.f, py::arg("roughness") = 1.f, py::arg("metallic") = 0.f,
+           py::arg("specular") = 0.5f, py::arg("roughness") = 0.45f,
+           py::arg("metallic") = 0.f,
            py::arg("transmission") = 0.f, py::arg("ior") = 1.45f,
            py::arg("transmission_roughness") = 0.f)
 
