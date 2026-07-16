@@ -2,6 +2,9 @@
 
 set -e
 
+# For local builds, using --jobs 4 is recommended to avoid excessive resource use.
+# Keep parallelism caller-configurable here so CI and dedicated builders can choose appropriately.
+
 VERSION=
 DEBUG=
 PROFILE=

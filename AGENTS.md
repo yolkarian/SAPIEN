@@ -52,6 +52,9 @@ If documentation and checked-in automation disagree, prefer the repository scrip
 - Python should be type-annotated and well-documented with comments.
 
 ## Build And Install
+- Local and agent validation builds must use at most 4 compile jobs.
+  - Apply the limit at invocation time with `CMAKE_BUILD_PARALLEL_LEVEL=4` or `--jobs 4`.
+  - Keep repository scripts caller-configurable; do not hard-code or default the scripts themselves to 4 jobs.
 - Initialize submodules before any source build:
   - `git submodule update --init --recursive`
 - Preferred wheel build in Docker:

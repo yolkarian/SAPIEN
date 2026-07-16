@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# For local builds, CMAKE_BUILD_PARALLEL_LEVEL=4 is recommended. This wrapper
+# only forwards the caller's setting and intentionally does not impose a cap.
 DOCKER_ENV_ARGS=()
 if [ -n "${CMAKE_BUILD_PARALLEL_LEVEL:-}" ]; then
        DOCKER_ENV_ARGS+=("-e" "CMAKE_BUILD_PARALLEL_LEVEL")
