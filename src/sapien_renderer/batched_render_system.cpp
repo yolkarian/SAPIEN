@@ -565,8 +565,28 @@ void BatchedRenderSystem::update() {
     mCudaRTInstanceRefBuffer = CudaArray::FromData(rtInstanceRefs);
   }
 
-  // upload data
+  // Upload CPU-owned RT transforms first, then order CUDA after the Vulkan update on the same
+  // timeline semaphore. The CUDA kernel below remains the final writer for GPU-bound instances.
 #ifdef SAPIEN_CUDA
+  if (std::any_of(mRTSceneEnabled.begin(), mRTSceneEnabled.end(),
+                  [](bool value) { return value; })) {
+    SAPIEN_PROFILE_BLOCK_BEGIN("CPU-owned RT transform update");
+    for (uint32_t i = 0; i < mRenderScenes.size(); ++i) {
+      if (mRTSceneEnabled[i]) {
+        mRenderScenes[i]->updateRTResources(false);
+      }
+    }
+    SAPIEN_PROFILE_BLOCK_END;
+
+    ++mSemValue;
+    SapienRenderEngine::Get()->getContext()->getQueue().submit(
+        {}, {}, {}, {}, mSem.get(), mSemValue, {});
+    cudaExternalSemaphoreWaitParams waitParams{};
+    waitParams.flags = 0;
+    waitParams.params.fence.value = mSemValue;
+    checkCudaErrors(cudaWaitExternalSemaphoresAsync(&mCudaSem, &waitParams, 1, mCudaStream));
+  }
+
   SAPIEN_PROFILE_BLOCK_BEGIN("render object and camera transform update");
   update_object_transforms(
       (float **)mCudaSceneTransformRefBuffer.ptr, (float **)mCudaRTInstanceRefBuffer.ptr,
