@@ -277,6 +277,9 @@ void SapienRendererWindow::rebuildRenderScene() {
   }
   if (mRenderScene) {
     mSVulkanRenderer->setScene(mRenderScene);
+    // The controller camera is part of the aggregate scene topology. Create it before recording
+    // transform indices so the first submission does not immediately invalidate its transport.
+    getCamera();
   }
   rebuildPoseTransport();
 }
