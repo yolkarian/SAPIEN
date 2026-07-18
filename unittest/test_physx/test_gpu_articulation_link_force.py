@@ -246,7 +246,37 @@ class TestGpuArticulationLinkForce(unittest.TestCase):
         angular_velocity = _read_float_values(link_data, (art.gpu_index, child.index, 10), 3)
         self.assertGreater(abs(angular_velocity[2]), 1e-3)
 
-    def test_force_clearing(self):
+    def test_force_writes_replace_instead_of_accumulate(self):
+        system, scene = self._create_scene()
+        art0, _, child0 = self._build_two_link_articulation(scene, x=-1.0)
+        art1, _, child1 = self._build_two_link_articulation(scene, x=1.0)
+        system.gpu_init()
+
+        force = system.cuda_articulation_link_force
+        _memset_cuda(force)
+        _write_float_values(force, (art0.gpu_index, child0.index, 0), [1000.0, 0.0, 0.0])
+        _write_float_values(force, (art1.gpu_index, child1.index, 0), [1000.0, 0.0, 0.0])
+        _cuda_synchronize()
+
+        owner0, index0 = self._cuda_index_buffer(art0.gpu_index)
+        owner1, index1 = self._cuda_index_buffer(art1.gpu_index)
+        system.gpu_apply_articulation_link_force(index0)
+        system.gpu_apply_articulation_link_force(index0)
+        system.gpu_apply_articulation_link_force(index1)
+        system.step()
+        system.gpu_fetch_articulation_link_velocity()
+        _cuda_synchronize()
+
+        link_data = system.cuda_articulation_link_data
+        velocity0 = _read_float_values(link_data, (art0.gpu_index, child0.index, 7), 3)
+        velocity1 = _read_float_values(link_data, (art1.gpu_index, child1.index, 7), 3)
+        owner0.close()
+        owner1.close()
+
+        self.assertGreater(velocity0[0], 1e-3)
+        self.assertAlmostEqual(velocity0[0], velocity1[0], delta=1e-3)
+
+    def test_force_is_cleared_after_one_step(self):
         system, scene = self._create_scene()
         art, _, child = self._build_two_link_articulation(scene)
         system.gpu_init()
@@ -262,16 +292,19 @@ class TestGpuArticulationLinkForce(unittest.TestCase):
         link_data = system.cuda_articulation_link_data
         velocity_after_force = _read_float_values(link_data, (art.gpu_index, child.index, 7), 3)
 
-        _memset_cuda(force)
-        _cuda_synchronize()
-        system.gpu_apply_articulation_link_force()
+        # Do not clear or re-apply the exposed force buffer. PhysX consumes the SET write for one
+        # simulation step because SAPIEN does not enable eRETAIN_ACCELERATIONS.
         system.step()
         system.gpu_fetch_articulation_link_velocity()
         _cuda_synchronize()
-        velocity_after_clear = _read_float_values(link_data, (art.gpu_index, child.index, 7), 3)
+        velocity_after_next_step = _read_float_values(
+            link_data, (art.gpu_index, child.index, 7), 3
+        )
 
         self.assertGreater(velocity_after_force[0], 1e-3)
-        self.assertLess(abs(velocity_after_clear[0] - velocity_after_force[0]), 1e-3)
+        self.assertLess(
+            abs(velocity_after_next_step[0] - velocity_after_force[0]), 1e-3
+        )
 
 
 if __name__ == "__main__":

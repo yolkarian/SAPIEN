@@ -784,6 +784,21 @@ class PhysxGpuSystem(PhysxSystem):
         Warning: this function is super slow and for debug only. Download all poses from the GPU and copy to SAPIEN entities.
         """
     @property
+    def _gpu_fetch_articulation_link_pose_count(self) -> int:
+        ...
+    @property
+    def _gpu_fetch_rigid_dynamic_data_count(self) -> int:
+        ...
+    @property
+    def _sync_poses_gpu_to_cpu_count(self) -> int:
+        ...
+    @property
+    def is_initialized(self) -> bool:
+        ...
+    @property
+    def total_steps(self) -> int:
+        ...
+    @property
     def cuda_articulation_link_data(self) -> sapien.pysapien.CudaArray:
         ...
     @property

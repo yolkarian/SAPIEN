@@ -12,7 +12,12 @@ struct Device {
   bool render{};
   bool present{};
   int cudaId{-1};
-  std::array<uint32_t, 4> pci;
+  std::array<uint32_t, 4> pci{};
+  std::array<uint8_t, 16> uuid{};
+  bool cudaExternalMemory{};
+  bool cudaExternalSemaphore{};
+  bool vulkanExternalMemory{};
+  bool vulkanExternalSemaphore{};
   int renderPriority{}; // how good is this device for rendering
 
   inline bool isCpu() const { return type == Type::CPU; }
@@ -21,6 +26,10 @@ struct Device {
 
   inline bool canRender() const { return render; }
   inline bool canPresent() const { return present; }
+  inline bool canDirectCudaVulkanInterop() const {
+    return isCuda() && canRender() && cudaExternalMemory && cudaExternalSemaphore &&
+           vulkanExternalMemory && vulkanExternalSemaphore;
+  }
   inline std::optional<std::string> getPciString() const {
     if (isCpu()) {
       return {};
@@ -31,6 +40,8 @@ struct Device {
     return pciStr;
   }
 
+  std::optional<std::string> getUuidString() const;
+  bool canAccessPeer(Device const &peer) const;
   std::string getAlias() const;
 };
 

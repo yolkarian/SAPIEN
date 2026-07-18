@@ -2,7 +2,7 @@
 
 Agent-facing GPU table. Pair with `../gpu-workflows.md`; this file is lookup, not workflow prose.
 
-Hard rules: `enable_gpu()` before `PhysxGpuSystem`; configure memory/scene/body/shape before system creation; assign env ids before adding bodies; `gpu_init()` after building; fetch before reads; apply only modified buffers; `sync_poses_gpu_to_cpu()` only viewer/debug. Exposed after `gpu_init()`: PhysX GPU link-data and dense-Jacobian buffers.
+Hard rules: `enable_gpu()` before `PhysxGpuSystem`; configure memory/scene/body/shape before system creation; assign env ids before adding bodies; `gpu_init()` after building; fetch before reads; apply only modified buffers; `sync_poses_gpu_to_cpu()` only for explicit CPU debugging or Viewer `cpu-debug`. Exposed after `gpu_init()`: PhysX GPU link-data and dense-Jacobian buffers.
 
 Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper source; verify pybind/C++ when behavior matters.
 
@@ -117,7 +117,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `set_scene_offset` | method | `set_scene_offset(self, scene: sapien.Scene, offset: np.ndarray[Literal[3], np.dtype[np.float32]] \| list[float] \| tuple) -> None` | In GPU mode, all SAPIEN scenes share the same PhysX scene. One should call this function to apply an offset to avoid bodies in different scenes interfere with each oth... | Must be set before adding PhysX bodies; prefer env-id isolation currently. |
 | `step_finish` | method | `step_finish(self) -> None` |  |  |
 | `step_start` | method | `step_start(self) -> None` |  |  |
-| `sync_poses_gpu_to_cpu` | method | `sync_poses_gpu_to_cpu(self) -> None` | Warning: this function is super slow and for debug only. Download all poses from the GPU and copy to SAPIEN entities. | Not for training/sensor/video paths; viewer/debug only. |
+| `sync_poses_gpu_to_cpu` | method | `sync_poses_gpu_to_cpu(self) -> None` | Warning: this function is super slow and for debug only. Download all poses from the GPU and copy to SAPIEN entities. | Not for normal Viewer/training/sensor/video paths; explicit CPU debugging only. |
 | `__init__` | method | `__init__(self, device: str='cuda') -> None<br>__init__(self, device: sapien.Device) -> None` |  |  |
 
 ## GPU articulation link/Jacobian buffer reference

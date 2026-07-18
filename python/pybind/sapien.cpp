@@ -249,8 +249,15 @@ Generator<int> init_sapien(py::module &m) {
       .def_readonly("cuda_id", &Device::cudaId)
       .def("can_render", &Device::canRender)
       .def("can_present", &Device::canPresent)
+      .def("can_direct_cuda_vulkan_interop", &Device::canDirectCudaVulkanInterop)
+      .def("can_access_peer", &Device::canAccessPeer, py::arg("peer"))
+      .def_readonly("cuda_external_memory", &Device::cudaExternalMemory)
+      .def_readonly("cuda_external_semaphore", &Device::cudaExternalSemaphore)
+      .def_readonly("vulkan_external_memory", &Device::vulkanExternalMemory)
+      .def_readonly("vulkan_external_semaphore", &Device::vulkanExternalSemaphore)
       .def_readonly("name", &Device::name)
-      .def_property_readonly("pci_string", &Device::getPciString);
+      .def_property_readonly("pci_string", &Device::getPciString)
+      .def_property_readonly("uuid", &Device::getUuidString);
 
   PyCudaArray
       .def(py::init<>([](py::object obj) {

@@ -527,6 +527,14 @@ Generator<int> init_physx(py::module &sapien) {
            }),
            py::arg("device"))
       .def_property_readonly("device", &PhysxSystemGpu::getDevice)
+      .def_property_readonly("is_initialized", &PhysxSystemGpu::isInitialized)
+      .def_property_readonly("total_steps", &PhysxSystemGpu::getTotalSteps)
+      .def_property_readonly("_sync_poses_gpu_to_cpu_count",
+                             &PhysxSystemGpu::getSyncPosesGpuToCpuCount)
+      .def_property_readonly("_gpu_fetch_rigid_dynamic_data_count",
+                             &PhysxSystemGpu::getRigidDynamicFetchCount)
+      .def_property_readonly("_gpu_fetch_articulation_link_pose_count",
+                             &PhysxSystemGpu::getArticulationLinkPoseFetchCount)
       .def("get_scene_offset", &PhysxSystemGpu::getSceneOffset, py::arg("scene"))
       .def("set_scene_offset", &PhysxSystemGpu::setSceneOffset, py::arg("scene"),
            py::arg("offset"), R"doc(

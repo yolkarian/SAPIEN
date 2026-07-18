@@ -1,4 +1,8 @@
 #include "sapien/device.h"
+#include <algorithm>
+#include <cstring>
+#include <iomanip>
+#include <sstream>
 #include <svulkan2/core/context.h>
 #include <svulkan2/core/instance.h>
 #include <svulkan2/core/physical_device.h>
@@ -29,6 +33,30 @@ static std::vector<std::shared_ptr<Device>> vulkanFindDevices() {
       for (auto &d : devices) {
         int priority = 0;
 
+        bool externalMemory = false;
+        bool externalSemaphore = false;
+        for (auto const &extension : d.device.enumerateDeviceExtensionProperties()) {
+#ifdef _WIN32
+          externalMemory |= std::strcmp(extension.extensionName,
+                                        VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME) == 0;
+          externalSemaphore |= std::strcmp(extension.extensionName,
+                                           VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME) == 0;
+#else
+          externalMemory |=
+              std::strcmp(extension.extensionName, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) == 0;
+          externalSemaphore |= std::strcmp(extension.extensionName,
+                                           VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME) == 0;
+#endif
+        }
+
+        auto properties =
+            d.device
+                .getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceIDProperties>();
+        std::array<uint8_t, 16> uuid{};
+        std::memcpy(uuid.data(),
+                    properties.get<vk::PhysicalDeviceIDProperties>().deviceUUID.data(),
+                    uuid.size());
+
         if (d.supported) {
           priority = 1;
           if (d.cudaId >= 0) {
@@ -52,6 +80,9 @@ static std::vector<std::shared_ptr<Device>> vulkanFindDevices() {
                                                       .present = d.present,
                                                       .cudaId = d.cudaId,
                                                       .pci = d.pci,
+                                                      .uuid = uuid,
+                                                      .vulkanExternalMemory = externalMemory,
+                                                      .vulkanExternalSemaphore = externalSemaphore,
                                                       .renderPriority = priority}));
       }
     }
@@ -95,12 +126,21 @@ static std::vector<std::shared_ptr<Device>> cudaFindDevices() {
       continue;
     }
 
+    int driverVersion = 0;
+    cudaDriverGetVersion(&driverVersion);
+    bool externalInterop = prop.unifiedAddressing && driverVersion >= 10000;
+    std::array<uint8_t, 16> uuid{};
+    std::memcpy(uuid.data(), prop.uuid.bytes, uuid.size());
+
     res.push_back(std::make_shared<Device>(Device{.type = Device::Type::GPU,
                                                   .name = prop.name,
                                                   .render = false,
                                                   .present = false,
                                                   .cudaId = i,
-                                                  .pci = parsePCIString(std::string(pci))}));
+                                                  .pci = parsePCIString(std::string(pci)),
+                                                  .uuid = uuid,
+                                                  .cudaExternalMemory = externalInterop,
+                                                  .cudaExternalSemaphore = externalInterop}));
   }
   return res;
 }
@@ -114,19 +154,56 @@ static std::vector<std::shared_ptr<Device>> findDevices() {
   auto gpuDevices = vulkanFindDevices();
 #ifdef SAPIEN_CUDA
   auto cudaDevices = cudaFindDevices();
-  // merge devices
-  for (auto cd : cudaDevices) {
-    for (auto vd : gpuDevices) {
-      if (cd->pci == vd->pci) {
+  // Merge CUDA capabilities into the matching Vulkan physical device. A CUDA-only entry is
+  // retained only when no Vulkan device has the same PCI identity.
+  for (auto const &cd : cudaDevices) {
+    bool merged = false;
+    for (auto const &vd : gpuDevices) {
+      if (cd->pci != vd->pci && vd->cudaId != cd->cudaId) {
         continue;
       }
+      vd->cudaId = cd->cudaId;
+      vd->cudaExternalMemory = cd->cudaExternalMemory;
+      vd->cudaExternalSemaphore = cd->cudaExternalSemaphore;
+      if (std::all_of(vd->uuid.begin(), vd->uuid.end(),
+                      [](uint8_t value) { return value == 0; })) {
+        vd->uuid = cd->uuid;
+      }
+      merged = true;
+      break;
     }
-    gpuDevices.push_back(cd);
+    if (!merged) {
+      gpuDevices.push_back(cd);
+    }
   }
 #endif
 
   devices.insert(devices.end(), gpuDevices.begin(), gpuDevices.end());
   return devices;
+}
+
+std::optional<std::string> Device::getUuidString() const {
+  if (isCpu() || std::all_of(uuid.begin(), uuid.end(), [](uint8_t value) { return value == 0; })) {
+    return {};
+  }
+  std::ostringstream stream;
+  stream << std::hex << std::setfill('0');
+  for (auto value : uuid) {
+    stream << std::setw(2) << static_cast<int>(value);
+  }
+  return stream.str();
+}
+
+bool Device::canAccessPeer(Device const &peer) const {
+#ifdef SAPIEN_CUDA
+  if (!isCuda() || !peer.isCuda() || cudaId == peer.cudaId) {
+    return false;
+  }
+  int access = 0;
+  return cudaDeviceCanAccessPeer(&access, cudaId, peer.cudaId) == cudaSuccess && access != 0;
+#else
+  return false;
+#endif
 }
 
 std::string Device::getAlias() const {

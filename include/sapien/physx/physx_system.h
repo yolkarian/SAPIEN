@@ -167,6 +167,7 @@ public:
    *  gpuQuery* and gpuApply* will be synchronized with the stream
    *  If not set, gpuQuery* and gpuApply* synchronizes with the default stream */
   void gpuSetCudaStream(uintptr_t stream);
+  uintptr_t gpuGetCudaStream() const { return reinterpret_cast<uintptr_t>(mCudaStream); }
 
   /** handle to the pose-vel buffer for rigid dynamic bodies and links */
   CudaArrayHandle gpuGetRigidBodyCudaHandle() const { return mCudaRigidBodyBuffer.handle(); }
@@ -222,7 +223,9 @@ public:
   }
 
   void gpuFetchRigidDynamicData();
+  void gpuFetchRigidDynamicDataIfNeeded();
   void gpuFetchArticulationLinkPose();
+  void gpuFetchArticulationLinkPoseIfNeeded();
   void gpuFetchArticulationLinkVel();
   void gpuFetchArticulationQpos();
   void gpuFetchArticulationQvel();
@@ -292,6 +295,12 @@ public:
   void gpuQueryContactBodyImpulses(PhysxGpuContactBodyImpulseQuery const &query);
 
   void syncPosesGpuToCpu();
+  uint64_t getTotalSteps() const { return mTotalSteps; }
+  uint64_t getSyncPosesGpuToCpuCount() const { return mSyncPosesGpuToCpuCount; }
+  uint64_t getRigidDynamicFetchCount() const { return mRigidDynamicFetchCount; }
+  uint64_t getArticulationLinkPoseFetchCount() const {
+    return mArticulationLinkPoseFetchCount;
+  }
 
   std::vector<float> gpuDownloadArticulationQpos(int index);
   void gpuUploadArticulationQpos(int index, Eigen::VectorXf const &q);
@@ -349,7 +358,19 @@ private:
 
   CudaEvent mCudaEventRecord;
   CudaEvent mCudaEventWait;
+  CudaEvent mCudaRigidPoseFetchEvent;
+  CudaEvent mCudaRigidLinearVelocityFetchEvent;
+  CudaEvent mCudaRigidAngularVelocityFetchEvent;
+  CudaEvent mCudaArticulationLinkPoseFetchEvent;
   cudaStream_t mCudaStream{0};
+
+  std::optional<uint64_t> mRigidDynamicDataFetchedStep;
+  std::optional<uint64_t> mArticulationLinkPoseFetchedStep;
+  uint64_t mSyncPosesGpuToCpuCount{};
+  uint64_t mRigidDynamicFetchCount{};
+  uint64_t mArticulationLinkPoseFetchCount{};
+  void invalidateRigidDynamicData();
+  void invalidateArticulationLinkPose();
 
   CudaArray mCudaRigidDynamicScratch;
   CudaArray mCudaLinkPoseScratch;
