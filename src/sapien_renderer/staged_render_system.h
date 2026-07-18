@@ -3,9 +3,12 @@
 #ifdef SAPIEN_CUDA
 
 #include "sapien/array.h"
+#include "sapien/math/pose.h"
 #include "sapien/utils/cuda.h"
 #include <memory>
+#include <optional>
 #include <svulkan2/common/vk.h>
+#include <unordered_map>
 #include <vector>
 
 struct CUstream_st;
@@ -39,6 +42,7 @@ public:
   ~StagedRenderSystem();
 
   void update();
+  std::optional<Pose> getPose(int sourcePoseIndex) const;
   uint64_t getTransferredBytes() const { return mTransferredBytes; }
 
 private:
@@ -60,6 +64,7 @@ private:
   CUstream_st *mCudaStream{};
   CudaArray mSourcePoseIndices;
   CudaArray mCompactPoses;
+  std::unordered_map<int, uint32_t> mCompactIndexByPose;
 
   std::unique_ptr<svulkan2::core::Buffer> mPoseBuffer;
   std::unique_ptr<svulkan2::core::Buffer> mShapeBuffer;
@@ -74,6 +79,7 @@ private:
   uint32_t mShapeCount{};
   uint32_t mTransformStride{};
   uint32_t mNextSlot{};
+  int mLastCompletedSlot{-1};
   uint64_t mTransferredBytes{};
 };
 

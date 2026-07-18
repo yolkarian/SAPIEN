@@ -13,6 +13,11 @@
 #include <svulkan2/renderer/rt_renderer.h>
 #include <svulkan2/scene/scene_group.h>
 
+#ifdef SAPIEN_CUDA
+#include "sapien/utils/cuda.h"
+#include <cuda_runtime.h>
+#endif
+
 namespace sapien {
 namespace sapien_renderer {
 
@@ -22,6 +27,7 @@ public:
   virtual void prepare() {}
   virtual void submit() {}
   virtual bool ownsGpuTransforms() const { return false; }
+  virtual std::optional<Pose> getPose(int poseIndex) { return std::nullopt; }
   virtual std::string getName() const = 0;
   virtual uint64_t getTransferredBytes() const { return 0; }
 };
@@ -48,7 +54,8 @@ class DirectViewerPoseTransport final : public ViewerPoseTransport {
 public:
   DirectViewerPoseTransport(std::shared_ptr<physx::PhysxSystemGpu> system,
                             std::unique_ptr<BatchedRenderSystem> renderSystem)
-      : mSystem(std::move(system)), mRenderSystem(std::move(renderSystem)) {}
+      : mSystem(std::move(system)), mRenderSystem(std::move(renderSystem)),
+        mSelectedPose({7}, "f4") {}
 
   void submit() override {
     mSystem->gpuFetchRigidDynamicDataIfNeeded();
@@ -56,11 +63,31 @@ public:
     mRenderSystem->update();
   }
   bool ownsGpuTransforms() const override { return true; }
+  std::optional<Pose> getPose(int poseIndex) override {
+    auto poses = mSystem->gpuGetRigidBodyCudaHandle();
+    if (poseIndex < 0 || poseIndex >= poses.shape[0]) {
+      return std::nullopt;
+    }
+    checkCudaErrors(cudaSetDevice(poses.cudaId));
+    auto stream = reinterpret_cast<cudaStream_t>(mSystem->gpuGetCudaStream());
+    auto const *source = static_cast<char const *>(poses.ptr) + poseIndex * poses.strides[0];
+    checkCudaErrors(cudaMemcpyAsync(mSelectedPose.ptr, source, 7 * sizeof(float),
+                                    cudaMemcpyDeviceToHost, stream));
+    mSelectedPoseReady.record(stream);
+    mSelectedPoseReady.synchronize();
+    mTransferredBytes += 7 * sizeof(float);
+    auto const *pose = static_cast<float const *>(mSelectedPose.ptr);
+    return Pose({pose[0], pose[1], pose[2]}, {pose[3], pose[4], pose[5], pose[6]});
+  }
   std::string getName() const override { return "direct"; }
+  uint64_t getTransferredBytes() const override { return mTransferredBytes; }
 
 private:
   std::shared_ptr<physx::PhysxSystemGpu> mSystem;
   std::unique_ptr<BatchedRenderSystem> mRenderSystem;
+  CudaHostArray mSelectedPose;
+  CudaEvent mSelectedPoseReady;
+  uint64_t mTransferredBytes{};
 };
 
 class StagedViewerPoseTransport final : public ViewerPoseTransport {
@@ -75,6 +102,9 @@ public:
     mRenderSystem->update();
   }
   bool ownsGpuTransforms() const override { return true; }
+  std::optional<Pose> getPose(int poseIndex) override {
+    return mRenderSystem->getPose(poseIndex);
+  }
   std::string getName() const override { return "staged"; }
   uint64_t getTransferredBytes() const override {
     return mRenderSystem->getTransferredBytes();
@@ -244,6 +274,10 @@ void SapienRendererWindow::setScenes(std::vector<std::shared_ptr<Scene>> const &
 
 uint64_t SapienRendererWindow::getPoseTransferBytes() const {
   return mPoseTransportImpl ? mPoseTransportImpl->getTransferredBytes() : 0;
+}
+
+std::optional<Pose> SapienRendererWindow::getPhysxGpuPose(int poseIndex) {
+  return mPoseTransportImpl ? mPoseTransportImpl->getPose(poseIndex) : std::nullopt;
 }
 
 void SapienRendererWindow::configurePhysxGpuRendering(

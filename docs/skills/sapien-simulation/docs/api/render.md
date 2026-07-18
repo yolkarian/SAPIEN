@@ -790,6 +790,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_picture` | method | `get_picture(self, name: str) -> np.ndarray[Any, np.dtype[Any]]` |  | GPU PhysX dynamic bodies read CPU poses; prefer the CUDA pose path for offscreen. |
 | `get_picture_pixel` | method | `get_picture_pixel(self, name: str, x: int, y: int) -> np.ndarray[Any, np.dtype[Any]]` |  |  |
 | `get_picture_size` | method | `get_picture_size(self, name: str) -> Annotated[list[int], FixedSize(2)]` |  |  |
+| `get_physx_gpu_pose` | method | `get_physx_gpu_pose(self, pose_index: int) -> sapien.Pose \| None` | Read one pose from the latest Viewer submission. | Direct mode performs a 28-byte D2H; staged mode reuses its host slot. |
 | `hide` | method | `hide(self) -> None` |  |  |
 | `key_down` | method | `key_down(self, key: str) -> bool` |  |  |
 | `key_press` | method | `key_press(self, key: str) -> bool` |  |  |

@@ -84,6 +84,12 @@ camera on the selected entity. In focused mode, the right mouse button rotates
 around the selected entity and the mouse wheel zooms in or out. Pressing any of
 `w`, `a`, `s`, or `d` returns to free-camera mode.
 
+With direct or staged PhysX GPU rendering, selection, focus, coordinate/joint
+axes, mounted-camera overlays, and the Transform gizmo use the most recently
+submitted GPU pose instead of stale `Entity.pose`. Direct mode downloads only
+the selected 7-float pose once per submitted frame; staged mode reuses the pose
+already present in its completed pinned-host slot.
+
 ## Control window
 
 The `Control` window contains simulation, camera, display, selection, and

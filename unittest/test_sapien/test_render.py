@@ -366,7 +366,23 @@ class TestSceneGPU(unittest.TestCase):
             self.assertEqual(viewer.pose_transfer_bytes - initial_transfer_bytes, 7 * 4)
             self.assertEqual(physx._sync_poses_gpu_to_cpu_count, initial_sync_count)
             self.assertTrue(np.allclose(actor.pose.p, initial_cpu_pose.p))
+            submitted_pose = viewer.get_entity_viewer_pose(actor)
+            self.assertLess(float(submitted_pose.p[2]), float(initial_cpu_pose.p[2]) - 0.5)
             self.assertGreater(np.count_nonzero(staged[..., 0] == actor.per_scene_id), 20)
+
+            if shader == "default":
+                viewer.configure_physx_gpu_rendering(physx, "direct")
+                viewer.update_render()
+                before_selected_read = viewer.pose_transfer_bytes
+                direct_pose = viewer.get_entity_viewer_pose(actor)
+                self.assertTrue(np.allclose(direct_pose.p, submitted_pose.p))
+                self.assertEqual(
+                    viewer.pose_transfer_bytes - before_selected_read, 7 * 4
+                )
+                _ = viewer.get_entity_viewer_pose(actor)
+                self.assertEqual(
+                    viewer.pose_transfer_bytes - before_selected_read, 7 * 4
+                )
 
             viewer.configure_physx_gpu_rendering(physx, "cpu-debug")
             viewer.update_render()

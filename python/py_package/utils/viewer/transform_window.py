@@ -61,7 +61,9 @@ class TransformWindow(Plugin):
             self._gizmo_pose = sapien.Pose()
             self.follow = False
         else:
-            self._gizmo_pose = self.selected_entity.pose
+            self._gizmo_pose = self.viewer.get_entity_viewer_pose(
+                self.selected_entity
+            )
             self.follow = True
 
             art = self.get_articulation(self.selected_entity)
@@ -150,7 +152,7 @@ class TransformWindow(Plugin):
 
         elif articulation_link is not None:
             link: sapien.LinkBase = self.selected_entity
-            link2world = link.pose
+            link2world = self.viewer.get_entity_viewer_pose(link)
             articulation = articulation_link.articulation
             for l in articulation.get_links():
                 new_node = render_scene.add_node()
@@ -168,12 +170,13 @@ class TransformWindow(Plugin):
                         new_obj.transparency = 0.7
                         new_obj.set_segmentation(obj.get_segmentation())
 
-                new_node.set_position(l.pose.p)
-                new_node.set_rotation(l.pose.q)
+                link_pose = self.viewer.get_entity_viewer_pose(l.entity)
+                new_node.set_position(link_pose.p)
+                new_node.set_rotation(link_pose.q)
                 self.ghost_objects.append(new_node)
 
         else:
-            entity2world = self.selected_entity.pose
+            entity2world = self.viewer.get_entity_viewer_pose(self.selected_entity)
             render_node = render_body._internal_node
             new_node = render_scene.add_node()
 
@@ -184,8 +187,8 @@ class TransformWindow(Plugin):
                 new_obj.set_scale(obj.scale)
                 new_obj.transparency = 0.7
 
-            new_node.set_position(self.selected_entity.pose.p)
-            new_node.set_rotation(self.selected_entity.pose.q)
+            new_node.set_position(entity2world.p)
+            new_node.set_rotation(entity2world.q)
             self.ghost_objects.append(new_node)
 
         self.viewer.notify_render_update()
@@ -212,10 +215,10 @@ class TransformWindow(Plugin):
                     obj.set_rotation(pose.q)
             else:
                 link = self.selected_entity
-                link2world = link.pose
+                link2world = self.viewer.get_entity_viewer_pose(link)
                 for l, node in zip(art.get_links(), self.ghost_objects):
                     newlink2world = self._gizmo_pose
-                    l2world = l.pose
+                    l2world = self.viewer.get_entity_viewer_pose(l.entity)
                     l2link = link2world.inv() * l2world
                     newl2world = newlink2world * l2link
                     node.set_position(newl2world.p)
@@ -255,7 +258,9 @@ class TransformWindow(Plugin):
             return
 
         if self.follow and self.selected_entity and self.ghost_objects:
-            self._gizmo_pose = self.selected_entity.pose
+            self._gizmo_pose = self.viewer.get_entity_viewer_pose(
+                self.selected_entity
+            )
             self.update_ghost_objects()
 
         if not self.ui_window:
@@ -303,7 +308,8 @@ class TransformWindow(Plugin):
         self.gizmo.CameraMatrices(view, proj)
 
         if self.selected_entity is not None:
-            self.gizmo.Matrix(self.selected_entity.pose.to_transformation_matrix())
+            pose = self.viewer.get_entity_viewer_pose(self.selected_entity)
+            self.gizmo.Matrix(pose.to_transformation_matrix())
         else:
             self.gizmo.Matrix(np.eye(4))
 

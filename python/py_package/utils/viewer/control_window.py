@@ -98,7 +98,7 @@ class ControlWindow(Plugin):
                         x.transparency = 1
 
                 j2c = j.pose_in_child
-                c2w = c.pose
+                c2w = self.viewer.get_entity_viewer_pose(self.selected_entity)
                 j2v = c2w * j2c
 
                 if j.type == "prismatic":
@@ -742,14 +742,13 @@ class ControlWindow(Plugin):
                 c.transparency = 0
             self.coordinate_axes.set_scale([self.coordinate_axes_scale] * 3)
 
+            pose = self.viewer.get_entity_viewer_pose(self.selected_entity)
             if self._use_cm_frame and (
                 comp := self.selected_entity.find_component_by_type(
                     sapien.physx.PhysxRigidBodyComponent
                 )
             ):
-                pose = self.selected_entity.pose * comp.cmass_local_pose
-            else:
-                pose = self.selected_entity.pose
+                pose = pose * comp.cmass_local_pose
 
             self.coordinate_axes.set_position(pose.p)
             self.coordinate_axes.set_rotation(pose.q)
@@ -772,7 +771,12 @@ class ControlWindow(Plugin):
                 )
         for lineset, camera in zip(self.camera_linesets, cameras):
             lineset: R.LineSetObject
-            mat = camera.get_model_matrix()
+            camera_pose = (
+                self.viewer.get_entity_viewer_pose(camera.entity)
+                * camera.local_pose
+                * sapien.Pose([0, 0, 0], [-0.5, -0.5, 0.5, 0.5])
+            )
+            mat = camera_pose.to_transformation_matrix()
             lineset.set_position(mat[:3, 3])
             lineset.set_rotation(mat2quat(mat[:3, :3]))
 

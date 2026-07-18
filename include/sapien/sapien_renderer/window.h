@@ -5,6 +5,7 @@
 #include "sapien/math/mat.h"
 #include "sapien/scene.h"
 #include <functional>
+#include <optional>
 #include <svulkan2/renderer/renderer.h>
 #include <svulkan2/renderer/rt_renderer.h>
 #include <svulkan2/ui/ui.h>
@@ -62,6 +63,7 @@ public:
                                   std::string const &transport = "auto");
   std::string getPoseTransport() const { return mPoseTransport; }
   uint64_t getPoseTransferBytes() const;
+  std::optional<Pose> getPhysxGpuPose(int poseIndex);
 
   /** Submit the selected render-system state without drawing the window. */
   void updateRender();

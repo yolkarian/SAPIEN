@@ -81,15 +81,16 @@ The final Viewer therefore needs both same-device direct transport and cross-dev
 
 ## Implementation Status
 
-Stages 0 through 3 are complete. The Viewer now resolves base plus shared scenes without offsets,
+Stages 0 through 4 are complete. The Viewer now resolves base plus shared scenes without offsets,
 submits simulation state explicitly, uses direct CUDA/Vulkan transforms on a compatible same
 device, and automatically uses compact pinned-host staging on different devices. Both raster and
 RT staged paths are implemented; RT writes Vulkan instance transforms, refits the TLAS, and resets
-accumulation. `manualtest/gpu_viewer.py` reports the selected transport and transferred pose bytes,
-and automated GPU tests compare staged raster and RT output with `cpu-debug` output.
+accumulation. Selection, focus, joint/coordinate overlays, mounted-camera overlays, and the
+Transform gizmo read the latest submitted GPU pose through a per-frame selected-pose cache. Direct
+mode downloads only the requested 7-float row; staged mode reuses its completed host slot.
 
-Stages 4 through 7 remain: GPU-aware selection/overlays, interaction, property windows, and final
-release cleanup. Cross-device offscreen camera transport is outside this Viewer migration scope.
+Stages 5 through 7 remain: GPU interaction, property windows, and final release cleanup.
+Cross-device offscreen camera transport is outside this Viewer migration scope.
 
 ## Target Architecture
 
@@ -549,7 +550,7 @@ accumulation.
 
 ## Stage 4: Adapt Existing Selection, Focus, and Overlay Handling
 
-**Priority: After core GPU visualization** — **Complexity: Medium**
+**Status: Complete** — **Priority: After core GPU visualization** — **Complexity: Medium**
 
 This stage updates the existing `ControlWindow` and related Viewer helpers. It does not add a new selection component or replace the current UI.
 
@@ -569,6 +570,11 @@ This stage updates the existing `ControlWindow` and related Viewer helpers. It d
 5. Update existing focus, selected-frame, joint-axis, coordinate-axis, and bounding-overlay logic to use the current transport pose rather than stale CPU Entity pose.
 6. Refresh CPU-visible selected values only when the corresponding existing window is open or a low-frequency UI update is due.
 7. Account for the paused loop: plugin `before_render`/`after_render` hooks (focus re-centering, joint-axis, coordinate-axis, and camera-lineset overlays) run on every paused frame, so overlay pose reads must respect the same open-window and low-frequency gating while paused.
+
+The implemented pose service resolves the selected Entity to its configured PhysX GPU pose index.
+It caches each requested pose until the next `viewer.update_render()`, so repeated paused draws do
+not repeat D2H. Direct mode transfers one 28-byte pose on the first request; staged mode reads the
+matching compact pose from its latest completed pinned-host slot without another transfer.
 
 ### Exit Criteria
 

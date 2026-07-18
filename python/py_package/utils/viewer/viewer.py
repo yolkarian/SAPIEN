@@ -85,6 +85,7 @@ class Viewer:
         self._physx_gpu_system: Optional[sapien.physx.PhysxGpuSystem] = None
         self._physx_gpu_auto_configured = False
         self._requested_pose_transport = "auto"
+        self._gpu_pose_cache: dict[int, sapien.Pose] = {}
 
     @property
     def render_scene(self):
@@ -131,6 +132,7 @@ class Viewer:
 
         self.selected_entity = None
         self.scenes = scenes
+        self._gpu_pose_cache.clear()
 
         self.window.set_scenes(scenes)
         if scenes:
@@ -140,8 +142,40 @@ class Viewer:
         for plugin in self.plugins:
             plugin.notify_scene_change()
 
+    def _get_entity_gpu_pose_index(self, entity: Entity) -> int | None:
+        if self._physx_gpu_system is None:
+            return None
+        try:
+            if entity.scene.physx_system is not self._physx_gpu_system:
+                return None
+        except RuntimeError:
+            return None
+
+        rigid = entity.find_component_by_type(
+            sapien.physx.PhysxRigidDynamicComponent
+        )
+        if rigid is not None and rigid.gpu_pose_index >= 0:
+            return rigid.gpu_pose_index
+        link = entity.find_component_by_type(
+            sapien.physx.PhysxArticulationLinkComponent
+        )
+        if link is not None and link.gpu_pose_index >= 0:
+            return link.gpu_pose_index
+        return None
+
     def get_entity_viewer_pose(self, entity: Entity) -> sapien.Pose:
-        return entity.pose
+        """Return the pose represented by the latest Viewer submission."""
+        if self.pose_transport not in ("direct", "staged"):
+            return entity.pose
+        pose_index = self._get_entity_gpu_pose_index(entity)
+        if pose_index is None:
+            return entity.pose
+        if pose_index not in self._gpu_pose_cache:
+            pose = self.window.get_physx_gpu_pose(pose_index)
+            if pose is None:
+                return entity.pose
+            self._gpu_pose_cache[pose_index] = pose
+        return self._gpu_pose_cache[pose_index]
 
     def set_scene(self, scene: Scene) -> None:
         self.set_scenes([scene])
@@ -213,6 +247,7 @@ class Viewer:
         self._physx_gpu_system = physx_system
         self._physx_gpu_auto_configured = False
         self._requested_pose_transport = transport
+        self._gpu_pose_cache.clear()
         self.window.configure_physx_gpu_rendering(physx_system, transport)
 
     @property
@@ -229,6 +264,7 @@ class Viewer:
         """Submit current simulation state without drawing the Viewer window."""
         self._configure_detected_physx_gpu_system()
         self.window.update_render()
+        self._gpu_pose_cache.clear()
         self.reset_notifications()
 
     def render(self):

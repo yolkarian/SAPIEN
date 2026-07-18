@@ -95,6 +95,7 @@ StagedRenderSystem::StagedRenderSystem(
   }
   mPoseCount = sourcePoseIndices.size();
   mShapeCount = shapeData.size();
+  mCompactIndexByPose = std::move(compactIndexByPose);
 
   checkCudaErrors(cudaSetDevice(mPoseSource.cudaId));
   mSourcePoseIndices = CudaArray({static_cast<int>(mPoseCount)}, "i4");
@@ -162,7 +163,8 @@ void StagedRenderSystem::update() {
     return;
   }
 
-  Slot &slot = mSlots[mNextSlot];
+  uint32_t slotIndex = mNextSlot;
+  Slot &slot = mSlots[slotIndex];
   mNextSlot = (mNextSlot + 1) % mSlots.size();
 
   SAPIEN_PROFILE_BLOCK_BEGIN("compact staged poses");
@@ -229,7 +231,21 @@ void StagedRenderSystem::update() {
   }
   SAPIEN_PROFILE_BLOCK_END;
 
+  mLastCompletedSlot = slotIndex;
   mTransferredBytes += transferBytes;
+}
+
+std::optional<Pose> StagedRenderSystem::getPose(int sourcePoseIndex) const {
+  if (mLastCompletedSlot < 0) {
+    return std::nullopt;
+  }
+  auto iterator = mCompactIndexByPose.find(sourcePoseIndex);
+  if (iterator == mCompactIndexByPose.end()) {
+    return std::nullopt;
+  }
+  auto const *poses = static_cast<float const *>(mSlots[mLastCompletedSlot].hostPoses.ptr);
+  auto const *pose = poses + iterator->second * 7;
+  return Pose({pose[0], pose[1], pose[2]}, {pose[3], pose[4], pose[5], pose[6]});
 }
 
 StagedRenderSystem::~StagedRenderSystem() {

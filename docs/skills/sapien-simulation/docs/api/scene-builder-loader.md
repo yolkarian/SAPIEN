@@ -400,7 +400,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `focus_camera` | method | `focus_camera(self, camera)` |  |  |
 | `focus_change` | method | `focus_change(self, focused)` |  |  |
 | `focus_entity` | method | `focus_entity(self, entity)` |  |  |
-| `get_entity_viewer_pose` | method | `get_entity_viewer_pose(self, entity)` |  |  |
+| `get_entity_viewer_pose` | method | `get_entity_viewer_pose(self, entity) -> sapien.Pose` | Return the latest submitted Viewer pose. | GPU poses are cached per submitted frame; CPU Entity pose may remain stale. |
 | `init_plugins` | method | `init_plugins(self, plugins)` |  |  |
 | `loop` | method | `loop(self, physx_steps=0)` | A convenience method for opening a temporary viewer for a scene. Simply call scene.create_viewer().loop() |  |
 | `notify_render_update` | method | `notify_render_update(self)` | notify the viewer that the camera is moved |  |
