@@ -362,6 +362,16 @@ void SapienRendererWindow::updateRender() {
 #ifdef SAPIEN_CUDA
   if (mPoseTransportImpl) {
     if (mPoseTransportImpl->ownsGpuTransforms()) {
+      // RT instance storage is created lazily. Initialize it before the transport's first write so
+      // the first displayed GPU state does not use stale CPU instance transforms.
+      if (auto renderer = dynamic_cast<svulkan2::renderer::RTRenderer *>(mSVulkanRenderer.get());
+          renderer && !mRenderScene->getTLAS()) {
+        if (mRequiresRebuild) {
+          rebuild();
+        }
+        renderer->initializeExternalTransformResources(*getCamera());
+      }
+
       // CPU-owned transforms are uploaded first; the transport is the final writer for GPU-bound
       // shapes. Draw still refreshes camera, light, segmentation, and material metadata.
       mRenderScene->uploadObjectTransforms();
