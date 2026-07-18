@@ -149,12 +149,8 @@ creating cameras, then use the same batched workflow as rasterization:
 ```python
 sapien.render.set_camera_shader_dir("rt")
 
-# After physx_system.gpu_init():
-for shape in render_body.render_shapes:
-   shape.set_gpu_pose_batch_index(rigid_body.gpu_pose_index)
-
-# For a camera mounted on a GPU rigid body or articulation link:
-camera.set_gpu_pose_batch_index(camera_mount.gpu_pose_index)
+# After physx_system.gpu_init(), sibling PhysX GPU bodies/links are discovered
+# automatically. Explicit pose indices remain available for custom pose buffers.
 
 group = sapien.render.RenderSystemGroup(render_systems)
 camera_group = group.create_camera_group([camera], ["Color"])
@@ -166,8 +162,20 @@ camera_group.take_picture()
 color = camera_group.get_picture_cuda("Color")
 ```
 
-Each rigid-pose update requires a TLAS update and resets RT accumulation, so
-this path is more expensive than updating raster vertex transforms. SAPIEN does
+The interactive Viewer uses the same direct pose source when configured after
+PhysX GPU initialization:
+
+```python
+viewer.set_scene(scene)
+viewer.configure_physx_gpu_rendering(physx_system, transport="direct")
+viewer.update_render()
+viewer.render()
+```
+
+Viewer and camera scene selection use the same base-plus-shared resolver and do
+not apply scene offsets. Each rigid-pose update requires a TLAS update and
+resets RT accumulation, so this path is more expensive than updating raster
+vertex transforms. SAPIEN does
 not currently provide deformable-body physics, although the separate
 render-only `RenderCudaMeshComponent` API exposes mutable CUDA mesh vertices.
 Supporting that component in batched RT would require synchronized BLAS
