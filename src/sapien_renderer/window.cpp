@@ -328,7 +328,13 @@ void SapienRendererWindow::updateRender() {
   SAPIEN_PROFILE_FUNCTION;
   auto currentSystems =
       RenderSceneResolver::resolve(mBaseRenderSystems, mEngine->getRenderSystems());
-  if (currentSystems != mRenderSystems) {
+  bool rebuildScene = currentSystems != mRenderSystems;
+  if (!rebuildScene && currentSystems.size() == mRenderSceneVersions.size()) {
+    for (uint32_t i = 0; i < currentSystems.size(); ++i) {
+      rebuildScene |= currentSystems[i]->getScene()->getVersion() != mRenderSceneVersions[i];
+    }
+  }
+  if (rebuildScene) {
     rebuildRenderScene();
   }
 
@@ -342,11 +348,8 @@ void SapienRendererWindow::updateRender() {
   }
 #endif
 
-  for (uint32_t i = 0; i < mRenderSystems.size(); ++i) {
-    if (mRenderSystems[i]->getScene()->getVersion() != mRenderSceneVersions[i]) {
-      mRenderSceneVersions[i] = mRenderSystems[i]->getScene()->getVersion();
-    }
-    mRenderSystems[i]->step();
+  for (auto const &system : mRenderSystems) {
+    system->step();
   }
 
   if (!mRenderScene) {

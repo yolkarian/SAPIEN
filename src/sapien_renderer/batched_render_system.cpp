@@ -182,7 +182,7 @@ BatchedCamera::~BatchedCamera() {
 
 BatchedRenderSystem::BatchedRenderSystem(
     std::vector<std::shared_ptr<SapienRendererSystem>> systems)
-    : mSystems(systems) {
+    : mSystems(RenderSceneResolver::resolve(systems, {})) {
   if (mSystems.empty()) {
     throw std::runtime_error("systems must not be empty");
   }
@@ -193,8 +193,8 @@ BatchedRenderSystem::BatchedRenderSystem(
     std::vector<std::shared_ptr<SapienRendererSystem>> systems,
     std::shared_ptr<svulkan2::scene::Scene> renderScene,
     std::vector<std::shared_ptr<SapienRenderBodyComponent>> gpuSourcedBodies)
-    : mSystems(systems), mFixedRenderScene(renderScene), mAutoBindPhysxGpuPoses(false),
-      mFixedGpuSourcedBodies(gpuSourcedBodies) {
+    : mSystems(RenderSceneResolver::resolve(systems, {})), mFixedRenderScene(renderScene),
+      mAutoBindPhysxGpuPoses(false), mFixedGpuSourcedBodies(gpuSourcedBodies) {
   if (mSystems.empty()) {
     throw std::runtime_error("systems must not be empty");
   }
