@@ -144,6 +144,84 @@ __global__ void pack_vec3_kernel(Vec3 *__restrict__ dst, float const *__restrict
   dst[g] = {src[g * stride], src[g * stride + 1], src[g * stride + 2]};
 }
 
+__global__ void compose_viewer_wrench_kernel(
+    Vec3 *__restrict__ outputForce, Vec3 *__restrict__ outputTorque,
+    float const *__restrict__ applicationForce, float const *__restrict__ applicationTorque,
+    SapienBodyData const *__restrict__ bodyData, int applicationIndex, int poseIndex,
+    Vec3 localAnchor, Vec3 localCenterOfMass, Vec3 target, float effectiveMass,
+    float stiffness, float damping, float maxAcceleration) {
+  SapienBodyData body = bodyData[poseIndex];
+  Pose bodyPose(body.p, body.q);
+  Vec3 anchor = bodyPose * localAnchor;
+  Vec3 centerOfMass = bodyPose * localCenterOfMass;
+  Vec3 lever = anchor - centerOfMass;
+  Vec3 pointVelocity = body.v + body.w.cross(lever);
+  Vec3 force = (target - anchor) * (effectiveMass * stiffness) -
+               pointVelocity * (effectiveMass * damping);
+
+  float maximumForce = effectiveMass * maxAcceleration;
+  float forceLengthSquared = force.lengthSqr();
+  if (maximumForce > 0.f && forceLengthSquared > maximumForce * maximumForce) {
+    force *= maximumForce / sqrtf(forceLengthSquared);
+  }
+  Vec3 torque = lever.cross(force);
+
+  int offset = applicationIndex * 4;
+  outputForce[0] = force + Vec3(applicationForce[offset], applicationForce[offset + 1],
+                                applicationForce[offset + 2]);
+  outputTorque[0] = torque + Vec3(applicationTorque[offset], applicationTorque[offset + 1],
+                                  applicationTorque[offset + 2]);
+}
+
+__global__ void compose_viewer_articulation_wrench_kernel(
+    Vec3 *__restrict__ outputForce, Vec3 *__restrict__ outputTorque,
+    float const *__restrict__ applicationForce, float const *__restrict__ applicationTorque,
+    SapienBodyData const *__restrict__ bodyData, int articulationIndex, int linkIndex,
+    int maxLinkCount, int poseIndex, Vec3 localAnchor, Vec3 localCenterOfMass, Vec3 target,
+    float effectiveMass, float stiffness, float damping, float maxAcceleration) {
+  int link = blockIdx.x * blockDim.x + threadIdx.x;
+  if (link >= maxLinkCount) {
+    return;
+  }
+  int applicationIndex = articulationIndex * maxLinkCount + link;
+  int offset = applicationIndex * 4;
+  Vec3 force(applicationForce[offset], applicationForce[offset + 1],
+             applicationForce[offset + 2]);
+  Vec3 torque(applicationTorque[offset], applicationTorque[offset + 1],
+              applicationTorque[offset + 2]);
+
+  if (link == linkIndex) {
+    SapienBodyData body = bodyData[poseIndex];
+    Pose bodyPose(body.p, body.q);
+    Vec3 anchor = bodyPose * localAnchor;
+    Vec3 centerOfMass = bodyPose * localCenterOfMass;
+    Vec3 lever = anchor - centerOfMass;
+    Vec3 pointVelocity = body.v + body.w.cross(lever);
+    Vec3 viewerForce = (target - anchor) * (effectiveMass * stiffness) -
+                       pointVelocity * (effectiveMass * damping);
+    float maximumForce = effectiveMass * maxAcceleration;
+    float forceLengthSquared = viewerForce.lengthSqr();
+    if (maximumForce > 0.f && forceLengthSquared > maximumForce * maximumForce) {
+      viewerForce *= maximumForce / sqrtf(forceLengthSquared);
+    }
+    force += viewerForce;
+    torque += lever.cross(viewerForce);
+  }
+
+  outputForce[link] = force;
+  outputTorque[link] = torque;
+}
+
+__global__ void set_viewer_body_pose_kernel(SapienBodyData *__restrict__ bodyData, int poseIndex,
+                                            Pose pose, bool zeroVelocity) {
+  bodyData[poseIndex].p = pose.p;
+  bodyData[poseIndex].q = pose.q;
+  if (zeroVelocity) {
+    bodyData[poseIndex].v = Vec3(0.f);
+    bodyData[poseIndex].w = Vec3(0.f);
+  }
+}
+
 __global__ void scatter_articulation_jacobians_kernel(float *__restrict__ dst,
                                                       float const *__restrict__ src,
                                                       int const *__restrict__ index,
@@ -387,6 +465,36 @@ void gather_blocks(void *dst, void *src, void *index, int block_size, int count,
 void pack_vec3(void *dst, void *src, int stride, int count, cudaStream_t stream) {
   pack_vec3_kernel<<<(count + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE, 0, stream>>>(
       (Vec3 *)dst, (float *)src, stride, count);
+}
+
+void compose_viewer_wrench(Vec3 *outputForce, Vec3 *outputTorque,
+                           float const *applicationForce, float const *applicationTorque,
+                           SapienBodyData const *bodyData, int applicationIndex, int poseIndex,
+                           Vec3 localAnchor, Vec3 localCenterOfMass, Vec3 target,
+                           float effectiveMass, float stiffness, float damping,
+                           float maxAcceleration, cudaStream_t stream) {
+  compose_viewer_wrench_kernel<<<1, 1, 0, stream>>>(
+      outputForce, outputTorque, applicationForce, applicationTorque, bodyData,
+      applicationIndex, poseIndex, localAnchor, localCenterOfMass, target, effectiveMass,
+      stiffness, damping, maxAcceleration);
+}
+
+void compose_viewer_articulation_wrench(
+    Vec3 *outputForce, Vec3 *outputTorque, float const *applicationForce,
+    float const *applicationTorque, SapienBodyData const *bodyData, int articulationIndex,
+    int linkIndex, int maxLinkCount, int poseIndex, Vec3 localAnchor, Vec3 localCenterOfMass,
+    Vec3 target, float effectiveMass, float stiffness, float damping, float maxAcceleration,
+    cudaStream_t stream) {
+  compose_viewer_articulation_wrench_kernel<<<
+      (maxLinkCount + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE, 0, stream>>>(
+      outputForce, outputTorque, applicationForce, applicationTorque, bodyData,
+      articulationIndex, linkIndex, maxLinkCount, poseIndex, localAnchor, localCenterOfMass,
+      target, effectiveMass, stiffness, damping, maxAcceleration);
+}
+
+void set_viewer_body_pose(SapienBodyData *bodyData, int poseIndex, Pose pose, bool zeroVelocity,
+                          cudaStream_t stream) {
+  set_viewer_body_pose_kernel<<<1, 1, 0, stream>>>(bodyData, poseIndex, pose, zeroVelocity);
 }
 
 void scatter_articulation_jacobians(void *dst, void *src, void *index, void *shape,

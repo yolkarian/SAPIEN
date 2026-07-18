@@ -259,6 +259,8 @@ public:
   void gpuFetchArticulationLinkIncomingJointForce();
 
   void gpuApplyRigidDynamicData(CudaArrayHandle const &indices);
+  void gpuApplyRigidDynamicForce(CudaArrayHandle const &indices);
+  void gpuApplyRigidDynamicTorque(CudaArrayHandle const &indices);
   void gpuApplyArticulationRootPose(CudaArrayHandle const &indices);
   void gpuApplyArticulationRootVel(CudaArrayHandle const &indices);
   void gpuApplyArticulationQpos(CudaArrayHandle const &indices);
@@ -281,6 +283,21 @@ public:
   void gpuApplyArticulationQf();
   void gpuApplyArticulationQTargetPos();
   void gpuApplyArticulationQTargetVel();
+
+  /** Compose one Viewer spring wrench with the exposed application wrench and apply only the
+   *  selected rigid dynamic. The exposed force/torque buffers are not modified. */
+  void gpuApplyViewerRigidDynamicWrench(int gpuIndex, Vec3 localAnchor, Vec3 localCenterOfMass,
+                                        Vec3 target, float effectiveMass, float stiffness,
+                                        float damping, float maxAcceleration);
+  /** Compose and apply one Viewer spring wrench for one articulation link without modifying the
+   *  exposed application wrench buffers. */
+  void gpuApplyViewerArticulationLinkWrench(int articulationIndex, int linkIndex, int poseIndex,
+                                            Vec3 localAnchor, Vec3 localCenterOfMass, Vec3 target,
+                                            float effectiveMass, float stiffness, float damping,
+                                            float maxAcceleration);
+  /** Queue-safe Viewer teleport helpers that preserve current velocities by default. */
+  void gpuSetViewerRigidDynamicPose(int gpuIndex, Pose pose, bool zeroVelocity = false);
+  void gpuSetViewerArticulationRootPose(int articulationIndex, int rootPoseIndex, Pose pose);
 
   void gpuUpdateArticulationKinematics();
   void gpuUpdateArticulationKinematics(CudaArrayHandle const &indices);
@@ -398,15 +415,23 @@ private:
 
   CudaArray mCudaRigidBodyForceBuffer;
   CudaArrayHandle mCudaRigidDynamicForceHandle;
+  CudaArray mCudaRigidDynamicForcePaddedScratch;
+  CudaArray mCudaRigidDynamicForcePackedScratch;
   CudaArrayHandle mCudaArticulationLinkForceHandle;
   CudaArray mCudaArticulationLinkForcePaddedScratch;
   CudaArray mCudaArticulationLinkForcePackedScratch;
 
   CudaArray mCudaRigidBodyTorqueBuffer;
   CudaArrayHandle mCudaRigidDynamicTorqueHandle;
+  CudaArray mCudaRigidDynamicTorquePaddedScratch;
+  CudaArray mCudaRigidDynamicTorquePackedScratch;
   CudaArrayHandle mCudaArticulationLinkTorqueHandle;
   CudaArray mCudaArticulationLinkTorquePaddedScratch;
   CudaArray mCudaArticulationLinkTorquePackedScratch;
+
+  CudaArray mCudaViewerForceScratch;
+  CudaArray mCudaViewerTorqueScratch;
+  CudaArray mCudaViewerIndexBuffer;
 
   CudaHostArray mCudaHostRigidBodyBuffer;
 

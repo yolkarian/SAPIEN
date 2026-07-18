@@ -275,9 +275,11 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
 - Viewer path:
   1. `Viewer.configure_physx_gpu_rendering(physx_system, transport="auto")` after `gpu_init()`.
   2. `"auto"` selects direct CUDA/Vulkan interop on a compatible same physical device and compact pinned-host staging on different devices. Both raster and RT Viewer shader paths are supported.
-  3. `Viewer.update_render()` after each displayed simulation state.
-  4. `Viewer.render()` to draw without another pose fetch.
-  5. Inspect `Viewer.pose_transport` for the active choice and `Viewer.pose_transfer_bytes` for cumulative pose D2H bytes. Staged submission copies 28 bytes per unique rendered body/link pose and does not update CPU entities.
+  3. For physical dragging or queued gizmo teleports, call `Viewer.apply_interactions()` immediately before every PhysX substep. Ctrl + left drag uses a damped point spring.
+  4. `Viewer.update_render()` after each displayed simulation state.
+  5. `Viewer.render()` to draw without another pose fetch.
+  6. Inspect `Viewer.pose_transport` for the active choice and `Viewer.pose_transfer_bytes` for cumulative pose D2H bytes. Staged submission copies 28 bytes per unique rendered body/link pose and does not update CPU entities.
+  7. Viewer spring composition preserves the exposed application force/torque buffers. Do not issue a later apply for the same selected body before `step()`, because it would replace the composed spring.
 - Use `sync_poses_gpu_to_cpu()` only for explicit CPU-state debugging or the Viewer `cpu-debug` transport. SAPIEN documents it as a super-slow helper that downloads all poses from GPU to CPU entities.
 - When adding policy-eval or teleoperation keyboard controls on top of the interactive viewer, do not reuse SAPIEN's built-in camera/navigation keys such as `W/A/S/D/Q/E`. Prefer a separate key cluster, for example `I/K` for forward/backward command, `J/L` for lateral command, `U/O` for yaw, `C` to clear commands, and `N` to reset.
 
@@ -313,8 +315,8 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
    - `cuda_articulation_target_qpos` -> `gpu_apply_articulation_target_position()`
    - `cuda_articulation_target_qvel` -> `gpu_apply_articulation_target_velocity()`
    - `cuda_articulation_qf` -> `gpu_apply_articulation_qf()`
-   - `cuda_rigid_body_force` -> `gpu_apply_rigid_dynamic_force()`
-   - `cuda_rigid_body_torque` -> `gpu_apply_rigid_dynamic_torque()`
+   - `cuda_rigid_body_force` -> `gpu_apply_rigid_dynamic_force()` or `gpu_apply_rigid_dynamic_force(index_buffer)`
+   - `cuda_rigid_body_torque` -> `gpu_apply_rigid_dynamic_torque()` or `gpu_apply_rigid_dynamic_torque(index_buffer)`
 5. Call `physx_system.step()`.
 6. If one control step contains multiple physics substeps and uses `cuda_articulation_qf`, reapply `gpu_apply_articulation_qf()` between substeps.
 7. Fetch state with the needed `gpu_fetch_*()` calls.

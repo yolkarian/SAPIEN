@@ -81,7 +81,7 @@ The final Viewer therefore needs both same-device direct transport and cross-dev
 
 ## Implementation Status
 
-Stages 0 through 4 are complete. The Viewer now resolves base plus shared scenes without offsets,
+Stages 0 through 5 are complete. The Viewer now resolves base plus shared scenes without offsets,
 submits simulation state explicitly, uses direct CUDA/Vulkan transforms on a compatible same
 device, and automatically uses compact pinned-host staging on different devices. Both raster and
 RT staged paths are implemented; RT writes Vulkan instance transforms, refits the TLAS, and resets
@@ -89,8 +89,13 @@ accumulation. Selection, focus, joint/coordinate overlays, mounted-camera overla
 Transform gizmo read the latest submitted GPU pose through a per-frame selected-pose cache. Direct
 mode downloads only the requested 7-float row; staged mode reuses its completed host slot.
 
-Stages 5 through 7 remain: GPU interaction, property windows, and final release cleanup.
-Cross-device offscreen camera transport is outside this Viewer migration scope.
+GPU interaction is also implemented: Ctrl + left drag creates a damped point spring, application
+and Viewer wrenches are composed in private CUDA scratch without modifying exposed application
+buffers, and `viewer.apply_interactions()` applies the result before physics. Transform-gizmo GPU
+teleports are queued and preserve velocity unless zeroing is explicitly requested.
+
+Stages 6 and 7 remain: GPU-aware property windows and final release cleanup. Cross-device
+offscreen camera transport is outside this Viewer migration scope.
 
 ## Target Architecture
 
@@ -245,7 +250,7 @@ Performance acceptance must therefore be based on measured GPU and CPU timings r
    - writes are replace, not accumulate: `setRigidDynamicData` / `setArticulationData` have SET semantics;
    - PhysX clears applied forces and torques after they act on the next simulation step unless `PxRigidBodyFlag::eRETAIN_ACCELERATIONS` is raised; SAPIEN never sets that flag, so a single `gpu_apply_*` force acts on exactly one step (verified empirically for rigid dynamics and articulation links);
    - sustained interaction therefore requires `viewer.apply_interactions()` to run before every physics step; releasing a pick clears the Viewer scratch so the next composition applies a zero Viewer contribution;
-   - `gpu_apply_rigid_dynamic_force` / `gpu_apply_rigid_dynamic_torque` have no `index_buffer` overload, so composition with application-provided wrench buffers must write the full rigid-body force/torque buffers;
+   - the baseline public `gpu_apply_rigid_dynamic_force` / `gpu_apply_rigid_dynamic_torque` lacked `index_buffer` overloads; Stage 5 adds them and also uses a private selected-index apply-from-scratch path so Viewer composition never modifies public buffers;
    - if `eRETAIN_ACCELERATIONS` support is added later, that mode requires an explicit zero-write on release.
 5. Add test instrumentation that fails if the normal GPU Viewer path calls `sync_poses_gpu_to_cpu()`.
 
@@ -588,7 +593,7 @@ matching compact pose from its latest completed pinned-host slot without another
 
 ## Stage 5: Adapt Existing Interaction Handling for PhysX GPU
 
-**Priority: After GPU visualization and selection** — **Complexity: Large**
+**Status: Complete** — **Priority: After GPU visualization and selection** — **Complexity: Large**
 
 This stage modifies the behavior behind the current Viewer controls and `TransformWindow`. It does not replace their UI.
 
@@ -670,7 +675,11 @@ application wrench (cuda_*_force/torque, written by the application)
 
 The composition must not write in place into the exposed `cuda_*_force` / `cuda_*_torque` buffers: they are simultaneously the application's input and the source `gpu_apply_*()` reads, so an in-place `application + viewer` write would re-add the Viewer wrench on every subsequent composition. Preferred design: a private final buffer plus an internal apply-from-buffer API (the current `gpu_apply_*` entry points read only the fixed SAPIEN buffers). A snapshot/compose/apply/restore sequence over the shared buffers is possible but has more complex ordering and is not recommended.
 
-Because `gpu_apply_rigid_dynamic_force` / `gpu_apply_rigid_dynamic_torque` have no `index_buffer` overload, the composition step writes the full rigid-body force/torque buffers, not only the selected body.
+The public `gpu_apply_rigid_dynamic_force` / `gpu_apply_rigid_dynamic_torque` methods now accept
+optional selected `index_buffer` inputs. Those overloads still read the exposed application
+buffers, so the Viewer uses a private selected-body apply-from-scratch path: it composes one row
+without changing the exposed buffers and passes that row with the matching internal PhysX GPU
+index. It does not rewrite or re-submit unrelated rigid bodies.
 
 Expose one application phase:
 
@@ -678,9 +687,17 @@ Expose one application phase:
 viewer.apply_interactions()
 ```
 
-Apply ownership must be explicit. Recommended contract: while Viewer interaction is active, the application writes the exposed buffers, and `viewer.apply_interactions()` is the sole caller of the force/torque apply operations, immediately before `physx.step()` — the application does not call the corresponding `gpu_apply_*()` itself. A later application apply would overwrite the Viewer wrench, and a Viewer full-buffer apply can re-submit application data not intended for this step, especially for indexed articulation applies. The alternative is application-applies-first with the Viewer overwriting only the picked body/link through the internal indexed apply-from-buffer path; since an internal apply-from-buffer API is being added anyway, an indexed rigid-dynamic variant also avoids full-buffer composition every step.
+Apply ownership must be explicit. Recommended contract: while Viewer interaction is active, the application writes the exposed buffers, and `viewer.apply_interactions()` performs the final selected-body/link apply immediately before `physx.step()`. A later application apply for the same selected body would overwrite the Viewer wrench. Other bodies may still use the public full or indexed apply methods independently because the Viewer does not re-submit them.
 
 PhysX clears applied forces after each simulation step (SAPIEN does not set `eRETAIN_ACCELERATIONS`), so the interaction wrench acts on exactly one step: `viewer.apply_interactions()` must run before every physics step, and before each step of a multi-step control frame. On release or selection change, clear the Viewer scratch so the next composition applies a zero Viewer contribution; no interaction force outlives the step it was composed for.
+
+The implemented binding is Ctrl + left drag. The click path reads one Segmentation pixel and one
+Position pixel, converts the camera-space hit point to world space, and stores a body-local anchor.
+Each `viewer.apply_interactions()` evaluates the damped spring from current GPU pose and velocity,
+clamps acceleration, composes it with the selected body's exposed application wrench into private
+CUDA scratch, and applies only that body or articulation. Rigid and articulation application
+buffers remain unchanged. The existing Transform gizmo uses the spring while dragging and queues
+explicit rigid or articulation-root teleports through the same pre-step phase.
 
 ### Exit Criteria
 

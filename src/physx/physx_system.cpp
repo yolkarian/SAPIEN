@@ -1084,6 +1084,29 @@ void PhysxSystemGpu::gpuApplyRigidDynamicForce() {
       PxRigidDynamicGPUAPIWriteType::eFORCE, count, mCudaEventRecord.event);
 }
 
+void PhysxSystemGpu::gpuApplyRigidDynamicForce(CudaArrayHandle const &indices) {
+  SAPIEN_PROFILE_FUNCTION;
+  checkGpuInitialized();
+  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  auto count = static_cast<PxU32>(indices.shape[0]);
+  if (count == 0) {
+    return;
+  }
+
+  ensureCudaDevice();
+  gather_blocks(mCudaRigidDynamicForcePaddedScratch.ptr, mCudaRigidDynamicForceHandle.ptr,
+                indices.ptr, 4, count, mCudaStream);
+  pack_vec3(mCudaRigidDynamicForcePackedScratch.ptr,
+            mCudaRigidDynamicForcePaddedScratch.ptr, 4, count, mCudaStream);
+  gather_blocks(mCudaRigidDynamicIndexScratch.ptr, mCudaRigidDynamicIndexBuffer.ptr,
+                indices.ptr, 1, count, mCudaStream);
+  mCudaEventRecord.record(mCudaStream);
+  mPxScene->getDirectGPUAPI().setRigidDynamicData(
+      mCudaRigidDynamicForcePackedScratch.ptr,
+      static_cast<PxRigidDynamicGPUIndex *>(mCudaRigidDynamicIndexScratch.ptr),
+      PxRigidDynamicGPUAPIWriteType::eFORCE, count, mCudaEventRecord.event);
+}
+
 void PhysxSystemGpu::gpuApplyRigidDynamicTorque() {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
@@ -1098,6 +1121,29 @@ void PhysxSystemGpu::gpuApplyRigidDynamicTorque() {
   mCudaEventRecord.record(mCudaStream);
   mPxScene->getDirectGPUAPI().setRigidDynamicData(
       mCudaRigidDynamicScratch.ptr, (PxRigidDynamicGPUIndex *)mCudaRigidDynamicIndexBuffer.ptr,
+      PxRigidDynamicGPUAPIWriteType::eTORQUE, count, mCudaEventRecord.event);
+}
+
+void PhysxSystemGpu::gpuApplyRigidDynamicTorque(CudaArrayHandle const &indices) {
+  SAPIEN_PROFILE_FUNCTION;
+  checkGpuInitialized();
+  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  auto count = static_cast<PxU32>(indices.shape[0]);
+  if (count == 0) {
+    return;
+  }
+
+  ensureCudaDevice();
+  gather_blocks(mCudaRigidDynamicTorquePaddedScratch.ptr, mCudaRigidDynamicTorqueHandle.ptr,
+                indices.ptr, 4, count, mCudaStream);
+  pack_vec3(mCudaRigidDynamicTorquePackedScratch.ptr,
+            mCudaRigidDynamicTorquePaddedScratch.ptr, 4, count, mCudaStream);
+  gather_blocks(mCudaRigidDynamicIndexScratch.ptr, mCudaRigidDynamicIndexBuffer.ptr,
+                indices.ptr, 1, count, mCudaStream);
+  mCudaEventRecord.record(mCudaStream);
+  mPxScene->getDirectGPUAPI().setRigidDynamicData(
+      mCudaRigidDynamicTorquePackedScratch.ptr,
+      static_cast<PxRigidDynamicGPUIndex *>(mCudaRigidDynamicIndexScratch.ptr),
       PxRigidDynamicGPUAPIWriteType::eTORQUE, count, mCudaEventRecord.event);
 }
 
@@ -1407,6 +1453,116 @@ void PhysxSystemGpu::gpuApplyArticulationQTargetVel(CudaArrayHandle const &indic
       PxArticulationGPUAPIWriteType::eJOINT_TARGET_VELOCITY, count, mCudaEventRecord.event);
 }
 
+void PhysxSystemGpu::gpuApplyViewerRigidDynamicWrench(
+    int gpuIndex, Vec3 localAnchor, Vec3 localCenterOfMass, Vec3 target, float effectiveMass,
+    float stiffness, float damping, float maxAcceleration) {
+  checkGpuInitialized();
+  if (gpuIndex < 0 || gpuIndex >= mCudaRigidDynamicHandle.shape[0]) {
+    throw std::runtime_error("failed to apply Viewer wrench: invalid rigid dynamic GPU index");
+  }
+  if (!localAnchor.isSane() || !localCenterOfMass.isSane() || !target.isSane() ||
+      !std::isfinite(effectiveMass) || !std::isfinite(stiffness) || !std::isfinite(damping) ||
+      !std::isfinite(maxAcceleration) || effectiveMass <= 0.f || stiffness < 0.f ||
+      damping < 0.f || maxAcceleration < 0.f) {
+    throw std::runtime_error("failed to apply Viewer wrench: invalid spring parameters");
+  }
+
+  gpuFetchRigidDynamicDataIfNeeded();
+  ensureCudaDevice();
+  compose_viewer_wrench(
+      static_cast<Vec3 *>(mCudaViewerForceScratch.ptr),
+      static_cast<Vec3 *>(mCudaViewerTorqueScratch.ptr),
+      static_cast<float const *>(mCudaRigidDynamicForceHandle.ptr),
+      static_cast<float const *>(mCudaRigidDynamicTorqueHandle.ptr),
+      static_cast<SapienBodyData const *>(mCudaRigidBodyBuffer.ptr), gpuIndex, gpuIndex,
+      localAnchor, localCenterOfMass, target, effectiveMass, stiffness, damping,
+      maxAcceleration, mCudaStream);
+  mCudaEventRecord.record(mCudaStream);
+
+  auto *physxIndex = static_cast<PxRigidDynamicGPUIndex *>(mCudaRigidDynamicIndexBuffer.ptr) +
+                     gpuIndex;
+  auto &gpuApi = mPxScene->getDirectGPUAPI();
+  gpuApi.setRigidDynamicData(mCudaViewerForceScratch.ptr, physxIndex,
+                             PxRigidDynamicGPUAPIWriteType::eFORCE, 1,
+                             mCudaEventRecord.event);
+  gpuApi.setRigidDynamicData(mCudaViewerTorqueScratch.ptr, physxIndex,
+                             PxRigidDynamicGPUAPIWriteType::eTORQUE, 1,
+                             mCudaEventRecord.event);
+}
+
+void PhysxSystemGpu::gpuApplyViewerArticulationLinkWrench(
+    int articulationIndex, int linkIndex, int poseIndex, Vec3 localAnchor,
+    Vec3 localCenterOfMass, Vec3 target, float effectiveMass, float stiffness, float damping,
+    float maxAcceleration) {
+  checkGpuInitialized();
+  if (articulationIndex < 0 || articulationIndex >= mGpuArticulationCount || linkIndex < 0 ||
+      linkIndex >= mGpuArticulationMaxLinkCount || poseIndex < 0 ||
+      poseIndex >= mCudaRigidBodyBuffer.shape[0]) {
+    throw std::runtime_error("failed to apply Viewer wrench: invalid articulation link index");
+  }
+  if (!localAnchor.isSane() || !localCenterOfMass.isSane() || !target.isSane() ||
+      !std::isfinite(effectiveMass) || !std::isfinite(stiffness) || !std::isfinite(damping) ||
+      !std::isfinite(maxAcceleration) || effectiveMass <= 0.f || stiffness < 0.f ||
+      damping < 0.f || maxAcceleration < 0.f) {
+    throw std::runtime_error("failed to apply Viewer wrench: invalid spring parameters");
+  }
+
+  gpuFetchArticulationLinkPoseIfNeeded();
+  gpuFetchArticulationLinkVel();
+  ensureCudaDevice();
+  compose_viewer_articulation_wrench(
+      static_cast<Vec3 *>(mCudaViewerForceScratch.ptr),
+      static_cast<Vec3 *>(mCudaViewerTorqueScratch.ptr),
+      static_cast<float const *>(mCudaArticulationLinkForceHandle.ptr),
+      static_cast<float const *>(mCudaArticulationLinkTorqueHandle.ptr),
+      static_cast<SapienBodyData const *>(mCudaRigidBodyBuffer.ptr), articulationIndex, linkIndex,
+      mGpuArticulationMaxLinkCount, poseIndex, localAnchor, localCenterOfMass, target,
+      effectiveMass, stiffness, damping, maxAcceleration, mCudaStream);
+  mCudaEventRecord.record(mCudaStream);
+
+  auto *physxIndex =
+      static_cast<PxArticulationGPUIndex *>(mCudaArticulationGpuIndexBuffer.ptr) +
+      articulationIndex;
+  auto &gpuApi = mPxScene->getDirectGPUAPI();
+  gpuApi.setArticulationData(mCudaViewerForceScratch.ptr, physxIndex,
+                             PxArticulationGPUAPIWriteType::eLINK_FORCE, 1,
+                             mCudaEventRecord.event);
+  gpuApi.setArticulationData(mCudaViewerTorqueScratch.ptr, physxIndex,
+                             PxArticulationGPUAPIWriteType::eLINK_TORQUE, 1,
+                             mCudaEventRecord.event);
+}
+
+void PhysxSystemGpu::gpuSetViewerRigidDynamicPose(int gpuIndex, Pose pose,
+                                                  bool zeroVelocity) {
+  checkGpuInitialized();
+  if (gpuIndex < 0 || gpuIndex >= mCudaRigidDynamicHandle.shape[0] || !pose.isSane()) {
+    throw std::runtime_error("failed to teleport Viewer rigid dynamic: invalid pose or index");
+  }
+  gpuFetchRigidDynamicDataIfNeeded();
+  ensureCudaDevice();
+  set_viewer_body_pose(static_cast<SapienBodyData *>(mCudaRigidBodyBuffer.ptr), gpuIndex, pose,
+                       zeroVelocity, mCudaStream);
+  checkCudaErrors(cudaMemcpyAsync(mCudaViewerIndexBuffer.ptr, &gpuIndex, sizeof(int),
+                                  cudaMemcpyHostToDevice, mCudaStream));
+  gpuApplyRigidDynamicData(mCudaViewerIndexBuffer.handle());
+}
+
+void PhysxSystemGpu::gpuSetViewerArticulationRootPose(int articulationIndex, int rootPoseIndex,
+                                                      Pose pose) {
+  checkGpuInitialized();
+  if (articulationIndex < 0 || articulationIndex >= mGpuArticulationCount || rootPoseIndex < 0 ||
+      rootPoseIndex >= mCudaRigidBodyBuffer.shape[0] || !pose.isSane()) {
+    throw std::runtime_error("failed to teleport Viewer articulation root: invalid pose or index");
+  }
+  gpuFetchArticulationLinkPoseIfNeeded();
+  ensureCudaDevice();
+  set_viewer_body_pose(static_cast<SapienBodyData *>(mCudaRigidBodyBuffer.ptr), rootPoseIndex,
+                       pose, false, mCudaStream);
+  checkCudaErrors(cudaMemcpyAsync(mCudaViewerIndexBuffer.ptr, &articulationIndex, sizeof(int),
+                                  cudaMemcpyHostToDevice, mCudaStream));
+  gpuApplyArticulationRootPose(mCudaViewerIndexBuffer.handle());
+}
+
 void PhysxSystemGpu::syncPosesGpuToCpu() {
   checkGpuInitialized();
   ++mSyncPosesGpuToCpuCount;
@@ -1642,6 +1798,8 @@ void PhysxSystemGpu::allocateCudaBuffers() {
                                                  .type = "f4",
                                                  .cudaId = mCudaRigidBodyForceBuffer.cudaId,
                                                  .ptr = (float *)mCudaRigidBodyForceBuffer.ptr};
+  mCudaRigidDynamicForcePaddedScratch = CudaArray({rigidDynamicCount, 4}, "f4");
+  mCudaRigidDynamicForcePackedScratch = CudaArray({rigidDynamicCount, 3}, "f4");
   mCudaArticulationLinkForceHandle =
       CudaArrayHandle{.shape = {mGpuArticulationCount, mGpuArticulationMaxLinkCount, 4},
                       .strides = {mGpuArticulationMaxLinkCount * 16, 16, 4},
@@ -1659,6 +1817,8 @@ void PhysxSystemGpu::allocateCudaBuffers() {
                                                   .type = "f4",
                                                   .cudaId = mCudaRigidBodyTorqueBuffer.cudaId,
                                                   .ptr = (float *)mCudaRigidBodyTorqueBuffer.ptr};
+  mCudaRigidDynamicTorquePaddedScratch = CudaArray({rigidDynamicCount, 4}, "f4");
+  mCudaRigidDynamicTorquePackedScratch = CudaArray({rigidDynamicCount, 3}, "f4");
   mCudaArticulationLinkTorqueHandle =
       CudaArrayHandle{.shape = {mGpuArticulationCount, mGpuArticulationMaxLinkCount, 4},
                       .strides = {mGpuArticulationMaxLinkCount * 16, 16, 4},
@@ -1669,6 +1829,11 @@ void PhysxSystemGpu::allocateCudaBuffers() {
       CudaArray({mGpuArticulationCount, mGpuArticulationMaxLinkCount, 4}, "f4");
   mCudaArticulationLinkTorquePackedScratch =
       CudaArray({mGpuArticulationCount, mGpuArticulationMaxLinkCount, 3}, "f4");
+
+  int viewerWrenchCount = std::max(1, mGpuArticulationMaxLinkCount);
+  mCudaViewerForceScratch = CudaArray({viewerWrenchCount, 3}, "f4");
+  mCudaViewerTorqueScratch = CudaArray({viewerWrenchCount, 3}, "f4");
+  mCudaViewerIndexBuffer = CudaArray({1}, "i4");
 
   int articulationBufferBlockSize = mGpuArticulationCount * mGpuArticulationMaxDof;
   mCudaArticulationBuffer = CudaArray({articulationBufferBlockSize * 8}, "f4");

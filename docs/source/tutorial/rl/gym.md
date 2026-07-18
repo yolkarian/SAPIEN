@@ -93,6 +93,8 @@ and compact pinned-host staging when PhysX and Vulkan use different devices:
 
 ```python
 viewer.configure_physx_gpu_rendering(physx_system, transport="auto")
+viewer.apply_interactions()  # before every physics substep when interaction is enabled
+physx_system.step()
 viewer.update_render()
 viewer.render()
 ```

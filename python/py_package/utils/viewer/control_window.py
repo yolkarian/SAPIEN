@@ -23,6 +23,7 @@ class ControlWindow(Plugin):
         self.viewer.focus_entity = self.focus_entity
         self.viewer.focus_camera = self.focus_camera
         self.viewer.register_click_handler = self.register_click_handler
+        self.register_click_handler(self._handle_gpu_pick)
 
         self._create_visual_models()
 
@@ -345,6 +346,20 @@ class ControlWindow(Plugin):
                         )
                     ),
                 ),
+                R.UISection()
+                .Label("GPU Interaction")
+                .append(
+                    R.UIDisplayText().Text("Ctrl + left drag: physical point spring"),
+                    R.UIInputFloat()
+                    .Label("Stiffness")
+                    .Bind(self.viewer, "interaction_stiffness"),
+                    R.UIInputFloat()
+                    .Label("Damping")
+                    .Bind(self.viewer, "interaction_damping"),
+                    R.UIInputFloat()
+                    .Label("Max Acceleration")
+                    .Bind(self.viewer, "interaction_max_acceleration"),
+                ),
                 R.UIButton().Label("Screenshot").Callback(self.take_screenshot),
                 R.UIDisplayText().Bind(lambda: "FPS: {:.2f}".format(self.window.fps)),
             )
@@ -384,6 +399,7 @@ class ControlWindow(Plugin):
         self._handle_focused_entity()
 
         self._handle_click()
+        self._handle_gpu_drag()
 
         self._handle_input_wasd()
         self._handle_input_mouse()
@@ -400,6 +416,49 @@ class ControlWindow(Plugin):
 
     def register_click_handler(self, func):
         self.click_handlers.append(func)
+
+    def _handle_gpu_pick(self, viewer, x: int, y: int) -> bool:
+        if not self.window.ctrl:
+            return False
+        segmentation = self.window.get_picture_pixel("Segmentation", x, y)
+        entity = self.find_entity_by_id(segmentation[1], segmentation[2])
+        if entity is None:
+            return False
+        camera_position = self.window.get_picture_pixel("Position", x, y)
+        if camera_position[3] >= 1:
+            return False
+        camera_point = np.append(camera_position[:3], 1.0)
+        world_point = self.window.get_camera_model_matrix() @ camera_point
+        if not viewer.begin_gpu_interaction(entity, world_point[:3]):
+            return False
+        viewer.select_entity(entity)
+        self._gpu_drag_depth = float(camera_position[3])
+        return True
+
+    def _handle_gpu_drag(self) -> None:
+        if not self.viewer.gpu_interaction_active:
+            return
+        if not self.window.mouse_down(0):
+            self.viewer.end_gpu_interaction()
+            return
+
+        mouse_x, mouse_y = self.window.mouse_position
+        width, height = self.window.size
+        if width <= 0 or height <= 0:
+            return
+        clip = np.array(
+            [
+                2.0 * mouse_x / width - 1.0,
+                2.0 * mouse_y / height - 1.0,
+                self._gpu_drag_depth,
+                1.0,
+            ],
+            dtype=np.float32,
+        )
+        camera_point = np.linalg.inv(self.window.get_camera_projection_matrix()) @ clip
+        camera_point /= camera_point[3]
+        world_point = self.window.get_camera_model_matrix() @ camera_point
+        self.viewer.update_gpu_interaction_target(world_point[:3])
 
     def _handle_click(self):
         if self.window.mouse_click(0):
@@ -566,6 +625,7 @@ class ControlWindow(Plugin):
         self._use_cm_frame = False
 
         self.click_handlers = []
+        self._gpu_drag_depth = 1.0
 
     def get_ui_windows(self):
         self.build()

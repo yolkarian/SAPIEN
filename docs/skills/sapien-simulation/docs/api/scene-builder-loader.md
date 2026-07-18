@@ -390,6 +390,8 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
 | `add_bounding_box` | method | `add_bounding_box(self, pose, half_size, color)` |  |  |
+| `apply_interactions` | method | `apply_interactions(self) -> None` | Apply queued GPU teleports and active spring composition. | Call immediately before every PhysX substep. |
+| `begin_gpu_interaction` | method | `begin_gpu_interaction(self, entity: sapien.Entity, world_anchor: np.ndarray) -> bool` | Begin a GPU point spring. | Ctrl + left drag invokes this through the Control window. |
 | `cameras` | property | `cameras(self)` |  |  |
 | `clear_scene` | method | `clear_scene(self)` | Call clear scene. |  |
 | `close` | method | `close(self)` |  |  |
@@ -397,9 +399,11 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `control_window` | property | `control_window(self) -> ControlWindow` |  |  |
 | `draw_aabb` | method | `draw_aabb(self, lower, upper, color)` |  |  |
 | `drop` | method | `drop(self, files)` |  |  |
+| `end_gpu_interaction` | method | `end_gpu_interaction(self) -> None` | Release the active GPU point spring. | PhysX clears the previous applied wrench after its step. |
 | `focus_camera` | method | `focus_camera(self, camera)` |  |  |
 | `focus_change` | method | `focus_change(self, focused)` |  |  |
 | `focus_entity` | method | `focus_entity(self, entity)` |  |  |
+| `gpu_interaction_active` | property | `gpu_interaction_active(self) -> bool` | Whether a Viewer point spring is active. |  |
 | `get_entity_viewer_pose` | method | `get_entity_viewer_pose(self, entity) -> sapien.Pose` | Return the latest submitted Viewer pose. | GPU poses are cached per submitted frame; CPU Entity pose may remain stale. |
 | `init_plugins` | method | `init_plugins(self, plugins)` |  |  |
 | `loop` | method | `loop(self, physx_steps=0)` | A convenience method for opening a temporary viewer for a scene. Simply call scene.create_viewer().loop() |  |

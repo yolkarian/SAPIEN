@@ -88,6 +88,20 @@ void root_vel_sapien_to_physx(void *physx_linear_velocity, void *physx_angular_v
 
 void gather_blocks(void *dst, void *src, void *index, int block_size, int count, CUstream_st *);
 void pack_vec3(void *dst, void *src, int stride, int count, CUstream_st *);
+void compose_viewer_wrench(Vec3 *outputForce, Vec3 *outputTorque,
+                           float const *applicationForce, float const *applicationTorque,
+                           SapienBodyData const *bodyData, int applicationIndex, int poseIndex,
+                           Vec3 localAnchor, Vec3 localCenterOfMass, Vec3 target,
+                           float effectiveMass, float stiffness, float damping,
+                           float maxAcceleration, CUstream_st *stream);
+void compose_viewer_articulation_wrench(
+    Vec3 *outputForce, Vec3 *outputTorque, float const *applicationForce,
+    float const *applicationTorque, SapienBodyData const *bodyData, int articulationIndex,
+    int linkIndex, int maxLinkCount, int poseIndex, Vec3 localAnchor, Vec3 localCenterOfMass,
+    Vec3 target, float effectiveMass, float stiffness, float damping, float maxAcceleration,
+    CUstream_st *stream);
+void set_viewer_body_pose(SapienBodyData *bodyData, int poseIndex, Pose pose, bool zeroVelocity,
+                          CUstream_st *stream);
 void scatter_articulation_jacobians(void *dst, void *src, void *index, void *shape,
                                     int max_rows, int max_cols, int count, CUstream_st *);
 void scatter_articulation_joint_forces(void *dst, void *src, void *index, void *meta,

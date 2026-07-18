@@ -87,6 +87,15 @@ class Viewer:
         self._requested_pose_transport = "auto"
         self._gpu_pose_cache: dict[int, sapien.Pose] = {}
 
+        self.interaction_stiffness = 80.0
+        self.interaction_damping = 12.0
+        self.interaction_max_acceleration = 100.0
+        self.interaction_minimum_mass = 0.1
+        self._interaction_entity: Optional[Entity] = None
+        self._interaction_local_anchor = np.zeros(3, dtype=np.float32)
+        self._interaction_target = np.zeros(3, dtype=np.float32)
+        self._pending_gpu_teleports: list[tuple] = []
+
     @property
     def render_scene(self):
         return self.window._internal_scene
@@ -181,6 +190,8 @@ class Viewer:
         self.set_scenes([scene])
 
     def clear_scene(self):
+        self.end_gpu_interaction()
+        self._pending_gpu_teleports.clear()
         for plugin in self.plugins:
             plugin.clear_scene()
 
@@ -267,6 +278,116 @@ class Viewer:
         self._gpu_pose_cache.clear()
         self.reset_notifications()
 
+    def begin_gpu_interaction(self, entity: Entity, world_anchor: np.ndarray) -> bool:
+        """Start a point-spring interaction on a PhysX GPU body or link."""
+        if self._physx_gpu_system is None:
+            return False
+        rigid = entity.find_component_by_type(
+            sapien.physx.PhysxRigidDynamicComponent
+        )
+        link = entity.find_component_by_type(
+            sapien.physx.PhysxArticulationLinkComponent
+        )
+        if (rigid is None or rigid.kinematic) and link is None:
+            return False
+
+        body_pose = self.get_entity_viewer_pose(entity)
+        anchor = np.asarray(world_anchor, dtype=np.float32)
+        anchor_homogeneous = np.append(anchor, 1.0)
+        self._interaction_entity = entity
+        self._interaction_local_anchor = (
+            body_pose.inv().to_transformation_matrix() @ anchor_homogeneous
+        )[:3]
+        self._interaction_target = anchor.copy()
+        return True
+
+    def update_gpu_interaction_target(self, target: np.ndarray) -> None:
+        if self._interaction_entity is not None:
+            self._interaction_target = np.asarray(target, dtype=np.float32).copy()
+
+    def end_gpu_interaction(self) -> None:
+        self._interaction_entity = None
+
+    @property
+    def gpu_interaction_active(self) -> bool:
+        return self._interaction_entity is not None
+
+    def queue_gpu_rigid_dynamic_pose(
+        self,
+        component: sapien.physx.PhysxRigidDynamicComponent,
+        pose: sapien.Pose,
+        zero_velocity: bool = False,
+    ) -> None:
+        self._pending_gpu_teleports.append(
+            ("rigid", component, pose, zero_velocity)
+        )
+
+    def queue_gpu_articulation_root_pose(
+        self, articulation: sapien.physx.PhysxArticulation, pose: sapien.Pose
+    ) -> None:
+        self._pending_gpu_teleports.append(("articulation", articulation, pose))
+
+    def apply_interactions(self) -> None:
+        """Apply queued GPU teleports and the active Viewer spring before physics."""
+        system = self._physx_gpu_system
+        if system is None:
+            self._pending_gpu_teleports.clear()
+            return
+
+        for command in self._pending_gpu_teleports:
+            if command[0] == "rigid":
+                _, component, pose, zero_velocity = command
+                system._gpu_set_viewer_rigid_dynamic_pose(
+                    component.gpu_index, pose, zero_velocity
+                )
+            else:
+                _, articulation, pose = command
+                system._gpu_set_viewer_articulation_root_pose(
+                    articulation.gpu_index,
+                    articulation.root.gpu_pose_index,
+                    pose,
+                )
+        if self._pending_gpu_teleports:
+            self._gpu_pose_cache.clear()
+            self.notify_render_update()
+        self._pending_gpu_teleports.clear()
+
+        entity = self._interaction_entity
+        if entity is None:
+            return
+        rigid = entity.find_component_by_type(
+            sapien.physx.PhysxRigidDynamicComponent
+        )
+        if rigid is not None and not rigid.kinematic:
+            system._gpu_apply_viewer_rigid_dynamic_wrench(
+                rigid.gpu_index,
+                self._interaction_local_anchor,
+                rigid.cmass_local_pose.p,
+                self._interaction_target,
+                max(float(rigid.mass), self.interaction_minimum_mass),
+                self.interaction_stiffness,
+                self.interaction_damping,
+                self.interaction_max_acceleration,
+            )
+            return
+
+        link = entity.find_component_by_type(
+            sapien.physx.PhysxArticulationLinkComponent
+        )
+        if link is not None:
+            system._gpu_apply_viewer_articulation_link_wrench(
+                link.articulation.gpu_index,
+                link.index,
+                link.gpu_pose_index,
+                self._interaction_local_anchor,
+                link.cmass_local_pose.p,
+                self._interaction_target,
+                max(float(link.mass), self.interaction_minimum_mass),
+                self.interaction_stiffness,
+                self.interaction_damping,
+                self.interaction_max_acceleration,
+            )
+
     def render(self):
         if self.window.should_close:
             self.close()
@@ -296,6 +417,8 @@ class Viewer:
     def select_entity(self, entity: Entity):
         if self.selected_entity == entity:
             return
+        if self._interaction_entity is not entity:
+            self.end_gpu_interaction()
 
         # reset previous selected entity
         if self.selected_entity is not None:
@@ -397,6 +520,7 @@ class Viewer:
         """
         while not self.closed:
             for _ in range(physx_steps):
+                self.apply_interactions()
                 self.scene.physx_system.step()
             self.update_render()
             self.render()

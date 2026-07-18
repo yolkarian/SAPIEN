@@ -103,6 +103,8 @@ screenshot controls.
 - `Display` selects the render target, resolution, and camera overlays.
 - `Selection` controls joint-axis display, coordinate frame display, selected
   entity opacity, and selected frame size.
+- `GPU Interaction` configures point-spring stiffness, damping, and maximum
+  acceleration.
 - `Screenshot` saves an image from the viewer window.
 
 ## Scene and entity windows
@@ -132,3 +134,26 @@ an axis to move in the orthogonal plane.
 
 For articulated links, the transform window can optionally use IK controls when
 a supported articulation is selected.
+
+With PhysX GPU rendering, hold `Ctrl` and left-drag a dynamic rigid body or
+articulation link to apply a damped point spring at the clicked Position-buffer
+hit point. Gizmo translation uses the same physical target by default. The
+`Teleport` button queues an explicit GPU pose update; rigid-body teleports
+preserve linear and angular velocity unless zeroing is explicitly requested.
+
+Apply Viewer commands before every physics substep:
+
+```python
+while not viewer.closed:
+   viewer.apply_interactions()
+   physx_system.step()
+   viewer.update_render()
+   viewer.render()
+```
+
+The Viewer composes its spring with the selected row of the application's
+`cuda_*_force` and `cuda_*_torque` buffers in private scratch. It does not
+modify those exposed buffers. While a Viewer spring is active,
+`viewer.apply_interactions()` must be the final force/torque apply for that
+selected body or link before `step()`; a later application apply would replace
+the composed spring.

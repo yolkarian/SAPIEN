@@ -133,6 +133,18 @@ class TestGpuArticulationLinkForce(unittest.TestCase):
         scene = sapien.Scene([system])
         return system, scene
 
+    def _build_rigid_dynamic(self, scene, x: float = 0.0):
+        material = sapien.physx.PhysxMaterial(0.2, 0.1, 0.05)
+        body = sapien.physx.PhysxRigidDynamicComponent()
+        body.disable_gravity = True
+        body.attach(
+            sapien.physx.PhysxCollisionShapeBox([0.1, 0.1, 0.1], material)
+        )
+        entity = sapien.Entity().add_component(body)
+        entity.pose = sapien.Pose([x, 0.0, 0.0])
+        scene.add_entity(entity)
+        return entity, body
+
     def _build_two_link_articulation(self, scene, x: float = 0.0):
         material = sapien.physx.PhysxMaterial(0.2, 0.1, 0.05)
 
@@ -245,6 +257,177 @@ class TestGpuArticulationLinkForce(unittest.TestCase):
         link_data = system.cuda_articulation_link_data
         angular_velocity = _read_float_values(link_data, (art.gpu_index, child.index, 10), 3)
         self.assertGreater(abs(angular_velocity[2]), 1e-3)
+
+    def test_indexed_rigid_force_and_torque_apply(self):
+        system, scene = self._create_scene()
+        _, body0 = self._build_rigid_dynamic(scene, x=-1.0)
+        _, body1 = self._build_rigid_dynamic(scene, x=1.0)
+        system.gpu_init()
+
+        force = system.cuda_rigid_body_force
+        torque = system.cuda_rigid_body_torque
+        _memset_cuda(force)
+        _memset_cuda(torque)
+        for body in (body0, body1):
+            _write_float_values(
+                force, (body.gpu_pose_index, 0), [100.0, 0.0, 0.0]
+            )
+            _write_float_values(
+                torque, (body.gpu_pose_index, 0), [0.0, 0.0, 100.0]
+            )
+        _cuda_synchronize()
+
+        owner, index_buffer = self._cuda_index_buffer(body0.gpu_index)
+        system.gpu_apply_rigid_dynamic_force(index_buffer)
+        system.gpu_apply_rigid_dynamic_torque(index_buffer)
+        system.step()
+        system.gpu_fetch_rigid_dynamic_data()
+        _cuda_synchronize()
+        data0 = _read_float_values(
+            system.cuda_rigid_body_data, (body0.gpu_pose_index, 7), 6
+        )
+        data1 = _read_float_values(
+            system.cuda_rigid_body_data, (body1.gpu_pose_index, 7), 6
+        )
+        owner.close()
+
+        self.assertGreater(data0[0], 1e-4)
+        self.assertGreater(data0[5], 1e-4)
+        self.assertTrue(np.allclose(data1, 0.0, atol=1e-4))
+
+    def test_viewer_rigid_wrench_composes_without_modifying_application_buffer(self):
+        system, scene = self._create_scene()
+        _, body = self._build_rigid_dynamic(scene)
+        system.gpu_init()
+
+        force = system.cuda_rigid_body_force
+        torque = system.cuda_rigid_body_torque
+        _memset_cuda(force)
+        _memset_cuda(torque)
+        _write_float_values(force, (body.gpu_pose_index, 0), [10.0, 0.0, 0.0])
+        _cuda_synchronize()
+
+        system._gpu_apply_viewer_rigid_dynamic_wrench(
+            body.gpu_index,
+            [0.0, 0.0, 0.0],
+            body.cmass_local_pose.p,
+            [0.0, 1.0, 0.0],
+            body.mass,
+            100.0,
+            0.0,
+            1000.0,
+        )
+        system.step()
+        system.gpu_fetch_rigid_dynamic_data()
+        _cuda_synchronize()
+
+        velocity = _read_float_values(
+            system.cuda_rigid_body_data, (body.gpu_pose_index, 7), 3
+        )
+        self.assertGreater(velocity[0], 1e-4)
+        self.assertGreater(velocity[1], 1e-4)
+        self.assertTrue(
+            np.allclose(
+                _read_float_values(force, (body.gpu_pose_index, 0), 3),
+                [10.0, 0.0, 0.0],
+            )
+        )
+
+    def test_viewer_articulation_wrench_composes_application_buffer(self):
+        system, scene = self._create_scene()
+        art, _, child = self._build_two_link_articulation(scene)
+        system.gpu_init()
+
+        force = system.cuda_articulation_link_force
+        torque = system.cuda_articulation_link_torque
+        _memset_cuda(force)
+        _memset_cuda(torque)
+        _write_float_values(
+            force, (art.gpu_index, child.index, 0), [10.0, 0.0, 0.0]
+        )
+        _cuda_synchronize()
+
+        system._gpu_apply_viewer_articulation_link_wrench(
+            art.gpu_index,
+            child.index,
+            child.gpu_pose_index,
+            [0.0, 0.0, 0.0],
+            child.cmass_local_pose.p,
+            [0.3, 1.0, 0.0],
+            child.mass,
+            100.0,
+            0.0,
+            1000.0,
+        )
+        system.step()
+        system.gpu_fetch_articulation_link_velocity()
+        _cuda_synchronize()
+
+        velocity = _read_float_values(
+            system.cuda_articulation_link_data,
+            (art.gpu_index, child.index, 7),
+            3,
+        )
+        self.assertGreater(abs(float(velocity[0])), 1e-4)
+        self.assertGreater(velocity[1], 1e-4)
+        self.assertTrue(
+            np.allclose(
+                _read_float_values(force, (art.gpu_index, child.index, 0), 3),
+                [10.0, 0.0, 0.0],
+            )
+        )
+
+    def test_viewer_gpu_teleport_preserves_or_zeros_velocity(self):
+        system, scene = self._create_scene()
+        _, body = self._build_rigid_dynamic(scene)
+        system.gpu_init()
+        system.gpu_fetch_rigid_dynamic_data()
+        _write_float_values(
+            system.cuda_rigid_body_data,
+            (body.gpu_pose_index, 7),
+            [1.0, 2.0, 3.0, 0.0, 0.0, 0.5],
+        )
+        system.gpu_apply_rigid_dynamic_data()
+        system._gpu_set_viewer_rigid_dynamic_pose(
+            body.gpu_index, sapien.Pose([2.0, 0.0, 1.0])
+        )
+        system.step()
+        system.gpu_fetch_rigid_dynamic_data()
+        _cuda_synchronize()
+        data = _read_float_values(
+            system.cuda_rigid_body_data, (body.gpu_pose_index, 0), 13
+        )
+        self.assertTrue(np.allclose(data[7:10], [1.0, 2.0, 3.0], atol=1e-4))
+        self.assertAlmostEqual(float(data[12]), 0.5, delta=1e-3)
+
+        system._gpu_set_viewer_rigid_dynamic_pose(
+            body.gpu_index, sapien.Pose([4.0, 0.0, 1.0]), True
+        )
+        system.step()
+        system.gpu_fetch_rigid_dynamic_data()
+        _cuda_synchronize()
+        stopped = _read_float_values(
+            system.cuda_rigid_body_data, (body.gpu_pose_index, 0), 13
+        )
+        self.assertTrue(np.allclose(stopped[7:13], 0.0, atol=1e-4))
+        self.assertAlmostEqual(float(stopped[0]), 4.0, places=3)
+
+    def test_viewer_gpu_articulation_root_teleport(self):
+        system, scene = self._create_scene()
+        art, root, _ = self._build_two_link_articulation(scene)
+        system.gpu_init()
+        system._gpu_set_viewer_articulation_root_pose(
+            art.gpu_index, root.gpu_pose_index, sapien.Pose([2.0, 0.0, 1.0])
+        )
+        system.step()
+        system.gpu_fetch_articulation_link_pose()
+        _cuda_synchronize()
+        root_pose = _read_float_values(
+            system.cuda_articulation_link_data,
+            (art.gpu_index, root.index, 0),
+            7,
+        )
+        self.assertTrue(np.allclose(root_pose[:3], [2.0, 0.0, 1.0], atol=1e-3))
 
     def test_force_writes_replace_instead_of_accumulate(self):
         system, scene = self._create_scene()

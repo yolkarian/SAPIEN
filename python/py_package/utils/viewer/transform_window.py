@@ -43,6 +43,21 @@ class TransformWindow(Plugin):
         self.update_ghost_objects()
         self.follow = False
 
+        entity = self.selected_entity
+        if entity is None or self.viewer._physx_gpu_system is None:
+            return
+        rigid = entity.find_component_by_type(
+            sapien.physx.PhysxRigidDynamicComponent
+        )
+        link = entity.find_component_by_type(
+            sapien.physx.PhysxArticulationLinkComponent
+        )
+        if (rigid is not None and not rigid.kinematic) or link is not None:
+            current_pose = self.viewer.get_entity_viewer_pose(entity)
+            if not self.viewer.gpu_interaction_active:
+                self.viewer.begin_gpu_interaction(entity, current_pose.p)
+            self.viewer.update_gpu_interaction_target(self._gizmo_pose.p)
+
     def get_articulation(self, entity):
         if not entity:
             return None
@@ -234,20 +249,34 @@ class TransformWindow(Plugin):
 
     def teleport(self, _):
         try:
-            art = self.get_articulation(self.selected_entity)
+            entity = self.selected_entity
+            art = self.get_articulation(entity)
+            gpu_system = self.viewer._physx_gpu_system
             if art:
-                link: sapien.LinkBase = self.selected_entity
                 if self.ik_enabled:
                     art.set_qpos(self.ik_result)
                 else:
-                    link2world = link.pose
-                    newlink2world = self._gizmo_pose
-                    l2world = art.pose
-                    l2link = link2world.inv() * l2world
-                    newl2world = newlink2world * l2link
-                    art.set_root_pose(newl2world)
+                    link_pose = self.viewer.get_entity_viewer_pose(entity)
+                    root_pose = self.viewer.get_entity_viewer_pose(art.root.entity)
+                    root_in_link = link_pose.inv() * root_pose
+                    new_root_pose = self._gizmo_pose * root_in_link
+                    if gpu_system is not None:
+                        self.viewer.queue_gpu_articulation_root_pose(
+                            art, new_root_pose
+                        )
+                    else:
+                        art.set_root_pose(new_root_pose)
             else:
-                self.selected_entity.set_pose(self._gizmo_pose)
+                rigid = entity.find_component_by_type(
+                    sapien.physx.PhysxRigidDynamicComponent
+                )
+                if gpu_system is not None and rigid is not None:
+                    self.viewer.queue_gpu_rigid_dynamic_pose(
+                        rigid, self._gizmo_pose
+                    )
+                else:
+                    entity.set_pose(self._gizmo_pose)
+            self.viewer.end_gpu_interaction()
             self.viewer.notify_render_update()
         except AttributeError:
             pass
@@ -308,7 +337,11 @@ class TransformWindow(Plugin):
         self.gizmo.CameraMatrices(view, proj)
 
         if self.selected_entity is not None:
-            pose = self.viewer.get_entity_viewer_pose(self.selected_entity)
+            pose = (
+                self.viewer.get_entity_viewer_pose(self.selected_entity)
+                if self.follow
+                else self._gizmo_pose
+            )
             self.gizmo.Matrix(pose.to_transformation_matrix())
         else:
             self.gizmo.Matrix(np.eye(4))

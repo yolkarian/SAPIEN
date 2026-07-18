@@ -400,6 +400,53 @@ class TestSceneGPU(unittest.TestCase):
     def test_viewer_staged_rt_pose_updates(self) -> None:
         self._assert_viewer_staged_pose_updates("rt")
 
+    def test_viewer_gpu_spring_and_queued_teleport(self) -> None:
+        from sapien.utils import Viewer
+
+        sapien.physx.enable_gpu()
+        device = sapien.Device("cuda")
+        physx = sapien.physx.PhysxGpuSystem(device)
+        scene = sapien.Scene([physx, sapien.render.RenderSystem(device)])
+        builder = scene.create_actor_builder()
+        builder.add_sphere_collision(radius=0.15)
+        builder.add_sphere_visual(radius=0.15)
+        actor = builder.build()
+        body = actor.find_component_by_type(
+            sapien.physx.PhysxRigidDynamicComponent
+        )
+        body.disable_gravity = True
+        physx.gpu_init()
+
+        viewer = Viewer(resolutions=(320, 240))
+        try:
+            viewer.configure_physx_gpu_rendering(physx, "direct")
+            viewer.set_scene(scene)
+            viewer.update_render()
+            initial_pose = viewer.get_entity_viewer_pose(actor)
+            initial_sync_count = physx._sync_poses_gpu_to_cpu_count
+
+            self.assertTrue(viewer.begin_gpu_interaction(actor, initial_pose.p))
+            viewer.update_gpu_interaction_target(initial_pose.p + [1.0, 0.0, 0.0])
+            viewer.apply_interactions()
+            physx.step()
+            viewer.update_render()
+            moved_pose = viewer.get_entity_viewer_pose(actor)
+            self.assertGreater(float(moved_pose.p[0]), float(initial_pose.p[0]))
+
+            viewer.end_gpu_interaction()
+            viewer.queue_gpu_rigid_dynamic_pose(
+                body, sapien.Pose([2.0, 0.0, 1.0]), zero_velocity=True
+            )
+            viewer.apply_interactions()
+            physx.step()
+            viewer.update_render()
+            teleported_pose = viewer.get_entity_viewer_pose(actor)
+            self.assertAlmostEqual(float(teleported_pose.p[0]), 2.0, places=3)
+            self.assertAlmostEqual(float(teleported_pose.p[2]), 1.0, places=3)
+            self.assertEqual(physx._sync_poses_gpu_to_cpu_count, initial_sync_count)
+        finally:
+            viewer.close()
+
     # def test_empty(self):
     #     scene = sapien.Scene()
     #     scene.add_ground(altitude=0)  # Add a ground

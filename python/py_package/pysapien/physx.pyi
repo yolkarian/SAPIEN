@@ -608,6 +608,29 @@ class PhysxGpuSystem(PhysxSystem):
     @typing.overload
     def __init__(self, device: sapien.pysapien.Device) -> None:
         ...
+    def _gpu_apply_viewer_rigid_dynamic_wrench(
+        self, gpu_index: int, local_anchor: numpy.ndarray | list[float] | tuple,
+        local_center_of_mass: numpy.ndarray | list[float] | tuple,
+        target: numpy.ndarray | list[float] | tuple, effective_mass: float,
+        stiffness: float, damping: float, max_acceleration: float
+    ) -> None:
+        ...
+    def _gpu_apply_viewer_articulation_link_wrench(
+        self, articulation_index: int, link_index: int, pose_index: int,
+        local_anchor: numpy.ndarray | list[float] | tuple,
+        local_center_of_mass: numpy.ndarray | list[float] | tuple,
+        target: numpy.ndarray | list[float] | tuple, effective_mass: float,
+        stiffness: float, damping: float, max_acceleration: float
+    ) -> None:
+        ...
+    def _gpu_set_viewer_rigid_dynamic_pose(
+        self, gpu_index: int, pose: sapien.pysapien.Pose, zero_velocity: bool = False
+    ) -> None:
+        ...
+    def _gpu_set_viewer_articulation_root_pose(
+        self, articulation_index: int, root_pose_index: int, pose: sapien.pysapien.Pose
+    ) -> None:
+        ...
     def get_scene_offset(self, scene: sapien.pysapien.Scene) -> numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]]:
         ...
     def get_scene_environment_id(self, scene: sapien.pysapien.Scene) -> int:
@@ -684,9 +707,17 @@ class PhysxGpuSystem(PhysxSystem):
     @typing.overload
     def gpu_apply_rigid_dynamic_data(self, index_buffer: typing.Any) -> None:
         ...
+    @typing.overload
     def gpu_apply_rigid_dynamic_force(self) -> None:
         ...
+    @typing.overload
+    def gpu_apply_rigid_dynamic_force(self, index_buffer: typing.Any) -> None:
+        ...
+    @typing.overload
     def gpu_apply_rigid_dynamic_torque(self) -> None:
+        ...
+    @typing.overload
+    def gpu_apply_rigid_dynamic_torque(self, index_buffer: typing.Any) -> None:
         ...
     def gpu_create_contact_body_impulse_query(self, bodies: list[PhysxRigidBaseComponent]) -> PhysxGpuContactBodyImpulseQuery:
         ...

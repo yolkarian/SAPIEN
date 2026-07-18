@@ -897,12 +897,37 @@ SAPIEN articulation `gpu_index` values.
            py::overload_cast<>(&PhysxSystemGpu::gpuApplyRigidDynamicData))
       .def("gpu_apply_rigid_dynamic_force",
            py::overload_cast<>(&PhysxSystemGpu::gpuApplyRigidDynamicForce))
+      .def("gpu_apply_rigid_dynamic_force",
+           py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyRigidDynamicForce),
+           py::arg("index_buffer"))
       .def("gpu_apply_rigid_dynamic_torque",
            py::overload_cast<>(&PhysxSystemGpu::gpuApplyRigidDynamicTorque))
+      .def("gpu_apply_rigid_dynamic_torque",
+           py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyRigidDynamicTorque),
+           py::arg("index_buffer"))
       .def("gpu_apply_articulation_link_force",
            py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationLinkForce))
       .def("gpu_apply_articulation_link_torque",
            py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationLinkTorque))
+      .def("_gpu_apply_viewer_rigid_dynamic_wrench",
+           &PhysxSystemGpu::gpuApplyViewerRigidDynamicWrench, py::arg("gpu_index"),
+           py::arg("local_anchor"), py::arg("local_center_of_mass"), py::arg("target"),
+           py::arg("effective_mass"), py::arg("stiffness"), py::arg("damping"),
+           py::arg("max_acceleration"))
+      .def("_gpu_apply_viewer_articulation_link_wrench",
+           &PhysxSystemGpu::gpuApplyViewerArticulationLinkWrench,
+           py::arg("articulation_index"), py::arg("link_index"), py::arg("pose_index"),
+           py::arg("local_anchor"), py::arg("local_center_of_mass"), py::arg("target"),
+           py::arg("effective_mass"), py::arg("stiffness"), py::arg("damping"),
+           py::arg("max_acceleration"))
+      .def("_gpu_set_viewer_rigid_dynamic_pose",
+           &PhysxSystemGpu::gpuSetViewerRigidDynamicPose, py::arg("gpu_index"),
+           py::arg("pose"), py::arg("zero_velocity") = false)
+      .def("_gpu_set_viewer_articulation_root_pose",
+           &PhysxSystemGpu::gpuSetViewerArticulationRootPose,
+           py::arg("articulation_index"), py::arg("root_pose_index"), py::arg("pose"))
 
       .def("gpu_apply_articulation_root_pose",
            py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationRootPose))
@@ -959,6 +984,16 @@ SAPIEN articulation `gpu_index` values.
       .def("gpu_apply_rigid_dynamic_data",
            [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
              system.gpuApplyRigidDynamicData(asCudaIndexBuffer(indexBuffer));
+           },
+           py::arg("index_buffer"))
+      .def("gpu_apply_rigid_dynamic_force",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuApplyRigidDynamicForce(asCudaIndexBuffer(indexBuffer));
+           },
+           py::arg("index_buffer"))
+      .def("gpu_apply_rigid_dynamic_torque",
+           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
+             system.gpuApplyRigidDynamicTorque(asCudaIndexBuffer(indexBuffer));
            },
            py::arg("index_buffer"))
       .def("gpu_apply_articulation_root_pose",
