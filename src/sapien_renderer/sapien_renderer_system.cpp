@@ -6,6 +6,7 @@
 #include "sapien/sapien_renderer/point_cloud_component.h"
 #include "sapien/sapien_renderer/render_body_component.h"
 #include "sapien/sapien_renderer/sapien_renderer_default.h"
+#include <algorithm>
 #include <svulkan2/core/context.h>
 #include <svulkan2/core/physical_device.h>
 #include <svulkan2/renderer/renderer.h>
@@ -111,6 +112,29 @@ void SapienRendererSystem::setBatchedRenderShared(bool shared) {
 
 bool SapienRendererSystem::isBatchedRenderShared() const {
   return mScene->isBatchedRenderShared();
+}
+
+void SapienRenderEngine::registerRenderSystem(
+    std::shared_ptr<SapienRendererSystem> const &system) {
+  std::erase_if(mRenderSystems, [](auto const &candidate) { return candidate.expired(); });
+  for (auto const &candidate : mRenderSystems) {
+    if (candidate.lock() == system) {
+      return;
+    }
+  }
+  mRenderSystems.push_back(system);
+}
+
+std::vector<std::shared_ptr<SapienRendererSystem>> SapienRenderEngine::getRenderSystems() {
+  std::vector<std::shared_ptr<SapienRendererSystem>> systems;
+  std::erase_if(mRenderSystems, [](auto const &candidate) { return candidate.expired(); });
+  systems.reserve(mRenderSystems.size());
+  for (auto const &candidate : mRenderSystems) {
+    if (auto system = candidate.lock()) {
+      systems.push_back(system);
+    }
+  }
+  return systems;
 }
 
 std::shared_ptr<Device> SapienRendererSystem::getDevice() const { return mEngine->getDevice(); }

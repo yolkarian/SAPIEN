@@ -25,6 +25,11 @@ void Scene::addSystem(std::shared_ptr<System> system) {
                              "] is already added to scene");
   }
   mSystems[name] = system;
+  if (auto renderSystem =
+          std::dynamic_pointer_cast<sapien_renderer::SapienRendererSystem>(system)) {
+    sapien_renderer::SapienRenderEngine::Get(renderSystem->getDevice())
+        ->registerRenderSystem(renderSystem);
+  }
 }
 
 std::shared_ptr<System> Scene::getSystem(std::string const &name) const {

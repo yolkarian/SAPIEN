@@ -99,13 +99,10 @@ class ControlWindow(Plugin):
 
                 j2c = j.pose_in_child
                 c2w = c.pose
-                j2w = c2w * j2c
-
-                w2v = sapien.Pose(self.viewer.scene_offset[self.selected_entity.scene])
-                j2v = w2v * j2w
+                j2v = c2w * j2c
 
                 if j.type == "prismatic":
-                    j2w.set_p(c2w.p)
+                    j2v.set_p(c2w.p)
                     self.joint_axes[1].set_position(j2v.p)
                     self.joint_axes[1].set_rotation(j2v.q)
                     self.joint_axes[1].transparency = 0 if self.show_joint_axes else 1
@@ -745,9 +742,6 @@ class ControlWindow(Plugin):
                 c.transparency = 0
             self.coordinate_axes.set_scale([self.coordinate_axes_scale] * 3)
 
-            scene_pose = sapien.Pose(
-                self.viewer.scene_offset[self.selected_entity.scene]
-            )
             if self._use_cm_frame and (
                 comp := self.selected_entity.find_component_by_type(
                     sapien.physx.PhysxRigidBodyComponent
@@ -757,7 +751,6 @@ class ControlWindow(Plugin):
             else:
                 pose = self.selected_entity.pose
 
-            pose = scene_pose * pose
             self.coordinate_axes.set_position(pose.p)
             self.coordinate_axes.set_rotation(pose.q)
 

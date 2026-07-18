@@ -10,8 +10,12 @@
 #include <svulkan2/ui/ui.h>
 
 namespace sapien {
+namespace physx {
+class PhysxSystemGpu;
+}
 namespace sapien_renderer {
 class SapienRenderEngine;
+class ViewerPoseTransport;
 
 #ifdef _DEBUG_VIEWER
 class FPSCameraControllerDebug {
@@ -52,10 +56,13 @@ public:
   ~SapienRendererWindow();
 
   void setScene(std::shared_ptr<Scene> scene);
-  void setScenes(std::vector<std::shared_ptr<Scene>> const &scenes,
-                 std::vector<Vec3> const &offsets);
+  void setScenes(std::vector<std::shared_ptr<Scene>> const &scenes);
 
-  /** updateRender calls updateRender of individual scenes */
+  void configurePhysxGpuRendering(std::shared_ptr<physx::PhysxSystemGpu> system,
+                                  std::string const &transport = "auto");
+  std::string getPoseTransport() const { return mPoseTransport; }
+
+  /** Submit the selected render-system state without drawing the window. */
   void updateRender();
 
   void setCameraParameters(float near, float far, float fovy);
@@ -152,8 +159,15 @@ private:
 
   std::shared_ptr<SapienRenderEngine> mEngine;
 
+  std::vector<std::shared_ptr<SapienRendererSystem>> mBaseRenderSystems;
   std::vector<std::shared_ptr<SapienRendererSystem>> mRenderSystems;
+  std::vector<uint64_t> mRenderSceneVersions;
+  uint64_t mAggregateRenderSceneVersion{};
   std::shared_ptr<svulkan2::scene::Scene> mRenderScene;
+  std::shared_ptr<physx::PhysxSystemGpu> mPhysxGpuSystem;
+  std::unique_ptr<ViewerPoseTransport> mPoseTransportImpl;
+  std::string mRequestedPoseTransport{"auto"};
+  std::string mPoseTransport{"cpu"};
 
   std::string mShaderDir{};
   std::unique_ptr<svulkan2::renderer::RendererBase> mSVulkanRenderer{};
@@ -168,6 +182,10 @@ private:
   int mViewportHeight{};
   bool mRequiresRebuild{true};
   bool mClosed{};
+
+  void rebuildRenderScene();
+  void rebuildPoseTransport();
+  void setRendererExternalTransformUpdates(bool enable);
 };
 
 } // namespace sapien_renderer

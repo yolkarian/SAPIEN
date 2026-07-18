@@ -1,7 +1,7 @@
 #pragma once
 
 #include "./sapien_renderer_system.h"
-#include <unordered_map>
+#include <map>
 
 struct CUstream_st;
 
@@ -41,6 +41,10 @@ private:
 class BatchedRenderSystem {
 public:
   BatchedRenderSystem(std::vector<std::shared_ptr<SapienRendererSystem>> systems);
+  BatchedRenderSystem(
+      std::vector<std::shared_ptr<SapienRendererSystem>> systems,
+      std::shared_ptr<svulkan2::scene::Scene> renderScene,
+      std::vector<std::shared_ptr<SapienRenderBodyComponent>> gpuSourcedBodies);
 
   void init();
 
@@ -57,11 +61,14 @@ public:
 
 private:
   std::vector<std::shared_ptr<SapienRendererSystem>> mSystems;
+  std::shared_ptr<svulkan2::scene::Scene> mFixedRenderScene;
+  bool mAutoBindPhysxGpuPoses{true};
+  std::vector<std::shared_ptr<SapienRenderBodyComponent>> mFixedGpuSourcedBodies;
   std::vector<uint64_t> mSceneVersions;
-  std::vector<std::shared_ptr<SapienRendererSystem>> mSharedSystems;
   std::vector<std::shared_ptr<svulkan2::scene::Scene>> mRenderScenes;
-  std::unordered_map<SapienRendererSystem *, std::shared_ptr<svulkan2::scene::Scene>>
-      mRenderSceneBySystem;
+  std::vector<uint64_t> mRenderSceneVersions;
+  std::vector<std::vector<std::shared_ptr<SapienRendererSystem>>> mRenderSceneSystems;
+  std::vector<std::vector<std::shared_ptr<SapienRendererSystem>>> mAdditionalRenderSelections;
 
   /** external poses array */
   CudaArrayHandle mCudaPoseHandle;
@@ -72,15 +79,20 @@ private:
   int mTransformBufferElementByteOffset{0};
 
   int mShapeCount{0};
+  int mMaximumPoseIndex{-1};
   CudaArray mCudaSceneTransformRefBuffer;
   CudaArray mCudaRTInstanceRefBuffer;
   CudaArray mCudaShapeDataBuffer;
   std::vector<bool> mRTSceneEnabled;
+  std::vector<std::shared_ptr<SapienRenderBodyComponent>> mGpuSourcedBodies;
 
   int mCameraCount{0};
   CudaArray mCudaCameraDataBuffer;
 
   CUstream_st *mCudaStream{nullptr};
+
+  void ensureCameraRenderScenes(
+      std::vector<std::shared_ptr<SapienRenderCameraComponent>> const &additionalCameras = {});
 
   // semaphore to notify scene update
   void notifyUpdate();

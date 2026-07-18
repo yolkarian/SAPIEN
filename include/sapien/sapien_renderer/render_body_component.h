@@ -30,6 +30,8 @@ public:
 
   // called by system to sync pose
   void internalUpdate();
+  void internalAcquireGpuPoseSource();
+  void internalReleaseGpuPoseSource();
 
   svulkan2::scene::Node *internalGetNode() const { return mNode; }
 
@@ -66,6 +68,7 @@ private:
   int mShadingMode{0};
 
   bool mRenderIdDisabled{false};
+  uint32_t mGpuPoseSourceRefCount{0};
 };
 
 } // namespace sapien_renderer

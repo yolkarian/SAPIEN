@@ -1,5 +1,6 @@
 #include "sapien/sapien_renderer/camera_component.h"
 #include "../logger.h"
+#include "render_scene_resolver.h"
 #include "sapien/entity.h"
 #include "sapien/math/conversion.h"
 #include "sapien/sapien_renderer/sapien_renderer_default.h"
@@ -231,7 +232,8 @@ void SapienRenderCameraComponent::setAutoUpload(bool enable) {
 }
 
 void SapienRenderCameraComponent::internalSetRenderScene(
-    std::shared_ptr<svulkan2::scene::Scene> scene) {
+    std::shared_ptr<svulkan2::scene::Scene> scene,
+    std::vector<std::shared_ptr<SapienRendererSystem>> const &resolvedSystems) {
   if (!mCamera) {
     throw std::runtime_error("failed to set camera render scene: camera is not added to scene");
   }
@@ -239,6 +241,14 @@ void SapienRenderCameraComponent::internalSetRenderScene(
     throw std::runtime_error("failed to set camera render scene: scene is null");
   }
   mCamera->mRenderer->setScene(scene);
+  if (!resolvedSystems.empty()) {
+    mResolvedRenderSystems = resolvedSystems;
+    mResolvedRenderSceneVersions.clear();
+    for (auto const &system : resolvedSystems) {
+      mResolvedRenderSceneVersions.push_back(system->getScene()->getVersion());
+    }
+    mResolvedRenderScene = scene;
+  }
 }
 
 svulkan2::core::Image &SapienRenderCameraComponent::getInternalImage(std::string const &name) {
@@ -272,19 +282,85 @@ void SapienRenderCameraComponent::onAddToScene(Scene &scene) {
   }
   system->registerComponent(
       std::static_pointer_cast<SapienRenderCameraComponent>(shared_from_this()));
+  refreshRenderScene();
 }
 
 void SapienRenderCameraComponent::onRemoveFromScene(Scene &scene) {
   auto system = scene.getSapienRendererSystem();
+  mResolvedRenderScene.reset();
+  mResolvedRenderSystems.clear();
+  mResolvedRenderSceneVersions.clear();
   mCamera = nullptr;
   system->unregisterComponent(
       std::static_pointer_cast<SapienRenderCameraComponent>(shared_from_this()));
+}
+
+std::vector<std::shared_ptr<SapienRendererSystem>>
+SapienRenderCameraComponent::internalResolveRenderSystems(
+    std::vector<std::shared_ptr<SapienRendererSystem>> const &contextSystems) {
+  std::vector<std::shared_ptr<SapienRendererSystem>> baseSystems;
+  if (mHasSceneSelectionOverride) {
+    for (auto const &weakScene : mSelectedScenes) {
+      auto scene = weakScene.lock();
+      if (!scene) {
+        throw std::runtime_error("failed to resolve camera scenes: a selected scene expired");
+      }
+      baseSystems.push_back(scene->getSapienRendererSystem());
+    }
+  } else {
+    auto scene = getScene();
+    if (!scene) {
+      throw std::runtime_error("failed to resolve camera scenes: camera is not added to scene");
+    }
+    baseSystems.push_back(scene->getSapienRendererSystem());
+  }
+  return RenderSceneResolver::resolve(baseSystems, contextSystems);
+}
+
+void SapienRenderCameraComponent::refreshRenderScene() {
+  if (!mCamera) {
+    return;
+  }
+  auto systems = internalResolveRenderSystems(SapienRenderEngine::Get()->getRenderSystems());
+  bool rebuild = systems != mResolvedRenderSystems;
+  if (!rebuild && systems.size() == mResolvedRenderSceneVersions.size()) {
+    for (uint32_t i = 0; i < systems.size(); ++i) {
+      rebuild |= systems[i]->getScene()->getVersion() != mResolvedRenderSceneVersions[i];
+    }
+  }
+  if (!rebuild) {
+    return;
+  }
+
+  mResolvedRenderSystems = systems;
+  mResolvedRenderSceneVersions.clear();
+  for (auto const &system : systems) {
+    mResolvedRenderSceneVersions.push_back(system->getScene()->getVersion());
+  }
+  mResolvedRenderScene = RenderSceneResolver::build(systems);
+  if (!mResolvedRenderScene) {
+    throw std::runtime_error("failed to resolve camera scenes: render scene is empty");
+  }
+  internalSetRenderScene(mResolvedRenderScene);
+}
+
+void SapienRenderCameraComponent::setScenes(std::vector<std::shared_ptr<Scene>> const &scenes) {
+  mHasSceneSelectionOverride = true;
+  mSelectedScenes.clear();
+  for (auto const &scene : scenes) {
+    if (!scene) {
+      throw std::runtime_error("failed to set camera scenes: a scene is null");
+    }
+    mSelectedScenes.push_back(scene);
+  }
+  refreshRenderScene();
 }
 
 void SapienRenderCameraComponent::takePicture() {
   if (!mCamera) {
     throw std::runtime_error("failed to take picture: the camera is not added to scene");
   }
+  refreshRenderScene();
   mCamera->takePicture();
   mUpdatedWithoutTakingPicture = false;
 }

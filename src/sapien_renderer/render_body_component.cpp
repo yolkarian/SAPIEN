@@ -166,10 +166,22 @@ void SapienRenderBodyComponent::setTextureArray(
 }
 
 void SapienRenderBodyComponent::internalUpdate() {
+  if (mGpuPoseSourceRefCount > 0) {
+    return;
+  }
   auto pose = getEntity()->getPose();
   mNode->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                        .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z},
                        .scale = mNode->getScale()});
+}
+
+void SapienRenderBodyComponent::internalAcquireGpuPoseSource() { ++mGpuPoseSourceRefCount; }
+
+void SapienRenderBodyComponent::internalReleaseGpuPoseSource() {
+  if (mGpuPoseSourceRefCount == 0) {
+    throw std::runtime_error("GPU pose source reference count is already zero");
+  }
+  --mGpuPoseSourceRefCount;
 }
 
 SapienRenderBodyComponent::~SapienRenderBodyComponent() {

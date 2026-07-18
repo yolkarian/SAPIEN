@@ -82,6 +82,9 @@ class Viewer:
         self.init_plugins(plugins)
 
         self._selected_entity_visibility = 0.5
+        self._physx_gpu_system: Optional[sapien.physx.PhysxGpuSystem] = None
+        self._physx_gpu_auto_configured = False
+        self._requested_pose_transport = "auto"
 
     @property
     def render_scene(self):
@@ -117,12 +120,9 @@ class Viewer:
             assert isinstance(plugin, Plugin)
             plugin.init(self)
 
-    def set_scenes(self, scenes, offsets=None):
-        if offsets is None:
-            side = int(np.ceil(len(scenes) ** 0.5))
-            idx = np.arange(len(scenes))
-            offsets = np.stack([idx // side, idx % side, np.zeros_like(idx)], axis=1)
-
+    def set_scenes(self, scenes: List[Scene]) -> None:
+        """Select base scenes without applying render-layer offsets."""
+        scenes = list(scenes)
         if self.scenes:
             camera_pose = self.window.get_camera_pose()
             self.clear_scene()
@@ -132,43 +132,19 @@ class Viewer:
         self.selected_entity = None
         self.scenes = scenes
 
-        if len(scenes) == 0:
-            self.window.set_scene(None)
-        elif len(scenes) == 1:
-            self.window.set_scene(scenes[0])
-            self.scene_offset = {scenes[0]: np.array([0, 0, 0])}
-        else:
-            self.window.set_scenes(scenes, offsets)
-            self.scene_offset = dict((s, o) for s, o in zip(scenes, offsets))
-
-        self.window.set_camera_parameters(0.1, 1000, np.pi / 2)
-        self.set_camera_pose(camera_pose)
+        self.window.set_scenes(scenes)
+        if scenes:
+            self.window.set_camera_parameters(0.1, 1000, np.pi / 2)
+            self.set_camera_pose(camera_pose)
 
         for plugin in self.plugins:
             plugin.notify_scene_change()
 
-    def get_entity_viewer_pose(self, entity):
-        return sapien.Pose(self.scene_offset[entity.scene]) * entity.pose
+    def get_entity_viewer_pose(self, entity: Entity) -> sapien.Pose:
+        return entity.pose
 
-    def set_scene(self, scene: Scene):
+    def set_scene(self, scene: Scene) -> None:
         self.set_scenes([scene])
-        # if self.scene is not None:
-        #     camera_pose = self.window.get_camera_pose()
-        #     self.clear_scene()
-        # else:
-        #     camera_pose = sapien.Pose([-2, 0, 0.5])
-
-        # self.selected_entity = None
-
-        # self.scene = scene
-        # # self.system = self.scene.render_system
-        # self.window.set_scene(scene)
-
-        # self.window.set_camera_parameters(0.1, 1000, np.pi / 2)
-        # self.set_camera_pose(camera_pose)
-
-        # for plugin in self.plugins:
-        #     plugin.notify_scene_change()
 
     def clear_scene(self):
         for plugin in self.plugins:
@@ -184,7 +160,7 @@ class Viewer:
 
         self.selected_entity = None
         self.scenes = []
-        # self.system = None
+        self._physx_gpu_system = None
         self.window = None
         self.plugins = []
         self.renderer_context = None
@@ -200,6 +176,56 @@ class Viewer:
     def reset_notifications(self):
         self.render_updated = False
 
+    def _configure_detected_physx_gpu_system(self) -> None:
+        if self._physx_gpu_system is not None and not self._physx_gpu_auto_configured:
+            return
+
+        gpu_systems = []
+        for scene in self.scenes:
+            try:
+                system = scene.physx_system
+            except RuntimeError:
+                continue
+            if isinstance(system, sapien.physx.PhysxGpuSystem):
+                gpu_systems.append(system)
+        unique_systems = {id(system): system for system in gpu_systems}
+        if len(unique_systems) != 1:
+            if self._physx_gpu_auto_configured:
+                self.window.configure_physx_gpu_rendering(None, "auto")
+                self._physx_gpu_system = None
+                self._physx_gpu_auto_configured = False
+            return
+
+        system = next(iter(unique_systems.values()))
+        if system.is_initialized and system is not self._physx_gpu_system:
+            self.window.configure_physx_gpu_rendering(
+                system, self._requested_pose_transport
+            )
+            self._physx_gpu_system = system
+            self._physx_gpu_auto_configured = True
+
+    def configure_physx_gpu_rendering(
+        self,
+        physx_system: sapien.physx.PhysxGpuSystem,
+        transport: str = "auto",
+    ) -> None:
+        """Configure pose transport from PhysX GPU to the Viewer render scene."""
+        self._physx_gpu_system = physx_system
+        self._physx_gpu_auto_configured = False
+        self._requested_pose_transport = transport
+        self.window.configure_physx_gpu_rendering(physx_system, transport)
+
+    @property
+    def pose_transport(self) -> str:
+        """Return the active Viewer pose transport."""
+        return self.window.pose_transport
+
+    def update_render(self) -> None:
+        """Submit current simulation state without drawing the Viewer window."""
+        self._configure_detected_physx_gpu_system()
+        self.window.update_render()
+        self.reset_notifications()
+
     def render(self):
         if self.window.should_close:
             self.close()
@@ -210,11 +236,6 @@ class Viewer:
         while True:
             if self.window.should_close:
                 break
-
-            if not self.paused or self.render_updated:
-                self.window.update_render()
-                # self.system.step()
-            self.reset_notifications()
 
             for plugin in self.plugins:
                 plugin.before_render()
@@ -336,7 +357,7 @@ class Viewer:
         while not self.closed:
             for _ in range(physx_steps):
                 self.scene.physx_system.step()
-            self.scene.update_render()
+            self.update_render()
             self.render()
 
     def register_click_handler(self, handler):

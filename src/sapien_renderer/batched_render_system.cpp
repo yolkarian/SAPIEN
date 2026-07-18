@@ -1,12 +1,20 @@
 #include "sapien/sapien_renderer/batched_render_system.h"
 #include "./batched_render_system.cuh"
-#include "sapien/scene.h"
+#include "render_scene_resolver.h"
+#include "sapien/entity.h"
+#include "sapien/physx/articulation_link_component.h"
+#include "sapien/physx/rigid_component.h"
+#include "sapien/profiler.h"
 #include "sapien/sapien_renderer/camera_component.h"
 #include "sapien/sapien_renderer/render_body_component.h"
+#include "sapien/scene.h"
+#include "sapien/utils/typestr.h"
+#include <algorithm>
 #include <svulkan2/renderer/renderer.h>
 #include <svulkan2/renderer/renderer_base.h>
 #include <svulkan2/renderer/rt_renderer.h>
 #include <svulkan2/scene/scene_group.h>
+#include <unordered_set>
 
 #ifdef SAPIEN_CUDA
 #include "sapien/utils/cuda.h"
@@ -17,10 +25,6 @@ namespace sapien {
 namespace sapien_renderer {
 
 namespace {
-
-bool isBatchedRenderShared(std::shared_ptr<SapienRendererSystem> const &system) {
-  return system->getScene()->isBatchedRenderShared();
-}
 
 CudaArrayHandle getTransformCudaArray(std::shared_ptr<svulkan2::scene::Scene> const &scene) {
   scene->prepareObjectTransformBuffer();
@@ -185,22 +189,36 @@ BatchedRenderSystem::BatchedRenderSystem(
   init();
 }
 
+BatchedRenderSystem::BatchedRenderSystem(
+    std::vector<std::shared_ptr<SapienRendererSystem>> systems,
+    std::shared_ptr<svulkan2::scene::Scene> renderScene,
+    std::vector<std::shared_ptr<SapienRenderBodyComponent>> gpuSourcedBodies)
+    : mSystems(systems), mFixedRenderScene(renderScene), mAutoBindPhysxGpuPoses(false),
+      mFixedGpuSourcedBodies(gpuSourcedBodies) {
+  if (mSystems.empty()) {
+    throw std::runtime_error("systems must not be empty");
+  }
+  if (!mFixedRenderScene) {
+    throw std::runtime_error("render scene must not be null");
+  }
+  init();
+}
+
 void BatchedRenderSystem::init() {
+  for (auto const &body : mGpuSourcedBodies) {
+    body->internalReleaseGpuPoseSource();
+  }
+  mGpuSourcedBodies.clear();
+
   std::vector<RenderShapeData> allShapeData;
   std::vector<void *> sceneTransformRefs;
 
   mSceneVersions = {};
-  mSharedSystems = {};
   mRenderScenes = {};
-  mRenderSceneBySystem = {};
+  mRenderSceneVersions = {};
+  mRenderSceneSystems = {};
   mTransformBufferElementByteOffset = 0;
-
-  for (auto &system : mSystems) {
-    if (isBatchedRenderShared(system)) {
-      mSharedSystems.push_back(system);
-    }
-  }
-  bool hasSharedSystems = !mSharedSystems.empty();
+  mMaximumPoseIndex = -1;
 
   // TODO ensure all cameras are valid
   for (auto &system : mSystems) {
@@ -211,46 +229,62 @@ void BatchedRenderSystem::init() {
     mSceneVersions.push_back(system->getScene()->getVersion());
   }
 
-  for (auto &system : mSystems) {
-    std::shared_ptr<svulkan2::scene::Scene> renderScene = system->getScene();
-    if (hasSharedSystems && !isBatchedRenderShared(system)) {
-      std::vector<std::shared_ptr<svulkan2::scene::Scene>> scenes{system->getScene()};
-      std::vector<svulkan2::scene::Transform> transforms(1);
-      for (auto &sharedSystem : mSharedSystems) {
-        if (sharedSystem == system) {
+  if (mFixedRenderScene) {
+    mRenderScenes.push_back(mFixedRenderScene);
+    mRenderSceneSystems.push_back(mSystems);
+  } else {
+    for (auto const &system : mSystems) {
+      auto resolvedSystems = RenderSceneResolver::resolve({system}, mSystems);
+      auto renderScene = RenderSceneResolver::build(resolvedSystems);
+      mRenderScenes.push_back(renderScene);
+      mRenderSceneSystems.push_back(resolvedSystems);
+    }
+    for (auto const &resolvedSystems : mAdditionalRenderSelections) {
+      mRenderScenes.push_back(RenderSceneResolver::build(resolvedSystems));
+      mRenderSceneSystems.push_back(resolvedSystems);
+    }
+  }
+
+  // PhysX GPU assigns sibling body/link pose indices during gpu_init(). Bind those indices
+  // automatically while preserving explicit indices for non-PhysX pose sources. The Viewer
+  // performs a stricter binding against its configured PhysX system before using a fixed output.
+  if (mAutoBindPhysxGpuPoses) {
+    for (auto const &system : mSystems) {
+      for (auto const &body : system->getRenderBodyComponents()) {
+        auto entity = body->getEntity();
+        int poseIndex = -1;
+        if (auto rigid = entity->getComponent<physx::PhysxRigidDynamicComponent>();
+            rigid && rigid->isUsingDirectGPUAPI()) {
+          poseIndex = rigid->getGpuPoseIndex();
+        } else if (auto link = entity->getComponent<physx::PhysxArticulationLinkComponent>();
+                   link && link->isUsingDirectGPUAPI()) {
+          poseIndex = link->getGpuPoseIndex();
+        }
+        if (poseIndex < 0) {
           continue;
         }
-        scenes.push_back(sharedSystem->getScene());
-        transforms.emplace_back();
-      }
-
-      auto group = std::make_shared<svulkan2::scene::SceneGroup>(scenes, transforms);
-      // The primary camera scene owns global ambient light; shared geometry must not multiply it.
-      glm::vec4 ambient = system->getScene()->getAmbientLight();
-
-      auto environmentMap = system->getScene()->getEnvironmentMap();
-      if (!environmentMap) {
-        for (auto &sharedSystem : mSharedSystems) {
-          environmentMap = sharedSystem->getScene()->getEnvironmentMap();
-          if (environmentMap) {
-            break;
+        for (auto const &shape : body->getRenderShapes()) {
+          if (shape->getGpuBatchedPoseIndex() < 0) {
+            shape->setGpuBatchedPoseIndex(poseIndex);
           }
         }
       }
-      ambient.a = environmentMap ? 0.f : 1.f;
-      group->setAmbientLight(ambient);
-      group->setEnvironmentMap(environmentMap);
-      renderScene = group;
     }
-    mRenderSceneBySystem[system.get()] = renderScene;
-    mRenderScenes.push_back(renderScene);
   }
 
+  std::unordered_set<SapienRenderBodyComponent *> fixedGpuSourcedBodySet;
+  for (auto const &body : mFixedGpuSourcedBodies) {
+    fixedGpuSourcedBodySet.insert(body.get());
+  }
+  std::unordered_set<SapienRenderBodyComponent *> gpuSourcedBodySet;
   auto appendSystemShapeData = [&](std::shared_ptr<SapienRendererSystem> const &shapeSystem,
                                    uint32_t renderSceneIndex,
                                    std::shared_ptr<svulkan2::scene::Scene> const &renderScene) {
     renderScene->prepareObjectTransformBuffer();
     for (auto &body : shapeSystem->getRenderBodyComponents()) {
+      if (mFixedRenderScene && !fixedGpuSourcedBodySet.contains(body.get())) {
+        continue;
+      }
       for (auto &shape : body->getRenderShapes()) {
         int poseIndex = shape->getGpuBatchedPoseIndex();
 
@@ -258,7 +292,11 @@ void BatchedRenderSystem::init() {
           continue;
         }
 
-        // TODO do range check
+        mMaximumPoseIndex = std::max(mMaximumPoseIndex, poseIndex);
+        if (gpuSourcedBodySet.insert(body.get()).second) {
+          body->internalAcquireGpuPoseSource();
+          mGpuSourcedBodies.push_back(body);
+        }
         Pose localPose = shape->getLocalPose();
         Vec3 scale = shape->getGpuScale();
         int transformIndex = shape->getInternalGpuTransformIndex(*renderScene);
@@ -278,7 +316,6 @@ void BatchedRenderSystem::init() {
   };
 
   for (uint32_t sceneIndex = 0; sceneIndex < mRenderScenes.size(); ++sceneIndex) {
-    auto system = mSystems[sceneIndex];
     auto renderScene = mRenderScenes[sceneIndex];
     auto transformArray = getTransformCudaArray(renderScene);
     sceneTransformRefs.push_back(transformArray.ptr);
@@ -292,13 +329,8 @@ void BatchedRenderSystem::init() {
       throw std::runtime_error("corrupted transform array buffer");
     }
 
-    appendSystemShapeData(system, sceneIndex, renderScene);
-    if (hasSharedSystems && !isBatchedRenderShared(system)) {
-      for (auto &sharedSystem : mSharedSystems) {
-        if (sharedSystem != system) {
-          appendSystemShapeData(sharedSystem, sceneIndex, renderScene);
-        }
-      }
+    for (auto const &system : mRenderSceneSystems[sceneIndex]) {
+      appendSystemShapeData(system, sceneIndex, renderScene);
     }
   }
   mShapeCount = allShapeData.size();
@@ -311,6 +343,9 @@ void BatchedRenderSystem::init() {
   mCudaRTInstanceRefBuffer =
       CudaArray::FromData(std::vector<void *>(mRenderScenes.size(), nullptr));
   mRTSceneEnabled.assign(mRenderScenes.size(), false);
+  for (auto const &scene : mRenderScenes) {
+    mRenderSceneVersions.push_back(scene->getVersion());
+  }
 
   // create semaphore
   auto context = SapienRenderEngine::Get()->getContext();
@@ -336,32 +371,83 @@ void BatchedRenderSystem::init() {
 }
 
 void BatchedRenderSystem::setPoseSource(CudaArrayHandle const &poses) {
-  poses.checkCongiguous();
   poses.checkShape({-1, -1});
+  if (typestrCode(poses.type) != 'f' || typestrBytes(poses.type) != sizeof(float)) {
+    throw std::runtime_error("pose buffer must be a CUDA float32 array");
+  }
+  if (poses.shape.at(1) < 7) {
+    throw std::runtime_error("pose buffer must have at least 7 channels per row");
+  }
+  poses.checkCongiguous();
   poses.checkStride({-1, sizeof(float)});
+  if (mMaximumPoseIndex >= poses.shape.at(0)) {
+    throw std::runtime_error("GPU pose batch index is outside the pose buffer");
+  }
 
   mCudaPoseHandle = poses;
+}
+
+void BatchedRenderSystem::ensureCameraRenderScenes(
+    std::vector<std::shared_ptr<SapienRenderCameraComponent>> const &additionalCameras) {
+  std::vector<std::shared_ptr<SapienRenderCameraComponent>> cameras = additionalCameras;
+  for (auto const &batch : mCameraBatches) {
+    auto const &batchCameras = batch->getCameras();
+    cameras.insert(cameras.end(), batchCameras.begin(), batchCameras.end());
+  }
+
+  bool rebuildRenderScenes = false;
+  for (auto const &camera : cameras) {
+    auto resolvedSystems = camera->internalResolveRenderSystems(mSystems);
+    bool exists = std::find(mRenderSceneSystems.begin(), mRenderSceneSystems.end(),
+                            resolvedSystems) != mRenderSceneSystems.end();
+    exists |= std::find(mAdditionalRenderSelections.begin(), mAdditionalRenderSelections.end(),
+                        resolvedSystems) != mAdditionalRenderSelections.end();
+    if (!exists) {
+      mAdditionalRenderSelections.push_back(resolvedSystems);
+      rebuildRenderScenes = true;
+    }
+  }
+  if (rebuildRenderScenes) {
+    SapienRenderEngine::Get()->getContext()->getDevice().waitIdle();
+    init();
+    if (mCudaPoseHandle.ptr) {
+      setPoseSource(mCudaPoseHandle);
+    }
+  }
+
+  for (auto const &camera : cameras) {
+    auto resolvedSystems = camera->internalResolveRenderSystems(mSystems);
+    auto it = std::find(mRenderSceneSystems.begin(), mRenderSceneSystems.end(), resolvedSystems);
+    if (it == mRenderSceneSystems.end()) {
+      throw std::runtime_error("failed to resolve camera output render scene");
+    }
+    camera->internalSetRenderScene(
+        mRenderScenes.at(std::distance(mRenderSceneSystems.begin(), it)), resolvedSystems);
+  }
 }
 
 std::shared_ptr<BatchedCamera> BatchedRenderSystem::createCameraBatch(
     std::vector<std::shared_ptr<SapienRenderCameraComponent>> cameras,
     std::vector<std::string> renderTargets) {
-  for (auto &camera : cameras) {
-    auto scene = camera->getScene();
-    if (!scene) {
-      throw std::runtime_error(
-          "failed to create BatchedCamera: some camera is not added to scene");
+  for (auto const &camera : cameras) {
+    if (camera->getGpuBatchedPoseIndex() >= 0) {
+      continue;
     }
-    auto system = scene->getSapienRendererSystem();
-    if (auto it = mRenderSceneBySystem.find(system.get()); it != mRenderSceneBySystem.end()) {
-      camera->internalSetRenderScene(it->second);
+    auto entity = camera->getEntity();
+    if (auto rigid = entity->getComponent<physx::PhysxRigidDynamicComponent>();
+        rigid && rigid->isUsingDirectGPUAPI()) {
+      camera->setGpuBatchedPoseIndex(rigid->getGpuPoseIndex());
+    } else if (auto link = entity->getComponent<physx::PhysxArticulationLinkComponent>();
+               link && link->isUsingDirectGPUAPI()) {
+      camera->setGpuBatchedPoseIndex(link->getGpuPoseIndex());
     }
   }
+  ensureCameraRenderScenes(cameras);
 
 #ifdef SAPIEN_CUDA
   for (auto &camera : cameras) {
-    if (auto renderer = dynamic_cast<svulkan2::renderer::RTRenderer *>(
-            &camera->getInternalRenderer())) {
+    if (auto renderer =
+            dynamic_cast<svulkan2::renderer::RTRenderer *>(&camera->getInternalRenderer())) {
       renderer->setExternalTransformUpdatesEnabled(true);
       renderer->setExternalCameraUpdatesEnabled(camera->getGpuBatchedPoseIndex() >= 0);
     }
@@ -398,6 +484,7 @@ std::shared_ptr<BatchedCamera> BatchedRenderSystem::createCameraBatch(
         // this camera does not need to be updated
         continue;
       }
+      mMaximumPoseIndex = std::max(mMaximumPoseIndex, index);
       CameraData data;
       data.buffer = cam->getCudaBuffer().ptr;
       auto pose = cam->getLocalPose() * POSE_GL_TO_ROS;
@@ -413,14 +500,20 @@ std::shared_ptr<BatchedCamera> BatchedRenderSystem::createCameraBatch(
   checkCudaErrors(cudaSetDevice(SapienRenderEngine::Get()->getDevice()->cudaId));
 #endif
   mCudaCameraDataBuffer = CudaArray::FromData(allCamData);
+  if (mCudaPoseHandle.ptr && mMaximumPoseIndex >= mCudaPoseHandle.shape.at(0)) {
+    throw std::runtime_error("GPU pose batch index is outside the pose buffer");
+  }
   return cameraBatch;
 }
 
 void BatchedRenderSystem::update() {
+  SAPIEN_PROFILE_FUNCTION;
   // check pose handle
   if (!mCudaPoseHandle.ptr) {
     throw std::runtime_error("the data source for pose has not been set.");
   }
+
+  ensureCameraRenderScenes();
 
   // check scene versions
   for (uint32_t i = 0; i < mSystems.size(); ++i) {
@@ -428,6 +521,18 @@ void BatchedRenderSystem::update() {
       throw std::runtime_error("Modifying a scene (add/remove object/camera) is not allowed after "
                                "creating the batched render system.");
     }
+  }
+
+  for (uint32_t i = 0; i < mRenderScenes.size(); ++i) {
+    if (mRenderScenes[i]->getVersion() != mRenderSceneVersions[i]) {
+      throw std::runtime_error(
+          "Modifying an output render scene is not allowed after creating the render system "
+          "group.");
+    }
+  }
+
+  if (mMaximumPoseIndex >= mCudaPoseHandle.shape.at(0)) {
+    throw std::runtime_error("GPU pose batch index is outside the pose buffer");
   }
 
   if (mCudaSceneTransformRefBuffer.cudaId != mCudaPoseHandle.cudaId) {
@@ -439,8 +544,30 @@ void BatchedRenderSystem::update() {
                              ") are on different cuda devices.");
   }
 
+  // An RT renderer may create its TLAS after this transport was initialized (notably the Viewer
+  // on its first draw). Bind newly available instance buffers before the next transform update.
+  bool refreshRTReferences = false;
+  for (uint32_t i = 0; i < mRenderScenes.size(); ++i) {
+    refreshRTReferences |= !mRTSceneEnabled[i] && mRenderScenes[i]->getTLAS() != nullptr;
+  }
+  if (refreshRTReferences) {
+    std::vector<void *> rtInstanceRefs(mRenderScenes.size(), nullptr);
+    for (uint32_t i = 0; i < mRenderScenes.size(); ++i) {
+      auto tlas = mRenderScenes[i]->getTLAS();
+      if (!tlas) {
+        continue;
+      }
+#ifdef SAPIEN_CUDA
+      rtInstanceRefs[i] = tlas->getInstanceBuffer().getCudaPtr();
+      mRTSceneEnabled[i] = true;
+#endif
+    }
+    mCudaRTInstanceRefBuffer = CudaArray::FromData(rtInstanceRefs);
+  }
+
   // upload data
 #ifdef SAPIEN_CUDA
+  SAPIEN_PROFILE_BLOCK_BEGIN("render object and camera transform update");
   update_object_transforms(
       (float **)mCudaSceneTransformRefBuffer.ptr, (float **)mCudaRTInstanceRefBuffer.ptr,
       mTransformBufferElementByteOffset / 4, (RenderShapeData *)mCudaShapeDataBuffer.ptr,
@@ -448,16 +575,21 @@ void BatchedRenderSystem::update() {
 
   update_camera_transforms((CameraData *)mCudaCameraDataBuffer.ptr, (float *)mCudaPoseHandle.ptr,
                            mCudaPoseHandle.shape.at(1), mCameraCount, mCudaStream);
+  SAPIEN_PROFILE_BLOCK_END;
 #endif
 
+  SAPIEN_PROFILE_BLOCK_BEGIN("RT render version update");
   for (uint32_t i = 0; i < mRenderScenes.size(); ++i) {
     if (mRTSceneEnabled[i]) {
       mRenderScenes[i]->updateRenderVersion();
     }
   }
+  SAPIEN_PROFILE_BLOCK_END;
 
   // sync with renderer
+  SAPIEN_PROFILE_BLOCK_BEGIN("CUDA Vulkan synchronization");
   notifyUpdate();
+  SAPIEN_PROFILE_BLOCK_END;
 }
 
 void BatchedRenderSystem::notifyUpdate() {
@@ -480,6 +612,9 @@ void BatchedRenderSystem::setCudaStream(uintptr_t stream) {
 }
 
 BatchedRenderSystem ::~BatchedRenderSystem() {
+  for (auto const &body : mGpuSourcedBodies) {
+    body->internalReleaseGpuPoseSource();
+  }
   SapienRenderEngine::Get()->getContext()->getDevice().waitIdle();
 #ifdef SAPIEN_CUDA
   cudaDestroyExternalSemaphore(mCudaSem);

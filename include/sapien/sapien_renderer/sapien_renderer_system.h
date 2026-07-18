@@ -15,6 +15,7 @@ typedef struct CUexternalSemaphore_st *cudaExternalSemaphore_t;
 
 namespace sapien {
 namespace sapien_renderer {
+class SapienRendererSystem;
 class SapienRenderBodyComponent;
 class SapienRenderCameraComponent;
 class SapienRenderLightComponent;
@@ -41,6 +42,9 @@ public:
 
   std::shared_ptr<Device> getDevice() const { return mDevice; }
 
+  void registerRenderSystem(std::shared_ptr<SapienRendererSystem> const &system);
+  std::vector<std::shared_ptr<SapienRendererSystem>> getRenderSystems();
+
   ~SapienRenderEngine();
 
 private:
@@ -51,6 +55,7 @@ private:
   std::shared_ptr<svulkan2::resource::SVMesh> mSphereMesh;
   std::shared_ptr<svulkan2::resource::SVMesh> mPlaneMesh;
   std::shared_ptr<svulkan2::resource::SVMesh> mBoxMesh;
+  std::vector<std::weak_ptr<SapienRendererSystem>> mRenderSystems;
 };
 
 class SapienRendererSystem : public System {

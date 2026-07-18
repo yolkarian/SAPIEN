@@ -13,6 +13,7 @@ class Entity;
 namespace sapien_renderer {
 struct SapienRenderCameraInternal;
 class SapienRenderTexture;
+class SapienRendererSystem;
 
 enum class CameraMode { ePerspective, eOrthographic };
 
@@ -68,6 +69,9 @@ public:
   inline CameraMode getMode() const { return mMode; }
 
   void takePicture();
+  void setScenes(std::vector<std::shared_ptr<Scene>> const &scenes);
+  std::vector<std::shared_ptr<SapienRendererSystem>> internalResolveRenderSystems(
+      std::vector<std::shared_ptr<SapienRendererSystem>> const &contextSystems);
   std::vector<std::string> getImageNames() const;
   SapienRenderImageCpu getImage(std::string const &name);
   SapienRenderImageCuda getImageCuda(std::string const &name);
@@ -87,7 +91,9 @@ public:
   void setGpuBatchedPoseIndex(int);
   int getGpuBatchedPoseIndex() const;
   void setAutoUpload(bool enable);
-  void internalSetRenderScene(std::shared_ptr<svulkan2::scene::Scene> scene);
+  void internalSetRenderScene(
+      std::shared_ptr<svulkan2::scene::Scene> scene,
+      std::vector<std::shared_ptr<SapienRendererSystem>> const &resolvedSystems = {});
   svulkan2::core::Image &getInternalImage(std::string const &name);
   svulkan2::renderer::RendererBase &getInternalRenderer();
   svulkan2::scene::Camera &getInternalCamera();
@@ -132,6 +138,13 @@ private:
   // this is set to true when GPU resources is available
   bool mGpuInitialized{false};
   int mGpuPoseIndex{-1};
+
+  bool mHasSceneSelectionOverride{false};
+  std::vector<std::weak_ptr<Scene>> mSelectedScenes;
+  std::vector<std::shared_ptr<SapienRendererSystem>> mResolvedRenderSystems;
+  std::vector<uint64_t> mResolvedRenderSceneVersions;
+  std::shared_ptr<svulkan2::scene::Scene> mResolvedRenderScene;
+  void refreshRenderScene();
 };
 
 } // namespace sapien_renderer

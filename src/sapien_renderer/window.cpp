@@ -1,5 +1,12 @@
 #include "sapien/sapien_renderer/window.h"
+#include "render_scene_resolver.h"
+#include "sapien/entity.h"
 #include "sapien/math/conversion.h"
+#include "sapien/physx/articulation_link_component.h"
+#include "sapien/physx/rigid_component.h"
+#include "sapien/profiler.h"
+#include "sapien/sapien_renderer/batched_render_system.h"
+#include "sapien/sapien_renderer/render_body_component.h"
 #include "sapien/sapien_renderer/sapien_renderer_default.h"
 #include "sapien/sapien_renderer/sapien_renderer_system.h"
 #include <svulkan2/renderer/rt_renderer.h>
@@ -7,6 +14,48 @@
 
 namespace sapien {
 namespace sapien_renderer {
+
+class ViewerPoseTransport {
+public:
+  virtual ~ViewerPoseTransport() = default;
+  virtual void prepare() {}
+  virtual void submit() {}
+  virtual bool ownsGpuTransforms() const { return false; }
+  virtual std::string getName() const = 0;
+};
+
+#ifdef SAPIEN_CUDA
+class CpuDebugViewerPoseTransport final : public ViewerPoseTransport {
+public:
+  explicit CpuDebugViewerPoseTransport(std::shared_ptr<physx::PhysxSystemGpu> system)
+      : mSystem(std::move(system)) {}
+
+  void prepare() override { mSystem->syncPosesGpuToCpu(); }
+  std::string getName() const override { return "cpu-debug"; }
+
+private:
+  std::shared_ptr<physx::PhysxSystemGpu> mSystem;
+};
+
+class DirectViewerPoseTransport final : public ViewerPoseTransport {
+public:
+  DirectViewerPoseTransport(std::shared_ptr<physx::PhysxSystemGpu> system,
+                            std::unique_ptr<BatchedRenderSystem> renderSystem)
+      : mSystem(std::move(system)), mRenderSystem(std::move(renderSystem)) {}
+
+  void submit() override {
+    mSystem->gpuFetchRigidDynamicDataIfNeeded();
+    mSystem->gpuFetchArticulationLinkPoseIfNeeded();
+    mRenderSystem->update();
+  }
+  bool ownsGpuTransforms() const override { return true; }
+  std::string getName() const override { return "direct"; }
+
+private:
+  std::shared_ptr<physx::PhysxSystemGpu> mSystem;
+  std::unique_ptr<BatchedRenderSystem> mRenderSystem;
+};
+#endif
 
 #ifdef _DEBUG_VIEWER
 FPSCameraControllerDebug::FPSCameraControllerDebug(svulkan2::scene::Node &node,
@@ -113,8 +162,8 @@ void SapienRendererWindow::setShader(std::string const &shaderDir) {
   mSVulkanRenderer = svulkan2::renderer::RendererBase::Create(config);
   if (mRenderScene) {
     mSVulkanRenderer->setScene(mRenderScene);
-    // mSVulkanRenderer->setScene(mScene->getSapienRendererSystem()->getScene());
   }
+  setRendererExternalTransformUpdates(mPoseTransport == "direct");
   mSVulkanRenderer->resize(mViewportWidth, mViewportHeight);
 }
 
@@ -149,44 +198,174 @@ void SapienRendererWindow::hide() { mWindow->hide(); }
 void SapienRendererWindow::show() { mWindow->show(); }
 
 void SapienRendererWindow::setScene(std::shared_ptr<Scene> scene) {
-  mRenderSystems = {scene->getSapienRendererSystem()};
-  mRenderScene = scene->getSapienRendererSystem()->getScene();
-  mSVulkanRenderer->setScene(mRenderScene);
+  setScenes(scene ? std::vector<std::shared_ptr<Scene>>{scene}
+                  : std::vector<std::shared_ptr<Scene>>{});
 }
 
-void SapienRendererWindow::setScenes(std::vector<std::shared_ptr<Scene>> const &scenes,
-                                     std::vector<Vec3> const &offsets) {
-  if (scenes.size() <= 1) {
+void SapienRendererWindow::setScenes(std::vector<std::shared_ptr<Scene>> const &scenes) {
+  mBaseRenderSystems.clear();
+  for (auto const &scene : scenes) {
+    if (!scene) {
+      throw std::runtime_error("failed to set scenes: a scene is null");
+    }
+    mBaseRenderSystems.push_back(scene->getSapienRendererSystem());
+  }
+  rebuildRenderScene();
+}
+
+void SapienRendererWindow::configurePhysxGpuRendering(
+    std::shared_ptr<physx::PhysxSystemGpu> system, std::string const &transport) {
+  if (transport != "auto" && transport != "direct" && transport != "staged" &&
+      transport != "cpu-debug") {
+    throw std::runtime_error("pose transport must be one of: auto, direct, staged, cpu-debug");
+  }
+  mPhysxGpuSystem = system;
+  mRequestedPoseTransport = transport;
+  rebuildPoseTransport();
+}
+
+void SapienRendererWindow::setRendererExternalTransformUpdates(bool enable) {
+  if (auto renderer = dynamic_cast<svulkan2::renderer::Renderer *>(mSVulkanRenderer.get())) {
+    renderer->setExternalTransformUpdatesEnabled(enable);
+  } else if (auto renderer =
+                 dynamic_cast<svulkan2::renderer::RTRenderer *>(mSVulkanRenderer.get())) {
+    renderer->setExternalTransformUpdatesEnabled(enable);
+  }
+}
+
+void SapienRendererWindow::rebuildRenderScene() {
+  mPoseTransportImpl.reset();
+  mRenderSystems = RenderSceneResolver::resolve(mBaseRenderSystems, mEngine->getRenderSystems());
+  mRenderScene = RenderSceneResolver::build(mRenderSystems);
+  mRenderSceneVersions.clear();
+  for (auto const &system : mRenderSystems) {
+    mRenderSceneVersions.push_back(system->getScene()->getVersion());
+  }
+  if (mRenderScene) {
+    mSVulkanRenderer->setScene(mRenderScene);
+  }
+  rebuildPoseTransport();
+}
+
+void SapienRendererWindow::rebuildPoseTransport() {
+  mPoseTransportImpl.reset();
+  setRendererExternalTransformUpdates(false);
+  mPoseTransport = "cpu";
+  if (!mPhysxGpuSystem || !mRenderScene || mRenderSystems.empty()) {
+    return;
+  }
+#ifndef SAPIEN_CUDA
+  throw std::runtime_error("PhysX GPU rendering requires a CUDA-enabled SAPIEN build");
+#else
+  if (mRequestedPoseTransport == "cpu-debug") {
+    mPoseTransportImpl = std::make_unique<CpuDebugViewerPoseTransport>(mPhysxGpuSystem);
+    mPoseTransport = mPoseTransportImpl->getName();
+    return;
+  }
+  if (mRequestedPoseTransport == "staged") {
     throw std::runtime_error(
-        "failed to set scenes: the function should be called with 2 or more scenes.");
-  }
-  if (scenes.size() != offsets.size()) {
-    throw std::runtime_error("failed to set scenes: scenes and offsets must have the same size.");
+        "staged PhysX GPU rendering is unavailable; use a matching CUDA/Vulkan device");
   }
 
-  mRenderSystems = {};
-  std::vector<std::shared_ptr<svulkan2::scene::Scene>> allScenes;
-  std::vector<svulkan2::scene::Transform> allTransforms;
-  for (uint32_t i = 0; i < scenes.size(); ++i) {
-    auto s = scenes[i];
-    mRenderSystems.push_back(s->getSapienRendererSystem());
-    allScenes.push_back(s->getSapienRendererSystem()->getScene());
-    allTransforms.push_back(
-        svulkan2::scene::Transform{.position = {offsets[i].x, offsets[i].y, offsets[i].z}});
+  auto computeDevice = mPhysxGpuSystem->getDevice();
+  auto renderDevice = mEngine->getDevice();
+  if (computeDevice->cudaId != renderDevice->cudaId) {
+    throw std::runtime_error("direct PhysX GPU rendering requires PhysX CUDA and Vulkan to use "
+                             "the same physical device; staged transport is unavailable");
+  }
+  if (!renderDevice->canDirectCudaVulkanInterop()) {
+    throw std::runtime_error("the Vulkan device does not expose the CUDA external-memory and "
+                             "external-semaphore capabilities required by direct transport");
+  }
+  if (!mPhysxGpuSystem->isInitialized()) {
+    throw std::runtime_error(
+        "PhysX GPU must be initialized with gpu_init() before configuring Viewer rendering");
   }
 
-  mRenderScene = std::make_shared<svulkan2::scene::SceneGroup>(allScenes, allTransforms);
-  mSVulkanRenderer->setScene(mRenderScene);
+  std::vector<std::shared_ptr<SapienRenderBodyComponent>> gpuSourcedBodies;
+  for (auto const &renderSystem : mRenderSystems) {
+    for (auto const &renderBody : renderSystem->getRenderBodyComponents()) {
+      auto entity = renderBody->getEntity();
+      try {
+        if (entity->getScene()->getPhysxSystem() != mPhysxGpuSystem) {
+          continue;
+        }
+      } catch (std::runtime_error const &) {
+        continue;
+      }
+      int poseIndex = -1;
+      if (auto body = entity->getComponent<physx::PhysxRigidDynamicComponent>()) {
+        poseIndex = body->getGpuPoseIndex();
+      } else if (auto link = entity->getComponent<physx::PhysxArticulationLinkComponent>()) {
+        poseIndex = link->getGpuPoseIndex();
+      }
+      if (poseIndex < 0) {
+        continue;
+      }
+      for (auto const &shape : renderBody->getRenderShapes()) {
+        shape->setGpuBatchedPoseIndex(poseIndex);
+      }
+      gpuSourcedBodies.push_back(renderBody);
+    }
+  }
+
+  setRendererExternalTransformUpdates(true);
+  auto renderSystem = std::make_unique<BatchedRenderSystem>(mRenderSystems, mRenderScene,
+                                                            gpuSourcedBodies);
+  renderSystem->setCudaStream(mPhysxGpuSystem->gpuGetCudaStream());
+  renderSystem->setPoseSource(mPhysxGpuSystem->gpuGetRigidBodyCudaHandle());
+  mPoseTransportImpl = std::make_unique<DirectViewerPoseTransport>(mPhysxGpuSystem,
+                                                                   std::move(renderSystem));
+  for (uint32_t i = 0; i < mRenderSystems.size(); ++i) {
+    mRenderSceneVersions[i] = mRenderSystems[i]->getScene()->getVersion();
+  }
+  mAggregateRenderSceneVersion = mRenderScene->getVersion();
+  mPoseTransport = mPoseTransportImpl->getName();
+#endif
 }
 
 void SapienRendererWindow::updateRender() {
-  for (auto &s : mRenderSystems) {
-    s->step();
+  SAPIEN_PROFILE_FUNCTION;
+  auto currentSystems =
+      RenderSceneResolver::resolve(mBaseRenderSystems, mEngine->getRenderSystems());
+  if (currentSystems != mRenderSystems) {
+    rebuildRenderScene();
   }
 
+#ifdef SAPIEN_CUDA
+  if (mPoseTransportImpl && mPoseTransportImpl->ownsGpuTransforms() &&
+      mRenderScene->getVersion() != mAggregateRenderSceneVersion) {
+    rebuildPoseTransport();
+  }
+  if (mPoseTransportImpl) {
+    mPoseTransportImpl->prepare();
+  }
+#endif
+
+  for (uint32_t i = 0; i < mRenderSystems.size(); ++i) {
+    if (mRenderSystems[i]->getScene()->getVersion() != mRenderSceneVersions[i]) {
+      mRenderSceneVersions[i] = mRenderSystems[i]->getScene()->getVersion();
+    }
+    mRenderSystems[i]->step();
+  }
+
+  if (!mRenderScene) {
+    return;
+  }
   if (dynamic_cast<svulkan2::scene::SceneGroup *>(mRenderScene.get())) {
     mRenderScene->updateModelMatrices();
   }
+
+#ifdef SAPIEN_CUDA
+  if (mPoseTransportImpl) {
+    if (mPoseTransportImpl->ownsGpuTransforms()) {
+      // CPU-owned transforms are uploaded first; the transport is the final writer for GPU-bound
+      // shapes. Draw still refreshes camera, light, segmentation, and material metadata.
+      mRenderScene->uploadObjectTransforms();
+    }
+    mPoseTransportImpl->submit();
+  }
+#endif
 }
 
 void SapienRendererWindow::setCameraParameters(float near, float far, float fovy) {
@@ -330,6 +509,7 @@ void SapienRendererWindow::resize(int width, int height) {
 
 void SapienRendererWindow::render(std::string const &targetName,
                                   std::vector<std::shared_ptr<svulkan2::ui::Widget>> uiWindows) {
+  SAPIEN_PROFILE_FUNCTION;
 
   if (!mRenderScene) {
     return;

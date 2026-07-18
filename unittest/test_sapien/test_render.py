@@ -82,6 +82,32 @@ class TestScene(unittest.TestCase):
                 self.assertGreater(center[0], center[1] + 0.1)
                 self.assertAlmostEqual(center[3], alpha, delta=0.05)
 
+    def test_camera_multiscene_selection_has_no_offsets(self) -> None:
+        sapien.render.set_camera_shader_dir("default")
+        owner_scene = sapien.Scene()
+        owner_scene.set_ambient_light([0.5, 0.5, 0.5])
+        camera = owner_scene.add_camera(
+            "camera", 64, 64, np.deg2rad(45), 0.05, 10
+        )
+        camera.pose = sapien.Pose([-3.0, 0.0, 0.0])
+
+        object_scene = sapien.Scene()
+        object_scene.set_ambient_light([0.5, 0.5, 0.5])
+        builder = object_scene.create_actor_builder()
+        builder.add_box_visual(
+            half_size=[0.5, 0.5, 0.5], material=[0.8, 0.05, 0.05]
+        )
+        builder.build_kinematic().pose = sapien.Pose()
+
+        # Duplicate base scenes are deduplicated, and the object remains at the origin rather
+        # than being moved into the legacy Viewer grid.
+        camera.set_scenes([owner_scene, object_scene, object_scene])
+        owner_scene.update_render()
+        object_scene.update_render()
+        camera.take_picture()
+        center = camera.get_picture("Color")[32, 32]
+        self.assertGreater(center[0] - center[1], 0.2)
+
     def test_rt_batched_shared_scene(self) -> None:
         sapien.render.set_camera_shader_dir("rt")
         sapien.render.set_ray_tracing_samples_per_pixel(2)
@@ -195,22 +221,45 @@ class TestSceneGPU(unittest.TestCase):
             camera_body = camera_rig.find_component_by_type(
                 sapien.physx.PhysxRigidDynamicComponent
             )
-            camera.set_gpu_pose_batch_index(camera_body.gpu_pose_index)
 
-            body = actor.find_component_by_type(
-                sapien.physx.PhysxRigidDynamicComponent
-            )
-            render_body = actor.find_component_by_type(
-                sapien.render.RenderBodyComponent
-            )
-            for shape in render_body.render_shapes:
-                shape.set_gpu_pose_batch_index(body.gpu_pose_index)
-
+            # RenderSystemGroup discovers sibling PhysX GPU pose indices for dynamic shapes and
+            # mounted cameras after gpu_init(); no manual set_gpu_pose_batch_index calls are needed.
             group = sapien.render.RenderSystemGroup(
                 [main_render, shared_render]
             )
             camera_group = group.create_camera_group([camera], ["Color"])
-            group.set_cuda_poses(physx.cuda_rigid_body_data)
+
+            class CudaPoseView:
+                def __init__(self, shape, strides, typestr):
+                    self.__cuda_array_interface__ = {
+                        "shape": tuple(shape),
+                        "strides": tuple(strides),
+                        "typestr": typestr,
+                        "data": (physx.cuda_rigid_body_data.ptr, False),
+                        "version": 2,
+                    }
+
+            pose_buffer = physx.cuda_rigid_body_data
+            with self.assertRaisesRegex(RuntimeError, "float32"):
+                group.set_cuda_poses(
+                    sapien.CudaArray(
+                        CudaPoseView(
+                            pose_buffer.shape,
+                            [pose_buffer.shape[1] * 8, 8],
+                            "<f8",
+                        )
+                    )
+                )
+            with self.assertRaisesRegex(RuntimeError, "at least 7 channels"):
+                group.set_cuda_poses(
+                    sapien.CudaArray(CudaPoseView([pose_buffer.shape[0], 6], [24, 4], "<f4"))
+                )
+            with self.assertRaisesRegex(RuntimeError, "outside the pose buffer"):
+                group.set_cuda_poses(
+                    sapien.CudaArray(CudaPoseView([0, 13], [52, 4], "<f4"))
+                )
+
+            group.set_cuda_poses(pose_buffer)
 
             def capture(*, fetch_physics: bool = True) -> np.ndarray:
                 if fetch_physics:
@@ -265,6 +314,7 @@ class TestSceneGPU(unittest.TestCase):
             self.assertGreater(before_center[0] - before_center[1], 0.3)
             self.assertLess(after_center[0] - after_center[1], 0.1)
             self.assertGreater(float(np.abs(before - after).mean()), 0.01)
+            self.assertEqual(physx._sync_poses_gpu_to_cpu_count, 0)
         finally:
             sapien.render.set_camera_shader_dir("default")
 

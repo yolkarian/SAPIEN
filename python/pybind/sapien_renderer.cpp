@@ -1,6 +1,7 @@
 #include "sapien/sapien_renderer/sapien_renderer.h"
 #include "array.hpp"
 #include "format.hpp"
+#include "sapien/physx/physx_system.h"
 #include "sapien_type_caster.h"
 #include <pybind11/eigen.h>
 #include <pybind11/functional.h>
@@ -1026,6 +1027,9 @@ This function waits for any pending CUDA operations on cuda stream provided by :
            py::arg("textures"))
 
       .def("take_picture", &SapienRenderCameraComponent::takePicture)
+      .def("set_scenes", &SapienRenderCameraComponent::setScenes, py::arg("scenes"),
+           "Select base render scenes for this camera. Shared scenes are included once and no "
+           "render offsets are applied.")
       .def("get_picture_names", &SapienRenderCameraComponent::getImageNames)
 
       .def(
@@ -1231,7 +1235,10 @@ consumer library. Make a copy if needed.
                              py::return_value_policy::reference)
 
       .def("set_scene", &SapienRendererWindow::setScene, py::arg("scene"))
-      .def("set_scenes", &SapienRendererWindow::setScenes, py::arg("scenes"), py::arg("offsets"))
+      .def("set_scenes", &SapienRendererWindow::setScenes, py::arg("scenes"))
+      .def("configure_physx_gpu_rendering", &SapienRendererWindow::configurePhysxGpuRendering,
+           py::arg("physx_system"), py::arg("transport") = "auto")
+      .def_property_readonly("pose_transport", &SapienRendererWindow::getPoseTransport)
       .def_property_readonly("display_picture_names", &SapienRendererWindow::getDisplayTargetNames,
                              "Names for available display targets that can be displayed "
                              "in the render function")
