@@ -21,9 +21,14 @@ layout(std430, set = 0, binding = 2) writeonly buffer TransformBuffer {
   float values[];
 } transformBuffer;
 
+layout(std430, set = 0, binding = 3) buffer RTInstanceBuffer {
+  float values[];
+} rtInstanceBuffer;
+
 layout(push_constant) uniform PushConstants {
   uint shapeCount;
   uint transformStride;
+  uint rtEnabled;
 } pushConstants;
 
 vec4 quaternionMultiply(vec4 lhs, vec4 rhs) {
@@ -78,4 +83,22 @@ void main() {
   transformBuffer.values[outputOffset + 13] = position.y;
   transformBuffer.values[outputOffset + 14] = position.z;
   transformBuffer.values[outputOffset + 15] = 1.0;
+
+  if (pushConstants.rtEnabled != 0) {
+    // VkTransformMatrixKHR is a row-major 3x4 matrix at the start of each
+    // 64-byte VkAccelerationStructureInstanceKHR. Preserve the final metadata words.
+    uint rtOffset = shape.indices.y * 16;
+    rtInstanceBuffer.values[rtOffset] = column0.x;
+    rtInstanceBuffer.values[rtOffset + 1] = column1.x;
+    rtInstanceBuffer.values[rtOffset + 2] = column2.x;
+    rtInstanceBuffer.values[rtOffset + 3] = position.x;
+    rtInstanceBuffer.values[rtOffset + 4] = column0.y;
+    rtInstanceBuffer.values[rtOffset + 5] = column1.y;
+    rtInstanceBuffer.values[rtOffset + 6] = column2.y;
+    rtInstanceBuffer.values[rtOffset + 7] = position.y;
+    rtInstanceBuffer.values[rtOffset + 8] = column0.z;
+    rtInstanceBuffer.values[rtOffset + 9] = column1.z;
+    rtInstanceBuffer.values[rtOffset + 10] = column2.z;
+    rtInstanceBuffer.values[rtOffset + 11] = position.z;
+  }
 }

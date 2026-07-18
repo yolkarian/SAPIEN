@@ -114,6 +114,9 @@ StagedRenderSystem::StagedRenderSystem(
   mShapeBuffer = svulkan2::core::Buffer::Create(
       shapeBytes, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
       VMA_MEMORY_USAGE_GPU_ONLY);
+  mDummyRTInstanceBuffer = svulkan2::core::Buffer::Create(
+      sizeof(vk::AccelerationStructureInstanceKHR), vk::BufferUsageFlagBits::eStorageBuffer,
+      VMA_MEMORY_USAGE_GPU_ONLY);
   if (!shapeData.empty()) {
     mShapeBuffer->upload(shapeData);
   }
@@ -127,8 +130,10 @@ StagedRenderSystem::StagedRenderSystem(
   mComputeInstance->setBuffer("ShapeBuffer", mShapeBuffer.get());
   mComputeInstance->setBuffer("TransformBuffer",
                               mRenderScene->getObjectTransformBuffer().get());
+  mComputeInstance->setBuffer("RTInstanceBuffer", mDummyRTInstanceBuffer.get());
   mComputeInstance->setPushConstant<uint32_t>("shapeCount", mShapeCount);
   mComputeInstance->setPushConstant<uint32_t>("transformStride", mTransformStride);
+  mComputeInstance->setPushConstant<uint32_t>("rtEnabled", 0);
 
   mCommandPool = context->createCommandPool();
   mSlots.reserve(2);
@@ -177,6 +182,16 @@ void StagedRenderSystem::update() {
 
   auto context = SapienRenderEngine::Get()->getContext();
   auto device = context->getDevice();
+  auto rtInstanceBuffer = mRenderScene->getTLAS()
+                              ? &mRenderScene->getTLAS()->getInstanceBuffer()
+                              : nullptr;
+  if (rtInstanceBuffer != mRTInstanceBuffer) {
+    mRTInstanceBuffer = rtInstanceBuffer;
+    mComputeInstance->setBuffer("RTInstanceBuffer",
+                                mRTInstanceBuffer ? mRTInstanceBuffer
+                                                  : mDummyRTInstanceBuffer.get());
+    mComputeInstance->setPushConstant<uint32_t>("rtEnabled", mRTInstanceBuffer ? 1 : 0);
+  }
   if (device.waitForFences(slot.fence.get(), VK_TRUE, UINT64_MAX) != vk::Result::eSuccess) {
     throw std::runtime_error("failed to reuse staged Vulkan upload slot");
   }
@@ -200,8 +215,18 @@ void StagedRenderSystem::update() {
       vk::PipelineStageFlagBits::eComputeShader,
       vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader, {},
       transformBarrier, {}, {});
+  if (mRTInstanceBuffer) {
+    vk::MemoryBarrier instanceBarrier(vk::AccessFlagBits::eShaderWrite,
+                                      vk::AccessFlagBits::eAccelerationStructureReadKHR);
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                                  vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR, {},
+                                  instanceBarrier, {}, {});
+  }
   commandBuffer.end();
   context->getQueue().submit(commandBuffer, slot.fence.get());
+  if (mRTInstanceBuffer) {
+    mRenderScene->updateRenderVersion();
+  }
   SAPIEN_PROFILE_BLOCK_END;
 
   mTransferredBytes += transferBytes;

@@ -257,12 +257,13 @@ void SapienRendererWindow::configurePhysxGpuRendering(
   rebuildPoseTransport();
 }
 
-void SapienRendererWindow::setRendererExternalTransformUpdates(bool enable) {
+void SapienRendererWindow::setRendererExternalTransformUpdates(bool enable, bool cudaInterop) {
   if (auto renderer = dynamic_cast<svulkan2::renderer::Renderer *>(mSVulkanRenderer.get())) {
     renderer->setExternalTransformUpdatesEnabled(enable);
   } else if (auto renderer =
                  dynamic_cast<svulkan2::renderer::RTRenderer *>(mSVulkanRenderer.get())) {
-    renderer->setExternalTransformUpdatesEnabled(enable);
+    renderer->setExternalTransformUpdatesEnabled(enable, cudaInterop);
+    mExternalTransformResourcesDirty = true;
   }
 }
 
@@ -311,12 +312,6 @@ void SapienRendererWindow::rebuildPoseTransport() {
         "direct PhysX GPU rendering requires one CUDA/Vulkan device with external-memory and "
         "external-semaphore support; use transport='staged' or 'auto'");
   }
-  if (!useDirect &&
-      dynamic_cast<svulkan2::renderer::RTRenderer *>(mSVulkanRenderer.get())) {
-    throw std::runtime_error(
-        "staged PhysX GPU ray tracing is unavailable; use transport='cpu-debug' explicitly");
-  }
-
   std::vector<std::shared_ptr<SapienRenderBodyComponent>> gpuSourcedBodies;
   for (auto const &renderSystem : mRenderSystems) {
     for (auto const &renderBody : renderSystem->getRenderBodyComponents()) {
@@ -344,7 +339,7 @@ void SapienRendererWindow::rebuildPoseTransport() {
     }
   }
 
-  setRendererExternalTransformUpdates(true);
+  setRendererExternalTransformUpdates(true, useDirect);
   if (useDirect) {
     auto renderSystem = std::make_unique<BatchedRenderSystem>(mRenderSystems, mRenderScene,
                                                               gpuSourcedBodies);
@@ -409,11 +404,13 @@ void SapienRendererWindow::updateRender() {
       // RT instance storage is created lazily. Initialize it before the transport's first write so
       // the first displayed GPU state does not use stale CPU instance transforms.
       if (auto renderer = dynamic_cast<svulkan2::renderer::RTRenderer *>(mSVulkanRenderer.get());
-          renderer && !mRenderScene->getTLAS()) {
+          renderer && (mRequiresRebuild || mExternalTransformResourcesDirty ||
+                       !mRenderScene->getTLAS())) {
         if (mRequiresRebuild) {
           rebuild();
         }
         renderer->initializeExternalTransformResources(*getCamera());
+        mExternalTransformResourcesDirty = false;
       }
 
       // CPU-owned transforms are uploaded first; the transport is the final writer for GPU-bound

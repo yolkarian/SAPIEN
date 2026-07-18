@@ -318,11 +318,16 @@ class TestSceneGPU(unittest.TestCase):
         finally:
             sapien.render.set_camera_shader_dir("default")
 
-    def test_viewer_staged_raster_pose_updates(self) -> None:
+    def _assert_viewer_staged_pose_updates(self, shader: str) -> None:
         from sapien.utils import Viewer
 
         sapien.physx.enable_gpu()
-        sapien.render.set_viewer_shader_dir("default")
+        sapien.render.set_viewer_shader_dir(shader)
+        if shader == "rt":
+            sapien.render.set_ray_tracing_samples_per_pixel(2)
+            sapien.render.set_ray_tracing_path_depth(2)
+            sapien.render.set_ray_tracing_denoiser("none")
+
         viewer = None
         try:
             device = sapien.Device("cuda")
@@ -372,6 +377,12 @@ class TestSceneGPU(unittest.TestCase):
             if viewer is not None:
                 viewer.close()
             sapien.render.set_viewer_shader_dir("default")
+
+    def test_viewer_staged_raster_pose_updates(self) -> None:
+        self._assert_viewer_staged_pose_updates("default")
+
+    def test_viewer_staged_rt_pose_updates(self) -> None:
+        self._assert_viewer_staged_pose_updates("rt")
 
     # def test_empty(self):
     #     scene = sapien.Scene()

@@ -63,6 +63,8 @@ private:
 
   std::unique_ptr<svulkan2::core::Buffer> mPoseBuffer;
   std::unique_ptr<svulkan2::core::Buffer> mShapeBuffer;
+  std::unique_ptr<svulkan2::core::Buffer> mDummyRTInstanceBuffer;
+  svulkan2::core::Buffer *mRTInstanceBuffer{};
   std::unique_ptr<svulkan2::core::CommandPool> mCommandPool;
   std::shared_ptr<svulkan2::shader::ComputeModule> mComputeModule;
   std::unique_ptr<svulkan2::shader::ComputeModuleInstance> mComputeInstance;

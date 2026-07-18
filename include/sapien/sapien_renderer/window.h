@@ -182,11 +182,12 @@ private:
   int mViewportWidth{};
   int mViewportHeight{};
   bool mRequiresRebuild{true};
+  bool mExternalTransformResourcesDirty{};
   bool mClosed{};
 
   void rebuildRenderScene();
   void rebuildPoseTransport();
-  void setRendererExternalTransformUpdates(bool enable);
+  void setRendererExternalTransformUpdates(bool enable, bool cudaInterop = false);
 };
 
 } // namespace sapien_renderer
