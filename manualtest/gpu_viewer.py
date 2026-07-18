@@ -219,11 +219,10 @@ def main() -> None:
     link_fetches = (
         physx._gpu_fetch_articulation_link_pose_count - initial_link_fetch_count
     )
-    rigid_pose_buffer = physx.cuda_rigid_body_data
-    link_pose_buffer = physx.cuda_articulation_link_data
-    full_pose_bytes = (
-        np.prod(rigid_pose_buffer.shape) + np.prod(link_pose_buffer.shape)
-    ) * 4
+    # cuda_rigid_body_data is the complete unified buffer; the articulation-link array is a view
+    # into the same storage and must not be counted a second time.
+    pose_buffer = physx.cuda_rigid_body_data
+    full_pose_bytes = np.prod(pose_buffer.shape) * 4
     d2h_bytes = sync_calls * int(full_pose_bytes)
     active_transport = (
         viewer.pose_transport if viewer is not None else "render-system-group-direct"
