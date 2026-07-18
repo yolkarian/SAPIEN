@@ -418,8 +418,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `set_camera_xyz` | method | `set_camera_xyz(self, x, y, z)` |  |  |
 | `set_scene` | method | `set_scene(self, scene: Scene)` |  |  |
 | `set_scenes` | method | `set_scenes(self, scenes: list[Scene])` | Select base scenes plus associated shared scenes once. | No render offsets are applied. |
-| `configure_physx_gpu_rendering` | method | `configure_physx_gpu_rendering(self, physx_system, transport="auto")` | Configure Viewer pose transport. |  |
+| `configure_physx_gpu_rendering` | method | `configure_physx_gpu_rendering(self, physx_system, transport="auto")` | Configure Viewer pose transport. | Auto selects same-device direct or cross-device staged raster/RT transport. |
 | `pose_transport` | property | `pose_transport(self) -> str` | Active pose transport. |  |
+| `pose_transfer_bytes` | property | `pose_transfer_bytes(self) -> int` | Cumulative pose D2H bytes for the active transport. | Staged transfers are 28 bytes per unique rendered GPU pose per submission. |
 | `update_render` | method | `update_render(self) -> None` | Submit current simulation/render state. | Explicit update boundary before `render()`. |
 | `update_aabb` | method | `update_aabb(self, aabb, lower, upper)` |  |  |
 | `update_bounding_box` | method | `update_bounding_box(self, box, pose, half_size)` |  |  |

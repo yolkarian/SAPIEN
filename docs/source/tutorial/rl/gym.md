@@ -87,8 +87,9 @@ the scenes you render.
 With CPU PhysX, `scene.update_render()` is enough before viewer/camera render.
 With GPU PhysX, avoid `sync_poses_gpu_to_cpu()` in training loops. For offscreen
 capture, use `sapien.render.RenderSystemGroup` with CUDA pose buffers. For
-interactive debugging on the same CUDA/Vulkan device, configure the Viewer and
-submit each displayed state explicitly:
+interactive debugging, configure the Viewer and submit each displayed state
+explicitly. `"auto"` uses direct CUDA/Vulkan interop on a compatible same device
+and compact pinned-host staging when PhysX and Vulkan use different devices:
 
 ```python
 viewer.configure_physx_gpu_rendering(physx_system, transport="auto")

@@ -31,6 +31,8 @@ This migration will not introduce:
 - new ECS components whose only purpose is Viewer state;
 - a rewrite of `ControlWindow`, `EntityWindow`, `ArticulationWindow`, or `TransformWindow`;
 - unrelated CPU Viewer features;
+- cross-device `RenderSystemGroup` offscreen-camera transport; Stage 3 targets the interactive
+  Viewer, while same-device offscreen cameras retain their existing direct path;
 - renderer-side grid layout or per-scene display offsets;
 - continuous synchronization of every CPU `Entity.pose` under PhysX GPU.
 
@@ -77,6 +79,18 @@ Compute GPU → pinned host memory → Vulkan rendering GPU
 
 The final Viewer therefore needs both same-device direct transport and cross-device staged transport.
 
+## Implementation Status
+
+Stages 0 through 3 are complete. The Viewer now resolves base plus shared scenes without offsets,
+submits simulation state explicitly, uses direct CUDA/Vulkan transforms on a compatible same
+device, and automatically uses compact pinned-host staging on different devices. Both raster and
+RT staged paths are implemented; RT writes Vulkan instance transforms, refits the TLAS, and resets
+accumulation. `manualtest/gpu_viewer.py` reports the selected transport and transferred pose bytes,
+and automated GPU tests compare staged raster and RT output with `cpu-debug` output.
+
+Stages 4 through 7 remain: GPU-aware selection/overlays, interaction, property windows, and final
+release cleanup. Cross-device offscreen camera transport is outside this Viewer migration scope.
+
 ## Target Architecture
 
 ```text
@@ -106,7 +120,7 @@ Resolved Vulkan render scene per output
 
 No new Viewer-facing component model is required. The transport implementation may use internal C++ classes or private Python helper objects, but they must not be added to scene Entities or exposed as another UI framework.
 
-Each Viewer or camera output has one coordinate system and one destination transform buffer. There is no scene transform in the pose path: the direct and staged kernels compute only `body pose × shape local pose`. If applications want environments to appear spatially separated, they must place the entities at separated poses; otherwise objects from different scenes may intentionally overlap.
+Each Viewer or camera output has one coordinate system and one destination transform buffer. There is no scene transform in the pose path: Viewer direct/staged kernels and the existing same-device camera direct kernel compute only `body pose × shape local pose`. If applications want environments to appear spatially separated, they must place the entities at separated poses; otherwise objects from different scenes may intentionally overlap.
 
 ## Transport Selection
 
@@ -257,8 +271,12 @@ python manualtest/gpu_viewer.py --transport direct --selection explicit
 python manualtest/gpu_viewer.py --transport direct --articulations
 python manualtest/gpu_viewer.py --transport direct --shader rt
 
-# Existing cross-device CPU-debug baseline before the Stage 3 staged transport.
+# Cross-device debug reference and production staged raster/RT paths.
 python manualtest/gpu_viewer.py --transport cpu-debug \
+  --render-device pci:0000:00:02.0
+python manualtest/gpu_viewer.py --transport auto \
+  --render-device pci:0000:00:02.0
+python manualtest/gpu_viewer.py --transport staged --shader rt \
   --render-device pci:0000:00:02.0
 ```
 
@@ -460,7 +478,7 @@ reusable double-buffered pinned host memory
 pose buffer on the Vulkan rendering device
     ↓ Vulkan compute shader
 Vulkan object-transform buffers
-    ↓ current Vulkan Viewer or camera draw
+    ↓ current Vulkan Viewer draw
 ```
 
 The Vulkan compute shader uses the same metadata as the aggregate same-device transform path:
@@ -468,7 +486,7 @@ The Vulkan compute shader uses the same metadata as the aggregate same-device tr
 - pose index;
 - local pose;
 - scale;
-- destination transform index in the resolved Viewer or camera output scene.
+- destination transform index in the resolved Viewer output scene.
 
 Source scene and environment IDs remain CPU-side bookkeeping for selection and interaction; they do not select another output buffer or modify the render transform. This transfers one compact pose per rendered body rather than one matrix per shape.
 
@@ -476,14 +494,14 @@ Source scene and environment IDs remain CPU-side bookkeeping for selection and i
 
 #### Tasks
 
-1. Build a compact list of bodies used by each Viewer's or camera's resolved base-plus-shared scene set.
+1. Build a compact list of bodies used by each Viewer's resolved base-plus-shared scene set.
 2. Pack only those poses into a contiguous CUDA buffer.
 3. Allocate reusable pinned host slots rather than allocating per frame.
 4. Upload completed host slots through Vulkan staging buffers.
 5. Add a Vulkan compute pass that writes object-transform buffers. The current buffers cannot be written by compute directly: object-transform buffers are created with only `eUniformBuffer | eTransferDst` usage, and RT instance buffers likewise lack storage usage. Choose explicitly: add `eStorageBuffer` usage to the affected buffers, or have compute write a temporary storage buffer that is copied into the existing buffers with `vkCmdCopyBuffer` (the `eTransferDst` usage already permits this). Either way, add the required compute/transfer → vertex/fragment and acceleration-structure-build barriers.
 6. Preserve:
-   - default current/owning scene plus shared scenes;
-   - explicit Viewer/camera multi-scene selection plus shared scenes;
+   - the default current scene plus shared scenes;
+   - explicit Viewer multi-scene selection plus shared scenes;
    - each object's existing pose without renderer-generated offsets;
    - shared-scene geometry and lights included once;
    - bound and unbound objects;
@@ -516,7 +534,10 @@ Source scene and environment IDs remain CPU-side bookkeeping for selection and i
 3. Reset RT accumulation after staged transform changes.
 4. Report unsupported renderer/driver combinations explicitly.
 
-Until Stage 3B is complete, cross-device RT must select `cpu-debug` explicitly or report that staged RT is unavailable. It must not silently display stale transforms.
+The staged compute pass writes the first 12 floats of each
+`VkAccelerationStructureInstanceKHR`, preserving instance metadata. Vulkan compute-to-AS barriers
+order the write before the rendering-device TLAS refit, and the scene render version resets RT
+accumulation.
 
 ### Exit Criteria
 
@@ -767,7 +788,7 @@ Do not add a new window solely for this status.
 | --- | --- | --- | --- |
 | CPU PhysX | Integrated or discrete GPU | Viewer/camera default scene + shared; explicit multi-scene + shared | Raster |
 | PhysX GPU | Same NVIDIA GPU | Viewer/camera default scene + shared; explicit multi-scene + shared | Raster/RT |
-| PhysX GPU on NVIDIA | Intel/AMD integrated GPU | Default and explicit multi-scene selection | Staged raster |
+| PhysX GPU on NVIDIA | Intel/AMD integrated GPU | Default and explicit multi-scene selection | Staged raster/RT when supported |
 | PhysX GPU on NVIDIA A | NVIDIA B | Default and explicit multi-scene selection | Staged raster/RT |
 | GPU articulations | Same or different rendering GPU | Overlapping environments plus shared scene | Raster |
 

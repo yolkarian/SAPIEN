@@ -801,6 +801,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `near` | property | `near(self) -> float` |  |  |
 | `ortho_top` | property | `ortho_top(self) -> float` |  |  |
 | `pose_transport` | property | `pose_transport(self) -> str` | Active Viewer pose transport. |  |
+| `pose_transfer_bytes` | property | `pose_transfer_bytes(self) -> int` | Cumulative pose D2H bytes for the active transport. | Staged transfers are 28 bytes per unique rendered GPU pose per submission. |
 | `render` | method | `render(self, target_name: str, ui_windows: list[sapien.internal_renderer.UIWidget]=[]) -> None` |  |  |
 | `resize` | method | `resize(self, width: int, height: int) -> None` |  |  |
 | `set_camera_orthographic_parameters` | method | `set_camera_orthographic_parameters(self, near: float, far: float, top: float) -> None` |  |  |
@@ -817,7 +818,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `set_intrinsic_parameters` | method | `set_intrinsic_parameters(self, near: float, far: float, fx: float, fy: float, cx: float, cy: float, skew: float) -> None` |  |  |
 | `set_scene` | method | `set_scene(self, scene: sapien.Scene) -> None` |  |  |
 | `set_scenes` | method | `set_scenes(self, scenes: list[sapien.Scene]) -> None` | Select base scenes plus associated shared scenes once. | No render offsets are applied. |
-| `configure_physx_gpu_rendering` | method | `configure_physx_gpu_rendering(self, physx_system: sapien.physx.PhysxGpuSystem, transport: Literal['auto', 'direct', 'staged', 'cpu-debug']='auto') -> None` | Configure Viewer pose transport. | Same-device direct and explicit CPU-debug are currently available. |
+| `configure_physx_gpu_rendering` | method | `configure_physx_gpu_rendering(self, physx_system: sapien.physx.PhysxGpuSystem, transport: Literal['auto', 'direct', 'staged', 'cpu-debug']='auto') -> None` | Configure Viewer pose transport. | Auto selects same-device direct or cross-device staged raster/RT transport. |
 | `set_shader_dir` | method | `set_shader_dir(self, shader_dir: str) -> None` |  |  |
 | `shift` | property | `shift(self) -> bool` |  |  |
 | `should_close` | property | `should_close(self) -> bool` |  |  |
@@ -826,7 +827,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `super` | property | `super(self) -> bool` |  |  |
 | `unset_drop_callback` | method | `unset_drop_callback(self) -> None` |  |  |
 | `unset_focus_callback` | method | `unset_focus_callback(self) -> None` |  |  |
-| `update_render` | method | `update_render(self) -> None` | Equivalent to calling the update_render function for all added scene | GPU PhysX dynamic bodies read CPU poses; prefer the CUDA pose path for offscreen. |
+| `update_render` | method | `update_render(self) -> None` | Submit render-system state and the configured Viewer pose transport. | Call before `render()` after each displayed simulation state. |
 | `__init__` | method | `__init__(self, width: int, height: int, shader_dir: str) -> None` |  |  |
 | `_internal_renderer` | property | `_internal_renderer(self) -> sapien.internal_renderer.Renderer` |  |  |
 | `_internal_scene` | property | `_internal_scene(self) -> sapien.internal_renderer.Scene` |  |  |

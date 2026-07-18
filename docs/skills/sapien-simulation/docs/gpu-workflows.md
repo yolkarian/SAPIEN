@@ -274,8 +274,10 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
   - This path is acceptable for viewer/debug rendering only; do not use it for normal offscreen video/camera capture.
 - Viewer path:
   1. `Viewer.configure_physx_gpu_rendering(physx_system, transport="auto")` after `gpu_init()`.
-  2. `Viewer.update_render()` after each displayed simulation state.
-  3. `Viewer.render()` to draw without another pose fetch.
+  2. `"auto"` selects direct CUDA/Vulkan interop on a compatible same physical device and compact pinned-host staging on different devices. Both raster and RT Viewer shader paths are supported.
+  3. `Viewer.update_render()` after each displayed simulation state.
+  4. `Viewer.render()` to draw without another pose fetch.
+  5. Inspect `Viewer.pose_transport` for the active choice and `Viewer.pose_transfer_bytes` for cumulative pose D2H bytes. Staged submission copies 28 bytes per unique rendered body/link pose and does not update CPU entities.
 - Use `sync_poses_gpu_to_cpu()` only for explicit CPU-state debugging or the Viewer `cpu-debug` transport. SAPIEN documents it as a super-slow helper that downloads all poses from GPU to CPU entities.
 - When adding policy-eval or teleoperation keyboard controls on top of the interactive viewer, do not reuse SAPIEN's built-in camera/navigation keys such as `W/A/S/D/Q/E`. Prefer a separate key cluster, for example `I/K` for forward/backward command, `J/L` for lateral command, `U/O` for yaw, `C` to clear commands, and `N` to reset.
 

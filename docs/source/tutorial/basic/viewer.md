@@ -51,10 +51,17 @@ while not viewer.closed:
 ```
 
 The available transport requests are `"auto"`, `"direct"`, `"staged"`, and
-`"cpu-debug"`. Same-device direct rendering is available now. `"cpu-debug"`
-explicitly performs the full pose download; `"staged"` reports unavailable
-until cross-device staging support is enabled. The active choice is available
-as `viewer.pose_transport`.
+`"cpu-debug"`. `"auto"` selects direct CUDA/Vulkan interop on a compatible
+same physical device and otherwise selects staged transfer. Staged transfer
+gathers one 7-float pose per rendered GPU body, copies it through reusable
+pinned host memory, and composes raster or ray-tracing transforms with Vulkan
+compute on the rendering device. `"cpu-debug"` explicitly performs the full
+pose download and updates CPU entities.
+
+The active choice is available as `viewer.pose_transport`. The cumulative pose
+D2H bytes for the active transport are available as
+`viewer.pose_transfer_bytes`; a staged submission transfers 28 bytes per
+unique rendered GPU pose.
 
 ## Multiple render scenes
 
