@@ -1,5 +1,6 @@
 #include "sapien/sapien_renderer/window.h"
 #include "render_scene_resolver.h"
+#include "staged_render_system.h"
 #include "sapien/entity.h"
 #include "sapien/math/conversion.h"
 #include "sapien/physx/articulation_link_component.h"
@@ -22,6 +23,7 @@ public:
   virtual void submit() {}
   virtual bool ownsGpuTransforms() const { return false; }
   virtual std::string getName() const = 0;
+  virtual uint64_t getTransferredBytes() const { return 0; }
 };
 
 #ifdef SAPIEN_CUDA
@@ -30,11 +32,16 @@ public:
   explicit CpuDebugViewerPoseTransport(std::shared_ptr<physx::PhysxSystemGpu> system)
       : mSystem(std::move(system)) {}
 
-  void prepare() override { mSystem->syncPosesGpuToCpu(); }
+  void prepare() override {
+    mSystem->syncPosesGpuToCpu();
+    mTransferredBytes += mSystem->gpuGetRigidBodyCudaHandle().bytes();
+  }
   std::string getName() const override { return "cpu-debug"; }
+  uint64_t getTransferredBytes() const override { return mTransferredBytes; }
 
 private:
   std::shared_ptr<physx::PhysxSystemGpu> mSystem;
+  uint64_t mTransferredBytes{};
 };
 
 class DirectViewerPoseTransport final : public ViewerPoseTransport {
@@ -54,6 +61,28 @@ public:
 private:
   std::shared_ptr<physx::PhysxSystemGpu> mSystem;
   std::unique_ptr<BatchedRenderSystem> mRenderSystem;
+};
+
+class StagedViewerPoseTransport final : public ViewerPoseTransport {
+public:
+  StagedViewerPoseTransport(std::shared_ptr<physx::PhysxSystemGpu> system,
+                            std::unique_ptr<StagedRenderSystem> renderSystem)
+      : mSystem(std::move(system)), mRenderSystem(std::move(renderSystem)) {}
+
+  void submit() override {
+    mSystem->gpuFetchRigidDynamicDataIfNeeded();
+    mSystem->gpuFetchArticulationLinkPoseIfNeeded();
+    mRenderSystem->update();
+  }
+  bool ownsGpuTransforms() const override { return true; }
+  std::string getName() const override { return "staged"; }
+  uint64_t getTransferredBytes() const override {
+    return mRenderSystem->getTransferredBytes();
+  }
+
+private:
+  std::shared_ptr<physx::PhysxSystemGpu> mSystem;
+  std::unique_ptr<StagedRenderSystem> mRenderSystem;
 };
 #endif
 
@@ -163,8 +192,8 @@ void SapienRendererWindow::setShader(std::string const &shaderDir) {
   if (mRenderScene) {
     mSVulkanRenderer->setScene(mRenderScene);
   }
-  setRendererExternalTransformUpdates(mPoseTransport == "direct");
   mSVulkanRenderer->resize(mViewportWidth, mViewportHeight);
+  rebuildPoseTransport();
 }
 
 void SapienRendererWindow::setDropCallback(
@@ -211,6 +240,10 @@ void SapienRendererWindow::setScenes(std::vector<std::shared_ptr<Scene>> const &
     mBaseRenderSystems.push_back(scene->getSapienRendererSystem());
   }
   rebuildRenderScene();
+}
+
+uint64_t SapienRendererWindow::getPoseTransferBytes() const {
+  return mPoseTransportImpl ? mPoseTransportImpl->getTransferredBytes() : 0;
 }
 
 void SapienRendererWindow::configurePhysxGpuRendering(
@@ -262,24 +295,26 @@ void SapienRendererWindow::rebuildPoseTransport() {
     mPoseTransport = mPoseTransportImpl->getName();
     return;
   }
-  if (mRequestedPoseTransport == "staged") {
+  if (!mPhysxGpuSystem->isInitialized()) {
     throw std::runtime_error(
-        "staged PhysX GPU rendering is unavailable; use a matching CUDA/Vulkan device");
+        "PhysX GPU must be initialized with gpu_init() before configuring Viewer rendering");
   }
 
   auto computeDevice = mPhysxGpuSystem->getDevice();
   auto renderDevice = mEngine->getDevice();
-  if (computeDevice->cudaId != renderDevice->cudaId) {
-    throw std::runtime_error("direct PhysX GPU rendering requires PhysX CUDA and Vulkan to use "
-                             "the same physical device; staged transport is unavailable");
-  }
-  if (!renderDevice->canDirectCudaVulkanInterop()) {
-    throw std::runtime_error("the Vulkan device does not expose the CUDA external-memory and "
-                             "external-semaphore capabilities required by direct transport");
-  }
-  if (!mPhysxGpuSystem->isInitialized()) {
+  bool directCompatible = computeDevice->cudaId == renderDevice->cudaId &&
+                          renderDevice->canDirectCudaVulkanInterop();
+  bool useDirect = mRequestedPoseTransport == "direct" ||
+                   (mRequestedPoseTransport == "auto" && directCompatible);
+  if (mRequestedPoseTransport == "direct" && !directCompatible) {
     throw std::runtime_error(
-        "PhysX GPU must be initialized with gpu_init() before configuring Viewer rendering");
+        "direct PhysX GPU rendering requires one CUDA/Vulkan device with external-memory and "
+        "external-semaphore support; use transport='staged' or 'auto'");
+  }
+  if (!useDirect &&
+      dynamic_cast<svulkan2::renderer::RTRenderer *>(mSVulkanRenderer.get())) {
+    throw std::runtime_error(
+        "staged PhysX GPU ray tracing is unavailable; use transport='cpu-debug' explicitly");
   }
 
   std::vector<std::shared_ptr<SapienRenderBodyComponent>> gpuSourcedBodies;
@@ -310,12 +345,21 @@ void SapienRendererWindow::rebuildPoseTransport() {
   }
 
   setRendererExternalTransformUpdates(true);
-  auto renderSystem = std::make_unique<BatchedRenderSystem>(mRenderSystems, mRenderScene,
-                                                            gpuSourcedBodies);
-  renderSystem->setCudaStream(mPhysxGpuSystem->gpuGetCudaStream());
-  renderSystem->setPoseSource(mPhysxGpuSystem->gpuGetRigidBodyCudaHandle());
-  mPoseTransportImpl = std::make_unique<DirectViewerPoseTransport>(mPhysxGpuSystem,
-                                                                   std::move(renderSystem));
+  if (useDirect) {
+    auto renderSystem = std::make_unique<BatchedRenderSystem>(mRenderSystems, mRenderScene,
+                                                              gpuSourcedBodies);
+    renderSystem->setCudaStream(mPhysxGpuSystem->gpuGetCudaStream());
+    renderSystem->setPoseSource(mPhysxGpuSystem->gpuGetRigidBodyCudaHandle());
+    mPoseTransportImpl = std::make_unique<DirectViewerPoseTransport>(mPhysxGpuSystem,
+                                                                     std::move(renderSystem));
+  } else {
+    auto renderSystem = std::make_unique<StagedRenderSystem>(
+        mRenderSystems, mRenderScene, gpuSourcedBodies,
+        mPhysxGpuSystem->gpuGetRigidBodyCudaHandle(),
+        reinterpret_cast<CUstream_st *>(mPhysxGpuSystem->gpuGetCudaStream()));
+    mPoseTransportImpl = std::make_unique<StagedViewerPoseTransport>(mPhysxGpuSystem,
+                                                                     std::move(renderSystem));
+  }
   for (uint32_t i = 0; i < mRenderSystems.size(); ++i) {
     mRenderSceneVersions[i] = mRenderSystems[i]->getScene()->getVersion();
   }

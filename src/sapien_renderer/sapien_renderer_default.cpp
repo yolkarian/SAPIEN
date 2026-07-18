@@ -95,6 +95,10 @@ void SapienRendererDefault::internalSetShaderSearchPath(std::string const &dir) 
   }
 }
 
+std::string SapienRendererDefault::internalGetShaderSearchPath() {
+  return Get().shaderSearchPath;
+}
+
 void SapienRendererDefault::setImguiIniFilename(std::string const &filename) {
   svulkan2::renderer::GuiWindow::setImguiIniFileLocation(filename);
 }

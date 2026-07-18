@@ -220,6 +220,11 @@ class Viewer:
         """Return the active Viewer pose transport."""
         return self.window.pose_transport
 
+    @property
+    def pose_transfer_bytes(self) -> int:
+        """Return cumulative device-to-host pose bytes for the active transport."""
+        return self.window.pose_transfer_bytes
+
     def update_render(self) -> None:
         """Submit current simulation state without drawing the Viewer window."""
         self._configure_detected_physx_gpu_system()

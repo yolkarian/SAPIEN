@@ -318,6 +318,61 @@ class TestSceneGPU(unittest.TestCase):
         finally:
             sapien.render.set_camera_shader_dir("default")
 
+    def test_viewer_staged_raster_pose_updates(self) -> None:
+        from sapien.utils import Viewer
+
+        sapien.physx.enable_gpu()
+        sapien.render.set_viewer_shader_dir("default")
+        viewer = None
+        try:
+            device = sapien.Device("cuda")
+            physx = sapien.physx.PhysxGpuSystem(device)
+            render_system = sapien.render.RenderSystem(device)
+            scene = sapien.Scene([physx, render_system])
+            scene.set_ambient_light([0.5, 0.5, 0.5])
+            scene.add_ground(0.0, render_half_size=[4.0, 4.0])
+
+            builder = scene.create_actor_builder()
+            builder.add_sphere_collision(radius=0.15)
+            builder.add_sphere_visual(radius=0.15, material=[0.8, 0.05, 0.05])
+            builder.initial_pose = sapien.Pose([0.0, 0.0, 2.0])
+            actor = builder.build()
+            initial_cpu_pose = actor.pose
+            physx.gpu_init()
+
+            viewer = Viewer(resolutions=(320, 240))
+            viewer.configure_physx_gpu_rendering(physx, "staged")
+            viewer.set_scene(scene)
+            viewer.set_camera_xyz(-4.0, 0.0, 2.0)
+            viewer.update_render()
+            viewer.render()
+            initial_transfer_bytes = viewer.pose_transfer_bytes
+            initial_sync_count = physx._sync_poses_gpu_to_cpu_count
+
+            for _ in range(180):
+                physx.step()
+            physx.gpu_fetch_rigid_dynamic_data()
+            physx.gpu_fetch_articulation_link_pose()
+            viewer.update_render()
+            viewer.render()
+            staged = viewer.window.get_picture("Segmentation").copy()
+
+            self.assertEqual(viewer.pose_transport, "staged")
+            self.assertEqual(viewer.pose_transfer_bytes - initial_transfer_bytes, 7 * 4)
+            self.assertEqual(physx._sync_poses_gpu_to_cpu_count, initial_sync_count)
+            self.assertTrue(np.allclose(actor.pose.p, initial_cpu_pose.p))
+            self.assertGreater(np.count_nonzero(staged[..., 0] == actor.per_scene_id), 20)
+
+            viewer.configure_physx_gpu_rendering(physx, "cpu-debug")
+            viewer.update_render()
+            viewer.render()
+            cpu_debug = viewer.window.get_picture("Segmentation").copy()
+            self.assertTrue(np.array_equal(staged, cpu_debug))
+        finally:
+            if viewer is not None:
+                viewer.close()
+            sapien.render.set_viewer_shader_dir("default")
+
     # def test_empty(self):
     #     scene = sapien.Scene()
     #     scene.add_ground(altitude=0)  # Add a ground

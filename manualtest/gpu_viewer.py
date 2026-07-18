@@ -1,11 +1,11 @@
-"""Benchmark legacy and direct PhysX GPU render pose transports.
+"""Benchmark legacy, direct, and staged PhysX GPU render pose transports.
 
 Run on a display-capable CUDA/Vulkan machine, for example:
 
     python manualtest/gpu_viewer.py --transport render-system-group --selection default
     python manualtest/gpu_viewer.py --transport direct --selection explicit --scenes 16
     python manualtest/gpu_viewer.py --transport cpu-debug --shader rt --articulations
-    python manualtest/gpu_viewer.py --transport cpu-debug --render-device pci:0000:00:02.0
+    python manualtest/gpu_viewer.py --transport staged --render-device pci:0000:00:02.0
 
 Use Nsight Systems to inspect the NVTX ranges emitted by the PhysX fetch,
 conversion, transform, synchronization, RT update, Viewer update, and draw paths.
@@ -30,7 +30,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--transport",
-        choices=("direct", "cpu-debug", "render-system-group"),
+        choices=("auto", "direct", "staged", "cpu-debug", "render-system-group"),
         default="direct",
     )
     parser.add_argument("--shader", choices=("default", "rt"), default="default")
@@ -166,9 +166,13 @@ def main() -> None:
         viewer.update_render()
         viewer.render()
 
+    active_transport = (
+        viewer.pose_transport if viewer is not None else "render-system-group-direct"
+    )
     initial_sync_count = physx._sync_poses_gpu_to_cpu_count
     initial_rigid_fetch_count = physx._gpu_fetch_rigid_dynamic_data_count
     initial_link_fetch_count = physx._gpu_fetch_articulation_link_pose_count
+    initial_transfer_bytes = viewer.pose_transfer_bytes if viewer is not None else 0
 
     if viewer is not None:
         viewer.render()
@@ -189,7 +193,7 @@ def main() -> None:
         for _ in range(args.substeps):
             physx.step()
 
-        if args.transport in ("direct", "render-system-group"):
+        if active_transport in ("direct", "staged", "render-system-group-direct"):
             start = time.perf_counter()
             physx.gpu_fetch_rigid_dynamic_data()
             physx.gpu_fetch_articulation_link_pose()
@@ -222,10 +226,11 @@ def main() -> None:
     # cuda_rigid_body_data is the complete unified buffer; the articulation-link array is a view
     # into the same storage and must not be counted a second time.
     pose_buffer = physx.cuda_rigid_body_data
-    full_pose_bytes = np.prod(pose_buffer.shape) * 4
-    d2h_bytes = sync_calls * int(full_pose_bytes)
-    active_transport = (
-        viewer.pose_transport if viewer is not None else "render-system-group-direct"
+    full_pose_bytes = int(np.prod(pose_buffer.shape) * 4)
+    d2h_bytes = (
+        viewer.pose_transfer_bytes - initial_transfer_bytes
+        if viewer is not None
+        else sync_calls * full_pose_bytes
     )
 
     print(f"transport: {active_transport}")
@@ -240,17 +245,21 @@ def main() -> None:
     print(f"rigid dynamic fetches: {rigid_fetches}")
     print(f"articulation link pose fetches: {link_fetches}")
     print(f"sync_poses_gpu_to_cpu calls: {sync_calls}")
-    print(f"full-pose D2H bytes: {d2h_bytes}")
+    print(f"pose D2H bytes: {d2h_bytes}")
     print("SAPIEN cudaDeviceSynchronize calls: 0")
     print("Detailed GPU stages: capture the emitted NVTX ranges with Nsight Systems.")
 
-    if args.transport in ("direct", "render-system-group"):
-        assert sync_calls == 0, "direct path performed a full CPU pose synchronization"
+    if active_transport in ("direct", "staged", "render-system-group-direct"):
+        assert sync_calls == 0, "GPU pose transport performed a full CPU pose synchronization"
         assert rigid_fetches == completed_frames, "render path duplicated rigid-body fetches"
         assert link_fetches == completed_frames, "render path duplicated articulation fetches"
         assert np.allclose(tracked_entity.pose.p, initial_cpu_pose.p), (
-            "direct path unexpectedly updated Entity.pose"
+            "GPU pose transport unexpectedly updated Entity.pose"
         )
+        if active_transport == "staged":
+            assert 0 < d2h_bytes <= full_pose_bytes * completed_frames, (
+                "staged transport did not use a compact pose transfer"
+            )
 
 
 if __name__ == "__main__":

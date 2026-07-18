@@ -51,6 +51,7 @@ public:
   static void setRenderTargetFormat(std::string const &name, vk::Format format);
 
   static void internalSetShaderSearchPath(std::string const &dir);
+  static std::string internalGetShaderSearchPath();
 
 public:
   uint32_t defaultMipMaps = 1;

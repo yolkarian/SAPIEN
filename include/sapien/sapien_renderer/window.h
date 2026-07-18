@@ -61,6 +61,7 @@ public:
   void configurePhysxGpuRendering(std::shared_ptr<physx::PhysxSystemGpu> system,
                                   std::string const &transport = "auto");
   std::string getPoseTransport() const { return mPoseTransport; }
+  uint64_t getPoseTransferBytes() const;
 
   /** Submit the selected render-system state without drawing the window. */
   void updateRender();

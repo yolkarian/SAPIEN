@@ -976,6 +976,9 @@ class RenderWindow:
     def pose_transport(self) -> str:
         ...
     @property
+    def pose_transfer_bytes(self) -> int:
+        ...
+    @property
     def ortho_top(self) -> float:
         ...
     @property

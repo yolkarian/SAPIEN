@@ -1239,6 +1239,8 @@ consumer library. Make a copy if needed.
       .def("configure_physx_gpu_rendering", &SapienRendererWindow::configurePhysxGpuRendering,
            py::arg("physx_system"), py::arg("transport") = "auto")
       .def_property_readonly("pose_transport", &SapienRendererWindow::getPoseTransport)
+      .def_property_readonly("pose_transfer_bytes",
+                             &SapienRendererWindow::getPoseTransferBytes)
       .def_property_readonly("display_picture_names", &SapienRendererWindow::getDisplayTargetNames,
                              "Names for available display targets that can be displayed "
                              "in the render function")

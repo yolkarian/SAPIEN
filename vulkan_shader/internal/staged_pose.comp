@@ -1,0 +1,81 @@
+#version 450
+
+layout(local_size_x_id = 0, local_size_y = 1, local_size_z = 1) in;
+
+struct ShapeData {
+  uvec4 indices;
+  vec4 localPosition;
+  vec4 localQuaternion;
+  vec4 scale;
+};
+
+layout(std430, set = 0, binding = 0) readonly buffer PoseBuffer {
+  float values[];
+} poseBuffer;
+
+layout(std430, set = 0, binding = 1) readonly buffer ShapeBuffer {
+  ShapeData values[];
+} shapeBuffer;
+
+layout(std430, set = 0, binding = 2) writeonly buffer TransformBuffer {
+  float values[];
+} transformBuffer;
+
+layout(push_constant) uniform PushConstants {
+  uint shapeCount;
+  uint transformStride;
+} pushConstants;
+
+vec4 quaternionMultiply(vec4 lhs, vec4 rhs) {
+  float w = lhs.x * rhs.x - dot(lhs.yzw, rhs.yzw);
+  vec3 xyz = lhs.x * rhs.yzw + rhs.x * lhs.yzw + cross(lhs.yzw, rhs.yzw);
+  return vec4(w, xyz);
+}
+
+vec3 quaternionRotate(vec4 quaternion, vec3 vector) {
+  vec3 q = quaternion.yzw;
+  return vector + 2.0 * cross(q, cross(q, vector) + quaternion.x * vector);
+}
+
+void main() {
+  uint shapeIndex = gl_GlobalInvocationID.x;
+  if (shapeIndex >= pushConstants.shapeCount) {
+    return;
+  }
+
+  ShapeData shape = shapeBuffer.values[shapeIndex];
+  uint poseOffset = shape.indices.x * 7;
+  vec3 bodyPosition = vec3(
+      poseBuffer.values[poseOffset],
+      poseBuffer.values[poseOffset + 1],
+      poseBuffer.values[poseOffset + 2]);
+  vec4 bodyQuaternion = vec4(
+      poseBuffer.values[poseOffset + 3],
+      poseBuffer.values[poseOffset + 4],
+      poseBuffer.values[poseOffset + 5],
+      poseBuffer.values[poseOffset + 6]);
+
+  vec3 position = bodyPosition + quaternionRotate(bodyQuaternion, shape.localPosition.xyz);
+  vec4 quaternion = normalize(quaternionMultiply(bodyQuaternion, shape.localQuaternion));
+  vec3 column0 = quaternionRotate(quaternion, vec3(1.0, 0.0, 0.0)) * shape.scale.x;
+  vec3 column1 = quaternionRotate(quaternion, vec3(0.0, 1.0, 0.0)) * shape.scale.y;
+  vec3 column2 = quaternionRotate(quaternion, vec3(0.0, 0.0, 1.0)) * shape.scale.z;
+
+  uint outputOffset = shape.indices.y * pushConstants.transformStride;
+  transformBuffer.values[outputOffset] = column0.x;
+  transformBuffer.values[outputOffset + 1] = column0.y;
+  transformBuffer.values[outputOffset + 2] = column0.z;
+  transformBuffer.values[outputOffset + 3] = 0.0;
+  transformBuffer.values[outputOffset + 4] = column1.x;
+  transformBuffer.values[outputOffset + 5] = column1.y;
+  transformBuffer.values[outputOffset + 6] = column1.z;
+  transformBuffer.values[outputOffset + 7] = 0.0;
+  transformBuffer.values[outputOffset + 8] = column2.x;
+  transformBuffer.values[outputOffset + 9] = column2.y;
+  transformBuffer.values[outputOffset + 10] = column2.z;
+  transformBuffer.values[outputOffset + 11] = 0.0;
+  transformBuffer.values[outputOffset + 12] = position.x;
+  transformBuffer.values[outputOffset + 13] = position.y;
+  transformBuffer.values[outputOffset + 14] = position.z;
+  transformBuffer.values[outputOffset + 15] = 1.0;
+}
