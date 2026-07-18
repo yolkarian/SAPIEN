@@ -103,6 +103,9 @@ function build_pybind() {
   eval "${COMMAND} --pybind-only --build-dir=docker_sapien_build"
 
   PACKAGE_VERSION=`${BIN} setup.py --get-version`
+  # Wheel metadata normalizes numeric PEP 440 local versions by removing leading zeros.
+  # Resolve the same normalized version before locating the wheel for auditwheel.
+  PACKAGE_VERSION=`${BIN} -c "from packaging.version import Version; print(Version('${PACKAGE_VERSION}'))"`
   WHEEL_NAME="./dist/sapien-${PACKAGE_VERSION}-cp${PY_VERSION}-cp${PY_VERSION}${EXT}-linux_x86_64.whl"
   if test -f "$WHEEL_NAME"; then
     echo "$WHEEL_NAME exists, begin audit and repair"
