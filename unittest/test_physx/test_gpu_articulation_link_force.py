@@ -145,7 +145,9 @@ class TestGpuArticulationLinkForce(unittest.TestCase):
         scene.add_entity(entity)
         return entity, body
 
-    def _build_two_link_articulation(self, scene, x: float = 0.0):
+    def _build_two_link_articulation(
+        self, scene, x: float = 0.0, joint_type: str = "fixed"
+    ):
         material = sapien.physx.PhysxMaterial(0.2, 0.1, 0.05)
 
         root = sapien.physx.PhysxArticulationLinkComponent()
@@ -157,7 +159,9 @@ class TestGpuArticulationLinkForce(unittest.TestCase):
 
         root.attach(sapien.physx.PhysxCollisionShapeBox([0.1, 0.1, 0.1], material))
         child.attach(sapien.physx.PhysxCollisionShapeBox([0.1, 0.1, 0.1], material))
-        child.joint.set_type("fixed")
+        child.joint.set_type(joint_type)
+        if joint_type == "revolute":
+            child.joint.set_limits([[-1.0, 1.0]])
         child.joint.set_pose_in_parent(sapien.Pose([0.3, 0.0, 0.0]))
         child.joint.set_pose_in_child(sapien.Pose([0.0, 0.0, 0.0]))
 
@@ -411,6 +415,36 @@ class TestGpuArticulationLinkForce(unittest.TestCase):
         )
         self.assertTrue(np.allclose(stopped[7:13], 0.0, atol=1e-4))
         self.assertAlmostEqual(float(stopped[0]), 4.0, places=3)
+
+    def test_viewer_selected_articulation_state_roundtrip(self):
+        system, scene = self._create_scene()
+        art, _, _ = self._build_two_link_articulation(
+            scene, joint_type="revolute"
+        )
+        system.gpu_init()
+
+        system._gpu_upload_articulation_qpos(
+            art.gpu_index, np.asarray([0.0], dtype=np.float32)
+        )
+        system._gpu_upload_articulation_target_qpos(
+            art.gpu_index, np.asarray([0.25], dtype=np.float32)
+        )
+        system._gpu_upload_articulation_target_qvel(
+            art.gpu_index, np.asarray([-0.5], dtype=np.float32)
+        )
+        qpos = system._gpu_download_articulation_qpos(art.gpu_index)
+        target_qpos = system._gpu_download_articulation_target_qpos(art.gpu_index)
+        target_qvel = system._gpu_download_articulation_target_qvel(art.gpu_index)
+
+        self.assertAlmostEqual(qpos[0], 0.0, places=5)
+        self.assertAlmostEqual(target_qpos[0], 0.25, places=5)
+        self.assertAlmostEqual(target_qvel[0], -0.5, places=5)
+        with self.assertRaisesRegex(RuntimeError, "invalid articulation GPU index"):
+            system._gpu_download_articulation_qpos(-1)
+        with self.assertRaisesRegex(RuntimeError, "invalid index or shape"):
+            system._gpu_upload_articulation_qpos(
+                art.gpu_index, np.asarray([0.0, 0.1], dtype=np.float32)
+            )
 
     def test_viewer_gpu_articulation_root_teleport(self):
         system, scene = self._create_scene()

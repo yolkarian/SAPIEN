@@ -928,6 +928,22 @@ SAPIEN articulation `gpu_index` values.
       .def("_gpu_set_viewer_articulation_root_pose",
            &PhysxSystemGpu::gpuSetViewerArticulationRootPose,
            py::arg("articulation_index"), py::arg("root_pose_index"), py::arg("pose"))
+      .def("_gpu_download_articulation_qpos",
+           &PhysxSystemGpu::gpuDownloadArticulationQpos, py::arg("articulation_index"))
+      .def("_gpu_download_articulation_target_qpos",
+           &PhysxSystemGpu::gpuDownloadArticulationQTargetPos,
+           py::arg("articulation_index"))
+      .def("_gpu_download_articulation_target_qvel",
+           &PhysxSystemGpu::gpuDownloadArticulationQTargetVel,
+           py::arg("articulation_index"))
+      .def("_gpu_upload_articulation_qpos", &PhysxSystemGpu::gpuUploadArticulationQpos,
+           py::arg("articulation_index"), py::arg("qpos"))
+      .def("_gpu_upload_articulation_target_qpos",
+           &PhysxSystemGpu::gpuUploadArticulationQTargetPos,
+           py::arg("articulation_index"), py::arg("target"))
+      .def("_gpu_upload_articulation_target_qvel",
+           &PhysxSystemGpu::gpuUploadArticulationQTargetVel,
+           py::arg("articulation_index"), py::arg("target"))
 
       .def("gpu_apply_articulation_root_pose",
            py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationRootPose))

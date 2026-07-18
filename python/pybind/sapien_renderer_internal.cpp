@@ -154,6 +154,7 @@ void init_sapien_renderer_internal(py::module &parent) {
   // UI
   PyUIWindow.def("Label", &ui::Window::Label, py::arg("label"))
       .def("Id", &ui::Window::Id, py::arg("id"))
+      .def_property_readonly("expanded", &ui::Window::isExpanded)
       .def(py::init<>())
       .def(
           "Pos",

@@ -120,10 +120,20 @@ The current viewer uses SAPIEN 3's entity/component model.
 - `Articulation` appears when the selected entity is an articulation link. It
   lists joints and exposes drive target, velocity target, damping, stiffness,
   force limit, friction, and drive mode controls.
-- `Contacts` can display contacts reported by the current PhysX step.
+- `Contacts` can display contacts reported by a CPU PhysX step. Under PhysX GPU
+  it shows an explicit notice instead; use GPU contact queries in application
+  code.
 - `Settings` exposes scene-level PhysX settings such as timestep and gravity.
 - `Render` exposes renderer options including shader pack, denoiser, samples
   per pixel, ray depth, focal plane, and aperture.
+
+Under PhysX GPU, the `Entity` pose and `Articulation` qpos/drive-target rows are
+read on demand for only the selected object and cached for the submitted
+Viewer frame. Pose, qpos, and drive-target edits are queued and applied by
+`viewer.apply_interactions()` before physics. Collapsing these windows prevents
+the corresponding GPU readback. Non-root articulation-link poses are read-only,
+and the Transform window explicitly disables its CPU Pinocchio IK controls for
+GPU articulations.
 
 ## Move objects
 

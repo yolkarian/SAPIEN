@@ -81,7 +81,7 @@ The final Viewer therefore needs both same-device direct transport and cross-dev
 
 ## Implementation Status
 
-Stages 0 through 5 are complete. The Viewer now resolves base plus shared scenes without offsets,
+Stages 0 through 6 are complete. The Viewer resolves base plus shared scenes without offsets,
 submits simulation state explicitly, uses direct CUDA/Vulkan transforms on a compatible same
 device, and automatically uses compact pinned-host staging on different devices. Both raster and
 RT staged paths are implemented; RT writes Vulkan instance transforms, refits the TLAS, and resets
@@ -89,13 +89,18 @@ accumulation. Selection, focus, joint/coordinate overlays, mounted-camera overla
 Transform gizmo read the latest submitted GPU pose through a per-frame selected-pose cache. Direct
 mode downloads only the requested 7-float row; staged mode reuses its completed host slot.
 
-GPU interaction is also implemented: Ctrl + left drag creates a damped point spring, application
-and Viewer wrenches are composed in private CUDA scratch without modifying exposed application
+GPU interaction is implemented: Ctrl + left drag creates a damped point spring, application and
+Viewer wrenches are composed in private CUDA scratch without modifying exposed application
 buffers, and `viewer.apply_interactions()` applies the result before physics. Transform-gizmo GPU
 teleports are queued and preserve velocity unless zeroing is explicitly requested.
 
-Stages 6 and 7 remain: GPU-aware property windows and final release cleanup. Cross-device
-offscreen camera transport is outside this Viewer migration scope.
+The existing Entity and Articulation windows now use selected-object GPU reads and queued edits;
+collapsed windows avoid those reads. GPU Contact reports and CPU Pinocchio IK are explicitly
+unavailable rather than silently showing stale state.
+
+Stage 7 remains: resolved-scene automatic selection, final cleanup, release diagnostics, and the
+final validation matrix. Cross-device offscreen camera transport remains outside this Viewer
+migration scope.
 
 ## Target Architecture
 
@@ -712,7 +717,7 @@ explicit rigid or articulation-root teleports through the same pre-step phase.
 
 ## Stage 6: Make Existing Entity and Articulation Windows GPU-Aware
 
-**Priority: After visualization and interaction are usable** — **Complexity: Medium to large**
+**Status: Complete** — **Priority: After visualization and interaction are usable** — **Complexity: Medium to large**
 
 This stage adapts only fields already exposed by the current windows. It does not introduce a property registry or generic Inspector system.
 

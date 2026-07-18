@@ -607,6 +607,9 @@ class UIWidget:
     def remove_children(self) -> None:
         ...
 class UIWindow(UIWidget):
+    @property
+    def expanded(self) -> bool:
+        ...
     def Id(self, id: str) -> UIWindow:
         ...
     def Label(self, label: str) -> UIWindow:

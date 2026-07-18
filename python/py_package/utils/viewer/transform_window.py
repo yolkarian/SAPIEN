@@ -44,7 +44,7 @@ class TransformWindow(Plugin):
         self.follow = False
 
         entity = self.selected_entity
-        if entity is None or self.viewer._physx_gpu_system is None:
+        if entity is None or not self.viewer._entity_uses_physx_gpu(entity):
             return
         rigid = entity.find_component_by_type(
             sapien.physx.PhysxRigidDynamicComponent
@@ -58,6 +58,18 @@ class TransformWindow(Plugin):
                 self.viewer.begin_gpu_interaction(entity, current_pose.p)
             self.viewer.update_gpu_interaction_target(self._gizmo_pose.p)
 
+    @property
+    def ik_available(self) -> bool:
+        return not (
+            self.selected_entity is not None
+            and self.viewer._entity_uses_physx_gpu(self.selected_entity)
+            and self.get_articulation(self.selected_entity) is not None
+        )
+
+    @property
+    def gpu_ik_unavailable(self) -> bool:
+        return not self.ik_available
+
     def get_articulation(self, entity):
         if not entity:
             return None
@@ -66,6 +78,15 @@ class TransformWindow(Plugin):
             if isinstance(c, sapien.physx.PhysxArticulationLinkComponent):
                 return c.articulation
         return None
+
+    def _populate_move_group(self) -> None:
+        if self.ui_move_group is None:
+            return
+        self.ui_move_group.remove_children()
+        for index, name in enumerate(self.move_group_joints):
+            self.ui_move_group.append(
+                R.UICheckbox().Label(name).Bind(self.move_group_selection, index)
+            )
 
     def notify_selected_entity_change(self):
         if not self.scene:
@@ -76,15 +97,23 @@ class TransformWindow(Plugin):
             self._gizmo_pose = sapien.Pose()
             self.follow = False
         else:
-            self._gizmo_pose = self.viewer.get_entity_viewer_pose(
-                self.selected_entity
-            )
+            # Defer GPU pose readback until the Transform controls are actually enabled.
+            self._gizmo_pose = self.selected_entity.pose
             self.follow = True
 
             art = self.get_articulation(self.selected_entity)
             if art is not None:
+                if self.viewer._entity_uses_physx_gpu(self.selected_entity):
+                    self.ik_enabled = False
+                    self.ik_articulation = art
+                    self.pinocchio_model = None
+                    self.move_group_joints = []
+                    self.move_group_selection = []
+                    self._populate_move_group()
+                    return
                 if self.ik_articulation == art:
                     return
+                self.ik_enabled = True
                 self.ik_articulation = art
                 self.pinocchio_model: sapien.PinocchioModel = (
                     self.ik_articulation.create_pinocchio_model()
@@ -96,11 +125,7 @@ class TransformWindow(Plugin):
                     if j.get_dof() != 0
                 ]
                 self.move_group_selection = [True] * len(self.move_group_joints)
-                self.ui_move_group.remove_children()
-                for i, n in enumerate(self.move_group_joints):
-                    self.ui_move_group.append(
-                        R.UICheckbox().Label(n).Bind(self.move_group_selection, i)
-                    )
+                self._populate_move_group()
 
     def compute_ik(self):
         if (
@@ -145,7 +170,6 @@ class TransformWindow(Plugin):
         for obj in self.ghost_objects:
             render_scene.remove_node(obj)
         self.ghost_objects = []
-        self.viewer.notify_render_update()
 
     def refresh_ghost_objects(self):
         render_scene: R.Scene = self.viewer.render_scene
@@ -206,8 +230,6 @@ class TransformWindow(Plugin):
             new_node.set_rotation(entity2world.q)
             self.ghost_objects.append(new_node)
 
-        self.viewer.notify_render_update()
-
     def update_ghost_objects(self):
         if self.selected_entity is None:
             return
@@ -245,15 +267,17 @@ class TransformWindow(Plugin):
                 node.set_position(self._gizmo_pose.p)
                 node.set_rotation(self._gizmo_pose.q)
 
-        self.viewer.notify_render_update()
-
     def teleport(self, _):
         try:
             entity = self.selected_entity
             art = self.get_articulation(entity)
-            gpu_system = self.viewer._physx_gpu_system
+            gpu_system = (
+                self.viewer._physx_gpu_system
+                if self.viewer._entity_uses_physx_gpu(entity)
+                else None
+            )
             if art:
-                if self.ik_enabled:
+                if self.ik_enabled and gpu_system is None:
                     art.set_qpos(self.ik_result)
                 else:
                     link_pose = self.viewer.get_entity_viewer_pose(entity)
@@ -277,7 +301,6 @@ class TransformWindow(Plugin):
                 else:
                     entity.set_pose(self._gizmo_pose)
             self.viewer.end_gpu_interaction()
-            self.viewer.notify_render_update()
         except AttributeError:
             pass
 
@@ -286,7 +309,14 @@ class TransformWindow(Plugin):
             self.ui_window = None
             return
 
-        if self.follow and self.selected_entity and self.ghost_objects:
+        if (
+            self.enabled
+            and self.ui_window is not None
+            and self.ui_window.expanded
+            and self.follow
+            and self.selected_entity
+            and self.ghost_objects
+        ):
             self._gizmo_pose = self.viewer.get_entity_viewer_pose(
                 self.selected_entity
             )
@@ -294,6 +324,7 @@ class TransformWindow(Plugin):
 
         if not self.ui_window:
             self.ui_move_group = R.UISection().Label("Move Group")
+            self._populate_move_group()
 
             self.gizmo = R.UIGizmo().Bind(self, "gizmo_matrix")
             self.ui_window = (
@@ -316,14 +347,30 @@ class TransformWindow(Plugin):
                                 is not None
                             )
                             .append(
-                                R.UICheckbox().Label("IK").Bind(self, "ik_enabled"),
-                                self.ui_move_group,
+                                R.UIConditional()
+                                .Bind(self, "ik_available")
+                                .append(
+                                    R.UICheckbox()
+                                    .Label("IK")
+                                    .Bind(self, "ik_enabled"),
+                                    self.ui_move_group,
+                                ),
+                                R.UIConditional()
+                                .Bind(self, "gpu_ik_unavailable")
+                                .append(
+                                    R.UIDisplayText().Text(
+                                        "IK is unavailable for PhysX GPU articulations"
+                                    )
+                                ),
                             ),
                             R.UIButton().Label("Teleport").Callback(self.teleport),
                         ),
                     ),
                 )
             )
+
+        if not self.ui_window.expanded:
+            return
 
         proj = self.viewer.window.get_camera_projection_matrix()
         view = (
@@ -336,13 +383,12 @@ class TransformWindow(Plugin):
         )
         self.gizmo.CameraMatrices(view, proj)
 
-        if self.selected_entity is not None:
-            pose = (
-                self.viewer.get_entity_viewer_pose(self.selected_entity)
-                if self.follow
-                else self._gizmo_pose
-            )
-            self.gizmo.Matrix(pose.to_transformation_matrix())
+        if self.enabled and self.selected_entity is not None:
+            if self.follow:
+                self._gizmo_pose = self.viewer.get_entity_viewer_pose(
+                    self.selected_entity
+                )
+            self.gizmo.Matrix(self._gizmo_pose.to_transformation_matrix())
         else:
             self.gizmo.Matrix(np.eye(4))
 

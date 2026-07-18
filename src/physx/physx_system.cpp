@@ -1587,34 +1587,106 @@ void PhysxSystemGpu::syncPosesGpuToCpu() {
   }
 }
 
+uint32_t PhysxSystemGpu::getGpuArticulationDof(int index) const {
+  if (index < 0 || index >= mGpuArticulationCount) {
+    throw std::runtime_error("invalid articulation GPU index");
+  }
+  for (auto const &link : mArticulationLinkComponents) {
+    auto articulation = link->getArticulation();
+    if (articulation->getGpuIndex() == index) {
+      return articulation->getDof();
+    }
+  }
+  throw std::runtime_error("articulation GPU index is not registered with this system");
+}
+
 std::vector<float> PhysxSystemGpu::gpuDownloadArticulationQpos(int index) {
+  checkGpuInitialized();
+  uint32_t dof = getGpuArticulationDof(index);
   ensureCudaDevice();
   gpuFetchArticulationQpos();
-  cudaStreamSynchronize(mCudaStream);
+  checkCudaErrors(cudaStreamSynchronize(mCudaStream));
 
-  if (index < 0 || index >= mGpuArticulationCount) {
-    throw std::runtime_error("failed to download articulation qpos: invalid index");
-  }
+  std::vector<float> buffer(dof);
+  checkCudaErrors(cudaMemcpy(
+      buffer.data(), static_cast<float *>(mCudaQposHandle.ptr) + index * mGpuArticulationMaxDof,
+      dof * sizeof(float), cudaMemcpyDeviceToHost));
+  return buffer;
+}
 
-  std::vector<float> buffer(mGpuArticulationMaxDof);
+std::vector<float> PhysxSystemGpu::gpuDownloadArticulationQTargetPos(int index) {
+  checkGpuInitialized();
+  uint32_t dof = getGpuArticulationDof(index);
+  ensureCudaDevice();
+  gpuFetchArticulationQTargetPos();
+  checkCudaErrors(cudaStreamSynchronize(mCudaStream));
 
-  cudaMemcpy(buffer.data(), &((float *)mCudaQposHandle.ptr)[index * mGpuArticulationMaxDof],
-             mGpuArticulationMaxDof * sizeof(float), cudaMemcpyDeviceToHost);
+  std::vector<float> buffer(dof);
+  checkCudaErrors(cudaMemcpy(
+      buffer.data(), static_cast<float *>(mCudaQTargetPosHandle.ptr) +
+                         index * mGpuArticulationMaxDof,
+      dof * sizeof(float), cudaMemcpyDeviceToHost));
+  return buffer;
+}
+
+std::vector<float> PhysxSystemGpu::gpuDownloadArticulationQTargetVel(int index) {
+  checkGpuInitialized();
+  uint32_t dof = getGpuArticulationDof(index);
+  ensureCudaDevice();
+  gpuFetchArticulationQTargetVel();
+  checkCudaErrors(cudaStreamSynchronize(mCudaStream));
+
+  std::vector<float> buffer(dof);
+  checkCudaErrors(cudaMemcpy(
+      buffer.data(), static_cast<float *>(mCudaQTargetVelHandle.ptr) +
+                         index * mGpuArticulationMaxDof,
+      dof * sizeof(float), cudaMemcpyDeviceToHost));
   return buffer;
 }
 
 void PhysxSystemGpu::gpuUploadArticulationQpos(int index, Eigen::VectorXf const &q) {
-  ensureCudaDevice();
-  cudaStreamSynchronize(mCudaStream);
-  if (index < 0 || index >= mGpuArticulationCount) {
-    throw std::runtime_error("failed to download articulation qpos: invalid index");
+  checkGpuInitialized();
+  if (q.size() != getGpuArticulationDof(index)) {
+    throw std::runtime_error("failed to upload articulation qpos: invalid index or shape");
   }
+  ensureCudaDevice();
+  checkCudaErrors(cudaMemcpy(
+      static_cast<float *>(mCudaQposHandle.ptr) + index * mGpuArticulationMaxDof, q.data(),
+      q.size() * sizeof(float), cudaMemcpyHostToDevice));
+  checkCudaErrors(cudaMemcpy(mCudaViewerIndexBuffer.ptr, &index, sizeof(int),
+                             cudaMemcpyHostToDevice));
+  gpuApplyArticulationQpos(mCudaViewerIndexBuffer.handle());
+  gpuUpdateArticulationKinematics(mCudaViewerIndexBuffer.handle());
+}
 
-  cudaMemcpy(&((float *)mCudaQposHandle.ptr)[index * mGpuArticulationMaxDof], q.data(),
-             q.size() * sizeof(float), cudaMemcpyHostToDevice);
-  CudaArray cudaIndex({1}, "i4");
-  checkCudaErrors(cudaMemcpy(cudaIndex.ptr, &index, sizeof(int), cudaMemcpyHostToDevice));
-  gpuApplyArticulationQpos(cudaIndex.handle());
+void PhysxSystemGpu::gpuUploadArticulationQTargetPos(int index, Eigen::VectorXf const &q) {
+  checkGpuInitialized();
+  if (q.size() != getGpuArticulationDof(index)) {
+    throw std::runtime_error(
+        "failed to upload articulation position target: invalid index or shape");
+  }
+  ensureCudaDevice();
+  checkCudaErrors(cudaMemcpy(
+      static_cast<float *>(mCudaQTargetPosHandle.ptr) + index * mGpuArticulationMaxDof, q.data(),
+      q.size() * sizeof(float), cudaMemcpyHostToDevice));
+  checkCudaErrors(cudaMemcpy(mCudaViewerIndexBuffer.ptr, &index, sizeof(int),
+                             cudaMemcpyHostToDevice));
+  gpuApplyArticulationQTargetPos(mCudaViewerIndexBuffer.handle());
+}
+
+void PhysxSystemGpu::gpuUploadArticulationQTargetVel(int index, Eigen::VectorXf const &q) {
+  checkGpuInitialized();
+  if (q.size() != getGpuArticulationDof(index)) {
+    throw std::runtime_error(
+        "failed to upload articulation velocity target: invalid index or shape");
+  }
+  ensureCudaDevice();
+  checkCudaErrors(cudaMemcpy(
+      static_cast<float *>(mCudaQTargetVelHandle.ptr) + index * mGpuArticulationMaxDof, q.data(),
+      q.size() * sizeof(float), cudaMemcpyHostToDevice));
+  checkCudaErrors(cudaMemcpy(mCudaViewerIndexBuffer.ptr, &index, sizeof(int),
+                             cudaMemcpyHostToDevice));
+  gpuApplyArticulationQTargetVel(mCudaViewerIndexBuffer.handle());
 }
 
 void PhysxSystemGpu::setSceneOffset(std::shared_ptr<Scene> scene, Vec3 offset) {

@@ -29,6 +29,13 @@ class ContactWindow(Plugin):
         self.ui_window.remove_children()
         self.ui_window.append(R.UICheckbox().Label("Enabled").Bind(self, "enabled"))
 
+        if isinstance(scene.physx_system, sapien.physx.PhysxGpuSystem):
+            self.ui_window.append(
+                R.UIDisplayText().Text(
+                    "CPU contact reports are unavailable with PhysX GPU; use GPU contact queries."
+                )
+            )
+            return
         if not self.enabled:
             return
 

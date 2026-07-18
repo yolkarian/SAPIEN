@@ -320,7 +320,11 @@ public:
   }
 
   std::vector<float> gpuDownloadArticulationQpos(int index);
+  std::vector<float> gpuDownloadArticulationQTargetPos(int index);
+  std::vector<float> gpuDownloadArticulationQTargetVel(int index);
   void gpuUploadArticulationQpos(int index, Eigen::VectorXf const &q);
+  void gpuUploadArticulationQTargetPos(int index, Eigen::VectorXf const &q);
+  void gpuUploadArticulationQTargetVel(int index, Eigen::VectorXf const &q);
 
   void setSceneOffset(std::shared_ptr<Scene> scene, Vec3 offset);
   Vec3 getSceneOffset(std::shared_ptr<Scene> scene) const;
@@ -351,6 +355,7 @@ public:
 private:
   std::shared_ptr<Device> mDevice;
   void ensureCudaDevice();
+  uint32_t getGpuArticulationDof(int index) const;
 
   std::map<std::weak_ptr<Scene>, Vec3, std::owner_less<>> mSceneOffset;
   std::map<std::weak_ptr<Scene>, uint32_t, std::owner_less<>> mSceneEnvironmentIds;

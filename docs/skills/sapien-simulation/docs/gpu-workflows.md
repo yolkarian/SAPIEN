@@ -280,6 +280,7 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
   5. `Viewer.render()` to draw without another pose fetch.
   6. Inspect `Viewer.pose_transport` for the active choice and `Viewer.pose_transfer_bytes` for cumulative pose D2H bytes. Staged submission copies 28 bytes per unique rendered body/link pose and does not update CPU entities.
   7. Viewer spring composition preserves the exposed application force/torque buffers. Do not issue a later apply for the same selected body before `step()`, because it would replace the composed spring.
+  8. GPU-aware Entity and Articulation windows transfer only the selected pose or articulation row, cache it for the submitted frame, and queue supported edits for `apply_interactions()`. Collapsed windows do not read GPU state. CPU contact reports and CPU Pinocchio IK are explicitly unavailable in these windows under PhysX GPU.
 - Use `sync_poses_gpu_to_cpu()` only for explicit CPU-state debugging or the Viewer `cpu-debug` transport. SAPIEN documents it as a super-slow helper that downloads all poses from GPU to CPU entities.
 - When adding policy-eval or teleoperation keyboard controls on top of the interactive viewer, do not reuse SAPIEN's built-in camera/navigation keys such as `W/A/S/D/Q/E`. Prefer a separate key cluster, for example `I/K` for forward/backward command, `J/L` for lateral command, `U/O` for yaw, `C` to clear commands, and `N` to reset.
 

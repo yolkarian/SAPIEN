@@ -420,12 +420,15 @@ class ControlWindow(Plugin):
     def _handle_gpu_pick(self, viewer, x: int, y: int) -> bool:
         if not self.window.ctrl:
             return False
+        targets = self.window.display_picture_names
+        if "Segmentation" not in targets or "Position" not in targets:
+            return False
         segmentation = self.window.get_picture_pixel("Segmentation", x, y)
         entity = self.find_entity_by_id(segmentation[1], segmentation[2])
         if entity is None:
             return False
         camera_position = self.window.get_picture_pixel("Position", x, y)
-        if camera_position[3] >= 1:
+        if not np.all(np.isfinite(camera_position)) or camera_position[3] >= 1:
             return False
         camera_point = np.append(camera_position[:3], 1.0)
         world_point = self.window.get_camera_model_matrix() @ camera_point

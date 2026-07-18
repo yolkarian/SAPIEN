@@ -86,6 +86,9 @@ class Viewer:
         self._physx_gpu_auto_configured = False
         self._requested_pose_transport = "auto"
         self._gpu_pose_cache: dict[int, sapien.Pose] = {}
+        self._gpu_articulation_state_cache: dict[
+            int, tuple[np.ndarray, np.ndarray, np.ndarray]
+        ] = {}
 
         self.interaction_stiffness = 80.0
         self.interaction_damping = 12.0
@@ -95,6 +98,15 @@ class Viewer:
         self._interaction_local_anchor = np.zeros(3, dtype=np.float32)
         self._interaction_target = np.zeros(3, dtype=np.float32)
         self._pending_gpu_teleports: list[tuple] = []
+        self._pending_gpu_articulation_qpos: dict[
+            int, tuple[sapien.physx.PhysxArticulation, np.ndarray]
+        ] = {}
+        self._pending_gpu_articulation_target_qpos: dict[
+            int, tuple[sapien.physx.PhysxArticulation, np.ndarray]
+        ] = {}
+        self._pending_gpu_articulation_target_qvel: dict[
+            int, tuple[sapien.physx.PhysxArticulation, np.ndarray]
+        ] = {}
 
     @property
     def render_scene(self):
@@ -142,6 +154,7 @@ class Viewer:
         self.selected_entity = None
         self.scenes = scenes
         self._gpu_pose_cache.clear()
+        self._gpu_articulation_state_cache.clear()
 
         self.window.set_scenes(scenes)
         if scenes:
@@ -151,13 +164,16 @@ class Viewer:
         for plugin in self.plugins:
             plugin.notify_scene_change()
 
-    def _get_entity_gpu_pose_index(self, entity: Entity) -> int | None:
+    def _entity_uses_physx_gpu(self, entity: Entity) -> bool:
         if self._physx_gpu_system is None:
-            return None
+            return False
         try:
-            if entity.scene.physx_system is not self._physx_gpu_system:
-                return None
+            return entity.scene.physx_system is self._physx_gpu_system
         except RuntimeError:
+            return False
+
+    def _get_entity_gpu_pose_index(self, entity: Entity) -> int | None:
+        if not self._entity_uses_physx_gpu(entity):
             return None
 
         rigid = entity.find_component_by_type(
@@ -192,6 +208,9 @@ class Viewer:
     def clear_scene(self):
         self.end_gpu_interaction()
         self._pending_gpu_teleports.clear()
+        self._pending_gpu_articulation_qpos.clear()
+        self._pending_gpu_articulation_target_qpos.clear()
+        self._pending_gpu_articulation_target_qvel.clear()
         for plugin in self.plugins:
             plugin.clear_scene()
 
@@ -259,6 +278,7 @@ class Viewer:
         self._physx_gpu_auto_configured = False
         self._requested_pose_transport = transport
         self._gpu_pose_cache.clear()
+        self._gpu_articulation_state_cache.clear()
         self.window.configure_physx_gpu_rendering(physx_system, transport)
 
     @property
@@ -276,11 +296,12 @@ class Viewer:
         self._configure_detected_physx_gpu_system()
         self.window.update_render()
         self._gpu_pose_cache.clear()
+        self._gpu_articulation_state_cache.clear()
         self.reset_notifications()
 
     def begin_gpu_interaction(self, entity: Entity, world_anchor: np.ndarray) -> bool:
         """Start a point-spring interaction on a PhysX GPU body or link."""
-        if self._physx_gpu_system is None:
+        if not self._entity_uses_physx_gpu(entity):
             return False
         rigid = entity.find_component_by_type(
             sapien.physx.PhysxRigidDynamicComponent
@@ -327,12 +348,117 @@ class Viewer:
     ) -> None:
         self._pending_gpu_teleports.append(("articulation", articulation, pose))
 
+    def _get_gpu_articulation_state(
+        self, articulation: sapien.physx.PhysxArticulation
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Read and cache one articulation's qpos and drive-target rows."""
+        system = self._physx_gpu_system
+        if system is None or not self._entity_uses_physx_gpu(
+            articulation.root.entity
+        ):
+            raise RuntimeError(
+                "articulation does not belong to the configured PhysX GPU system"
+            )
+        index = articulation.gpu_index
+        if index not in self._gpu_articulation_state_cache:
+            dof = articulation.dof
+            qpos = np.asarray(
+                system._gpu_download_articulation_qpos(index), dtype=np.float32
+            )[:dof]
+            target_qpos = np.asarray(
+                system._gpu_download_articulation_target_qpos(index),
+                dtype=np.float32,
+            )[:dof]
+            target_qvel = np.asarray(
+                system._gpu_download_articulation_target_qvel(index),
+                dtype=np.float32,
+            )[:dof]
+            self._gpu_articulation_state_cache[index] = (
+                qpos,
+                target_qpos,
+                target_qvel,
+            )
+        return self._gpu_articulation_state_cache[index]
+
+    def _queue_gpu_articulation_qpos(
+        self, articulation: sapien.physx.PhysxArticulation, qpos: np.ndarray
+    ) -> None:
+        values = np.asarray(qpos, dtype=np.float32).copy()
+        self._pending_gpu_articulation_qpos[articulation.gpu_index] = (
+            articulation,
+            values,
+        )
+        if articulation.gpu_index in self._gpu_articulation_state_cache:
+            _, target_qpos, target_qvel = self._gpu_articulation_state_cache[
+                articulation.gpu_index
+            ]
+            self._gpu_articulation_state_cache[articulation.gpu_index] = (
+                values,
+                target_qpos,
+                target_qvel,
+            )
+
+    def _queue_gpu_articulation_target_qpos(
+        self, articulation: sapien.physx.PhysxArticulation, target: np.ndarray
+    ) -> None:
+        values = np.asarray(target, dtype=np.float32).copy()
+        self._pending_gpu_articulation_target_qpos[articulation.gpu_index] = (
+            articulation,
+            values,
+        )
+        if articulation.gpu_index in self._gpu_articulation_state_cache:
+            qpos, _, target_qvel = self._gpu_articulation_state_cache[
+                articulation.gpu_index
+            ]
+            self._gpu_articulation_state_cache[articulation.gpu_index] = (
+                qpos,
+                values,
+                target_qvel,
+            )
+
+    def _queue_gpu_articulation_target_qvel(
+        self, articulation: sapien.physx.PhysxArticulation, target: np.ndarray
+    ) -> None:
+        values = np.asarray(target, dtype=np.float32).copy()
+        self._pending_gpu_articulation_target_qvel[articulation.gpu_index] = (
+            articulation,
+            values,
+        )
+        if articulation.gpu_index in self._gpu_articulation_state_cache:
+            qpos, target_qpos, _ = self._gpu_articulation_state_cache[
+                articulation.gpu_index
+            ]
+            self._gpu_articulation_state_cache[articulation.gpu_index] = (
+                qpos,
+                target_qpos,
+                values,
+            )
+
     def apply_interactions(self) -> None:
         """Apply queued GPU teleports and the active Viewer spring before physics."""
         system = self._physx_gpu_system
         if system is None:
             self._pending_gpu_teleports.clear()
+            self._pending_gpu_articulation_qpos.clear()
+            self._pending_gpu_articulation_target_qpos.clear()
+            self._pending_gpu_articulation_target_qvel.clear()
             return
+
+        for articulation, values in self._pending_gpu_articulation_qpos.values():
+            system._gpu_upload_articulation_qpos(articulation.gpu_index, values)
+        for articulation, values in self._pending_gpu_articulation_target_qpos.values():
+            system._gpu_upload_articulation_target_qpos(
+                articulation.gpu_index, values
+            )
+        for articulation, values in self._pending_gpu_articulation_target_qvel.values():
+            system._gpu_upload_articulation_target_qvel(
+                articulation.gpu_index, values
+            )
+        if self._pending_gpu_articulation_qpos:
+            self._gpu_pose_cache.clear()
+        self._pending_gpu_articulation_qpos.clear()
+        self._pending_gpu_articulation_target_qpos.clear()
+        self._pending_gpu_articulation_target_qvel.clear()
 
         for command in self._pending_gpu_teleports:
             if command[0] == "rigid":
@@ -349,7 +475,6 @@ class Viewer:
                 )
         if self._pending_gpu_teleports:
             self._gpu_pose_cache.clear()
-            self.notify_render_update()
         self._pending_gpu_teleports.clear()
 
         entity = self._interaction_entity
@@ -479,7 +604,6 @@ class Viewer:
         colors = np.ones((vertices.shape[0], 4)) * [*color[:3], 1]
         lineset = self.renderer_context.create_line_set(vertices, colors)
 
-        # render_scene: R.Scene = self.system._internal_scene
         box = self.render_scene.add_line_set(lineset)
         box.set_position(pose.p)
         box.set_rotation(pose.q)
@@ -493,7 +617,6 @@ class Viewer:
         box.set_scale(half_size)
 
     def remove_bounding_box(self, box):
-        # render_scene: R.Scene = self.system._internal_scene
         self.render_scene.remove_node(box)
 
     def draw_aabb(self, lower, upper, color):

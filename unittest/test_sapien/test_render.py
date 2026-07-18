@@ -447,27 +447,72 @@ class TestSceneGPU(unittest.TestCase):
         finally:
             viewer.close()
 
-    # def test_empty(self):
-    #     scene = sapien.Scene()
-    #     scene.add_ground(altitude=0)  # Add a ground
-    #     actor_builder = scene.create_actor_builder()
-    #     actor_builder.add_box_collision(half_size=[0.5, 0.5, 0.5])
-    #     actor_builder.add_box_visual(half_size=[0.5, 0.5, 0.5], material=[1.0, 0.0, 0.0])
-    #     box = actor_builder.build(name="box")
-    #     box.set_pose(sapien.Pose(p=[0, 0, 0.5]))
+    def test_viewer_gpu_articulation_property_commands(self) -> None:
+        from sapien.utils import Viewer
 
-    #     # Add some lights so that you can observe the scene
-    #     scene.set_ambient_light([0.5, 0.5, 0.5])
-    #     scene.add_directional_light([0, 1, -1], [0.5, 0.5, 0.5])
+        sapien.physx.enable_gpu()
+        device = sapien.Device("cuda")
+        physx = sapien.physx.PhysxGpuSystem(device)
+        scene = sapien.Scene([physx, sapien.render.RenderSystem(device)])
 
-    #     actor = scene.create_actor_builder().build_kinematic()
-    #     actor.set_pose(sapien.Pose([-3, 0, 0.5]))
-    #     cam = scene.add_mounted_camera("", actor, sapien.Pose(), 128, 128, 1, 0.01, 10)
+        root = sapien.physx.PhysxArticulationLinkComponent()
+        child = sapien.physx.PhysxArticulationLinkComponent(root)
+        root.disable_gravity = True
+        child.disable_gravity = True
+        child.joint.set_type("revolute")
+        child.joint.set_limits([[-1.0, 1.0]])
+        child.joint.set_pose_in_parent(sapien.Pose([0.3, 0.0, 0.0]))
+        root_entity = sapien.Entity().add_component(root)
+        child_entity = sapien.Entity().add_component(child)
+        scene.add_entity(root_entity)
+        scene.add_entity(child_entity)
+        articulation = root.articulation
+        physx.gpu_init()
 
-    #     scene.update_render()
-    #     cam.take_picture()
-    #     color = cam.get_picture("Color")
+        viewer = Viewer(resolutions=(320, 240))
+        try:
+            viewer.configure_physx_gpu_rendering(physx, "direct")
+            viewer.set_scene(scene)
+            viewer.update_render()
+            viewer.select_entity(root_entity)
+            viewer.render()
+            qpos, target_qpos, target_qvel = viewer._get_gpu_articulation_state(
+                articulation
+            )
+            self.assertEqual(qpos.shape, (1,))
+            self.assertEqual(target_qpos.shape, (1,))
+            self.assertEqual(target_qvel.shape, (1,))
 
-    #     Image.fromarray((color[..., :3].clip(0, 1) * 255).astype(np.uint8)).save(
-    #         "sapien_offscreen.png"
-    #     )
+            viewer._queue_gpu_articulation_qpos(
+                articulation, np.asarray([0.2], dtype=np.float32)
+            )
+            viewer._queue_gpu_articulation_target_qpos(
+                articulation, np.asarray([0.35], dtype=np.float32)
+            )
+            viewer._queue_gpu_articulation_target_qvel(
+                articulation, np.asarray([-0.4], dtype=np.float32)
+            )
+            viewer.apply_interactions()
+
+            self.assertAlmostEqual(
+                physx._gpu_download_articulation_qpos(articulation.gpu_index)[0],
+                0.2,
+                places=4,
+            )
+            self.assertAlmostEqual(
+                physx._gpu_download_articulation_target_qpos(
+                    articulation.gpu_index
+                )[0],
+                0.35,
+                places=4,
+            )
+            self.assertAlmostEqual(
+                physx._gpu_download_articulation_target_qvel(
+                    articulation.gpu_index
+                )[0],
+                -0.4,
+                places=4,
+            )
+            self.assertEqual(physx._sync_poses_gpu_to_cpu_count, 0)
+        finally:
+            viewer.close()
