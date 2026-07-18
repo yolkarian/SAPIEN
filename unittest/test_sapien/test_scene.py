@@ -114,31 +114,23 @@ class TestScene(unittest.TestCase):
         viewer = Viewer.__new__(Viewer)
         viewer.window = DummyWindow()
         viewer.plugins = []
-        viewer.render_updated = False
 
         viewer.set_camera_xyz(4, 5, 6)
         np.testing.assert_allclose(viewer.window.pose.p, [4, 5, 6])
         np.testing.assert_allclose(viewer.window.pose.q, [1, 0, 0, 0])
-        self.assertTrue(viewer.render_updated)
 
-        viewer.render_updated = False
         viewer.set_camera_rpy(0.1, -0.2, 0.3)
         expected = FPSCameraController()
         expected.setXYZ(4, 5, 6)
         expected.setRPY(0.1, -0.2, 0.3)
         self.assertTrue(pose_equal(viewer.window.pose, expected.pose))
-        self.assertTrue(viewer.render_updated)
 
     def test_viewer_collision_visual_heightfield(self):
         from sapien.utils.viewer.entity_window import EntityWindow
 
         class DummyViewer:
             def __init__(self):
-                self.notified = False
                 self.selected_entity = None
-
-            def notify_render_update(self):
-                self.notified = True
 
         scene = sapien.Scene()
         height_field = np.array([[0, 1, 2], [3, 4, 5]], dtype=np.int16)
@@ -157,7 +149,6 @@ class TestScene(unittest.TestCase):
         plugin.viewer = viewer
         plugin.enable_collision_visual(terrain)
 
-        self.assertTrue(viewer.notified)
         collision_bodies = [
             component
             for component in terrain.components

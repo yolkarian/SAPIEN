@@ -801,6 +801,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `mouse_wheel_delta` | property | `mouse_wheel_delta(self) -> Annotated[list[float], FixedSize(2)]` |  |  |
 | `near` | property | `near(self) -> float` |  |  |
 | `ortho_top` | property | `ortho_top(self) -> float` |  |  |
+| `physx_gpu_system` | property | `physx_gpu_system(self) -> sapien.physx.PhysxGpuSystem \| None` | Auto-detected or explicitly configured Viewer PhysX GPU source. | One unambiguous initialized system from the resolved scenes is selected automatically. |
 | `pose_transport` | property | `pose_transport(self) -> str` | Active Viewer pose transport. |  |
 | `pose_transfer_bytes` | property | `pose_transfer_bytes(self) -> int` | Cumulative pose D2H bytes for the active transport. | Staged transfers are 28 bytes per unique rendered GPU pose per submission. |
 | `render` | method | `render(self, target_name: str, ui_windows: list[sapien.internal_renderer.UIWidget]=[]) -> None` |  |  |

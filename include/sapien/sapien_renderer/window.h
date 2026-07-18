@@ -62,6 +62,9 @@ public:
   void configurePhysxGpuRendering(std::shared_ptr<physx::PhysxSystemGpu> system,
                                   std::string const &transport = "auto");
   std::string getPoseTransport() const { return mPoseTransport; }
+  std::shared_ptr<physx::PhysxSystemGpu> getPhysxGpuSystem() const {
+    return mPhysxGpuSystem;
+  }
   uint64_t getPoseTransferBytes() const;
   std::optional<Pose> getPhysxGpuPose(int poseIndex);
 
@@ -168,6 +171,7 @@ private:
   uint64_t mAggregateRenderSceneVersion{};
   std::shared_ptr<svulkan2::scene::Scene> mRenderScene;
   std::shared_ptr<physx::PhysxSystemGpu> mPhysxGpuSystem;
+  bool mAutoDetectedPhysxGpuSystem{};
   std::unique_ptr<ViewerPoseTransport> mPoseTransportImpl;
   std::string mRequestedPoseTransport{"auto"};
   std::string mPoseTransport{"cpu"};

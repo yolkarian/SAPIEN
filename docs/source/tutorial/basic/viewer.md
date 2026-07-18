@@ -58,10 +58,14 @@ pinned host memory, and composes raster or ray-tracing transforms with Vulkan
 compute on the rendering device. `"cpu-debug"` explicitly performs the full
 pose download and updates CPU entities.
 
-The active choice is available as `viewer.pose_transport`. The cumulative pose
-D2H bytes for the active transport are available as
-`viewer.pose_transfer_bytes`; a staged submission transfers 28 bytes per
-unique rendered GPU pose.
+The Viewer auto-detects one initialized `PhysxGpuSystem` in its resolved base
+plus shared render scenes. Explicit `configure_physx_gpu_rendering()` remains
+available when several GPU systems make that choice ambiguous.
+
+The active choice is available as `viewer.pose_transport` and is also shown in
+the existing `Control` window. The cumulative pose D2H bytes for the active
+transport are available as `viewer.pose_transfer_bytes`; a staged submission
+transfers 28 bytes per unique rendered GPU pose.
 
 ## Multiple render scenes
 
@@ -103,8 +107,8 @@ screenshot controls.
 - `Display` selects the render target, resolution, and camera overlays.
 - `Selection` controls joint-axis display, coordinate frame display, selected
   entity opacity, and selected frame size.
-- `GPU Interaction` configures point-spring stiffness, damping, and maximum
-  acceleration.
+- `GPU Interaction` shows the active pose transport and transferred bytes, and
+  configures point-spring stiffness, damping, and maximum acceleration.
 - `Screenshot` saves an image from the viewer window.
 
 ## Scene and entity windows

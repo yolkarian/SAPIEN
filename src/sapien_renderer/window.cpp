@@ -287,6 +287,7 @@ void SapienRendererWindow::configurePhysxGpuRendering(
     throw std::runtime_error("pose transport must be one of: auto, direct, staged, cpu-debug");
   }
   mPhysxGpuSystem = system;
+  mAutoDetectedPhysxGpuSystem = false;
   mRequestedPoseTransport = transport;
   rebuildPoseTransport();
 }
@@ -303,6 +304,10 @@ void SapienRendererWindow::setRendererExternalTransformUpdates(bool enable, bool
 
 void SapienRendererWindow::rebuildRenderScene() {
   mPoseTransportImpl.reset();
+  if (mAutoDetectedPhysxGpuSystem) {
+    mPhysxGpuSystem.reset();
+    mAutoDetectedPhysxGpuSystem = false;
+  }
   mRenderSystems = RenderSceneResolver::resolve(mBaseRenderSystems, mEngine->getRenderSystems());
   mRenderScene = RenderSceneResolver::build(mRenderSystems);
   mRenderSceneVersions.clear();
@@ -322,12 +327,52 @@ void SapienRendererWindow::rebuildPoseTransport() {
   mPoseTransportImpl.reset();
   setRendererExternalTransformUpdates(false);
   mPoseTransport = "cpu";
-  if (!mPhysxGpuSystem || !mRenderScene || mRenderSystems.empty()) {
+  if (!mRenderScene || mRenderSystems.empty()) {
     return;
   }
 #ifndef SAPIEN_CUDA
+  if (!mPhysxGpuSystem) {
+    return;
+  }
   throw std::runtime_error("PhysX GPU rendering requires a CUDA-enabled SAPIEN build");
 #else
+  if (!mPhysxGpuSystem) {
+    std::shared_ptr<physx::PhysxSystemGpu> detectedSystem;
+    auto detectEntitySystem = [&](std::shared_ptr<Entity> const &entity) {
+      std::shared_ptr<physx::PhysxSystemGpu> candidate;
+      try {
+        candidate = std::dynamic_pointer_cast<physx::PhysxSystemGpu>(
+            entity->getScene()->getPhysxSystem());
+      } catch (std::runtime_error const &) {
+        return true;
+      }
+      if (!candidate) {
+        return true;
+      }
+      if (detectedSystem && detectedSystem != candidate) {
+        return false;
+      }
+      detectedSystem = candidate;
+      return true;
+    };
+    for (auto const &renderSystem : mRenderSystems) {
+      for (auto const &renderBody : renderSystem->getRenderBodyComponents()) {
+        if (!detectEntitySystem(renderBody->getEntity())) {
+          return;
+        }
+      }
+      for (auto const &camera : renderSystem->getCameraComponents()) {
+        if (!detectEntitySystem(camera->getEntity())) {
+          return;
+        }
+      }
+    }
+    if (!detectedSystem || !detectedSystem->isInitialized()) {
+      return;
+    }
+    mPhysxGpuSystem = std::move(detectedSystem);
+    mAutoDetectedPhysxGpuSystem = true;
+  }
   if (mRequestedPoseTransport == "cpu-debug") {
     mPoseTransportImpl = std::make_unique<CpuDebugViewerPoseTransport>(mPhysxGpuSystem);
     mPoseTransport = mPoseTransportImpl->getName();

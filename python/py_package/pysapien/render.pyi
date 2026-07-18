@@ -975,6 +975,9 @@ class RenderWindow:
     def near(self) -> float:
         ...
     @property
+    def physx_gpu_system(self) -> sapien.pysapien.physx.PhysxGpuSystem | None:
+        ...
+    @property
     def pose_transport(self) -> str:
         ...
     @property

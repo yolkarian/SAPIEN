@@ -407,12 +407,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_entity_viewer_pose` | method | `get_entity_viewer_pose(self, entity) -> sapien.Pose` | Return the latest submitted Viewer pose. | GPU poses are cached per submitted frame; CPU Entity pose may remain stale. |
 | `init_plugins` | method | `init_plugins(self, plugins)` |  |  |
 | `loop` | method | `loop(self, physx_steps=0)` | A convenience method for opening a temporary viewer for a scene. Simply call scene.create_viewer().loop() |  |
-| `notify_render_update` | method | `notify_render_update(self)` | notify the viewer that the camera is moved |  |
 | `register_click_handler` | method | `register_click_handler(self, handler)` |  |  |
 | `remove_bounding_box` | method | `remove_bounding_box(self, box)` |  |  |
 | `render` | method | `render(self)` | Draw the most recently submitted Vulkan state and Viewer UI. | Does not update transforms or fetch poses. |
 | `render_scene` | property | `render_scene(self)` |  |  |
-| `reset_notifications` | method | `reset_notifications(self)` |  |  |
 | `resolution` | property | `resolution(self)<br>resolution(self, res)` |  |  |
 | `scene` | property | `scene(self) -> sapien.Scene` |  |  |
 | `select_entity` | method | `select_entity(self, entity: Entity)` |  |  |

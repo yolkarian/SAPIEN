@@ -349,6 +349,12 @@ class ControlWindow(Plugin):
                 R.UISection()
                 .Label("GPU Interaction")
                 .append(
+                    R.UIDisplayText().Bind(
+                        lambda: f"Pose transport: {self.viewer.pose_transport}"
+                    ),
+                    R.UIDisplayText().Bind(
+                        lambda: f"Pose D2H: {self.viewer.pose_transfer_bytes} bytes"
+                    ),
                     R.UIDisplayText().Text("Ctrl + left drag: physical point spring"),
                     R.UIInputFloat()
                     .Label("Stiffness")

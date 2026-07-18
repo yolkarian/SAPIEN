@@ -273,7 +273,7 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
   - `scene.update_render()` / `RenderSystem.step()` and `RenderCameraComponent.get_picture(...)` read CPU SAPIEN entity poses. Under GPU PhysX these poses are stale unless `PhysxGpuSystem.sync_poses_gpu_to_cpu()` is called first.
   - This path is acceptable for viewer/debug rendering only; do not use it for normal offscreen video/camera capture.
 - Viewer path:
-  1. `Viewer.configure_physx_gpu_rendering(physx_system, transport="auto")` after `gpu_init()`.
+  1. Call `gpu_init()` before Viewer submission. The Viewer auto-detects one unambiguous initialized `PhysxGpuSystem` in its resolved base plus shared scenes; use `Viewer.configure_physx_gpu_rendering(physx_system, transport="auto")` to choose explicitly.
   2. `"auto"` selects direct CUDA/Vulkan interop on a compatible same physical device and compact pinned-host staging on different devices. Both raster and RT Viewer shader paths are supported.
   3. For physical dragging or queued gizmo teleports, call `Viewer.apply_interactions()` immediately before every PhysX substep. Ctrl + left drag uses a damped point spring.
   4. `Viewer.update_render()` after each displayed simulation state.

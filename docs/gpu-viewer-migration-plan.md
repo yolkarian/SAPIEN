@@ -81,7 +81,7 @@ The final Viewer therefore needs both same-device direct transport and cross-dev
 
 ## Implementation Status
 
-Stages 0 through 6 are complete. The Viewer resolves base plus shared scenes without offsets,
+Stages 0 through 7 are complete. The Viewer resolves base plus shared scenes without offsets,
 submits simulation state explicitly, uses direct CUDA/Vulkan transforms on a compatible same
 device, and automatically uses compact pinned-host staging on different devices. Both raster and
 RT staged paths are implemented; RT writes Vulkan instance transforms, refits the TLAS, and resets
@@ -96,11 +96,11 @@ teleports are queued and preserve velocity unless zeroing is explicitly requeste
 
 The existing Entity and Articulation windows now use selected-object GPU reads and queued edits;
 collapsed windows avoid those reads. GPU Contact reports and CPU Pinocchio IK are explicitly
-unavailable rather than silently showing stale state.
-
-Stage 7 remains: resolved-scene automatic selection, final cleanup, release diagnostics, and the
-final validation matrix. Cross-device offscreen camera transport remains outside this Viewer
-migration scope.
+unavailable rather than silently showing stale state. The Viewer auto-detects one unambiguous GPU
+system from its resolved scenes and reports the active transport in the Control window. The
+canonical Stage 0 benchmark remains in `manualtest/gpu_viewer.py`; superseded implementation
+fragments and update-notification gating have been removed. Cross-device offscreen camera
+transport remains outside this Viewer migration scope.
 
 ## Target Architecture
 
@@ -767,7 +767,7 @@ ContactWindow reads CPU PhysX contact reports, which do not exist in the same fo
 
 ## Stage 7: Default Selection, Cleanup, Documentation, and Release
 
-**Priority: Final integration** — **Complexity: Medium**
+**Status: Complete** — **Priority: Final integration** — **Complexity: Medium**
 
 ### Default Behavior
 

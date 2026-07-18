@@ -108,6 +108,29 @@ class TestScene(unittest.TestCase):
         center = camera.get_picture("Color")[32, 32]
         self.assertGreater(center[0] - center[1], 0.2)
 
+    def test_cpu_viewer_update_and_reopen(self) -> None:
+        from sapien.utils import Viewer
+
+        scene = sapien.Scene()
+        builder = scene.create_actor_builder()
+        builder.add_box_visual(half_size=[0.2, 0.2, 0.2])
+        actor = builder.build_kinematic()
+
+        for _ in range(2):
+            viewer = Viewer(resolutions=(320, 240))
+            try:
+                viewer.set_scene(scene)
+                viewer.update_render()
+                viewer.render()
+                segmentation = viewer.window.get_picture("Segmentation")
+                self.assertGreater(
+                    np.count_nonzero(segmentation[..., 0] == actor.per_scene_id),
+                    0,
+                )
+                self.assertEqual(viewer.pose_transport, "cpu")
+            finally:
+                viewer.close()
+
     def test_rt_batched_shared_scene(self) -> None:
         sapien.render.set_camera_shader_dir("rt")
         sapien.render.set_ray_tracing_samples_per_pixel(2)
@@ -516,3 +539,42 @@ class TestSceneGPU(unittest.TestCase):
             self.assertEqual(physx._sync_poses_gpu_to_cpu_count, 0)
         finally:
             viewer.close()
+
+    def test_viewer_auto_detects_shared_gpu_system_after_reopen(self) -> None:
+        from sapien.utils import Viewer
+
+        sapien.physx.enable_gpu()
+        device = sapien.Device("cuda")
+        base_scene = sapien.Scene(
+            [sapien.physx.PhysxCpuSystem(), sapien.render.RenderSystem(device)]
+        )
+        cpu_builder = base_scene.create_actor_builder()
+        cpu_builder.add_box_collision(half_size=[0.1, 0.1, 0.1])
+        cpu_builder.add_box_visual(half_size=[0.1, 0.1, 0.1])
+        cpu_actor = cpu_builder.build()
+
+        physx = sapien.physx.PhysxGpuSystem(device)
+        shared_render = sapien.render.RenderSystem(device)
+        shared_render.batched_render_shared = True
+        shared_scene = sapien.Scene([physx, shared_render])
+        builder = shared_scene.create_actor_builder()
+        builder.add_sphere_collision(radius=0.15)
+        builder.add_sphere_visual(radius=0.15)
+        builder.build()
+        physx.gpu_init()
+
+        for _ in range(2):
+            viewer = Viewer(resolutions=(320, 240))
+            try:
+                viewer.set_scene(base_scene)
+                viewer.update_render()
+                viewer.render()
+                self.assertEqual(viewer.pose_transport, "direct")
+                self.assertIs(viewer.window.physx_gpu_system, physx)
+                self.assertIs(viewer._physx_gpu_system, physx)
+                self.assertFalse(
+                    viewer.begin_gpu_interaction(cpu_actor, np.zeros(3))
+                )
+                self.assertEqual(physx._sync_poses_gpu_to_cpu_count, 0)
+            finally:
+                viewer.close()

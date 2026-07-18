@@ -1239,6 +1239,7 @@ consumer library. Make a copy if needed.
       .def("configure_physx_gpu_rendering", &SapienRendererWindow::configurePhysxGpuRendering,
            py::arg("physx_system"), py::arg("transport") = "auto")
       .def_property_readonly("pose_transport", &SapienRendererWindow::getPoseTransport)
+      .def_property_readonly("physx_gpu_system", &SapienRendererWindow::getPhysxGpuSystem)
       .def_property_readonly("pose_transfer_bytes",
                              &SapienRendererWindow::getPoseTransferBytes)
       .def("get_physx_gpu_pose", &SapienRendererWindow::getPhysxGpuPose,

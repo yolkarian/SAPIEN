@@ -157,6 +157,10 @@ class Viewer:
         self._gpu_articulation_state_cache.clear()
 
         self.window.set_scenes(scenes)
+        if self._physx_gpu_system is None or self._physx_gpu_auto_configured:
+            detected_system = self.window.physx_gpu_system
+            self._physx_gpu_system = detected_system
+            self._physx_gpu_auto_configured = detected_system is not None
         if scenes:
             self.window.set_camera_parameters(0.1, 1000, np.pi / 2)
             self.set_camera_pose(camera_pose)
@@ -231,14 +235,6 @@ class Viewer:
 
     def set_camera_pose(self, pose):
         self.window.set_camera_pose(pose)
-        self.notify_render_update()
-
-    def notify_render_update(self):
-        """notify the viewer that the camera is moved"""
-        self.render_updated = True
-
-    def reset_notifications(self):
-        self.render_updated = False
 
     def _configure_detected_physx_gpu_system(self) -> None:
         if self._physx_gpu_system is not None and not self._physx_gpu_auto_configured:
@@ -254,6 +250,11 @@ class Viewer:
                 gpu_systems.append(system)
         unique_systems = {id(system): system for system in gpu_systems}
         if len(unique_systems) != 1:
+            detected_system = self.window.physx_gpu_system
+            if detected_system is not None:
+                self._physx_gpu_system = detected_system
+                self._physx_gpu_auto_configured = True
+                return
             if self._physx_gpu_auto_configured:
                 self.window.configure_physx_gpu_rendering(None, "auto")
                 self._physx_gpu_system = None
@@ -295,9 +296,12 @@ class Viewer:
         """Submit current simulation state without drawing the Viewer window."""
         self._configure_detected_physx_gpu_system()
         self.window.update_render()
+        if self._physx_gpu_system is None or self._physx_gpu_auto_configured:
+            detected_system = self.window.physx_gpu_system
+            self._physx_gpu_system = detected_system
+            self._physx_gpu_auto_configured = detected_system is not None
         self._gpu_pose_cache.clear()
         self._gpu_articulation_state_cache.clear()
-        self.reset_notifications()
 
     def begin_gpu_interaction(self, entity: Entity, world_anchor: np.ndarray) -> bool:
         """Start a point-spring interaction on a PhysX GPU body or link."""
@@ -570,7 +574,6 @@ class Viewer:
 
     @selected_entity_visibility.setter
     def selected_entity_visibility(self, v):
-        self.notify_render_update()
         self._selected_entity_visibility = v
 
         if self.selected_entity is not None:
