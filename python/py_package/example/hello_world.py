@@ -43,7 +43,7 @@ def main():
 
     while not viewer.closed:  # Press key q to quit
         scene.step()  # Simulate the world
-        scene.update_render()  # Update the world to the renderer
+        viewer.update_render()  # Submit the world to the renderer
         viewer.render()
 
 

@@ -55,6 +55,10 @@ shared_scene = sapien.Scene([physx_system])
 shared_scene.set_environment_id(-1)
 ```
 
+Environment IDs affect PhysX broadphase membership only. Viewer and camera
+scene selection never turns environment IDs into render offsets; place entities
+at different poses explicitly when environments should appear separated.
+
 `scene.environment_id` and `scene.get_environment_id()` only inspect the
 already assigned ID and return `None` if no ID exists yet; they do not allocate
 a new ID. Use `scene.get_or_assign_environment_id()` when you want explicit
@@ -62,9 +66,11 @@ lazy allocation. Environment IDs are only available with `PhysxGpuSystem` and
 do not change SAPIEN GPU state-buffer indexing such as `gpu_index` or
 `gpu_pose_index`.
 
-For batched rendering, a render scene whose environment ID is shared
+For batched rendering and the Viewer, a render scene whose environment ID is shared
 (`-1`/`0xFFFFFFFF`) is also marked as shared for
 `sapien.render.RenderSystemGroup`. When that shared render system is included
 in a render-system group, its objects and lights are rendered together with each
 non-shared environment so every environment sees the shared world. You can also
 control this explicitly with `scene.render_system.batched_render_shared`.
+Shared content is included once in each resolved Viewer/camera output without a
+scene-level transform.

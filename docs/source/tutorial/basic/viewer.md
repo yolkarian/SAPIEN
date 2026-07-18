@@ -23,9 +23,46 @@ viewer.set_camera_rpy(0, -np.arctan2(2, 4), 0)
 
 while not viewer.closed:
    scene.step()
-   scene.update_render()
+   viewer.update_render()  # submit simulation state and render transforms
+   viewer.render()         # draw the submitted state and Viewer UI
+```
+
+`Viewer.update_render()` and `Viewer.render()` are separate phases. Calling
+`render()` repeatedly while paused redraws the last submitted state without
+stepping render systems or fetching poses again.
+
+## PhysX GPU rendering
+
+After `PhysxGpuSystem.gpu_init()`, the Viewer can source dynamic transforms
+directly from `cuda_rigid_body_data` when PhysX CUDA and Vulkan use the same
+compatible device. This path does not call `sync_poses_gpu_to_cpu()`, so CPU
+`Entity.pose` values intentionally remain stale.
+
+```python
+physx_system.gpu_init()
+viewer = sapien.utils.Viewer()
+viewer.set_scene(scene)
+viewer.configure_physx_gpu_rendering(physx_system, transport="auto")
+
+while not viewer.closed:
+   physx_system.step()
+   viewer.update_render()
    viewer.render()
 ```
+
+The available transport requests are `"auto"`, `"direct"`, `"staged"`, and
+`"cpu-debug"`. Same-device direct rendering is available now. `"cpu-debug"`
+explicitly performs the full pose download; `"staged"` reports unavailable
+until cross-device staging support is enabled. The active choice is available
+as `viewer.pose_transport`.
+
+## Multiple render scenes
+
+`viewer.set_scenes([scene0, scene1])` selects those base scenes. A camera can
+make the same opt-in selection with `camera.set_scenes([scene0, scene1])`.
+Render systems marked `batched_render_shared=True` in the same render context
+are appended once. Scene selection never creates a grid or applies offsets, so
+objects in different scenes retain their poses and may overlap.
 
 ## Free camera control
 

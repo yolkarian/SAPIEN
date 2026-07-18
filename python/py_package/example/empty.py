@@ -15,7 +15,7 @@ def main():
 
     while not viewer.closed:
         scene.step()
-        scene.update_render()
+        viewer.update_render()
         viewer.render()
 
 

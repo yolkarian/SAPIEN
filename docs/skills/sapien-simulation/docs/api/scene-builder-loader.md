@@ -406,7 +406,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `notify_render_update` | method | `notify_render_update(self)` | notify the viewer that the camera is moved |  |
 | `register_click_handler` | method | `register_click_handler(self, handler)` |  |  |
 | `remove_bounding_box` | method | `remove_bounding_box(self, box)` |  |  |
-| `render` | method | `render(self)` |  |  |
+| `render` | method | `render(self)` | Draw the most recently submitted Vulkan state and Viewer UI. | Does not update transforms or fetch poses. |
 | `render_scene` | property | `render_scene(self)` |  |  |
 | `reset_notifications` | method | `reset_notifications(self)` |  |  |
 | `resolution` | property | `resolution(self)<br>resolution(self, res)` |  |  |
@@ -417,7 +417,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `set_camera_rpy` | method | `set_camera_rpy(self, r, p, y)` |  |  |
 | `set_camera_xyz` | method | `set_camera_xyz(self, x, y, z)` |  |  |
 | `set_scene` | method | `set_scene(self, scene: Scene)` |  |  |
-| `set_scenes` | method | `set_scenes(self, scenes, offsets=None)` |  |  |
+| `set_scenes` | method | `set_scenes(self, scenes: list[Scene])` | Select base scenes plus associated shared scenes once. | No render offsets are applied. |
+| `configure_physx_gpu_rendering` | method | `configure_physx_gpu_rendering(self, physx_system, transport="auto")` | Configure Viewer pose transport. |  |
+| `pose_transport` | property | `pose_transport(self) -> str` | Active pose transport. |  |
+| `update_render` | method | `update_render(self) -> None` | Submit current simulation/render state. | Explicit update boundary before `render()`. |
 | `update_aabb` | method | `update_aabb(self, aabb, lower, upper)` |  |  |
 | `update_bounding_box` | method | `update_bounding_box(self, box, pose, half_size)` |  |  |
 | `__init__` | method | `__init__(self, renderer: SapienRenderer=None, shader_dir='', resolutions=(1920, 1080), plugins=[PathWindow(), ContactWindow(), SettingWindow(), TransformWindow(), RenderOptionsWindow(), ControlWindow(), SceneWindow(), EntityWindow(), ArticulationWindow()])` |  |  |

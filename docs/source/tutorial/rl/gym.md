@@ -85,9 +85,16 @@ For evaluation videos or debugging, add a `sapien.render.RenderSystem` only to
 the scenes you render.
 
 With CPU PhysX, `scene.update_render()` is enough before viewer/camera render.
-With GPU PhysX, avoid `sync_poses_gpu_to_cpu()` in training loops; for offscreen
-capture, prefer the direct GPU rendering path described in the GPU workflow
-notes and use `sapien.render.RenderSystemGroup` with CUDA pose buffers.
+With GPU PhysX, avoid `sync_poses_gpu_to_cpu()` in training loops. For offscreen
+capture, use `sapien.render.RenderSystemGroup` with CUDA pose buffers. For
+interactive debugging on the same CUDA/Vulkan device, configure the Viewer and
+submit each displayed state explicitly:
+
+```python
+viewer.configure_physx_gpu_rendering(physx_system, transport="auto")
+viewer.update_render()
+viewer.render()
+```
 
 ## Random rollout
 

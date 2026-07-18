@@ -5,8 +5,14 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
+### Added
+
+- Added same-device PhysX GPU pose transport for the Vulkan Viewer, explicit `Viewer.update_render()`, camera multi-scene selection, transport diagnostics, and CUDA/Vulkan device-capability discovery.
+
 ### Changed
 
+- Viewer and camera scene selection now aggregate the selected base scenes plus shared render scenes once, without grid or per-scene render offsets.
+- `Viewer.render()` now draws the most recently submitted state; call `Viewer.update_render()` explicitly after simulation updates.
 - Improved default raster visuals with image-based studio reflections, screen-space ambient occlusion, energy-conserving ambient light, and smoother filtered shadows.
 - Updated default primitive materials, terrain checker materials, scene ambient fill, and packaged example lighting for clearer color, surface detail, contact shading, and cast shadows.
 

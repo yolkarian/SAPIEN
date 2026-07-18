@@ -84,13 +84,14 @@ The GUI is optional. For offscreen rendering, create a camera and call
 
 ## Simulation loop
 
-`scene.step()` advances PhysX. `scene.update_render()` uploads CPU-side
-entity poses to the renderer. The viewer's `render` call draws the frame.
+`scene.step()` advances PhysX. `viewer.update_render()` submits the selected
+scene state and transform updates. The viewer's `render()` call only draws the
+submitted frame and UI.
 
 ```python
 while not viewer.closed:
    scene.step()
-   scene.update_render()
+   viewer.update_render()
    viewer.render()
 ```
 

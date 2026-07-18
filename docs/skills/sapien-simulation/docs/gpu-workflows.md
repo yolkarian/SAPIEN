@@ -9,7 +9,7 @@
 - Prefer PhysX GPU scene environment IDs over collision-group hacks for multi-env isolation: set a unique env ID before adding each env's bodies, and set env ID `-1`/`0xffffffff` for shared bodies such as a global ground plane.
 - In GPU runtime, update state through `sapien.physx.PhysxGpuSystem.cuda_*` buffers plus `gpu_apply_*()`.
 - Read state only after the needed `gpu_fetch_*()` calls.
-- `PhysxGpuSystem.sync_poses_gpu_to_cpu()` downloads all GPU poses to CPU SAPIEN entities; use it only for viewer/debug paths that need CPU entity poses, never for training, reset, step, sensors, video, or offscreen capture.
+- `PhysxGpuSystem.sync_poses_gpu_to_cpu()` downloads all GPU poses to CPU SAPIEN entities; use it only for explicit CPU-state debugging or the Viewer `cpu-debug` transport, never for normal Viewer rendering, training, reset, step, sensors, video, or offscreen capture.
 - For direct GPU camera/offscreen rendering, use GPU pose batch indices with `sapien.render.RenderSystemGroup.set_cuda_poses(physx_system.cuda_rigid_body_data)` and read images through `get_picture_cuda(...)` instead of syncing poses to CPU.
 - `RenderSystemGroup` supports both raster and `"rt"` camera shader packs. RT rigid-pose updates also update the TLAS and reset accumulation. SAPIEN has no deformable-body physics, but it does expose a render-only `RenderCudaMeshComponent`; supporting that component in batched RT additionally requires synchronized BLAS updates or rebuilds, shared-`SceneGroup` aggregation, and accumulation resets after vertex changes.
 - Cache `sapien.CudaArray.torch()` views once after `gpu_init()`; do not recreate them in loops.
@@ -204,13 +204,13 @@ PY
 12. When the environment has a viewer, initialize it here:
     - `sapien.utils.viewer.Viewer()`
     - `viewer.set_scene(scene)`
-    - `physx_system.sync_poses_gpu_to_cpu()`
+    - `viewer.configure_physx_gpu_rendering(physx_system, transport="auto")`
+    - `viewer.update_render()`
     - `viewer.render()`
 13. Initialize sensors/rendering after `gpu_init()` and GPU index caching:
     - create `sapien.render.RenderCameraComponent(...)`.
     - set camera pose, near/far, fov or intrinsics.
-    - for mounted cameras, call `RenderCameraComponent.set_gpu_pose_batch_index(link_gpu_pose_index)`.
-    - for dynamic render shapes, call `RenderShape.set_gpu_pose_batch_index(gpu_pose_index)`.
+    - sibling PhysX GPU bodies/links are bound to mounted cameras and dynamic render shapes automatically; use explicit `set_gpu_pose_batch_index(...)` only for custom pose-buffer layouts.
     - direct GPU sensors/offscreen cameras: use `sapien.render.RenderSystemGroup([...])`, `set_cuda_poses(physx_system.cuda_rigid_body_data)`, `create_camera_group(...)`, `update_render()`, `take_picture()`, and `get_picture_cuda(...)`.
     - for one rendered env, still prefer `RenderSystemGroup([scene.get_render_system()])` so dynamic body poses come directly from GPU buffers without `sync_poses_gpu_to_cpu()`.
 
@@ -262,8 +262,8 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
   - Use the GPU batched-render path below, even for a single rendered scene.
   - Do not create `RenderSystem` or cameras for the other training envs.
 - Direct GPU camera/offscreen rendering, including one-scene capture:
-  1. Bind dynamic render shapes with `RenderShape.set_gpu_pose_batch_index(body.get_gpu_pose_index())`.
-  2. For mounted cameras, bind them with `RenderCameraComponent.set_gpu_pose_batch_index(link_gpu_pose_index)`; for free/follow cameras, update their CPU pose explicitly before rendering.
+  1. After `gpu_init()`, sibling PhysX GPU bodies/links are bound automatically. Use `set_gpu_pose_batch_index(...)` only for custom pose-buffer layouts.
+  2. For free/follow cameras, update their CPU pose explicitly before rendering.
   3. Create `RenderSystemGroup([scene.get_render_system(), ...])` and `create_camera_group(cameras, picture_names)`.
   4. Call `RenderSystemGroup.set_cuda_poses(physx_system.cuda_rigid_body_data)`.
   5. After the required `gpu_fetch_*()` calls, call `RenderSystemGroup.update_render()`.
@@ -273,9 +273,10 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
   - `scene.update_render()` / `RenderSystem.step()` and `RenderCameraComponent.get_picture(...)` read CPU SAPIEN entity poses. Under GPU PhysX these poses are stale unless `PhysxGpuSystem.sync_poses_gpu_to_cpu()` is called first.
   - This path is acceptable for viewer/debug rendering only; do not use it for normal offscreen video/camera capture.
 - Viewer path:
-  1. `PhysxGpuSystem.sync_poses_gpu_to_cpu()`
-  2. `Viewer.render()`
-- Use `sync_poses_gpu_to_cpu()` only in viewer/debug paths. SAPIEN documents it as a super-slow debug helper that downloads all poses from GPU to CPU entities.
+  1. `Viewer.configure_physx_gpu_rendering(physx_system, transport="auto")` after `gpu_init()`.
+  2. `Viewer.update_render()` after each displayed simulation state.
+  3. `Viewer.render()` to draw without another pose fetch.
+- Use `sync_poses_gpu_to_cpu()` only for explicit CPU-state debugging or the Viewer `cpu-debug` transport. SAPIEN documents it as a super-slow helper that downloads all poses from GPU to CPU entities.
 - When adding policy-eval or teleoperation keyboard controls on top of the interactive viewer, do not reuse SAPIEN's built-in camera/navigation keys such as `W/A/S/D/Q/E`. Prefer a separate key cluster, for example `I/K` for forward/backward command, `J/L` for lateral command, `U/O` for yaw, `C` to clear commands, and `N` to reset.
 
 ## Reset workflow

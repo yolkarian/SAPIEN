@@ -186,7 +186,11 @@ Direct GPU simulation can also apply world-space forces and torques to links via
 buffers have shape `(articulation_count, max_links, 4)`; the first three
 channels are the vector and the fourth channel is padding. After writing them,
 call `gpu_apply_articulation_link_force()` and/or
-`gpu_apply_articulation_link_torque()`.
+`gpu_apply_articulation_link_torque()`. Direct GPU writes have SET (replace),
+not accumulate, semantics. SAPIEN does not enable PhysX
+`eRETAIN_ACCELERATIONS`, so an applied force or torque acts on exactly the next
+simulation step and is then cleared by PhysX. Re-apply sustained wrenches before
+every step, including every substep of a multi-step control frame.
 
 ## Remove an articulation
 

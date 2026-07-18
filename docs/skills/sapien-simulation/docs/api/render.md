@@ -156,6 +156,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `set_fovy` | method | `set_fovy(self, fov: float, compute_x: bool=True) -> None` |  |  |
 | `set_gpu_pose_batch_index` | method | `set_gpu_pose_batch_index(self, index: int) -> None` | Bind GPU pose index for batched/direct GPU rendering. | Direct GPU render path; no sync_poses_gpu_to_cpu needed. |
 | `set_local_pose` | method | `set_local_pose(self, pose: sapien.Pose) -> None` |  |  |
+| `set_scenes` | method | `set_scenes(self, scenes: list[sapien.Scene]) -> None` | Select base scenes; associated shared scenes are included once. | No render offsets are applied. |
 | `set_near` | method | `set_near(self, near: float) -> None` |  |  |
 | `set_orthographic_parameters` | method | `set_orthographic_parameters(self, near: float, far: float, top: float) -> None<br>set_orthographic_parameters(self, near: float, far: float, left: float, right: float, bottom: float, top: float) -> None` |  |  |
 | `set_perspective_parameters` | method | `set_perspective_parameters(self, near: float, far: float, fx: float, fy: float, cx: float, cy: float, skew: float) -> None` |  |  |
@@ -799,6 +800,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `mouse_wheel_delta` | property | `mouse_wheel_delta(self) -> Annotated[list[float], FixedSize(2)]` |  |  |
 | `near` | property | `near(self) -> float` |  |  |
 | `ortho_top` | property | `ortho_top(self) -> float` |  |  |
+| `pose_transport` | property | `pose_transport(self) -> str` | Active Viewer pose transport. |  |
 | `render` | method | `render(self, target_name: str, ui_windows: list[sapien.internal_renderer.UIWidget]=[]) -> None` |  |  |
 | `resize` | method | `resize(self, width: int, height: int) -> None` |  |  |
 | `set_camera_orthographic_parameters` | method | `set_camera_orthographic_parameters(self, near: float, far: float, top: float) -> None` |  |  |
@@ -814,7 +816,8 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `set_focus_callback` | method | `set_focus_callback(self, callback: Callable[[int], None]) -> None` |  |  |
 | `set_intrinsic_parameters` | method | `set_intrinsic_parameters(self, near: float, far: float, fx: float, fy: float, cx: float, cy: float, skew: float) -> None` |  |  |
 | `set_scene` | method | `set_scene(self, scene: sapien.Scene) -> None` |  |  |
-| `set_scenes` | method | `set_scenes(self, scenes: list[sapien.Scene], offsets: list[np.ndarray[Literal[3], np.dtype[np.float32]]]) -> None` |  |  |
+| `set_scenes` | method | `set_scenes(self, scenes: list[sapien.Scene]) -> None` | Select base scenes plus associated shared scenes once. | No render offsets are applied. |
+| `configure_physx_gpu_rendering` | method | `configure_physx_gpu_rendering(self, physx_system: sapien.physx.PhysxGpuSystem, transport: Literal['auto', 'direct', 'staged', 'cpu-debug']='auto') -> None` | Configure Viewer pose transport. | Same-device direct and explicit CPU-debug are currently available. |
 | `set_shader_dir` | method | `set_shader_dir(self, shader_dir: str) -> None` |  |  |
 | `shift` | property | `shift(self) -> bool` |  |  |
 | `should_close` | property | `should_close(self) -> bool` |  |  |

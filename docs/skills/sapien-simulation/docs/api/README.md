@@ -11,7 +11,7 @@ Conventions:
 - `Pose.q` is always `wxyz`.
 - GPU PhysX: call `sapien.physx.enable_gpu()` before `PhysxGpuSystem`; configure global PhysX before creating systems; call `gpu_init()` after all bodies/lights are built.
 - No IK solver: SAPIEN has no IK solver (`GpuInverseKinematicsSolver` and `gpu_inverse_kinematics` do not exist). Exposed PhysX GPU link-data and dense-Jacobian buffers: `cuda_articulation_link_data`, `cuda_articulation_jacobian`, `cuda_articulation_jacobian_shape` (valid after `gpu_init()`).
-- For training/offscreen sensors, use CUDA buffers and `RenderSystemGroup.set_cuda_poses(...)`; reserve `sync_poses_gpu_to_cpu()` for viewer/debug only.
+- For training/offscreen sensors, use CUDA buffers and `RenderSystemGroup.set_cuda_poses(...)`; use `Viewer.configure_physx_gpu_rendering(...)` for interactive GPU visualization, and reserve `sync_poses_gpu_to_cpu()` for explicit CPU debugging.
 - Cache `CudaArray.torch()/cupy()/jax()` views and GPU indices after `gpu_init()`; do not recreate in loops.
 
 ## File map

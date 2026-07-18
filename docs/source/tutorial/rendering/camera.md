@@ -96,6 +96,21 @@ camera.set_perspective_parameters(
 )
 ```
 
+## Select multiple render scenes
+
+A camera renders its owning scene plus render systems marked
+`batched_render_shared=True` in the same render context by default. Use
+`set_scenes` to replace its base scene selection:
+
+```python
+camera.set_scenes([scene0, scene1])
+```
+
+The selected scenes and associated shared scenes are aggregated once in stable
+order. No scene-level transform is applied; objects retain their existing poses
+and may overlap. This selection changes only render content, not the camera's
+mount pose, properties, update flow, or `take_picture()` call.
+
 ## Render an RGB image
 
 Update render poses, render the camera, then read the `"Color"` picture.
