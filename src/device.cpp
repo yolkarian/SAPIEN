@@ -18,6 +18,15 @@ static std::vector<std::shared_ptr<Device>> vulkanFindDevices() {
   svulkan2::logger::setLogLevel("off");
 
   std::vector<std::shared_ptr<Device>> res;
+#ifdef _WIN32
+  // Win32 extension-name macros require VK_USE_PLATFORM_WIN32_KHR, but this code only needs
+  // the platform-independent extension strings.
+  constexpr auto externalMemoryExtensionName = "VK_KHR_external_memory_win32";
+  constexpr auto externalSemaphoreExtensionName = "VK_KHR_external_semaphore_win32";
+#else
+  constexpr auto externalMemoryExtensionName = VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
+  constexpr auto externalSemaphoreExtensionName = VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
+#endif
   try {
     std::shared_ptr<svulkan2::core::Instance> instance;
     try {
@@ -36,17 +45,10 @@ static std::vector<std::shared_ptr<Device>> vulkanFindDevices() {
         bool externalMemory = false;
         bool externalSemaphore = false;
         for (auto const &extension : d.device.enumerateDeviceExtensionProperties()) {
-#ifdef _WIN32
-          externalMemory |= std::strcmp(extension.extensionName,
-                                        VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME) == 0;
-          externalSemaphore |= std::strcmp(extension.extensionName,
-                                           VK_KHR_EXTERNAL_SEMAPHORE_WIN32_EXTENSION_NAME) == 0;
-#else
           externalMemory |=
-              std::strcmp(extension.extensionName, VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) == 0;
-          externalSemaphore |= std::strcmp(extension.extensionName,
-                                           VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME) == 0;
-#endif
+              std::strcmp(extension.extensionName, externalMemoryExtensionName) == 0;
+          externalSemaphore |=
+              std::strcmp(extension.extensionName, externalSemaphoreExtensionName) == 0;
         }
 
         auto properties =
