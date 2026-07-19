@@ -11,6 +11,7 @@ import sapien
 _CUDART = None
 _CUDA_MEMCPY_HOST_TO_DEVICE = 1
 _CUDA_MEMCPY_DEVICE_TO_HOST = 2
+_CUDA_STREAM_NON_BLOCKING = 1
 
 
 def _load_cudart():
@@ -24,6 +25,18 @@ def _load_cudart():
     _CUDART.cudaFree.argtypes = [ctypes.c_void_p]
     _CUDART.cudaMemcpy.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int]
     _CUDART.cudaMemset.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_size_t]
+    _CUDART.cudaMemsetAsync.argtypes = [
+        ctypes.c_void_p,
+        ctypes.c_int,
+        ctypes.c_size_t,
+        ctypes.c_void_p,
+    ]
+    _CUDART.cudaStreamCreateWithFlags.argtypes = [
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_uint,
+    ]
+    _CUDART.cudaStreamSynchronize.argtypes = [ctypes.c_void_p]
+    _CUDART.cudaStreamDestroy.argtypes = [ctypes.c_void_p]
     _CUDART.cudaDeviceSynchronize.argtypes = []
     _CUDART.cudaGetErrorString.argtypes = [ctypes.c_int]
     _CUDART.cudaGetErrorString.restype = ctypes.c_char_p
@@ -445,6 +458,82 @@ class TestGpuArticulationLinkForce(unittest.TestCase):
             system._gpu_upload_articulation_qpos(
                 art.gpu_index, np.asarray([0.0, 0.1], dtype=np.float32)
             )
+
+    def test_selected_articulation_transfers_wait_for_custom_stream(self):
+        system, scene = self._create_scene()
+        art, _, _ = self._build_two_link_articulation(
+            scene, joint_type="revolute"
+        )
+        system.gpu_init()
+
+        cudart = _load_cudart()
+        stream = ctypes.c_void_p()
+        scratch = ctypes.c_void_p()
+        scratch_size = 64 * 1024 * 1024
+
+        try:
+            _check_cuda(
+                cudart.cudaStreamCreateWithFlags(
+                    ctypes.byref(stream), _CUDA_STREAM_NON_BLOCKING
+                )
+            )
+            _check_cuda(cudart.cudaMalloc(ctypes.byref(scratch), scratch_size))
+            system.gpu_set_cuda_stream(stream.value)
+
+            def enqueue_delayed_zero(buffer):
+                for _ in range(256):
+                    _check_cuda(
+                        cudart.cudaMemsetAsync(scratch, 0, scratch_size, stream)
+                    )
+                _check_cuda(
+                    cudart.cudaMemsetAsync(
+                        ctypes.c_void_p(buffer.ptr),
+                        0,
+                        int(np.prod(buffer.shape))
+                        * np.dtype(buffer.typestr).itemsize,
+                        stream,
+                    )
+                )
+
+            enqueue_delayed_zero(system.cuda_articulation_qpos)
+            system._gpu_upload_articulation_qpos(
+                art.gpu_index, np.asarray([0.2], dtype=np.float32)
+            )
+            enqueue_delayed_zero(system.cuda_articulation_target_qpos)
+            system._gpu_upload_articulation_target_qpos(
+                art.gpu_index, np.asarray([0.35], dtype=np.float32)
+            )
+            enqueue_delayed_zero(system.cuda_articulation_target_qvel)
+            system._gpu_upload_articulation_target_qvel(
+                art.gpu_index, np.asarray([-0.4], dtype=np.float32)
+            )
+
+            enqueue_delayed_zero(system.cuda_articulation_qpos)
+            self.assertAlmostEqual(
+                system._gpu_download_articulation_qpos(art.gpu_index)[0],
+                0.2,
+                places=4,
+            )
+            enqueue_delayed_zero(system.cuda_articulation_target_qpos)
+            self.assertAlmostEqual(
+                system._gpu_download_articulation_target_qpos(art.gpu_index)[0],
+                0.35,
+                places=4,
+            )
+            enqueue_delayed_zero(system.cuda_articulation_target_qvel)
+            self.assertAlmostEqual(
+                system._gpu_download_articulation_target_qvel(art.gpu_index)[0],
+                -0.4,
+                places=4,
+            )
+        finally:
+            if stream.value:
+                _check_cuda(cudart.cudaStreamSynchronize(stream))
+            system.gpu_set_cuda_stream(0)
+            if scratch.value:
+                _check_cuda(cudart.cudaFree(scratch))
+            if stream.value:
+                _check_cuda(cudart.cudaStreamDestroy(stream))
 
     def test_viewer_gpu_articulation_root_teleport(self):
         system, scene = self._create_scene()
