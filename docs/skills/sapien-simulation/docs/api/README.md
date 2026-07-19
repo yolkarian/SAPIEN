@@ -40,6 +40,8 @@ Conventions:
 | Rigid body component | `entity.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)` |
 | Camera | `scene.add_camera(...)` or `sapien.render.RenderCameraComponent` |
 | Batched GPU render | `sapien.render.RenderSystemGroup([...]).set_cuda_poses(physx.cuda_rigid_body_data)` |
+| Interactive GPU Viewer | `viewer.configure_physx_gpu_rendering(physx_system, "auto")`, then `apply_interactions()` before physics and `update_render()` before `render()` |
+| Viewer device/transport diagnostics | `sapien.Device.uuid`, `can_direct_cuda_vulkan_interop()`, `can_access_peer(...)`, `viewer.pose_transport`, `viewer.pose_transfer_bytes` |
 | GPU articulation link/Jacobian buffers | `physx_system.cuda_articulation_link_data`, `physx_system.gpu_compute_articulation_jacobian(...)`, `physx_system.cuda_articulation_jacobian_shape` after `physx_system.gpu_init()` |
 | GPU state tensors | `physx_system.cuda_*` then `.torch()`/`.cupy()`/`.jax()` |
 | Viewer | `sapien.utils.Viewer()` / `scene.create_viewer()` |

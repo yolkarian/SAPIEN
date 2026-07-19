@@ -88,6 +88,44 @@ sapien.render.set_ray_tracing_denoiser("oidn")
 sapien.render.set_picture_format("Color", "r16g16b16a16Sfloat")
 ```
 
+## Viewer rendering
+
+Viewer state submission is now explicit. Older loops often update the scene and
+rely on `viewer.render()` to push any pending Viewer state:
+
+```python
+scene.update_render()
+viewer.render()
+```
+
+Current Viewer loops submit through the Viewer itself. `viewer.render()` only
+draws the most recently submitted state and UI:
+
+```python
+scene.step()
+viewer.update_render()
+viewer.render()
+```
+
+`Viewer.set_scenes(scenes, offsets=...)`, its implicit grid layout, and
+`Viewer.scene_offset` have been removed. Use `Viewer.set_scenes(scenes)` or
+`RenderCameraComponent.set_scenes(scenes)` to select base render scenes; shared
+render scenes are included once and no render-layer transform is applied. The
+low-level `RenderWindow.set_scenes()` API follows the same no-offset signature.
+Place entities explicitly when scenes should appear spatially separated.
+
+The old `Viewer.notify_render_update()`, `Viewer.reset_notifications()`, and
+`Viewer.render_updated` notification gate have also been removed. Call
+`Viewer.update_render()` at the exact state-submission boundary instead.
+
+For PhysX GPU visualization, initialize GPU PhysX before Viewer submission and
+use `viewer.configure_physx_gpu_rendering(physx_system, transport="auto")` when
+an explicit choice is needed. Direct and staged transports leave CPU entity
+poses stale. Call `viewer.apply_interactions()` immediately before every physics
+substep when GPU dragging, queued property edits, or queued teleports are in use.
+Reserve `sync_poses_gpu_to_cpu()` for explicit CPU debugging or the
+`"cpu-debug"` Viewer transport.
+
 ## Lights
 
 Light helper methods live on `Scene`:

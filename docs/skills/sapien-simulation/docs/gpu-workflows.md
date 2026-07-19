@@ -271,7 +271,7 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
   7. Read frames with `RenderCameraGroup.get_picture_cuda(name)`; copy to CPU only if a video encoder or logger needs CPU arrays.
 - CPU-pose render path:
   - `scene.update_render()` / `RenderSystem.step()` and `RenderCameraComponent.get_picture(...)` read CPU SAPIEN entity poses. Under GPU PhysX these poses are stale unless `PhysxGpuSystem.sync_poses_gpu_to_cpu()` is called first.
-  - This path is acceptable for viewer/debug rendering only; do not use it for normal offscreen video/camera capture.
+  - This path is acceptable for explicit CPU debugging or the Viewer `cpu-debug` transport only; do not use it for normal Viewer or offscreen video/camera capture.
 - Viewer path:
   1. Call `gpu_init()` before Viewer submission. The Viewer auto-detects one unambiguous initialized `PhysxGpuSystem` in its resolved base plus shared scenes; use `Viewer.configure_physx_gpu_rendering(physx_system, transport="auto")` to choose explicitly.
   2. `"auto"` selects direct CUDA/Vulkan interop on a compatible same physical device and compact pinned-host staging on different devices. Both raster and RT Viewer shader paths are supported.
@@ -281,6 +281,8 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
   6. Inspect `Viewer.pose_transport` for the active choice and `Viewer.pose_transfer_bytes` for cumulative pose D2H bytes. Staged submission copies 28 bytes per unique rendered body/link pose and does not update CPU entities.
   7. Viewer spring composition preserves the exposed application force/torque buffers. Do not issue a later apply for the same selected body before `step()`, because it would replace the composed spring.
   8. GPU-aware Entity and Articulation windows transfer only the selected pose or articulation row, cache it for the submitted frame, and queue supported edits for `apply_interactions()`. Collapsed windows do not read GPU state. CPU contact reports and CPU Pinocchio IK are explicitly unavailable in these windows under PhysX GPU.
+  9. `Viewer.set_scenes(scenes)` and camera `set_scenes(scenes)` select base scenes plus associated shared scenes once. They do not accept render offsets; place entities explicitly when scenes should appear separated.
+  10. Viewer plugins may call `begin_gpu_interaction()`, `update_gpu_interaction_target()`, and `end_gpu_interaction()`, or queue teleports with `queue_gpu_rigid_dynamic_pose()` and `queue_gpu_articulation_root_pose()`. All commands remain deferred until `apply_interactions()`.
 - Use `sync_poses_gpu_to_cpu()` only for explicit CPU-state debugging or the Viewer `cpu-debug` transport. SAPIEN documents it as a super-slow helper that downloads all poses from GPU to CPU entities.
 - When adding policy-eval or teleoperation keyboard controls on top of the interactive viewer, do not reuse SAPIEN's built-in camera/navigation keys such as `W/A/S/D/Q/E`. Prefer a separate key cluster, for example `I/K` for forward/backward command, `J/L` for lateral command, `U/O` for yaw, `C` to clear commands, and `N` to reset.
 
@@ -300,7 +302,7 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
 7. Call `gpu_update_articulation_kinematics()`.
 8. Fetch state with the needed `gpu_fetch_*()` calls.
 9. For full reset, call `physx_system.step()` and fetch again; for partial reset, do not advance physics for non-reset scenes.
-10. Update rendering only if viewer or sensors exist. Use `sync_poses_gpu_to_cpu()` only for viewer/debug; direct sensors/offscreen capture should use `RenderSystemGroup` with CUDA pose buffers.
+10. Update rendering only if viewer or sensors exist. Normal Viewer rendering should use direct/staged transport, and direct sensors/offscreen capture should use `RenderSystemGroup` with CUDA pose buffers. Use `sync_poses_gpu_to_cpu()` only for explicit CPU debugging or Viewer `cpu-debug`.
 
 ## Step workflow
 
@@ -321,7 +323,7 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
 5. Call `physx_system.step()`.
 6. If one control step contains multiple physics substeps and uses `cuda_articulation_qf`, reapply `gpu_apply_articulation_qf()` between substeps.
 7. Fetch state with the needed `gpu_fetch_*()` calls.
-8. Update viewer/render/sensors only if they exist. Use `sync_poses_gpu_to_cpu()` only for viewer/debug; direct sensors/offscreen capture should use `RenderSystemGroup` with CUDA pose buffers.
+8. Update viewer/render/sensors only if they exist. Normal Viewer rendering should use direct/staged transport, and direct sensors/offscreen capture should use `RenderSystemGroup` with CUDA pose buffers. Use `sync_poses_gpu_to_cpu()` only for explicit CPU debugging or Viewer `cpu-debug`.
 9. Read observations, rewards, termination, or diagnostics after fetch/render update.
 
 ## Collision and scene isolation
@@ -352,6 +354,6 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
 - Recreating `sapien.CudaArray.torch()` views repeatedly.
 - Forgetting `wxyz` quaternion order.
 - Calling all apply functions in the normal step path and overwriting simulated state with stale buffers.
-- Calling `sync_poses_gpu_to_cpu()` for training, reset, step, eval video, sensors, or offscreen capture; it downloads all poses to CPU and should be reserved for viewer/debug paths.
+- Calling `sync_poses_gpu_to_cpu()` for normal Viewer rendering, training, reset, step, eval video, sensors, or offscreen capture; it downloads all poses to CPU and should be reserved for explicit CPU debugging or Viewer `cpu-debug`.
 - Using `scene.update_render()` / `RenderSystem.step()` alone for GPU-PhysX camera capture; it reads CPU entity poses and will render stale dynamic bodies unless you first sync, so prefer `RenderSystemGroup` with CUDA pose buffers.
 - Shipping a SAPIEN GPU container without pre-baking `$HOME/.sapien/physx/<version>/`, so every fresh `docker run` re-downloads `physxgpu-linux-clang.zip`; bake the extracted library into the image (see "Pre-bake the PhysX GPU library into Docker images" above).

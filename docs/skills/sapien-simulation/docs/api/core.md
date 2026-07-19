@@ -124,13 +124,20 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
+| `can_access_peer` | method | `can_access_peer(self, peer: Device) -> bool` | Query CUDA peer access to another device. | Cross-device Viewer `auto` transport remains staged even when peer access is available. |
+| `can_direct_cuda_vulkan_interop` | method | `can_direct_cuda_vulkan_interop(self) -> bool` | Check whether this device exposes the CUDA/Vulkan external-memory and semaphore capabilities required by direct Viewer transport. | Direct transport also requires PhysX and Vulkan to identify the same physical device. |
 | `can_present` | method | `can_present(self) -> bool` |  |  |
 | `can_render` | method | `can_render(self) -> bool` |  |  |
-| `cuda_id` | property | `cuda_id(self) -> int` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
+| `cuda_external_memory` | property | `cuda_external_memory(self) -> bool` | Report CUDA external-memory support. | Viewer transport diagnostic. |
+| `cuda_external_semaphore` | property | `cuda_external_semaphore(self) -> bool` | Report CUDA external-semaphore support. | Viewer transport diagnostic. |
+| `cuda_id` | property | `cuda_id(self) -> int` | CUDA device ordinal. |  |
 | `is_cpu` | method | `is_cpu(self) -> bool` |  |  |
 | `is_cuda` | method | `is_cuda(self) -> bool` |  |  |
 | `name` | property | `name(self) -> str` |  |  |
-| `pci_string` | property | `pci_string(self) -> str \| None` |  |  |
+| `pci_string` | property | `pci_string(self) -> str \| None` | PCI identity when available. | Used with `uuid` to diagnose CUDA/Vulkan physical-device matching. |
+| `uuid` | property | `uuid(self) -> str \| None` | Physical-device UUID when available. | Used by automatic Viewer transport selection. |
+| `vulkan_external_memory` | property | `vulkan_external_memory(self) -> bool` | Report Vulkan external-memory support. | Viewer transport diagnostic. |
+| `vulkan_external_semaphore` | property | `vulkan_external_semaphore(self) -> bool` | Report Vulkan external-semaphore support. | Viewer transport diagnostic. |
 | `__init__` | method | `__init__(self, alias: str) -> None` |  |  |
 | `__repr__` | method | `__repr__(self) -> str` |  |  |
 | `__str__` | method | `__str__(self) -> str` |  |  |

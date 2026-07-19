@@ -423,6 +423,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `configure_physx_gpu_rendering` | method | `configure_physx_gpu_rendering(self, physx_system, transport="auto")` | Configure Viewer pose transport. | Auto selects same-device direct or cross-device staged raster/RT transport. |
 | `pose_transport` | property | `pose_transport(self) -> str` | Active pose transport. |  |
 | `pose_transfer_bytes` | property | `pose_transfer_bytes(self) -> int` | Cumulative pose D2H bytes for the active transport. | Staged transfers are 28 bytes per unique rendered GPU pose per submission. |
+| `queue_gpu_articulation_root_pose` | method | `queue_gpu_articulation_root_pose(self, articulation: sapien.physx.PhysxArticulation, pose: sapien.Pose) -> None` | Queue a GPU articulation-root teleport. | Applied by the next `apply_interactions()` call. |
+| `queue_gpu_rigid_dynamic_pose` | method | `queue_gpu_rigid_dynamic_pose(self, component: sapien.physx.PhysxRigidDynamicComponent, pose: sapien.Pose, zero_velocity: bool=False) -> None` | Queue a GPU rigid-body teleport. | Preserves velocity by default; applied by the next `apply_interactions()` call. |
+| `update_gpu_interaction_target` | method | `update_gpu_interaction_target(self, target: np.ndarray) -> None` | Move the active GPU point-spring target. | The new target is consumed by `apply_interactions()`. |
 | `update_render` | method | `update_render(self) -> None` | Submit current simulation/render state. | Explicit update boundary before `render()`. |
 | `update_aabb` | method | `update_aabb(self, aabb, lower, upper)` |  |  |
 | `update_bounding_box` | method | `update_bounding_box(self, box, pose, half_size)` |  |  |

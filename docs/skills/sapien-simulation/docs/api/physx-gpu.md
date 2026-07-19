@@ -76,7 +76,12 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `cuda_rigid_dynamic_data` | property | `cuda_rigid_dynamic_data(self) -> sapien.CudaArray` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
 | `cuda_rigid_dynamic_force` | property | `cuda_rigid_dynamic_force(self) -> sapien.CudaArray` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
 | `cuda_rigid_dynamic_torque` | property | `cuda_rigid_dynamic_torque(self) -> sapien.CudaArray` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
-| `device` | property | `device(self) -> sapien.Device` |  |  |
+| `device` | property | `device(self) -> sapien.Device` | PhysX CUDA device and its identity/capability diagnostics. | Viewer `auto` transport compares this device with the Vulkan device. |
+| `is_initialized` | property | `is_initialized(self) -> bool` | Report whether `gpu_init()` is current for the system topology. | Automatic Viewer binding considers only initialized GPU systems. |
+| `total_steps` | property | `total_steps(self) -> int` | Number of PhysX GPU steps completed by this system. | Used by submitted-frame fetch/cache diagnostics. |
+| `_gpu_fetch_articulation_link_pose_count` | property | `_gpu_fetch_articulation_link_pose_count(self) -> int` | Debug counter for articulation-link pose fetches. | Migration/benchmark instrumentation; not normal application state. |
+| `_gpu_fetch_rigid_dynamic_data_count` | property | `_gpu_fetch_rigid_dynamic_data_count(self) -> int` | Debug counter for rigid dynamic data fetches. | Migration/benchmark instrumentation; not normal application state. |
+| `_sync_poses_gpu_to_cpu_count` | property | `_sync_poses_gpu_to_cpu_count(self) -> int` | Debug counter for full GPU-to-CPU pose synchronizations. | Migration/benchmark instrumentation; direct/staged Viewer paths should not increment it. |
 | `get_assigned_scene_environment_id` | method | `get_assigned_scene_environment_id(self, scene: sapien.Scene) -> int \| None` | Only read assigned env ids; no side effects. |  |
 | `get_or_assign_scene_environment_id` | method | `get_or_assign_scene_environment_id(self, scene: sapien.Scene) -> int` | Read or lazily assign a unique env id. |  |
 | `get_scene_environment_id` | method | `get_scene_environment_id(self, scene: sapien.Scene) -> int` |  |  |

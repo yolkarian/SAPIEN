@@ -67,6 +67,12 @@ the existing `Control` window. The cumulative pose D2H bytes for the active
 transport are available as `viewer.pose_transfer_bytes`; a staged submission
 transfers 28 bytes per unique rendered GPU pose.
 
+Device identity and interop diagnostics are available on `sapien.Device` through
+`uuid`, `pci_string`, `can_direct_cuda_vulkan_interop()`, `can_access_peer()`,
+and the CUDA/Vulkan external-memory and external-semaphore capability flags.
+Peer access is diagnostic only; `"auto"` still uses staged transport between
+different physical devices.
+
 ## Multiple render scenes
 
 `viewer.set_scenes([scene0, scene1])` selects those base scenes. A camera can
@@ -154,6 +160,12 @@ articulation link to apply a damped point spring at the clicked Position-buffer
 hit point. Gizmo translation uses the same physical target by default. The
 `Teleport` button queues an explicit GPU pose update; rigid-body teleports
 preserve linear and angular velocity unless zeroing is explicitly requested.
+
+Viewer plugins can drive the same deferred interaction path with
+`begin_gpu_interaction()`, `update_gpu_interaction_target()`, and
+`end_gpu_interaction()`. Programmatic teleports can be queued with
+`queue_gpu_rigid_dynamic_pose()` or `queue_gpu_articulation_root_pose()`.
+None of these commands reaches PhysX until `apply_interactions()` is called.
 
 Apply Viewer commands before every physics substep:
 

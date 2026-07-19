@@ -1,6 +1,6 @@
 ---
 name: sapien-simulation
-description: Build, refactor, or review SAPIEN simulation environments, especially PhysX GPU setup, scene/build/light/render/sensor initialization order, GPU buffer access, batched rendering, exposed PhysX GPU articulation link/Jacobian buffers, reset workflows, step workflows, and Docker container packaging of GPU PhysX and rendering dependencies.
+description: Build, refactor, or review SAPIEN simulation environments, especially PhysX GPU setup, scene/build/light/render/sensor initialization order, direct and staged GPU Viewer rendering, GPU buffer access, batched rendering, exposed PhysX GPU articulation link/Jacobian buffers, reset workflows, step workflows, and Docker container packaging of GPU PhysX and rendering dependencies.
 ---
 
 # SAPIEN Simulation
@@ -17,7 +17,7 @@ Use this skill when creating, refactoring, or reviewing SAPIEN simulation enviro
 6. For many identical URDF robots, parse the URDF once, cache the builder, and reuse it with `builder.set_scene(scene)` plus a restored initial pose before each `builder.build()`. For kinematics-only or IK-only workflows, set `loader.load_visuals = False` and `loader.load_collisions = False` when geometry is unnecessary.
 7. Prefer PhysX GPU scene environment IDs for multi-env isolation when available; assign a unique env ID before adding each env's bodies, and use env ID `-1`/`0xffffffff` for shared objects such as one global ground plane.
 8. Create `sapien.render.RenderSystem` only when viewer, sensors, or offscreen rendering need it; do not create it for pure physics.
-9. Use `PhysxGpuSystem.sync_poses_gpu_to_cpu()` only for viewer/debug paths that need CPU entity poses; do not use it for offscreen video/camera capture. Use GPU pose batch indices plus `RenderSystemGroup.set_cuda_poses(...)` and `get_picture_cuda(...)` for direct GPU rendering.
+9. For an interactive PhysX GPU Viewer, initialize GPU PhysX first, use automatic direct/staged pose transport, call `viewer.apply_interactions()` immediately before every physics substep that may consume Viewer commands, call `viewer.update_render()` after each displayed state, and then call `viewer.render()`. Reserve `PhysxGpuSystem.sync_poses_gpu_to_cpu()` for explicit CPU debugging or Viewer `cpu-debug`. For offscreen capture, use GPU pose batch indices plus `RenderSystemGroup.set_cuda_poses(...)` and `get_picture_cuda(...)`.
 10. Cache SAPIEN CUDA tensor views and GPU indices once after `gpu_init()`; use cached indices for batched access.
 11. For indexed GPU APIs, allowed selected-index argument types are `sapien.CudaArray` or CUDA-array-interface objects such as CUDA `torch.Tensor`, `cupy.ndarray`, or Numba CUDA device arrays. They must wrap 1D contiguous CUDA `int32` buffers on the same CUDA device as the PhysX system and contain SAPIEN `gpu_index` values; NumPy arrays, Python lists, CPU tensors, `int64` tensors, non-contiguous views, and cross-device arrays are invalid. Keep external owners alive until the SAPIEN CUDA stream finishes.
 12. SAPIEN has no IK solver. Exposed PhysX GPU buffers after `gpu_init()`: `cuda_articulation_link_data`, `cuda_articulation_jacobian`, `cuda_articulation_jacobian_shape`.
@@ -27,7 +27,7 @@ Use this skill when creating, refactoring, or reviewing SAPIEN simulation enviro
 ## Guardrails
 
 - Do not mix CPU state APIs with GPU runtime state updates.
-- Do not call `sync_poses_gpu_to_cpu()` in training, reset, step, sensor, video, or offscreen capture paths; it downloads all poses to CPU and is only appropriate before viewer/debug rendering.
+- Do not call `sync_poses_gpu_to_cpu()` in normal Viewer, training, reset, step, sensor, video, or offscreen capture paths; it downloads all poses to CPU and is only appropriate for explicit CPU debugging or Viewer `cpu-debug`.
 - Do not bind app-specific interactive controls to SAPIEN viewer navigation keys such as `W/A/S/D/Q/E`; prefer non-conflicting keys such as `I/K/J/L` for planar commands, `U/O` for yaw, `C` to clear commands, and `N` to reset.
 - Do not create batched rendering before render bodies/cameras have GPU pose batch indices.
 - SAPIEN has no IK solver; `GpuInverseKinematicsSolver` and `gpu_inverse_kinematics` do not exist.

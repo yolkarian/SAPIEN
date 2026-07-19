@@ -1,13 +1,13 @@
 # Quickstart with Agents
 
-This directory helps users who build SAPIEN simulation environments get started fast *with an agent*. An agent reading these guides can quickly learn how to set up a SAPIEN simulation environment — GPU PhysX configuration, scene/build/render initialization order, batched rendering, the exposed PhysX GPU buffers, and where to find each API.
+This directory helps users who build SAPIEN simulation environments get started fast *with an agent*. An agent reading these guides can quickly learn how to set up a SAPIEN simulation environment — GPU PhysX configuration, scene/build/render initialization order, direct and staged GPU Viewer rendering, batched rendering, the exposed PhysX GPU buffers, and where to find each API.
 
 These are practical, lookup-oriented references (not tutorial prose): workflow rules the agent follows, plus a grep-friendly map of the SAPIEN Python API it can consult instead of guessing names or signatures.
 
 ## Contents
 
 - `sapien-simulation/SKILL.md` — workflow checklist an agent follows when creating, refactoring, or reviewing a SAPIEN simulation environment.
-- `sapien-simulation/docs/gpu-workflows.md` — GPU simulation workflows: PhysX GPU setup, env IDs, CUDA buffers, Docker Vulkan/EGL setup, exposed PhysX GPU articulation link/Jacobian buffers.
+- `sapien-simulation/docs/gpu-workflows.md` — GPU simulation workflows: PhysX GPU setup, env IDs, CUDA buffers, direct/staged Viewer submission and interaction, Docker Vulkan/EGL setup, and exposed PhysX GPU articulation link/Jacobian buffers.
 - `sapien-simulation/docs/api/` — compact API tables covering core, scene/builders/loaders, PhysX CPU/GPU, rendering, sensors, math, and the low-level internal renderer/UI.
 
 ## How to use it

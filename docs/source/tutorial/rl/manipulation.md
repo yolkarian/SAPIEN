@@ -115,4 +115,5 @@ def reset():
 For GPU PhysX manipulation, use the GPU reset and step workflows: write state to
 `cuda_*` buffers, call only the matching `gpu_apply_*` methods, fetch the
 state required by observations, and avoid CPU pose synchronization except for
-viewer/debug rendering.
+explicit CPU debugging or the Viewer `cpu-debug` transport. Normal Viewer
+rendering should use direct or staged GPU pose transport.

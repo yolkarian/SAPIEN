@@ -742,6 +742,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
+| `expanded` | property | `expanded(self) -> bool` | Report whether the window content is currently expanded. | Viewer property plugins use this to avoid GPU readback while collapsed. |
 | `Id` | method | `Id(self, id: str) -> UIWindow` |  |  |
 | `Label` | method | `Label(self, label: str) -> UIWindow` |  |  |
 | `Pos` | method | `Pos(self, x: float, y: float) -> UIWindow` |  |  |
