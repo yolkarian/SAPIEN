@@ -5,6 +5,10 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
+No notable changes yet.
+
+## 3.0.0+fork.12 - 2026-07-19
+
 ### Added
 
 - Added same-device direct and cross-device staged PhysX GPU pose transport for the Vulkan Viewer, including raster and ray-tracing updates, resolved-scene automatic transport selection, compact transfer-byte diagnostics, GPU-aware selection/focus/overlays, damped point-spring dragging, queued GPU teleports, explicit `Viewer.update_render()`, camera multi-scene selection, and CUDA/Vulkan device-capability discovery.
@@ -20,6 +24,8 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 ### Fixed
 
 - Fixed selected GPU articulation qpos and drive-target host transfers racing pending work on a configured non-blocking CUDA stream.
+- Corrected generated Python API stubs and aligned Pinocchio wrapper signatures and packaged typing information with runtime behavior.
+- Fixed wheel version normalization when the development version contains a commit hash beginning with a digit.
 
 ## 3.0.0+fork.11 - 2026-07-15
 
