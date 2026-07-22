@@ -47,8 +47,15 @@ from sapien.pysapien.physx import get_sdf_config as get_sdf_config
 from sapien.pysapien.physx import get_shape_config as get_shape_config
 from sapien.pysapien.physx import is_gpu_enabled as is_gpu_enabled
 from sapien.pysapien.physx import set_body_config as set_body_config
+from sapien.pysapien.physx import set_body_cmass_local_poses as set_body_cmass_local_poses
+from sapien.pysapien.physx import set_body_inertias as set_body_inertias
+from sapien.pysapien.physx import set_body_masses as set_body_masses
 from sapien.pysapien.physx import set_default_material as set_default_material
 from sapien.pysapien.physx import set_gpu_memory_config as set_gpu_memory_config
+from sapien.pysapien.physx import set_joint_armatures as set_joint_armatures
+from sapien.pysapien.physx import set_joint_drive_properties as set_joint_drive_properties
+from sapien.pysapien.physx import set_joint_frictions as set_joint_frictions
+from sapien.pysapien.physx import set_material_properties as set_material_properties
 from sapien.pysapien.physx import set_scene_config as set_scene_config
 from sapien.pysapien.physx import set_sdf_config as set_sdf_config
 from sapien.pysapien.physx import set_shape_config as set_shape_config

@@ -1812,7 +1812,131 @@ This method is available in CPU simulation. In GPU simulation, use
            py::arg("config"))
       .def("get_sdf_config", &PhysxDefault::getSDFShapeConfig)
 
-      .def("version", []() { return PhysxDefault::getPhysxVersion(); });
+      .def("version", []() { return PhysxDefault::getPhysxVersion(); })
+
+      .def("set_body_masses", &batchSetBodyMasses, py::arg("bodies"), py::arg("masses"),
+           py::arg("scale_inertia") = true,
+           R"doc(
+Batch-set the mass of rigid dynamic bodies or articulation links, primarily for
+reset-time domain randomization.
+
+When scale_inertia is true (default), each body's diagonal inertia is scaled by
+new_mass / old_mass and the center-of-mass pose is kept, which requires the current
+mass to be positive. When false, only the mass is set and the inertia is unchanged.
+
+This is valid on both CPU and GPU PhysX systems. On PhysxGpuSystem it may be called
+any time after gpu_init() as long as no step is in flight (never between step_start()
+and step_finish()); PhysX uploads the new mass properties to the GPU during the next
+step without disturbing GPU-side poses, velocities, or joint states.
+
+Args:
+    bodies: list of PhysxRigidBodyComponent (rigid dynamic bodies or articulation links)
+    masses: array of positive masses, same length as bodies
+    scale_inertia: scale each body's diagonal inertia by the mass ratio)doc")
+
+      .def("set_joint_frictions", &batchSetJointFrictions, py::arg("joints"),
+           py::arg("frictions"),
+           R"doc(
+Batch-set the friction coefficient of articulation joints, primarily for reset-time
+domain randomization. Every joint must have at least 1 DOF.
+
+This is valid on both CPU and GPU PhysX systems. On PhysxGpuSystem it may be called
+any time after gpu_init() as long as no step is in flight (never between step_start()
+and step_finish()); PhysX uploads the new joint properties to the GPU during the next
+step without disturbing GPU-side poses, velocities, or joint states.
+
+Args:
+    joints: list of PhysxArticulationJoint with at least 1 DOF
+    frictions: array of non-negative friction coefficients, same length as joints)doc")
+
+      .def("set_joint_drive_properties", &batchSetJointDriveProperties, py::arg("joints"),
+           py::arg("stiffness") = py::none(), py::arg("damping") = py::none(),
+           py::arg("force_limit") = py::none(),
+           R"doc(
+Batch-set drive stiffness, damping, and force limit of articulation joints, primarily
+for reset-time domain randomization. Omitted (None) fields keep their current values;
+the drive type of each joint is always preserved. Every joint must have at least 1 DOF,
+and the values of a joint apply to all of its axes.
+
+This is valid on both CPU and GPU PhysX systems. On PhysxGpuSystem it may be called
+any time after gpu_init() as long as no step is in flight (never between step_start()
+and step_finish()); PhysX uploads the new drive properties to the GPU during the next
+step without disturbing GPU-side poses, velocities, or joint states.
+
+Args:
+    joints: list of PhysxArticulationJoint with at least 1 DOF
+    stiffness: array of non-negative drive stiffness (kp), same length as joints, or None
+    damping: array of non-negative drive damping (kd), same length as joints, or None
+    force_limit: array of non-negative drive force limits (may be inf), same length as
+        joints, or None)doc")
+
+      .def("set_body_inertias", &batchSetBodyInertias, py::arg("bodies"), py::arg("inertias"),
+           R"doc(
+Batch-set the diagonal inertia (in the center-of-mass frame) of rigid dynamic bodies or
+articulation links, primarily for reset-time domain randomization.
+
+This is valid on both CPU and GPU PhysX systems. On PhysxGpuSystem it may be called
+any time after gpu_init() as long as no step is in flight (never between step_start()
+and step_finish()); PhysX uploads the new mass properties to the GPU during the next
+step without disturbing GPU-side poses, velocities, or joint states.
+
+Args:
+    bodies: list of PhysxRigidBodyComponent (rigid dynamic bodies or articulation links)
+    inertias: [N, 3] array of positive diagonal inertias, one row per body)doc")
+
+      .def("set_body_cmass_local_poses", &batchSetBodyCMassLocalPoses, py::arg("bodies"),
+           py::arg("poses"),
+           R"doc(
+Batch-set the center-of-mass local pose of rigid dynamic bodies or articulation links,
+primarily for reset-time domain randomization. Each row of poses is
+[x, y, z, qw, qx, qy, qz] in the body frame; quaternions are normalized before being
+applied.
+
+This is valid on both CPU and GPU PhysX systems. On PhysxGpuSystem it may be called
+any time after gpu_init() as long as no step is in flight (never between step_start()
+and step_finish()); PhysX uploads the new mass properties to the GPU during the next
+step without disturbing GPU-side poses, velocities, or joint states.
+
+Args:
+    bodies: list of PhysxRigidBodyComponent (rigid dynamic bodies or articulation links)
+    poses: [N, 7] array of center-of-mass local poses, one [x, y, z, qw, qx, qy, qz]
+        row per body)doc")
+
+      .def("set_joint_armatures", &batchSetJointArmatures, py::arg("joints"),
+           py::arg("armatures"),
+           R"doc(
+Batch-set the armature of articulation joints, primarily for reset-time domain
+randomization. Every joint must have at least 1 DOF, and the value of a joint applies
+to all of its DOFs.
+
+This is valid on both CPU and GPU PhysX systems. On PhysxGpuSystem it may be called
+any time after gpu_init() as long as no step is in flight (never between step_start()
+and step_finish()); PhysX uploads the new joint properties to the GPU during the next
+step without disturbing GPU-side poses, velocities, or joint states.
+
+Args:
+    joints: list of PhysxArticulationJoint with at least 1 DOF
+    armatures: array of non-negative armatures, same length as joints)doc")
+
+      .def("set_material_properties", &batchSetMaterialProperties, py::arg("materials"),
+           py::arg("static_friction") = py::none(), py::arg("dynamic_friction") = py::none(),
+           py::arg("restitution") = py::none(),
+           R"doc(
+Batch-set static friction, dynamic friction, and restitution of physical materials,
+primarily for reset-time domain randomization. Omitted (None) fields keep their
+current values. Note that materials are shared objects: changing a material affects
+every collision shape bound to it, so per-env randomization requires per-env materials.
+
+This is valid on both CPU and GPU PhysX systems. On PhysxGpuSystem it may be called
+any time after gpu_init() as long as no step is in flight (never between step_start()
+and step_finish()); PhysX uploads the new material values to the GPU during the next
+step without disturbing GPU-side simulation state.
+
+Args:
+    materials: list of PhysxMaterial
+    static_friction: array of non-negative static friction, same length as materials, or None
+    dynamic_friction: array of non-negative dynamic friction, same length as materials, or None
+    restitution: array of restitution values in [0, 1], same length as materials, or None)doc");
 
   ////////// end global //////////
 

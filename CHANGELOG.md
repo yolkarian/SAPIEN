@@ -5,7 +5,9 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
-No notable changes yet.
+### Added
+
+- Added batched physical-property setters in `sapien.physx` for reset-time domain randomization: `set_body_masses` (with optional inertia scaling), `set_body_inertias`, `set_body_cmass_local_poses`, `set_joint_frictions`, `set_joint_drive_properties`, `set_joint_armatures`, and `set_material_properties`. Each applies a whole batch in one call, validates every entry before mutating anything, and works on `PhysxGpuSystem` after `gpu_init()`: PhysX uploads the new properties during the next step without disturbing GPU-side poses, velocities, or joint states.
 
 ## 3.0.0+fork.12 - 2026-07-19
 

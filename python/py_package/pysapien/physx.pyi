@@ -5,7 +5,7 @@ import sapien.pysapien
 import sapien.wrapper.pinocchio_model
 import typing
 
-__all__ = ['PhysxArticulation', 'PhysxArticulationJoint', 'PhysxArticulationLinkComponent', 'PhysxBaseComponent', 'PhysxBodyConfig', 'PhysxCollisionShape', 'PhysxCollisionShapeBox', 'PhysxCollisionShapeCapsule', 'PhysxCollisionShapeConvexMesh', 'PhysxCollisionShapeCylinder', 'PhysxCollisionShapeHeightField', 'PhysxCollisionShapePlane', 'PhysxCollisionShapeSphere', 'PhysxCollisionShapeTriangleMesh', 'PhysxContact', 'PhysxContactPoint', 'PhysxCpuSystem', 'PhysxDistanceJointComponent', 'PhysxDriveComponent', 'PhysxEngine', 'PhysxGearComponent', 'PhysxGpuContactBodyImpulseQuery', 'PhysxGpuContactPairImpulseQuery', 'PhysxGpuSystem', 'PhysxJointComponent', 'PhysxMaterial', 'PhysxRayHit', 'PhysxRigidBaseComponent', 'PhysxRigidBodyComponent', 'PhysxRigidDynamicComponent', 'PhysxRigidStaticComponent', 'PhysxSDFConfig', 'PhysxSceneConfig', 'PhysxShapeConfig', 'PhysxSystem', 'get_body_config', 'get_default_material', 'get_scene_config', 'get_sdf_config', 'get_shape_config', 'is_gpu_enabled', 'set_body_config', 'set_default_material', 'set_gpu_memory_config', 'set_scene_config', 'set_sdf_config', 'set_shape_config', 'version']
+__all__ = ['PhysxArticulation', 'PhysxArticulationJoint', 'PhysxArticulationLinkComponent', 'PhysxBaseComponent', 'PhysxBodyConfig', 'PhysxCollisionShape', 'PhysxCollisionShapeBox', 'PhysxCollisionShapeCapsule', 'PhysxCollisionShapeConvexMesh', 'PhysxCollisionShapeCylinder', 'PhysxCollisionShapeHeightField', 'PhysxCollisionShapePlane', 'PhysxCollisionShapeSphere', 'PhysxCollisionShapeTriangleMesh', 'PhysxContact', 'PhysxContactPoint', 'PhysxCpuSystem', 'PhysxDistanceJointComponent', 'PhysxDriveComponent', 'PhysxEngine', 'PhysxGearComponent', 'PhysxGpuContactBodyImpulseQuery', 'PhysxGpuContactPairImpulseQuery', 'PhysxGpuSystem', 'PhysxJointComponent', 'PhysxMaterial', 'PhysxRayHit', 'PhysxRigidBaseComponent', 'PhysxRigidBodyComponent', 'PhysxRigidDynamicComponent', 'PhysxRigidStaticComponent', 'PhysxSDFConfig', 'PhysxSceneConfig', 'PhysxShapeConfig', 'PhysxSystem', 'get_body_config', 'get_default_material', 'get_scene_config', 'get_sdf_config', 'get_shape_config', 'is_gpu_enabled', 'set_body_config', 'set_body_inertias', 'set_body_cmass_local_poses', 'set_body_masses', 'set_default_material', 'set_gpu_memory_config', 'set_joint_armatures', 'set_joint_drive_properties', 'set_joint_frictions', 'set_material_properties', 'set_scene_config', 'set_sdf_config', 'set_shape_config', 'version']
 M = typing.TypeVar("M", bound=int)
 class PhysxArticulation:
     name: str
@@ -1234,10 +1234,73 @@ def set_body_config(solver_position_iterations: int = 10, solver_velocity_iterat
 @typing.overload
 def set_body_config(config: PhysxBodyConfig) -> None:
     ...
+def set_body_cmass_local_poses(bodies: list[PhysxRigidBodyComponent], poses: numpy.ndarray[tuple[M, typing.Literal[7]], numpy.dtype[numpy.float32]] | list | tuple) -> None:
+    """
+    Batch-set the center-of-mass local pose of rigid dynamic bodies or articulation
+    links, primarily for reset-time domain randomization. Each row of poses is
+    [x, y, z, qw, qx, qy, qz] in the body frame; quaternions are normalized before
+    being applied.
+    On PhysxGpuSystem this may be called any time after gpu_init() as long as no step is
+    in flight; PhysX uploads the new mass properties to the GPU during the next step
+    without disturbing GPU-side poses, velocities, or joint states.
+    """
+def set_body_inertias(bodies: list[PhysxRigidBodyComponent], inertias: numpy.ndarray[tuple[M, typing.Literal[3]], numpy.dtype[numpy.float32]] | list | tuple) -> None:
+    """
+    Batch-set the diagonal inertia (in the center-of-mass frame) of rigid dynamic bodies
+    or articulation links, primarily for reset-time domain randomization.
+    On PhysxGpuSystem this may be called any time after gpu_init() as long as no step is
+    in flight; PhysX uploads the new mass properties to the GPU during the next step
+    without disturbing GPU-side poses, velocities, or joint states.
+    """
+def set_body_masses(bodies: list[PhysxRigidBodyComponent], masses: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]] | list | tuple, scale_inertia: bool = True) -> None:
+    """
+    Batch-set the mass of rigid dynamic bodies or articulation links, primarily for
+    reset-time domain randomization. When scale_inertia is true (default), each body's
+    diagonal inertia is scaled by new_mass / old_mass and the center-of-mass pose is kept.
+    On PhysxGpuSystem this may be called any time after gpu_init() as long as no step is
+    in flight; PhysX uploads the new mass properties to the GPU during the next step
+    without disturbing GPU-side poses, velocities, or joint states.
+    """
 def set_default_material(static_friction: float, dynamic_friction: float, restitution: float) -> None:
     ...
 def set_gpu_memory_config(temp_buffer_capacity: int = 16777216, max_rigid_contact_count: int = 524288, max_rigid_patch_count: int = 81920, heap_capacity: int = 67108864, found_lost_pairs_capacity: int = 262144, found_lost_aggregate_pairs_capacity: int = 1024, total_aggregate_pairs_capacity: int = 1024) -> None:
     ...
+def set_joint_armatures(joints: list[PhysxArticulationJoint], armatures: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]] | list | tuple) -> None:
+    """
+    Batch-set the armature of articulation joints, primarily for reset-time domain
+    randomization. Every joint must have at least 1 DOF; the value of a joint applies
+    to all of its DOFs.
+    On PhysxGpuSystem this may be called any time after gpu_init() as long as no step is
+    in flight; PhysX uploads the new joint properties to the GPU during the next step
+    without disturbing GPU-side poses, velocities, or joint states.
+    """
+def set_joint_drive_properties(joints: list[PhysxArticulationJoint], stiffness: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]] | list | tuple | None = None, damping: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]] | list | tuple | None = None, force_limit: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]] | list | tuple | None = None) -> None:
+    """
+    Batch-set drive stiffness, damping, and force limit of articulation joints, primarily
+    for reset-time domain randomization. Omitted (None) fields keep their current values;
+    the drive type of each joint is always preserved. Every joint must have at least 1 DOF.
+    On PhysxGpuSystem this may be called any time after gpu_init() as long as no step is
+    in flight; PhysX uploads the new drive properties to the GPU during the next step
+    without disturbing GPU-side poses, velocities, or joint states.
+    """
+def set_joint_frictions(joints: list[PhysxArticulationJoint], frictions: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]] | list | tuple) -> None:
+    """
+    Batch-set the friction coefficient of articulation joints, primarily for reset-time
+    domain randomization. Every joint must have at least 1 DOF.
+    On PhysxGpuSystem this may be called any time after gpu_init() as long as no step is
+    in flight; PhysX uploads the new joint properties to the GPU during the next step
+    without disturbing GPU-side poses, velocities, or joint states.
+    """
+def set_material_properties(materials: list[PhysxMaterial], static_friction: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]] | list | tuple | None = None, dynamic_friction: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]] | list | tuple | None = None, restitution: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]] | list | tuple | None = None) -> None:
+    """
+    Batch-set static friction, dynamic friction, and restitution of physical materials,
+    primarily for reset-time domain randomization. Omitted (None) fields keep their
+    current values. Materials are shared objects: changing a material affects every
+    collision shape bound to it, so per-env randomization requires per-env materials.
+    On PhysxGpuSystem this may be called any time after gpu_init() as long as no step is
+    in flight; PhysX uploads the new material values to the GPU during the next step
+    without disturbing GPU-side simulation state.
+    """
 @typing.overload
 def set_scene_config(gravity: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]] = ..., bounce_threshold: float = 2.0, enable_pcm: bool = True, enable_tgs: bool = True, enable_ccd: bool = False, enable_enhanced_determinism: bool = False, enable_friction_every_iteration: bool = True, friction_offset_threshold:float = 0.04, friction_correlation_distance:float = 0.025, cpu_workers: int = 0) -> None:
     ...

@@ -3,6 +3,7 @@
 #include "articulation.h"
 #include "articulation_link_component.h"
 #include "base_component.h"
+#include "batched_properties.h"
 #include "collision_shape.h"
 #include "joint_component.h"
 #include "material.h"
