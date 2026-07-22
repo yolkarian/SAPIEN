@@ -20,13 +20,21 @@ static void checkSize(char const *what, size_t expected, Eigen::Index actual) {
   }
 }
 
+static void checkBody(std::shared_ptr<PhysxRigidBodyComponent> const &body, size_t i) {
+  if (!body) {
+    throw std::runtime_error("bodies[" + std::to_string(i) + "] is None");
+  }
+  if (!body->getPxActor()) {
+    throw std::runtime_error("bodies[" + std::to_string(i) +
+                             "] has no PhysX actor; it has been destroyed");
+  }
+}
+
 void batchSetBodyMasses(std::vector<std::shared_ptr<PhysxRigidBodyComponent>> const &bodies,
                         Eigen::VectorXf const &masses, bool scaleInertia) {
   checkSize("masses", bodies.size(), masses.size());
   for (size_t i = 0; i < bodies.size(); ++i) {
-    if (!bodies[i]) {
-      throw std::runtime_error("bodies[" + std::to_string(i) + "] is None");
-    }
+    checkBody(bodies[i], i);
     float mass = masses(static_cast<Eigen::Index>(i));
     if (!std::isfinite(mass) || mass <= 0.f) {
       throw std::runtime_error("masses[" + std::to_string(i) + "] must be finite and positive");
@@ -57,6 +65,18 @@ static void checkDrivableJoint(std::shared_ptr<PhysxArticulationJoint> const &jo
   if (joint->getDof() == 0) {
     throw std::runtime_error("joints[" + std::to_string(i) +
                              "] has 0 DOF; only joints with at least 1 DOF are supported");
+  }
+  // reject joints whose articulation has been destroyed while Python still holds the
+  // handle; getDof() alone cannot detect this because the axes are cached
+  std::shared_ptr<PhysxArticulationLinkComponent> link;
+  try {
+    link = joint->getChildLink();
+  } catch (std::runtime_error const &) {
+    link = nullptr;
+  }
+  if (!link || !link->getPxActor() || !link->getPxActor()->getInboundJoint()) {
+    throw std::runtime_error("joints[" + std::to_string(i) +
+                             "] belongs to a destroyed articulation");
   }
 }
 
@@ -132,9 +152,7 @@ void batchSetBodyInertias(
     Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> const &inertias) {
   checkSize("inertias", bodies.size(), inertias.rows());
   for (size_t i = 0; i < bodies.size(); ++i) {
-    if (!bodies[i]) {
-      throw std::runtime_error("bodies[" + std::to_string(i) + "] is None");
-    }
+    checkBody(bodies[i], i);
     auto idx = static_cast<Eigen::Index>(i);
     for (Eigen::Index c = 0; c < 3; ++c) {
       if (!std::isfinite(inertias(idx, c)) || inertias(idx, c) <= 0.f) {
@@ -154,26 +172,25 @@ void batchSetBodyCMassLocalPoses(
     Eigen::Matrix<float, Eigen::Dynamic, 7, Eigen::RowMajor> const &poses) {
   checkSize("poses", bodies.size(), poses.rows());
   for (size_t i = 0; i < bodies.size(); ++i) {
-    if (!bodies[i]) {
-      throw std::runtime_error("bodies[" + std::to_string(i) + "] is None");
-    }
+    checkBody(bodies[i], i);
     auto idx = static_cast<Eigen::Index>(i);
     for (Eigen::Index c = 0; c < 7; ++c) {
       if (!std::isfinite(poses(idx, c))) {
         throw std::runtime_error("poses[" + std::to_string(i) + "] must be finite");
       }
     }
-    float norm = poses.row(idx).tail<4>().norm();
-    if (norm < 1e-6f) {
+    // compute the norm in double so large finite float components cannot overflow to inf
+    double norm = poses.row(idx).tail<4>().cast<double>().norm();
+    if (norm < 1e-6) {
       throw std::runtime_error("poses[" + std::to_string(i) +
                                "] quaternion [qw, qx, qy, qz] must have non-zero norm");
     }
   }
   for (size_t i = 0; i < bodies.size(); ++i) {
     auto idx = static_cast<Eigen::Index>(i);
-    float norm = poses.row(idx).tail<4>().norm();
-    Quat q{poses(idx, 3) / norm, poses(idx, 4) / norm, poses(idx, 5) / norm,
-           poses(idx, 6) / norm};
+    double norm = poses.row(idx).tail<4>().cast<double>().norm();
+    Quat q{static_cast<float>(poses(idx, 3) / norm), static_cast<float>(poses(idx, 4) / norm),
+           static_cast<float>(poses(idx, 5) / norm), static_cast<float>(poses(idx, 6) / norm)};
     bodies[i]->setCMassLocalPose(Pose({poses(idx, 0), poses(idx, 1), poses(idx, 2)}, q));
   }
 }

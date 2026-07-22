@@ -1,3 +1,4 @@
+import gc
 import unittest
 
 import numpy as np
@@ -214,6 +215,15 @@ class TestBatchedProperties(unittest.TestCase):
                 links, np.zeros((1, 7), dtype=np.float32)
             )
 
+        # very large finite quaternion components must not overflow during normalization
+        big = np.array([[0.0, 0.0, 0.0, 3e30, 0.0, 0.0, 0.0]], dtype=np.float32)
+        sapien.physx.set_body_cmass_local_poses([links[0]], big)
+        q = np.array(links[0].cmass_local_pose.q)
+        self.assertTrue(np.all(np.isfinite(q)))
+        self.assertTrue(
+            np.allclose(q, [1, 0, 0, 0], atol=1e-5) or np.allclose(q, [-1, 0, 0, 0], atol=1e-5)
+        )
+
     def test_set_joint_armatures(self):
         scene = sapien.Scene()
         art = build_slider(scene)
@@ -263,19 +273,51 @@ class TestBatchedProperties(unittest.TestCase):
                 materials, static_friction=np.array([0.1], dtype=np.float32)
             )
 
+    def test_destroyed_articulation_rejected_atomically(self):
+        scene0 = sapien.Scene()
+        art0 = build_slider(scene0)
+        alive = art0.get_active_joints()[0]
+        alive.set_drive_properties(stiffness=10.0, damping=1.0, force_limit=5.0)
+        alive.friction = 0.05
+        armature_before = np.array(alive.armature)
 
-def _gpu_available() -> bool:
+        scene1 = sapien.Scene()
+        art1 = build_slider(scene1)
+        dead = art1.get_active_joints()[0]
+        del art1, scene1
+        gc.collect()
+
+        # the dead joint still reports a nonzero cached DOF; validation must reject it
+        # before mutating any earlier entry in the batch
+        with self.assertRaises(RuntimeError):
+            sapien.physx.set_joint_frictions(
+                [alive, dead], np.array([0.7, 0.7], dtype=np.float32)
+            )
+        with self.assertRaises(RuntimeError):
+            sapien.physx.set_joint_drive_properties(
+                [alive, dead], stiffness=np.array([99.0, 99.0], dtype=np.float32)
+            )
+        with self.assertRaises(RuntimeError):
+            sapien.physx.set_joint_armatures(
+                [alive, dead], np.array([0.3, 0.3], dtype=np.float32)
+            )
+
+        # the alive joint placed before the dead one must be untouched
+        self.assertAlmostEqual(alive.friction, 0.05, places=5)
+        self.assertAlmostEqual(alive.stiffness, 10.0, places=5)
+        np.testing.assert_allclose(np.array(alive.armature), armature_before, atol=1e-6)
+
+
+def _cuda_device_available() -> bool:
+    """Skip only on identifiable no-GPU conditions (missing driver or no CUDA device);
+    any other GPU initialization failure must propagate as a test error."""
+    import ctypes
+
     try:
-        import ctypes
-
-        ctypes.CDLL("libcuda.so")
+        lib = ctypes.CDLL("libcuda.so")
     except OSError:
         return False
-    try:
-        sapien.physx.enable_gpu()
-        return True
-    except Exception:
-        return False
+    return lib.cuInit(0) == 0  # nonzero includes CUDA_ERROR_NO_DEVICE
 
 
 class TestBatchedPropertiesGpu(unittest.TestCase):
@@ -284,8 +326,13 @@ class TestBatchedPropertiesGpu(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        if not _gpu_available():
-            raise unittest.SkipTest("PhysX GPU not available")
+        if not _cuda_device_available():
+            raise unittest.SkipTest("no usable CUDA device")
+        # release scenes leaked by earlier CPU tests; a live scene keeps the PhysxEngine
+        # singleton alive and enable_gpu() refuses to run with an existing engine
+        gc.collect()
+        # deliberately unguarded: enable_gpu() failures are real errors, not skips
+        sapien.physx.enable_gpu()
 
     def _build_pair(self):
         px = sapien.physx.PhysxGpuSystem()
