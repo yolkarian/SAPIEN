@@ -12,10 +12,10 @@ release workflow.
 
 ## Managed files
 
-Paths below are relative to this skill directory:
+Paths below are relative to the repository root:
 
-- `../../../.github/workflows/build-tagged-release.yml`: workflow dispatched by `gh`.
-- `../../../CHANGELOG.md`: manually maintained project changelog.
+- `.github/workflows/build-tagged-release.yml`: workflow dispatched by `gh`.
+- `CHANGELOG.md`: manually maintained project changelog.
 
 Run shell commands from the repository root unless a command says otherwise.
 
