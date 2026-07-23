@@ -113,10 +113,18 @@ PhysxEngine::PhysxEngine(float toleranceLength, float toleranceSpeed) {
   }
 
   cudaContextManagerDesc.ctx = &context;
-  mCudaContextManagers[cudaId] =
+  auto manager =
       PxCreateCudaContextManager(*mPxFoundation, cudaContextManagerDesc, PxGetProfilerCallback());
+  if (!manager || !manager->contextIsValid()) {
+    if (manager) {
+      manager->release();
+    }
+    throw std::runtime_error("failed to create PhysX CUDA context manager on cuda:" +
+                             std::to_string(cudaId));
+  }
+  mCudaContextManagers[cudaId] = manager;
 
-  return mCudaContextManagers[cudaId];
+  return manager;
 #else
   return nullptr;
 #endif

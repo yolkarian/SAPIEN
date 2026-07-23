@@ -17,6 +17,7 @@
 #include "./physx_system.cuh"
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <cudamanager/PxCudaContext.h>
 #endif
 
 using namespace physx;
@@ -73,6 +74,12 @@ PhysxSystemCpu::PhysxSystemCpu() {
   }
   sceneDesc.cpuDispatcher = mPxCPUDispatcher;
   mPxScene = mEngine->getPxPhysics()->createScene(sceneDesc);
+  if (!mPxScene) {
+    mPxCPUDispatcher->release();
+    mPxCPUDispatcher = nullptr;
+    throw std::runtime_error(
+        "PhysX system creation failed: failed to create PhysX scene (see PhysX errors above)");
+  }
   mPxScene->setSimulationEventCallback(&mSimulationCallback);
 }
 
@@ -167,6 +174,23 @@ PhysxSystemGpu::PhysxSystemGpu(std::shared_ptr<Device> device) {
   }
   sceneDesc.cpuDispatcher = mPxCPUDispatcher;
   mPxScene = mEngine->getPxPhysics()->createScene(sceneDesc);
+  if (!mPxScene) {
+    mPxCPUDispatcher->release();
+    mPxCPUDispatcher = nullptr;
+    // A failed GPU allocation during scene creation latches the shared PxCudaContext into
+    // abort mode ("out-of-memory state"), which would freeze simulate() for every other GPU
+    // scene on this device. Clear it so already-running systems keep stepping.
+    if (auto *manager = sceneDesc.cudaContextManager) {
+      if (auto *context = manager->getCudaContext(); context && context->isInAbortMode()) {
+        context->setAbortMode(false);
+      }
+    }
+    throw std::runtime_error(
+        "PhysX GPU system creation failed: failed to create PhysX scene on cuda:" +
+        std::to_string(device->cudaId) +
+        ". This usually means the GPU is out of memory: PhysX eagerly allocates the GPU heaps "
+        "configured by sapien.physx.set_gpu_memory_config() when the scene is created.");
+  }
 }
 #else
 PhysxSystemGpu::PhysxSystemGpu(std::shared_ptr<Device> device) {
