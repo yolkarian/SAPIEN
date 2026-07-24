@@ -573,6 +573,13 @@ void init_sapien_renderer(py::module &sapien) {
            py::arg("picture_names"))
       .def("set_cuda_stream", &BatchedRenderSystem::setCudaStream, py::arg("stream"))
       .def("set_cuda_poses", &BatchedRenderSystem::setPoseSource, py::arg("pose_buffer"))
+      .def("gpu_init", &BatchedRenderSystem::gpuInit,
+           R"doc(
+One-time initialization and seal. Validates referenced PhysX GPU systems, resolves mounted camera
+bindings and output render scenes, prepares resources, takes the one-time CPU snapshots, seals
+transform ownership, and freezes topology. Configure create_camera_group() and, when GPU objects
+or mounted cameras exist, set_cuda_poses() before calling; afterwards the steady state is
+update_render() plus capture only.)doc")
       .def("update_render", &BatchedRenderSystem::update,
            R"doc(
 This function performs CUDA operations to transfer poses from the CUDA buffer provided by :func:`set_cuda_poses` into render systems.
@@ -582,7 +589,22 @@ This function waits for any pending CUDA operations on cuda stream provided by :
 )doc");
 
   PyCameraGroup.def("take_picture", &BatchedCamera::takePicture)
-      .def("get_picture_cuda", &BatchedCamera::getPictureCuda, py::arg("name"));
+      .def("get_picture_cuda", &BatchedCamera::getPictureCuda, py::arg("name"))
+      .def_property_readonly("cuda_free_camera_poses", &BatchedCamera::getFreeCameraPoseHandle,
+                             R"doc(
+CUDA buffer of world pose rows [px, py, pz, qw, qx, qy, qz] for the group-owned free cameras
+(cameras without a GPU pose batch index). Rows are seeded once from the CPU pose at group
+creation; write rows on the GPU (or copy explicitly) before update_render().)doc")
+      .def("get_free_camera_cuda_pose_index", &BatchedCamera::getFreeCameraPoseIndex,
+           py::arg("camera"),
+           R"doc(
+Row index of a free camera in cuda_free_camera_poses. Raises for mounted cameras, whose pose is
+derived from their GPU parent body/link.)doc")
+      .def("set_free_camera_pose", &BatchedCamera::setFreeCameraPose, py::arg("camera"),
+           py::arg("pose"),
+           R"doc(
+Explicitly copy one CPU-authored world pose into a free camera's CUDA pose row. Equivalent to
+writing the row of cuda_free_camera_poses directly; takes effect at the next update_render().)doc");
 
   PyRenderSystem
       .def(py::init([](std::shared_ptr<Device> device) {

@@ -175,12 +175,17 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 - Use: Batched camera group; take/read CUDA for multiple cameras at once.
 - Bases: `-`
+- Ownership: each camera may belong to only one camera group. `RenderSystemGroup.gpu_init()` validates referenced PhysX GPU systems, resolves final mounted-camera indices, and seals every member camera transform for GPU ownership. Mounted cameras follow their PhysX parent pose row; free cameras get a group-owned CUDA pose row seeded from the CPU pose. CPU pose/configuration setters raise while sealed; destroying a camera group releases its camera ownership, while scene transform buffers remain protected from CPU uploads until their last live camera group is released. Explicit `sync_poses_gpu_to_cpu()` debugging may update a mounted camera's parent CPU pose without violating the seal because its render pose remains GPU-owned.
+- Lifecycle: `RenderSystemGroup` retains every camera group it creates. Never recreate groups per frame to move a free camera; write its CUDA pose row instead (see `../gpu-workflows.md`).
 
 ### Methods/properties
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
+| `cuda_free_camera_poses` | property | `cuda_free_camera_poses(self) -> sapien.CudaArray` | World pose rows `[px, py, pz, qw, qx, qy, qz]` of the group's free cameras. | Write rows on GPU (torch) or via `set_free_camera_pose`; consumed by the next `update_render()`. |
+| `get_free_camera_cuda_pose_index` | method | `get_free_camera_cuda_pose_index(self, camera: RenderCameraComponent) -> int` | Row index of a free camera. | Raises for mounted cameras; their pose derives from the GPU parent. |
 | `get_picture_cuda` | method | `get_picture_cuda(self, name: str) -> sapien.CudaArray` | Read CUDA image buffer; avoids CPU copy. | Direct GPU render path; no sync_poses_gpu_to_cpu needed. |
+| `set_free_camera_pose` | method | `set_free_camera_pose(self, camera: RenderCameraComponent, pose: sapien.Pose) -> None` | Explicit host-to-device copy of one CPU-authored camera pose into its CUDA row. | Takes effect at the next `update_render()`. |
 | `take_picture` | method | `take_picture(self) -> None` | Trigger camera/camera-group rendering. |  |
 
 ## `sapien.render.RenderCubemap`
@@ -629,6 +634,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 - Use: Batched render group over multiple RenderSystems; can bind CUDA poses.
 - Bases: `-`
+- Lifecycle note: construct, optionally `set_cuda_poses()` when GPU objects or mounted cameras exist, create every camera group, then call `gpu_init()` once. Initialization validates referenced PhysX GPU systems, resolves final mounted-camera indices and output scenes, prepares resources, snapshots static state, and seals ownership. Afterwards `update_render()` owns every grouped transform; `scene.update_render()` is not part of grouped capture, and steady-state calls before `gpu_init()` raise.
 
 ### Methods/properties
 
@@ -636,6 +642,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 |---|---|---|---|---|
 | `create_camera_group` | method | `create_camera_group(self, cameras: list[RenderCameraComponent], picture_names: list[str]) -> RenderCameraGroup` | Create a batched camera group. |  |
 | `set_cuda_poses` | method | `set_cuda_poses(self, pose_buffer: sapien.CudaArray) -> None` | Bind a RenderSystemGroup to a PhysX CUDA pose buffer. | Direct GPU render path; no sync_poses_gpu_to_cpu needed. |
+| `gpu_init` | method | `gpu_init(self) -> None` | One-time initialization and seal; call after `set_cuda_poses` and `create_camera_group`. | Prepares resources, seeds CPU snapshots and free-camera rows, seals ownership, freezes topology. |
 | `set_cuda_stream` | method | `set_cuda_stream(self, stream: int) -> None` |  |  |
 | `update_render` | method | `update_render(self) -> None` | This function performs CUDA operations to transfer poses from the CUDA buffer provided by :func:`set_cuda_poses` into render systems. It updates the transformation mat... | GPU PhysX dynamic bodies read CPU poses; prefer the CUDA pose path for offscreen. |
 | `__init__` | method | `__init__(self, systems: list[RenderSystem]) -> None` |  |  |

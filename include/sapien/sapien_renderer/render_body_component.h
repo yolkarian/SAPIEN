@@ -33,6 +33,12 @@ public:
   void internalAcquireGpuPoseSource();
   void internalReleaseGpuPoseSource();
 
+  // Static-snapshot seal: a RenderSystemGroup copied this body's CPU pose into
+  // the GPU transform buffer once at gpu_init(); later CPU pose changes would
+  // silently diverge from the rendered image and are therefore errors.
+  void internalSealStaticPose();
+  void internalReleaseStaticPoseSeal();
+
   svulkan2::scene::Node *internalGetNode() const { return mNode; }
 
   void setVisibility(float v);
@@ -69,6 +75,8 @@ private:
 
   bool mRenderIdDisabled{false};
   uint32_t mGpuPoseSourceRefCount{0};
+  uint32_t mStaticPoseSealCount{0};
+  Pose mSealedStaticPose;
 };
 
 } // namespace sapien_renderer

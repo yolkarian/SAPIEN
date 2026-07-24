@@ -427,6 +427,9 @@ void SapienRendererWindow::rebuildPoseTransport() {
                                                               gpuSourcedBodies);
     renderSystem->setCudaStream(mPhysxGpuSystem->gpuGetCudaStream());
     renderSystem->setPoseSource(mPhysxGpuSystem->gpuGetRigidBodyCudaHandle());
+    // The Viewer's fixed-scene group is CPU-managed for its helper visuals; explicit
+    // initialization still freezes topology and prepares the transport.
+    renderSystem->gpuInit();
     mPoseTransportImpl = std::make_unique<DirectViewerPoseTransport>(mPhysxGpuSystem,
                                                                      std::move(renderSystem));
   } else {

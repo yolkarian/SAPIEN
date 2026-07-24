@@ -199,10 +199,27 @@ class RenderCameraComponent(sapien.pysapien.Component):
     def width(self) -> int:
         ...
 class RenderCameraGroup:
+    def get_free_camera_cuda_pose_index(self, camera: RenderCameraComponent) -> int:
+        """
+        Row index of a free camera in cuda_free_camera_poses. Raises for mounted cameras, whose pose is
+        derived from their GPU parent body/link.
+        """
     def get_picture_cuda(self, name: str) -> sapien.pysapien.CudaArray:
         ...
+    def set_free_camera_pose(self, camera: RenderCameraComponent, pose: sapien.pysapien.Pose) -> None:
+        """
+        Explicitly copy one CPU-authored world pose into a free camera's CUDA pose row. Equivalent to
+        writing the row of cuda_free_camera_poses directly; takes effect at the next update_render().
+        """
     def take_picture(self) -> None:
         ...
+    @property
+    def cuda_free_camera_poses(self) -> sapien.pysapien.CudaArray:
+        """
+        CUDA buffer of world pose rows [px, py, pz, qw, qx, qy, qz] for the group-owned free cameras
+        (cameras without a GPU pose batch index). Rows are seeded once from the CPU pose at group
+        creation; write rows on the GPU (or copy explicitly) before update_render().
+        """
 class RenderCubemap:
     @typing.overload
     def __init__(self, filename: str) -> None:
@@ -664,6 +681,14 @@ class RenderSystemGroup:
         ...
     def create_camera_group(self, cameras: list[RenderCameraComponent], picture_names: list[str]) -> RenderCameraGroup:
         ...
+    def gpu_init(self) -> None:
+        """
+        One-time initialization and seal. Validates referenced PhysX GPU systems, resolves mounted
+        camera bindings and output render scenes, prepares camera resources, takes the one-time CPU
+        snapshots, seals transform ownership, and freezes topology. Configure create_camera_group()
+        and, when GPU objects or mounted cameras exist, set_cuda_poses() before calling; afterwards
+        the steady state is update_render() plus capture only.
+        """
     def set_cuda_poses(self, pose_buffer: sapien.pysapien.CudaArray) -> None:
         ...
     def set_cuda_stream(self, stream: int) -> None:

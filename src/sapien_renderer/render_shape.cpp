@@ -325,8 +325,21 @@ AABB RenderShape::getGlobalAABBFast() {
 }
 AABB RenderShape::computeGlobalAABBTight() { return getGlobalAABBFast(); }
 
-void RenderShape::setGpuBatchedPoseIndex(int index) { mBatchedPoseIndex = index; }
+void RenderShape::setGpuBatchedPoseIndex(int index) {
+  if (mBatchedPoseIndexSealCount > 0) {
+    throw std::runtime_error(
+        "failed to set GPU pose batch index: the shape is sealed by a render system group");
+  }
+  mBatchedPoseIndex = index;
+}
 int RenderShape::getGpuBatchedPoseIndex() const { return mBatchedPoseIndex; }
+void RenderShape::internalSealGpuBatchedPoseIndex() { ++mBatchedPoseIndexSealCount; }
+void RenderShape::internalReleaseGpuBatchedPoseIndexSeal() {
+  if (mBatchedPoseIndexSealCount == 0) {
+    throw std::runtime_error("GPU pose batch index seal count is already zero");
+  }
+  --mBatchedPoseIndexSealCount;
+}
 
 AABB RenderShapePlane::getLocalAABB() {
   Vec3 h = getScale();

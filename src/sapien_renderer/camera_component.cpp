@@ -27,6 +27,9 @@ struct SapienRenderCameraInternal {
   uint32_t mHeight;
   std::shared_ptr<SapienRenderEngine> mEngine;
   std::shared_ptr<svulkan2::scene::Scene> mScene;
+  // the scene currently assigned to mRenderer; may be a resolved render scene
+  // group different from mScene
+  std::shared_ptr<svulkan2::scene::Scene> mRendererScene;
   vk::UniqueSemaphore mSemaphore;
   uint64_t mFrameCounter{0};
   std::unique_ptr<svulkan2::renderer::RendererBase> mRenderer;
@@ -78,6 +81,7 @@ struct SapienRenderCameraInternal {
     mRenderer->resize(width, height);
     mCamera = &scene->addCamera();
     mRenderer->setScene(scene);
+    mRendererScene = scene;
 
     if (auto rtRenderer = dynamic_cast<svulkan2::renderer::RTRenderer *>(mRenderer.get())) {
       rtRenderer->setCustomProperty("spp", renderConfig.rayTracingSamplesPerPixel);
@@ -216,21 +220,6 @@ SapienRenderCameraComponent::SapienRenderCameraComponent(uint32_t width, uint32_
   mShaderDir = shaderDir;
 }
 
-void SapienRenderCameraComponent::setAutoUpload(bool enable) {
-  auto scene = getScene();
-  if (!scene) {
-    throw std::runtime_error("The camera needs to be added to scene.");
-  }
-
-  auto system = scene->getSapienRendererSystem();
-  if (auto r = dynamic_cast<svulkan2::renderer::Renderer *>(&mCamera->getRenderer())) {
-    r->setAutoUploadEnabled(enable);
-  } else if (auto r =
-                 dynamic_cast<svulkan2::renderer::RTRenderer *>(&mCamera->getRenderer())) {
-    r->setAutoUploadEnabled(enable);
-  }
-}
-
 void SapienRenderCameraComponent::internalSetRenderScene(
     std::shared_ptr<svulkan2::scene::Scene> scene,
     std::vector<std::shared_ptr<SapienRendererSystem>> const &resolvedSystems) {
@@ -240,7 +229,15 @@ void SapienRenderCameraComponent::internalSetRenderScene(
   if (!scene) {
     throw std::runtime_error("failed to set camera render scene: scene is null");
   }
-  mCamera->mRenderer->setScene(scene);
+  // Re-assigning the same scene must be a no-op: Renderer::setScene()
+  // unconditionally schedules a full pipeline rebuild, which recreates render
+  // targets and re-runs the record-time resource upload. BatchedRenderSystem
+  // re-resolves camera render scenes on every update, so without this guard
+  // every frame pays a pipeline rebuild.
+  if (mCamera->mRendererScene != scene) {
+    mCamera->mRenderer->setScene(scene);
+    mCamera->mRendererScene = scene;
+  }
   if (!resolvedSystems.empty()) {
     mResolvedRenderSystems = resolvedSystems;
     mResolvedRenderSceneVersions.clear();
@@ -264,6 +261,14 @@ svulkan2::renderer::RendererBase &SapienRenderCameraComponent::getInternalRender
 
 svulkan2::scene::Camera &SapienRenderCameraComponent::getInternalCamera() {
   return mCamera->getCamera();
+}
+
+std::shared_ptr<svulkan2::scene::Scene>
+SapienRenderCameraComponent::getInternalRenderScene() {
+  if (!mCamera) {
+    throw std::runtime_error("failed to get camera render scene: camera is not added to scene");
+  }
+  return mCamera->mRendererScene;
 }
 
 void SapienRenderCameraComponent::onAddToScene(Scene &scene) {
@@ -321,6 +326,12 @@ void SapienRenderCameraComponent::refreshRenderScene() {
   if (!mCamera) {
     return;
   }
+  // A camera sealed by a RenderCameraGroup keeps the render scene its group
+  // resolved and sealed; re-resolving here could hijack the renderer onto a
+  // fresh, unseeded scene group.
+  if (mGpuOwnershipSealed) {
+    return;
+  }
   auto systems = internalResolveRenderSystems(SapienRenderEngine::Get()->getRenderSystems());
   bool rebuild = systems != mResolvedRenderSystems;
   if (!rebuild && systems.size() == mResolvedRenderSceneVersions.size()) {
@@ -345,6 +356,7 @@ void SapienRenderCameraComponent::refreshRenderScene() {
 }
 
 void SapienRenderCameraComponent::setScenes(std::vector<std::shared_ptr<Scene>> const &scenes) {
+  checkGpuOwnershipMutable("set camera scenes");
   mHasSceneSelectionOverride = true;
   mSelectedScenes.clear();
   for (auto const &scene : scenes) {
@@ -443,6 +455,7 @@ Mat34 SapienRenderCameraComponent::getExtrinsicMatrix() const {
 void SapienRenderCameraComponent::setPerspectiveParameters(float near, float far, float fx,
                                                            float fy, float cx, float cy,
                                                            float skew) {
+  checkGpuOwnershipMutable("set perspective parameters");
   mMode = CameraMode::ePerspective;
   mNear = near;
   mFar = far;
@@ -464,6 +477,7 @@ void SapienRenderCameraComponent::setOrthographicParameters(float near, float fa
 
 void SapienRenderCameraComponent::setOrthographicParameters(float near, float far, float left,
                                                             float right, float bottom, float top) {
+  checkGpuOwnershipMutable("set orthographic parameters");
   mMode = CameraMode::eOrthographic;
   mNear = near;
   mFar = far;
@@ -516,13 +530,86 @@ void SapienRenderCameraComponent::setSkew(float s) {
                            getPrincipalPointX(), getPrincipalPointY(), s);
 }
 
-void SapienRenderCameraComponent::setLocalPose(Pose const &pose) { mLocalPose = pose; }
+void SapienRenderCameraComponent::setLocalPose(Pose const &pose) {
+  if (mGpuOwnershipSealed) {
+    throw std::runtime_error(
+        "failed to set camera local pose: the camera transform is owned by a RenderCameraGroup. "
+        "Free cameras update through the group's CUDA pose row (RenderCameraGroup."
+        "set_free_camera_pose or cuda_free_camera_poses); mounted cameras follow their GPU "
+        "parent body with the local pose fixed at group creation.");
+  }
+  mLocalPose = pose;
+}
+
+void SapienRenderCameraComponent::checkGpuOwnershipMutable(char const *operation) const {
+  if (mGpuOwnershipSealed) {
+    throw std::runtime_error(std::string("failed to ") + operation +
+                             ": the camera is sealed by a RenderCameraGroup");
+  }
+}
+
+void SapienRenderCameraComponent::internalRegisterGpuOwnership(void const *owner) {
+  if (!owner) {
+    throw std::runtime_error("failed to register camera GPU ownership: owner is null");
+  }
+  if (mGpuOwnershipOwner) {
+    throw std::runtime_error(
+        "failed to create camera group: the camera already belongs to a RenderCameraGroup");
+  }
+  mGpuOwnershipOwner = owner;
+}
+
+void SapienRenderCameraComponent::internalSealGpuOwnership(void const *owner) {
+  if (mGpuOwnershipOwner != owner) {
+    throw std::runtime_error("failed to seal camera GPU ownership: owner mismatch");
+  }
+  if (mGpuOwnershipSealed) {
+    return;
+  }
+  mSealedCpuGlobalPose = getGlobalPose();
+  mGpuOwnershipSealed = true;
+}
+
+void SapienRenderCameraComponent::internalReleaseGpuOwnership(void const *owner) {
+  if (mGpuOwnershipOwner != owner) {
+    return;
+  }
+  if (mCamera) {
+    auto &renderer = mCamera->getRenderer();
+    renderer.setExecutionMode(svulkan2::renderer::RenderExecutionMode::eCpuManaged);
+    if (auto raster = dynamic_cast<svulkan2::renderer::Renderer *>(&renderer)) {
+      raster->setExternalTransformUpdatesEnabled(false);
+    } else if (auto rt = dynamic_cast<svulkan2::renderer::RTRenderer *>(&renderer)) {
+      rt->setExternalCameraUpdatesEnabled(false);
+      rt->setExternalTransformUpdatesEnabled(false);
+    }
+  }
+  mGpuOwnershipSealed = false;
+  mGpuOwnershipOwner = nullptr;
+}
+
 Pose SapienRenderCameraComponent::getLocalPose() const { return mLocalPose; }
 Pose SapienRenderCameraComponent::getGlobalPose() const { return getPose() * mLocalPose; }
 
 void SapienRenderCameraComponent::internalUpdate() {
+  Pose globalPose = getGlobalPose();
+  // A mounted/direct GPU camera derives its world pose from its CUDA pose row.
+  // sync_poses_gpu_to_cpu() may legitimately update its parent entity's CPU pose
+  // for debugging, so only free cameras enforce an unchanged CPU seed pose.
+  if (mGpuOwnershipSealed && mGpuPoseIndex < 0 &&
+      (globalPose.p.x != mSealedCpuGlobalPose.p.x ||
+       globalPose.p.y != mSealedCpuGlobalPose.p.y ||
+       globalPose.p.z != mSealedCpuGlobalPose.p.z ||
+       globalPose.q.w != mSealedCpuGlobalPose.q.w ||
+       globalPose.q.x != mSealedCpuGlobalPose.q.x ||
+       globalPose.q.y != mSealedCpuGlobalPose.q.y ||
+       globalPose.q.z != mSealedCpuGlobalPose.q.z)) {
+    throw std::runtime_error(
+        "failed to update camera: its CPU pose changed after RenderSystemGroup.gpu_init(); "
+        "write a free-camera CUDA pose row or move the mounted GPU parent instead");
+  }
   if (mCamera) {
-    auto pose = getGlobalPose() * POSE_GL_TO_ROS;
+    auto pose = globalPose * POSE_GL_TO_ROS;
     mCamera->mCamera->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                                     .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z}});
   }
@@ -541,22 +628,16 @@ void SapienRenderCameraComponent::checkMode(CameraMode mode) const {
 }
 
 void SapienRenderCameraComponent::gpuInit() {
-  if (mGpuInitialized) {
-    return;
-  }
-
   if (!mCamera) {
     throw std::runtime_error("failed to init: the camera is not added to scene.");
   }
 
-  setAutoUpload(true);
-  auto device = SapienRenderEngine::Get()->getContext()->getDevice();
-  auto fence = device.createFenceUnique({});
-  mCamera->getRenderer().render(mCamera->getCamera(), {}, {}, {}, fence.get());
-  if (device.waitForFences(fence.get(), true, UINT64_MAX) != vk::Result::eSuccess) {
-    throw std::runtime_error("failed to initialize camera: the camera failed to render");
-  }
-  setAutoUpload(false);
+  // Prepare pipelines, render targets, buffers, and recorded commands, then take
+  // the one-time CPU snapshot of camera/scene/light/object frame state. No warm-up
+  // render submission is required; the first capture executes the prepared commands.
+  auto &renderer = mCamera->getRenderer();
+  renderer.prepareResources(mCamera->getCamera());
+  renderer.uploadCpuFrameState(mCamera->getCamera());
   mGpuInitialized = true;
 }
 
@@ -578,8 +659,7 @@ CudaArrayHandle SapienRenderCameraComponent::getCudaBuffer() {
                  dynamic_cast<svulkan2::renderer::RTRenderer *>(&mCamera->getRenderer())) {
     if (!r->getExternalCameraUpdatesEnabled()) {
       throw std::runtime_error(
-          "RT camera CUDA buffer is only available for cameras with GPU pose batch indices in "
-          "a RenderSystemGroup");
+          "RT camera CUDA buffer is only available for cameras in a RenderCameraGroup");
     }
     buffer = &r->getCameraBuffer();
   } else {
@@ -599,7 +679,10 @@ CudaArrayHandle SapienRenderCameraComponent::getCudaBuffer() {
 #endif
 }
 
-void SapienRenderCameraComponent::setGpuBatchedPoseIndex(int index) { mGpuPoseIndex = index; }
+void SapienRenderCameraComponent::setGpuBatchedPoseIndex(int index) {
+  checkGpuOwnershipMutable("set GPU pose batch index");
+  mGpuPoseIndex = index;
+}
 int SapienRenderCameraComponent::getGpuBatchedPoseIndex() const { return mGpuPoseIndex; }
 
 SapienRenderCameraComponent::~SapienRenderCameraComponent() {}

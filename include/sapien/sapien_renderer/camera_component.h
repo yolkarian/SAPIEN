@@ -90,13 +90,20 @@ public:
   CudaArrayHandle getCudaBuffer();
   void setGpuBatchedPoseIndex(int);
   int getGpuBatchedPoseIndex() const;
-  void setAutoUpload(bool enable);
+  /** reserve this camera for exactly one RenderCameraGroup before GPU initialization */
+  void internalRegisterGpuOwnership(void const *owner);
+  /** seal the registered camera transform after its one-time CPU snapshot */
+  void internalSealGpuOwnership(void const *owner);
+  /** release the group's ownership and restore ordinary CPU-managed rendering */
+  void internalReleaseGpuOwnership(void const *owner);
+  bool isGpuOwnershipSealed() const { return mGpuOwnershipSealed; }
   void internalSetRenderScene(
       std::shared_ptr<svulkan2::scene::Scene> scene,
       std::vector<std::shared_ptr<SapienRendererSystem>> const &resolvedSystems = {});
   svulkan2::core::Image &getInternalImage(std::string const &name);
   svulkan2::renderer::RendererBase &getInternalRenderer();
   svulkan2::scene::Camera &getInternalCamera();
+  std::shared_ptr<svulkan2::scene::Scene> getInternalRenderScene();
 
   ~SapienRenderCameraComponent();
   SapienRenderCameraComponent(SapienRenderCameraComponent const &) = delete;
@@ -138,6 +145,13 @@ private:
   // this is set to true when GPU resources is available
   bool mGpuInitialized{false};
   int mGpuPoseIndex{-1};
+  // One camera may belong to exactly one RenderCameraGroup. Registration happens
+  // at camera-group creation; sealing happens at RenderSystemGroup.gpu_init().
+  void const *mGpuOwnershipOwner{};
+  bool mGpuOwnershipSealed{false};
+  Pose mSealedCpuGlobalPose;
+
+  void checkGpuOwnershipMutable(char const *operation) const;
 
   bool mHasSceneSelectionOverride{false};
   std::vector<std::weak_ptr<Scene>> mSelectedScenes;

@@ -170,6 +170,16 @@ void SapienRenderBodyComponent::internalUpdate() {
     return;
   }
   auto pose = getEntity()->getPose();
+  if (mStaticPoseSealCount > 0 &&
+      (pose.p.x != mSealedStaticPose.p.x || pose.p.y != mSealedStaticPose.p.y ||
+       pose.p.z != mSealedStaticPose.p.z || pose.q.w != mSealedStaticPose.q.w ||
+       pose.q.x != mSealedStaticPose.q.x || pose.q.y != mSealedStaticPose.q.y ||
+       pose.q.z != mSealedStaticPose.q.z)) {
+    throw std::runtime_error(
+        "failed to update render body: the body is a static snapshot sealed by a render system "
+        "group; its CPU pose was copied to the GPU once at gpu_init() and must not change. Bind "
+        "the body to a CUDA pose source or destroy the group before moving it.");
+  }
   mNode->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                        .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z},
                        .scale = mNode->getScale()});
@@ -182,6 +192,19 @@ void SapienRenderBodyComponent::internalReleaseGpuPoseSource() {
     throw std::runtime_error("GPU pose source reference count is already zero");
   }
   --mGpuPoseSourceRefCount;
+}
+
+void SapienRenderBodyComponent::internalSealStaticPose() {
+  if (mStaticPoseSealCount++ == 0) {
+    mSealedStaticPose = getEntity()->getPose();
+  }
+}
+
+void SapienRenderBodyComponent::internalReleaseStaticPoseSeal() {
+  if (mStaticPoseSealCount == 0) {
+    throw std::runtime_error("static pose seal count is already zero");
+  }
+  --mStaticPoseSealCount;
 }
 
 SapienRenderBodyComponent::~SapienRenderBodyComponent() {

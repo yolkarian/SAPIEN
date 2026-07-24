@@ -153,14 +153,22 @@ sapien.render.set_camera_shader_dir("rt")
 # automatically. Explicit pose indices remain available for custom pose buffers.
 
 group = sapien.render.RenderSystemGroup(render_systems)
-camera_group = group.create_camera_group([camera], ["Color"])
 group.set_cuda_poses(physx_system.cuda_rigid_body_data)
+camera_group = group.create_camera_group([camera], ["Color"])
+group.gpu_init()  # prepares resources, seeds CPU snapshots, seals transform ownership
 
 physx_system.gpu_fetch_rigid_dynamic_data()
 group.update_render()  # updates RT instance transforms and the TLAS
 camera_group.take_picture()
 color = camera_group.get_picture_cuda("Color")
 ```
+
+`RenderSystemGroup.gpu_init()` seals every member camera transform for GPU
+ownership. Mounted cameras follow their PhysX GPU parent pose row. Free cameras
+(no GPU pose batch index) receive a row in `camera_group.cuda_free_camera_poses`,
+seeded once from the CPU pose at `gpu_init()`; move them by writing that row
+(or `camera_group.set_free_camera_pose(camera, pose)`) before
+`group.update_render()`. `set_local_pose()` raises on sealed cameras.
 
 The interactive Viewer uses the same direct pose source when configured after
 PhysX GPU initialization:

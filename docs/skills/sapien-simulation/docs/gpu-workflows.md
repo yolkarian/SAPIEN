@@ -11,6 +11,7 @@
 - Read state only after the needed `gpu_fetch_*()` calls.
 - `PhysxGpuSystem.sync_poses_gpu_to_cpu()` downloads all GPU poses to CPU SAPIEN entities; use it only for explicit CPU-state debugging or the Viewer `cpu-debug` transport, never for normal Viewer rendering, training, reset, step, sensors, video, or offscreen capture.
 - For direct GPU camera/offscreen rendering, use GPU pose batch indices with `sapien.render.RenderSystemGroup.set_cuda_poses(physx_system.cuda_rigid_body_data)` and read images through `get_picture_cuda(...)` instead of syncing poses to CPU.
+- `RenderSystemGroup` follows an explicit lifecycle: construct, `set_cuda_poses(...)`, `create_camera_group(...)`, then one `gpu_init()` that resolves output render scenes (including batched-render-shared scenes such as a shared ground), prepares all resources, takes the one-time CPU snapshots, seeds free-camera pose rows, and seals transform ownership. `update_render()` then owns every grouped transform: GPU-sourced objects and mounted cameras update from the bound CUDA pose buffer, free cameras from group-owned CUDA pose rows (`RenderCameraGroup.cuda_free_camera_poses`), with prior Vulkan reads and CUDA writes ordered both ways on a timeline semaphore. After `gpu_init()`, `set_local_pose()` on member cameras raises, moving a CPU-owned static body raises at the next CPU scene update, and `scene.update_render()` plays no role in grouped capture. Never recreate a `RenderCameraGroup` per frame. One group update and one capture per frame shows the current camera and all GPU articulation-link poses on both raster and RT.
 - `RenderSystemGroup` supports both raster and `"rt"` camera shader packs. RT rigid-pose updates also update the TLAS and reset accumulation. SAPIEN has no deformable-body physics, but it does expose a render-only `RenderCudaMeshComponent`; supporting that component in batched RT additionally requires synchronized BLAS updates or rebuilds, shared-`SceneGroup` aggregation, and accumulation resets after vertex changes.
 - Cache `sapien.CudaArray.torch()` views once after `gpu_init()`; do not recreate them in loops.
 - Cache common GPU indices once after `gpu_init()`:
@@ -263,15 +264,32 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
   - Do not create `RenderSystem` or cameras for the other training envs.
 - Direct GPU camera/offscreen rendering, including one-scene capture:
   1. After `gpu_init()`, sibling PhysX GPU bodies/links are bound automatically. Use `set_gpu_pose_batch_index(...)` only for custom pose-buffer layouts.
-  2. For free/follow cameras, update their CPU pose explicitly before rendering.
-  3. Create `RenderSystemGroup([scene.get_render_system(), ...])` and `create_camera_group(cameras, picture_names)`.
-  4. Call `RenderSystemGroup.set_cuda_poses(physx_system.cuda_rigid_body_data)`.
-  5. After the required `gpu_fetch_*()` calls, call `RenderSystemGroup.update_render()`.
-  6. Call `RenderCameraGroup.take_picture()`.
-  7. Read frames with `RenderCameraGroup.get_picture_cuda(name)`; copy to CPU only if a video encoder or logger needs CPU arrays.
+  2. For free cameras created with `scene.add_camera(...)`, set the initial world transform in exactly one place before `gpu_init()`, usually `camera.set_local_pose(sapien.Pose(p=..., q=...))` while the owning entity remains identity. `gpu_init()` seeds the camera's CUDA pose row from this pose and seals the CPU pose afterwards.
+  3. Create one `RenderSystemGroup([scene.get_render_system(), ...])`, call `set_cuda_poses(physx_system.cuda_rigid_body_data)`, create every `RenderCameraGroup`, then call `render_system_group.gpu_init()` exactly once. Camera groups cannot be created after `gpu_init()`, and steady-state calls before it raise.
+  4. For a PhysX-mounted camera or another camera with a GPU pose batch index, after the required `gpu_fetch_*()` calls use `RenderSystemGroup.update_render()`, `RenderCameraGroup.take_picture()`, then `RenderCameraGroup.get_picture_cuda(name)`.
+  5. For a fixed or moving free camera (raster or RT), use this order every frame:
+     1. When the camera moves, write its world pose row `[px, py, pz, qw, qx, qy, qz]` in `camera_group.cuda_free_camera_poses` on the GPU, or copy one CPU-authored pose explicitly with `camera_group.set_free_camera_pose(camera, pose)`.
+     2. Call `render_system_group.update_render()`; it writes PhysX CUDA body poses and all grouped camera buffers with bidirectional Vulkan/CUDA semaphore ordering.
+     3. Run `camera.take_picture()` and keep `camera.get_picture_cuda(name)`, or capture through `camera_group.take_picture()`; both read the same GPU-owned transforms.
+  6. Copy only the kept CUDA image to CPU when a video encoder or logger requires it. This path does not call `sync_poses_gpu_to_cpu()`.
+
+  ```python
+  # One-time setup: resolve scenes, prepare resources, seed snapshots, seal ownership.
+  render_group = sapien.render.RenderSystemGroup([scene.get_render_system()])
+  render_group.set_cuda_poses(physx_system.cuda_rigid_body_data)
+  camera.set_local_pose(initial_pose)  # seeds the CUDA row at gpu_init()
+  camera_group = render_group.create_camera_group([camera], ["Color"])
+  render_group.gpu_init()
+
+  # Each free-camera frame: one pose-row write, one ordered update, one capture.
+  camera_group.set_free_camera_pose(camera, updated_pose)  # or write cuda_free_camera_poses
+  render_group.update_render()   # ordered CUDA body/link + camera update
+  camera.take_picture()
+  color_cuda = camera.get_picture_cuda("Color")
+  ```
 - CPU-pose render path:
-  - `scene.update_render()` / `RenderSystem.step()` and `RenderCameraComponent.get_picture(...)` read CPU SAPIEN entity poses. Under GPU PhysX these poses are stale unless `PhysxGpuSystem.sync_poses_gpu_to_cpu()` is called first.
-  - This path is acceptable for explicit CPU debugging or the Viewer `cpu-debug` transport only; do not use it for normal Viewer or offscreen video/camera capture.
+  - `scene.update_render()` / `RenderSystem.step()` alone leaves GPU PhysX bodies at stale CPU poses unless `PhysxGpuSystem.sync_poses_gpu_to_cpu()` is called.
+  - Grouped capture involves no CPU transform participation: GPU-sourced body poses and all grouped camera poses come only from `RenderSystemGroup.update_render()`; `scene.update_render()` serves CPU rendering and the Viewer, not grouped capture.
 - Viewer path:
   1. Call `gpu_init()` before Viewer submission. The Viewer auto-detects one unambiguous initialized `PhysxGpuSystem` in its resolved base plus shared scenes; use `Viewer.configure_physx_gpu_rendering(physx_system, transport="auto")` to choose explicitly.
   2. `"auto"` selects direct CUDA/Vulkan interop on a compatible same physical device and compact pinned-host staging on different devices. Both raster and RT Viewer shader paths are supported.
@@ -355,5 +373,10 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
 - Forgetting `wxyz` quaternion order.
 - Calling all apply functions in the normal step path and overwriting simulated state with stale buffers.
 - Calling `sync_poses_gpu_to_cpu()` for normal Viewer rendering, training, reset, step, eval video, sensors, or offscreen capture; it downloads all poses to CPU and should be reserved for explicit CPU debugging or Viewer `cpu-debug`.
-- Using `scene.update_render()` / `RenderSystem.step()` alone for GPU-PhysX camera capture; it reads CPU entity poses and will render stale dynamic bodies unless you first sync, so prefer `RenderSystemGroup` with CUDA pose buffers.
+- Using `scene.update_render()` / `RenderSystem.step()` alone for GPU-PhysX camera capture; it reads CPU entity poses and renders stale dynamic bodies.
+- Calling `set_local_pose()` on a camera in a `RenderCameraGroup`; `gpu_init()` seals camera transforms for GPU ownership and the setter raises. Write the group CUDA pose row instead.
+- Adding `scene.update_render()`, discarded warm-up captures, or a second `update_render()` to the grouped capture loop. `RenderSystemGroup.update_render()` performs the bidirectional Vulkan/CUDA semaphore handoff and owns every grouped transform, so one pose write, one group update, and one capture per frame is the contract.
+- Calling `update_render()` or capturing before `RenderSystemGroup.gpu_init()`, or creating camera groups after it; the lifecycle is configure, `gpu_init()`, then steady state.
+- Moving a CPU-owned static body (no CUDA pose source) after `gpu_init()`; its transform is a sealed one-time snapshot and the next `scene.update_render()` raises.
+- Recreating `RenderCameraGroup` every frame to move a free camera. `BatchedRenderSystem::mCameraBatches` retains every created batch, so this accumulates GPU/Vulkan resources; create once and use direct `RenderCameraComponent` capture after the ordered camera/body updates.
 - Shipping a SAPIEN GPU container without pre-baking `$HOME/.sapien/physx/<version>/`, so every fresh `docker run` re-downloads `physxgpu-linux-clang.zip`; bake the extracted library into the image (see "Pre-bake the PhysX GPU library into Docker images" above).

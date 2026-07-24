@@ -151,6 +151,7 @@ def main() -> None:
         )
         camera_group = render_group.create_camera_group(selected_cameras, ["Color"])
         render_group.set_cuda_poses(physx.cuda_rigid_body_data)
+        render_group.gpu_init()
         physx.gpu_fetch_rigid_dynamic_data()
         physx.gpu_fetch_articulation_link_pose()
         render_group.update_render()

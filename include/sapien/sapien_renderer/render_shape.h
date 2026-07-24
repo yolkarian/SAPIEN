@@ -79,6 +79,8 @@ public:
   /** batched rendering only, sets the index to look up for GPU pose */
   void setGpuBatchedPoseIndex(int);
   int getGpuBatchedPoseIndex() const;
+  void internalSealGpuBatchedPoseIndex();
+  void internalReleaseGpuBatchedPoseIndexSeal();
 
   /** Get the index of this shape in the transform array of its owning render scene.
    *  The index will change when any object is removed from the scene.
@@ -114,6 +116,7 @@ protected:
   svulkan2::scene::Object *mObject{nullptr};
 
   int mBatchedPoseIndex{-1};
+  uint32_t mBatchedPoseIndexSealCount{0};
 };
 
 class RenderShapePrimitive : public RenderShape {
