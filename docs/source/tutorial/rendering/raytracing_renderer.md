@@ -164,11 +164,27 @@ color = camera_group.get_picture_cuda("Color")
 ```
 
 `RenderSystemGroup.gpu_init()` seals every member camera transform for GPU
-ownership. Mounted cameras follow their PhysX GPU parent pose row. Free cameras
-(no GPU pose batch index) receive a row in `camera_group.cuda_free_camera_poses`,
-seeded once from the CPU pose at `gpu_init()`; move them by writing that row
-(or `camera_group.set_free_camera_pose(camera, pose)`) before
-`group.update_render()`. `set_local_pose()` raises on sealed cameras.
+ownership. Configure each free camera's pose mode with
+`camera_group.set_pose_mode(camera, mode)` after `create_camera_group()` and
+before `gpu_init()`. Free cameras default to `'static'` (a one-time CPU pose
+snapshot; CPU pose setters raise afterwards). `'cpu'` keeps the CPU pose
+authoritative and uploads at the next `group.update_render()` — use it for
+host-driven follow/anchor cameras. `'cuda'` allocates a group-owned CUDA pose
+row in `camera_group.cuda_poses`, seeded once from the CPU pose; move it by
+writing that row (or `camera_group.set_cuda_pose(camera, pose)`) before
+`group.update_render()`. Cameras mounted on PhysX GPU bodies are
+auto-attached and reuse their PhysX parent pose row; they cannot be configured.
+Dynamic bodies in implicitly discovered shared scenes are also bound to their
+PhysX GPU rows and require `set_cuda_poses()`. CPU-owned static bodies and
+point clouds are sealed snapshots; mutate them only after destroying the group.
+Camera projection/intrinsics (fov, near/far, principal point, skew,
+perspective/ortho) stay CPU real-time in every mode. Light color, spot
+inner/outer FOV, parallelogram shape, shadow near/far, directional shadow
+half-size, and ambient light stay CPU real-time after `gpu_init()`; for a light
+that should follow a GPU body, put the light on a separate entity, set its pose
+mode to `'cpu'` via `light.set_pose_mode("cpu")`, and write the pose from
+downloaded state each frame (`gpu_init()` rejects a `'cpu'` light sharing its
+entity with a PhysX GPU body).
 
 The interactive Viewer uses the same direct pose source when configured after
 PhysX GPU initialization:
