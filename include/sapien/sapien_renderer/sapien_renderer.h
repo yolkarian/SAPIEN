@@ -15,4 +15,5 @@
 #include "window.h"
 #include "vr.h"
 
+#include "batched_light_properties.h"
 #include "batched_render_system.h"

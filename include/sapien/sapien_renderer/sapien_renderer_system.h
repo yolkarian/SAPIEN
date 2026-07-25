@@ -72,6 +72,11 @@ public:
   void setCubemap(std::shared_ptr<SapienRenderCubemap> cubemap);
   std::shared_ptr<SapienRenderCubemap> getCubemap() const;
 
+  /** coarse dirty version of CPU scene/light state (light properties, cpu-mode light
+   *  poses, ambient light); consumed by RenderSystemGroup.update_render() */
+  uint64_t getLightStateVersion() const { return mLightStateVersion; }
+  void internalNotifyLightStateChanged() { ++mLightStateVersion; }
+
   void registerComponent(std::shared_ptr<SapienRenderBodyComponent> c);
   void registerComponent(std::shared_ptr<SapienRenderCameraComponent> c);
   void registerComponent(std::shared_ptr<SapienRenderLightComponent> c);
@@ -112,6 +117,7 @@ public:
 
 private:
   uint64_t mNextRenderId{1};
+  uint64_t mLightStateVersion{1};
 
   std::shared_ptr<SapienRenderEngine> mEngine;
   std::shared_ptr<svulkan2::scene::Scene> mScene;

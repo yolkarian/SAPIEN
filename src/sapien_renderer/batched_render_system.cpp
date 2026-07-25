@@ -7,6 +7,8 @@
 #include "sapien/physx/rigid_component.h"
 #include "sapien/profiler.h"
 #include "sapien/sapien_renderer/camera_component.h"
+#include "sapien/sapien_renderer/light_component.h"
+#include "sapien/sapien_renderer/point_cloud_component.h"
 #include "sapien/sapien_renderer/render_body_component.h"
 #include "sapien/scene.h"
 #include "sapien/utils/typestr.h"
@@ -90,9 +92,34 @@ void BatchedCamera::checkGpuInitialized() const {
   }
 }
 
+void BatchedCamera::setPoseMode(std::shared_ptr<SapienRenderCameraComponent> const &camera,
+                                CameraPoseMode mode) {
+  if (mGpuInitialized) {
+    throw std::runtime_error("failed to set camera pose mode: the camera group is already "
+                             "initialized; configure pose modes before gpu_init()");
+  }
+  if (std::find(mCameras.begin(), mCameras.end(), camera) == mCameras.end()) {
+    throw std::runtime_error(
+        "failed to set camera pose mode: the camera is not a member of this camera group");
+  }
+  camera->internalSetPoseMode(this, mode);
+}
+
 void BatchedCamera::internalGpuInit() {
   if (mGpuInitialized) {
     return;
+  }
+
+  // Mounted cameras (GPU pose batch index) are automatically CUDA-attached: they reuse
+  // the PhysX pose row without allocating a group row. Reject contradictory modes
+  // before touching any renderer state.
+  for (auto &cam : mCameras) {
+    if (cam->getGpuBatchedPoseIndex() >= 0 && cam->isPoseModeConfigured() &&
+        cam->getPoseMode() != CameraPoseMode::eCuda) {
+      throw std::runtime_error(
+          "failed to initialize camera group: a camera with a GPU pose batch index is "
+          "CUDA-attached to its parent body/link and cannot use pose mode 'cpu' or 'static'");
+    }
   }
 
   auto context = SapienRenderEngine::Get()->getContext();
@@ -116,15 +143,18 @@ void BatchedCamera::internalGpuInit() {
 
   // Enter grouped ownership before resource preparation. prepareResources() must
   // never perform an implicit CPU transform upload; gpuInit() takes the one explicit
-  // CPU snapshot after resources exist.
+  // CPU snapshot after resources exist. RT camera buffers become CUDA-writable only
+  // for CUDA-driven cameras; static/cpu cameras keep host-uploadable camera buffers.
   for (auto &cam : mCameras) {
+    bool cudaDriven =
+        cam->getGpuBatchedPoseIndex() >= 0 || cam->getPoseMode() == CameraPoseMode::eCuda;
     auto &renderer = cam->getInternalRenderer();
     renderer.setExecutionMode(svulkan2::renderer::RenderExecutionMode::eGroupedGpu);
     if (auto raster = dynamic_cast<svulkan2::renderer::Renderer *>(&renderer)) {
       raster->setExternalTransformUpdatesEnabled(true);
     } else if (auto rt = dynamic_cast<svulkan2::renderer::RTRenderer *>(&renderer)) {
       rt->setExternalTransformUpdatesEnabled(true);
-      rt->setExternalCameraUpdatesEnabled(true);
+      rt->setExternalCameraUpdatesEnabled(cudaDriven);
     }
   }
 #endif
@@ -173,15 +203,15 @@ void BatchedCamera::internalGpuInit() {
   }
 
 #ifdef SAPIEN_CUDA
-  // Cameras without a GPU pose batch index become group-owned free cameras. Their world pose
-  // lives in a CUDA row [px, py, pz, qw, qx, qy, qz], seeded once from the current CPU global
-  // pose; update_render() derives the camera matrices from that row. The CPU pose is sealed
-  // below, so grouped capture involves no CPU camera upload.
+  // Only cameras configured with pose mode 'cuda' (and no GPU pose batch index) receive
+  // a compact group-owned CUDA row [px, py, pz, qw, qx, qy, qz], seeded once from the
+  // current CPU global pose; update_render() derives their view matrices from that row.
+  // Static cameras keep their snapshot and cpu cameras upload their CPU pose when dirty.
   checkCudaErrors(cudaSetDevice(SapienRenderEngine::Get()->getDevice()->cudaId));
   std::vector<float> seedPoses;
-  std::vector<CameraData> freeCameraData;
+  std::vector<CameraData> rowCameraData;
   for (auto &cam : mCameras) {
-    if (cam->getGpuBatchedPoseIndex() >= 0) {
+    if (cam->getGpuBatchedPoseIndex() >= 0 || cam->getPoseMode() != CameraPoseMode::eCuda) {
       continue;
     }
     Pose pose = cam->getGlobalPose();
@@ -190,15 +220,15 @@ void BatchedCamera::internalGpuInit() {
     CameraData data;
     data.buffer = cam->getCudaBuffer().ptr;
     data.localPose = POSE_GL_TO_ROS;
-    data.poseIndex = static_cast<int>(mFreeCameras.size());
-    freeCameraData.push_back(data);
-    mFreeCameras.push_back(cam);
+    data.poseIndex = static_cast<int>(mCudaRowCameras.size());
+    rowCameraData.push_back(data);
+    mCudaRowCameras.push_back(cam);
   }
-  if (!mFreeCameras.empty()) {
-    mCudaFreeCameraPoseBuffer = CudaArray({static_cast<int>(mFreeCameras.size()), 7}, "f4");
-    checkCudaErrors(cudaMemcpy(mCudaFreeCameraPoseBuffer.ptr, seedPoses.data(),
+  if (!mCudaRowCameras.empty()) {
+    mCudaRowPoseBuffer = CudaArray({static_cast<int>(mCudaRowCameras.size()), 7}, "f4");
+    checkCudaErrors(cudaMemcpy(mCudaRowPoseBuffer.ptr, seedPoses.data(),
                                seedPoses.size() * sizeof(float), cudaMemcpyHostToDevice));
-    mCudaFreeCameraDataBuffer = CudaArray::FromData(freeCameraData);
+    mCudaRowCameraDataBuffer = CudaArray::FromData(rowCameraData);
   }
 #endif
 
@@ -223,10 +253,16 @@ void BatchedCamera::internalGpuInit() {
   checkCudaErrors(cudaImportExternalSemaphore(&mCudaSem, &desc));
 #endif
 
-  // From here on every camera transform in this group is GPU-owned: mounted cameras
-  // follow their parent CUDA pose row and free cameras follow their group-owned row.
+  // Seal pose ownership per configured mode: mounted cameras follow their parent CUDA
+  // pose row, cuda cameras their group-owned row, static cameras their snapshot, and
+  // cpu cameras keep a CPU-authoritative pose with dirty uploads at update_render().
   for (auto &cam : mCameras) {
     cam->internalSealGpuOwnership(this);
+  }
+  // gpu_init() uploaded the full CPU frame state; record the covered versions.
+  mUploadedStateVersions.clear();
+  for (auto &cam : mCameras) {
+    mUploadedStateVersions.push_back(cam->getCameraStateVersion());
   }
   mGpuInitialized = true;
 }
@@ -252,17 +288,47 @@ void BatchedCamera::recordCopyCommands() {
   mCommandBuffer->end();
 }
 
+void BatchedCamera::internalWaitForRendersIdle() {
+  if (!mSemaphore) {
+    return;
+  }
+  auto result = SapienRenderEngine::Get()->getContext()->getDevice().waitSemaphores(
+      vk::SemaphoreWaitInfo({}, mSemaphore.get(), mFrameCounter), UINT64_MAX);
+  if (result != vk::Result::eSuccess) {
+    throw std::runtime_error("failed to wait for camera group renders");
+  }
+}
+
+bool BatchedCamera::internalHasDirtyCameraState() const {
+  for (size_t i = 0; i < mCameras.size(); ++i) {
+    if (mCameras[i]->getCameraStateVersion() != mUploadedStateVersions.at(i)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void BatchedCamera::internalUploadDirtyCameraState() {
+  for (size_t i = 0; i < mCameras.size(); ++i) {
+    auto &cam = mCameras[i];
+    uint64_t version = cam->getCameraStateVersion();
+    if (version == mUploadedStateVersions.at(i)) {
+      continue;
+    }
+    // The full camera buffer uploads, including the CPU view matrices. For
+    // cuda/attached cameras the CUDA patch later in the same update_render()
+    // rewrites view/inverse-view, so a projection change never overrides a GPU pose.
+    cam->getInternalRenderer().uploadCpuCameraState(cam->getInternalCamera());
+    mUploadedStateVersions.at(i) = version;
+  }
+}
+
 void BatchedCamera::takePicture() {
   checkGpuInitialized();
   auto context = SapienRenderEngine::Get()->getContext();
 
   // make sure previous takePicture has finished
-  auto result = context->getDevice().waitSemaphores(
-      vk::SemaphoreWaitInfo({}, mSemaphore.get(), mFrameCounter), UINT64_MAX);
-
-  if (result != vk::Result::eSuccess) {
-    throw std::runtime_error("take picture failed: wait for fence failed");
-  }
+  internalWaitForRendersIdle();
 
   for (auto &cam : mCameras) {
     cam->getInternalRenderer().render(cam->getInternalCamera(), {}, {}, {}, {});
@@ -288,50 +354,57 @@ void BatchedCamera::takePicture() {
 #endif
 }
 
-CudaArrayHandle BatchedCamera::getFreeCameraPoseHandle() const {
+CudaArrayHandle BatchedCamera::getCudaPoseHandle() const {
   checkGpuInitialized();
 #ifdef SAPIEN_CUDA
-  if (mFreeCameras.empty()) {
-    throw std::runtime_error("this camera group has no free cameras: every camera derives its "
-                             "pose from a GPU pose batch index");
+  if (mCudaRowCameras.empty()) {
+    throw std::runtime_error(
+        "this camera group has no cameras with pose mode 'cuda'; configure "
+        "RenderCameraGroup.set_pose_mode(camera, 'cuda') before gpu_init()");
   }
-  return CudaArrayHandle{.shape = {static_cast<int>(mFreeCameras.size()), 7},
+  return CudaArrayHandle{.shape = {static_cast<int>(mCudaRowCameras.size()), 7},
                          .strides = {28, 4},
                          .type = "f4",
-                         .cudaId = mCudaFreeCameraPoseBuffer.cudaId,
-                         .ptr = mCudaFreeCameraPoseBuffer.ptr};
+                         .cudaId = mCudaRowPoseBuffer.cudaId,
+                         .ptr = mCudaRowPoseBuffer.ptr};
 #else
   throw std::runtime_error("sapien is not compiled with CUDA support");
 #endif
 }
 
-int BatchedCamera::getFreeCameraPoseIndex(
+int BatchedCamera::getCudaPoseIndex(
     std::shared_ptr<SapienRenderCameraComponent> const &camera) const {
   checkGpuInitialized();
-  for (size_t i = 0; i < mFreeCameras.size(); ++i) {
-    if (mFreeCameras[i] == camera) {
+  for (size_t i = 0; i < mCudaRowCameras.size(); ++i) {
+    if (mCudaRowCameras[i] == camera) {
       return static_cast<int>(i);
     }
   }
-  if (camera->getGpuBatchedPoseIndex() >= 0 &&
-      std::find(mCameras.begin(), mCameras.end(), camera) != mCameras.end()) {
-    throw std::runtime_error("this camera derives its pose from its mounted GPU parent "
-                             "body/link; it has no free-camera pose row");
+  if (std::find(mCameras.begin(), mCameras.end(), camera) != mCameras.end()) {
+    if (camera->getGpuBatchedPoseIndex() >= 0) {
+      throw std::runtime_error("this camera derives its pose from its mounted GPU parent "
+                               "body/link; it has no CUDA pose row");
+    }
+    throw std::runtime_error(
+        "this camera has no CUDA pose row: its pose mode is not 'cuda'; configure "
+        "RenderCameraGroup.set_pose_mode(camera, 'cuda') before gpu_init()");
   }
-  throw std::runtime_error("the camera is not a free camera of this camera group");
+  throw std::runtime_error("the camera is not a member of this camera group");
 }
 
-void BatchedCamera::setFreeCameraPose(
-    std::shared_ptr<SapienRenderCameraComponent> const &camera, Pose const &pose) {
+void BatchedCamera::setCudaPose(std::shared_ptr<SapienRenderCameraComponent> const &camera,
+                                Pose const &pose) {
 #ifdef SAPIEN_CUDA
-  int row = getFreeCameraPoseIndex(camera);
+  int row = getCudaPoseIndex(camera);
   checkCudaErrors(cudaSetDevice(SapienRenderEngine::Get()->getDevice()->cudaId));
   float data[7] = {pose.p.x, pose.p.y, pose.p.z, pose.q.w, pose.q.x, pose.q.y, pose.q.z};
-  // Synchronous convenience path. Performance-sensitive callers should write
-  // cuda_free_camera_poses directly on the group's configured CUDA stream.
-  checkCudaErrors(cudaMemcpy(static_cast<float *>(mCudaFreeCameraPoseBuffer.ptr) +
-                                 static_cast<size_t>(row) * 7,
-                             data, sizeof(data), cudaMemcpyHostToDevice));
+  // Keep this synchronous convenience API ordered with prior and subsequent
+  // transform kernels on the configured stream. The synchronization also keeps
+  // the stack-backed host data alive until the asynchronous copy completes.
+  checkCudaErrors(cudaMemcpyAsync(static_cast<float *>(mCudaRowPoseBuffer.ptr) +
+                                      static_cast<size_t>(row) * 7,
+                                  data, sizeof(data), cudaMemcpyHostToDevice, mCudaStream));
+  checkCudaErrors(cudaStreamSynchronize(mCudaStream));
 #else
   throw std::runtime_error("sapien is not compiled with CUDA support");
 #endif
@@ -392,6 +465,7 @@ void BatchedRenderSystem::init() {
   std::vector<RenderShapeData> allShapeData;
   std::vector<void *> sceneTransformRefs;
 
+  mTrackedSystems = {};
   mSceneVersions = {};
   mRenderScenes = {};
   mRenderSceneVersions = {};
@@ -399,23 +473,23 @@ void BatchedRenderSystem::init() {
   mTransformBufferElementByteOffset = 0;
   mMaximumPoseIndex = -1;
 
-  // TODO ensure all cameras are valid
+  // Camera-selected shared systems need current model matrices and topology tracking just like
+  // constructor-provided systems. Keep one ordered list so version checks cover the final output.
   std::unordered_set<SapienRendererSystem *> steppedSystems;
-  for (auto &system : mSystems) {
-    // run a step
+  auto stepAndTrack = [&](std::shared_ptr<SapienRendererSystem> const &system) {
+    if (!steppedSystems.insert(system.get()).second) {
+      return;
+    }
     system->step();
-    steppedSystems.insert(system.get());
-
-    // cache current versions
+    mTrackedSystems.push_back(system);
     mSceneVersions.push_back(system->getScene()->getVersion());
+  };
+  for (auto const &system : mSystems) {
+    stepAndTrack(system);
   }
-  // camera-selected shared systems also need current model matrices before the
-  // one-time CPU transform seed below
   for (auto const &selection : mAdditionalRenderSelections) {
     for (auto const &system : selection) {
-      if (steppedSystems.insert(system.get()).second) {
-        system->step();
-      }
+      stepAndTrack(system);
     }
   }
 
@@ -435,27 +509,34 @@ void BatchedRenderSystem::init() {
     }
   }
 
-  // PhysX GPU assigns sibling body/link pose indices during gpu_init(). Bind those indices
-  // automatically while preserving explicit indices for non-PhysX pose sources. The Viewer
-  // performs a stricter binding against its configured PhysX system before using a fixed output.
+  // PhysX GPU assigns sibling body/link pose indices during gpu_init(). Bind every system in
+  // the final output selections, including batched-render-shared systems discovered from cameras.
+  // Explicit indices for custom pose sources remain unchanged. The Viewer performs a stricter
+  // binding against its configured PhysX system before using a fixed output.
   if (mAutoBindPhysxGpuPoses) {
-    for (auto const &system : mSystems) {
-      for (auto const &body : system->getRenderBodyComponents()) {
-        auto entity = body->getEntity();
-        int poseIndex = -1;
-        if (auto rigid = entity->getComponent<physx::PhysxRigidDynamicComponent>();
-            rigid && rigid->isUsingDirectGPUAPI()) {
-          poseIndex = rigid->getGpuPoseIndex();
-        } else if (auto link = entity->getComponent<physx::PhysxArticulationLinkComponent>();
-                   link && link->isUsingDirectGPUAPI()) {
-          poseIndex = link->getGpuPoseIndex();
-        }
-        if (poseIndex < 0) {
+    std::unordered_set<SapienRendererSystem *> boundSystems;
+    for (auto const &selection : mRenderSceneSystems) {
+      for (auto const &system : selection) {
+        if (!boundSystems.insert(system.get()).second) {
           continue;
         }
-        for (auto const &shape : body->getRenderShapes()) {
-          if (shape->getGpuBatchedPoseIndex() < 0) {
-            shape->setGpuBatchedPoseIndex(poseIndex);
+        for (auto const &body : system->getRenderBodyComponents()) {
+          auto entity = body->getEntity();
+          int poseIndex = -1;
+          if (auto rigid = entity->getComponent<physx::PhysxRigidDynamicComponent>();
+              rigid && rigid->isUsingDirectGPUAPI()) {
+            poseIndex = rigid->getGpuPoseIndex();
+          } else if (auto link = entity->getComponent<physx::PhysxArticulationLinkComponent>();
+                     link && link->isUsingDirectGPUAPI()) {
+            poseIndex = link->getGpuPoseIndex();
+          }
+          if (poseIndex < 0) {
+            continue;
+          }
+          for (auto const &shape : body->getRenderShapes()) {
+            if (shape->getGpuBatchedPoseIndex() < 0) {
+              shape->setGpuBatchedPoseIndex(poseIndex);
+            }
           }
         }
       }
@@ -588,47 +669,39 @@ void BatchedRenderSystem::setPoseSource(CudaArrayHandle const &poses) {
   mCudaPoseHandle = poses;
 }
 
-void BatchedRenderSystem::ensureCameraRenderScenes(
-    std::vector<std::shared_ptr<SapienRenderCameraComponent>> const &additionalCameras) {
-  std::vector<std::shared_ptr<SapienRenderCameraComponent>> cameras = additionalCameras;
-  for (auto const &batch : mCameraBatches) {
-    auto const &batchCameras = batch->getCameras();
-    cameras.insert(cameras.end(), batchCameras.begin(), batchCameras.end());
-  }
-
+bool BatchedRenderSystem::collectCameraRenderSelections() {
   bool rebuildRenderScenes = false;
-  for (auto const &camera : cameras) {
-    // Resolve against every live render system so batched-render-shared scenes
-    // (for example shared ground/terrain) join the camera's output render scene,
-    // matching the resolution direct capture would compute.
-    auto resolvedSystems =
-        camera->internalResolveRenderSystems(SapienRenderEngine::Get()->getRenderSystems());
-    bool exists = std::find(mRenderSceneSystems.begin(), mRenderSceneSystems.end(),
-                            resolvedSystems) != mRenderSceneSystems.end();
-    exists |= std::find(mAdditionalRenderSelections.begin(), mAdditionalRenderSelections.end(),
-                        resolvedSystems) != mAdditionalRenderSelections.end();
-    if (!exists) {
-      mAdditionalRenderSelections.push_back(resolvedSystems);
-      rebuildRenderScenes = true;
+  for (auto const &batch : mCameraBatches) {
+    for (auto const &camera : batch->getCameras()) {
+      // Resolve against every live render system so batched-render-shared scenes
+      // (for example shared ground/terrain) join the camera's output render scene.
+      auto resolvedSystems =
+          camera->internalResolveRenderSystems(SapienRenderEngine::Get()->getRenderSystems());
+      bool exists = std::find(mRenderSceneSystems.begin(), mRenderSceneSystems.end(),
+                              resolvedSystems) != mRenderSceneSystems.end();
+      exists |= std::find(mAdditionalRenderSelections.begin(), mAdditionalRenderSelections.end(),
+                          resolvedSystems) != mAdditionalRenderSelections.end();
+      if (!exists) {
+        mAdditionalRenderSelections.push_back(resolvedSystems);
+        rebuildRenderScenes = true;
+      }
     }
   }
-  if (rebuildRenderScenes) {
-    SapienRenderEngine::Get()->getContext()->getDevice().waitIdle();
-    init();
-    if (mCudaPoseHandle.ptr) {
-      setPoseSource(mCudaPoseHandle);
-    }
-  }
+  return rebuildRenderScenes;
+}
 
-  for (auto const &camera : cameras) {
-    auto resolvedSystems =
-        camera->internalResolveRenderSystems(SapienRenderEngine::Get()->getRenderSystems());
-    auto it = std::find(mRenderSceneSystems.begin(), mRenderSceneSystems.end(), resolvedSystems);
-    if (it == mRenderSceneSystems.end()) {
-      throw std::runtime_error("failed to resolve camera output render scene");
+void BatchedRenderSystem::assignCameraRenderScenes() {
+  for (auto const &batch : mCameraBatches) {
+    for (auto const &camera : batch->getCameras()) {
+      auto resolvedSystems =
+          camera->internalResolveRenderSystems(SapienRenderEngine::Get()->getRenderSystems());
+      auto it = std::find(mRenderSceneSystems.begin(), mRenderSceneSystems.end(), resolvedSystems);
+      if (it == mRenderSceneSystems.end()) {
+        throw std::runtime_error("failed to resolve camera output render scene");
+      }
+      camera->internalSetRenderScene(
+          mRenderScenes.at(std::distance(mRenderSceneSystems.begin(), it)), resolvedSystems);
     }
-    camera->internalSetRenderScene(
-        mRenderScenes.at(std::distance(mRenderSceneSystems.begin(), it)), resolvedSystems);
   }
 }
 
@@ -669,9 +742,18 @@ void BatchedRenderSystem::gpuInit() {
           "complete gpu_init() first");
     }
   };
-  for (auto const &system : mSystems) {
+  auto validateRenderSystem = [&](std::shared_ptr<SapienRendererSystem> const &system) {
     for (auto const &body : system->getRenderBodyComponents()) {
       validatePhysxGpu(body->getEntity()->getScene());
+    }
+  };
+  for (auto const &system : mSystems) {
+    validateRenderSystem(system);
+  }
+  // A previous failed attempt may already have discovered camera-selected shared systems.
+  for (auto const &selection : mAdditionalRenderSelections) {
+    for (auto const &system : selection) {
+      validateRenderSystem(system);
     }
   }
   for (auto const &batch : mCameraBatches) {
@@ -712,10 +794,22 @@ void BatchedRenderSystem::gpuInit() {
   }
 #endif
 
-  // Resolve base and camera-selected output render scenes, freeze topology, and
-  // seed every CPU-owned object transform once.
+  // Resolve the base outputs first, then collect every camera-selected shared system. Newly
+  // discovered systems are validated before the final init binds poses or snapshots transforms.
   init();
-  ensureCameraRenderScenes();
+  bool rebuildRenderScenes = collectCameraRenderSelections();
+#ifdef SAPIEN_CUDA
+  for (auto const &selection : mAdditionalRenderSelections) {
+    for (auto const &system : selection) {
+      validateRenderSystem(system);
+    }
+  }
+#endif
+  if (rebuildRenderScenes) {
+    SapienRenderEngine::Get()->getContext()->getDevice().waitIdle();
+    init();
+  }
+  assignCameraRenderScenes();
 
   // Finish deterministic source validation before preparing or sealing any camera.
   for (auto const &batch : mCameraBatches) {
@@ -739,6 +833,41 @@ void BatchedRenderSystem::gpuInit() {
           "different CUDA devices");
     }
   }
+
+#ifdef SAPIEN_CUDA
+  // A cpu-mode light's CPU pose is not authoritative when its entity is driven by a
+  // PhysX GPU body: reject the configuration instead of rendering a stale light pose.
+  // Put such a light on a separate entity and set its pose from downloaded state.
+  if (!mFixedRenderScene) {
+    for (auto const &selection : mRenderSceneSystems) {
+      for (auto const &system : selection) {
+        for (auto const &light : system->getLightComponents()) {
+          if (light->getPoseMode() != LightPoseMode::eCpu) {
+            continue;
+          }
+          auto entity = light->getEntity();
+          if (!entity) {
+            continue;
+          }
+          bool gpuDriven = false;
+          if (auto rigid = entity->getComponent<physx::PhysxRigidDynamicComponent>();
+              rigid && rigid->isUsingDirectGPUAPI()) {
+            gpuDriven = true;
+          } else if (auto link = entity->getComponent<physx::PhysxArticulationLinkComponent>();
+                     link && link->isUsingDirectGPUAPI()) {
+            gpuDriven = true;
+          }
+          if (gpuDriven) {
+            throw std::runtime_error(
+                "failed to initialize render system group: a cpu-mode light shares its entity "
+                "with a PhysX GPU body, so its CPU pose is not authoritative. Attach the light "
+                "to a separate entity and set its pose from downloaded state each frame.");
+          }
+        }
+      }
+    }
+  }
+#endif
 
   // Prepare per-camera resources, take the CPU snapshots, create image and
   // free-camera pose buffers, and seal camera ownership.
@@ -772,18 +901,6 @@ void BatchedRenderSystem::gpuInit() {
   checkCudaErrors(cudaSetDevice(SapienRenderEngine::Get()->getDevice()->cudaId));
   mCudaCameraDataBuffer = CudaArray::FromData(allCamData);
 #endif
-
-  // Pose-source registry tracks only valid sources: the optional primary
-  // object/mounted-camera source followed by each free-camera source.
-  mCudaPoseSources.clear();
-  if (mCudaPoseHandle.ptr) {
-    mCudaPoseSources.push_back({mCudaPoseHandle});
-  }
-  for (auto &cb : mCameraBatches) {
-    if (cb->getFreeCameraCount() > 0) {
-      mCudaPoseSources.push_back({cb->getFreeCameraPoseHandle()});
-    }
-  }
 
   // RT instance buffers exist now if camera resource preparation built a TLAS.
   static_assert(sizeof(vk::AccelerationStructureInstanceKHR) == sizeof(float) * 16);
@@ -827,25 +944,52 @@ void BatchedRenderSystem::gpuInit() {
     }
   }
 
-  // Seal static snapshots: bodies without a CUDA pose source were copied to the GPU
-  // exactly once; later CPU pose changes are errors. The Viewer's fixed-scene group
-  // is CPU-managed by design and does not seal.
+  // Seal grouped state: bodies without a CUDA pose source and point clouds become
+  // one-time snapshots; lights seal their setup-only fields and, in static pose mode,
+  // their pose. Color/FOV/shape/shadow-parameter setters stay CPU real-time. The
+  // Viewer's fixed-scene group is CPU-managed by design and does not seal.
   if (!mFixedRenderScene) {
     std::unordered_set<SapienRenderBodyComponent *> gpuSourced;
     for (auto const &body : mGpuSourcedBodies) {
       gpuSourced.insert(body.get());
     }
-    std::unordered_set<SapienRenderBodyComponent *> sealed;
+    std::unordered_set<SapienRenderBodyComponent *> sealedBodies;
+    std::unordered_set<PointCloudComponent *> sealedPointClouds;
+    std::unordered_set<SapienRenderLightComponent *> sealedLights;
     for (auto const &selection : mRenderSceneSystems) {
       for (auto const &system : selection) {
         for (auto const &body : system->getRenderBodyComponents()) {
-          if (!gpuSourced.contains(body.get()) && sealed.insert(body.get()).second) {
+          if (!gpuSourced.contains(body.get()) && sealedBodies.insert(body.get()).second) {
             body->internalSealStaticPose();
             mSealedStaticBodies.push_back(body);
           }
         }
+        for (auto const &pointCloud : system->getPointCloudComponents()) {
+          if (sealedPointClouds.insert(pointCloud.get()).second) {
+            pointCloud->internalSealStaticPose();
+            mSealedPointClouds.push_back(pointCloud);
+          }
+        }
+        for (auto const &light : system->getLightComponents()) {
+          if (sealedLights.insert(light.get()).second) {
+            light->internalSealGroupState();
+            mSealedLights.push_back(light);
+          }
+        }
       }
     }
+  }
+
+  // gpu_init() uploaded the full CPU frame state; record the covered scene light
+  // state versions for dirty tracking at update_render().
+  mLightStateVersions.clear();
+  for (auto const &selection : mRenderSceneSystems) {
+    std::vector<uint64_t> versions;
+    versions.reserve(selection.size());
+    for (auto const &system : selection) {
+      versions.push_back(system->getLightStateVersion());
+    }
+    mLightStateVersions.push_back(std::move(versions));
   }
 
   mGpuInitialized = true;
@@ -863,8 +1007,8 @@ void BatchedRenderSystem::update() {
   }
 
   // check scene versions
-  for (uint32_t i = 0; i < mSystems.size(); ++i) {
-    if (mSystems.at(i)->getScene()->getVersion() != mSceneVersions.at(i)) {
+  for (uint32_t i = 0; i < mTrackedSystems.size(); ++i) {
+    if (mTrackedSystems.at(i)->getScene()->getVersion() != mSceneVersions.at(i)) {
       throw std::runtime_error("Modifying a scene (add/remove object/camera) is not allowed after "
                                "creating the batched render system.");
     }
@@ -889,6 +1033,13 @@ void BatchedRenderSystem::update() {
                                std::to_string(mCudaSceneTransformRefBuffer.cudaId) +
                                ") are on different cuda devices.");
     }
+  }
+
+  // Sealed groups own the per-frame schedule: refresh CPU components (raising on
+  // static-pose tampering), then upload any dirty CPU camera or scene/light state
+  // before the Vulkan->CUDA handoff below. Steady state performs zero CPU uploads.
+  if (!mFixedRenderScene) {
+    refreshAndUploadCpuState();
   }
 
   // An RT renderer may create its TLAS after this transport was initialized (notably the Viewer
@@ -963,11 +1114,11 @@ void BatchedRenderSystem::update() {
                              mCameraCount, mCudaStream);
   }
 
-  // free cameras read their group-owned world-pose rows
+  // cuda-mode cameras read their group-owned world-pose rows
   for (auto &batch : mCameraBatches) {
-    if (int freeCameraCount = batch->getFreeCameraCount()) {
-      update_camera_transforms((CameraData *)batch->getFreeCameraDataPtr(),
-                               (float *)batch->getFreeCameraPosePtr(), 7, freeCameraCount,
+    if (int rowCameraCount = batch->getCudaRowCameraCount()) {
+      update_camera_transforms((CameraData *)batch->getCudaRowCameraDataPtr(),
+                               (float *)batch->getCudaRowPosePtr(), 7, rowCameraCount,
                                mCudaStream);
     }
   }
@@ -985,6 +1136,78 @@ void BatchedRenderSystem::update() {
   // sync with renderer
   SAPIEN_PROFILE_BLOCK_BEGIN("CUDA Vulkan synchronization");
   notifyUpdate();
+  SAPIEN_PROFILE_BLOCK_END;
+}
+
+void BatchedRenderSystem::refreshAndUploadCpuState() {
+  // 1. CPU component refresh: propagates cpu-mode camera/light poses into the render
+  //    scene nodes, raises on static-pose tampering, and folds every change into the
+  //    coarse dirty versions consumed below.
+  SAPIEN_PROFILE_BLOCK_BEGIN("CPU component refresh");
+  for (auto const &system : mTrackedSystems) {
+    system->step();
+  }
+  SAPIEN_PROFILE_BLOCK_END;
+
+  // 2. Dirty CPU uploads. Renders still in flight read the same buffers, so wait for
+  //    every camera group's submitted work once before the first host write.
+  bool anyCameraDirty = false;
+  for (auto const &batch : mCameraBatches) {
+    anyCameraDirty |= batch->internalHasDirtyCameraState();
+  }
+  std::vector<uint32_t> dirtyLightScenes;
+  for (uint32_t i = 0; i < mRenderSceneSystems.size(); ++i) {
+    auto const &selection = mRenderSceneSystems[i];
+    auto &versions = mLightStateVersions.at(i);
+    bool dirty = false;
+    for (uint32_t j = 0; j < selection.size(); ++j) {
+      dirty |= selection[j]->getLightStateVersion() != versions[j];
+    }
+    if (dirty) {
+      dirtyLightScenes.push_back(i);
+    }
+  }
+  if (!anyCameraDirty && dirtyLightScenes.empty()) {
+    return;
+  }
+
+  for (auto const &batch : mCameraBatches) {
+    batch->internalWaitForRendersIdle();
+  }
+
+  SAPIEN_PROFILE_BLOCK_BEGIN("dirty CPU state upload");
+  if (anyCameraDirty) {
+    for (auto const &batch : mCameraBatches) {
+      batch->internalUploadDirtyCameraState();
+    }
+  }
+
+  for (uint32_t i : dirtyLightScenes) {
+    auto const &selection = mRenderSceneSystems[i];
+    auto const &renderScene = mRenderScenes[i];
+
+    // Multi-system scene groups copy the base system's ambient light at resolution
+    // time; refresh it here so post-init ambient changes propagate. The alpha channel
+    // encodes the environment-map fallback flag and is setup-only.
+    if (selection.size() > 1 && !selection.empty()) {
+      auto base = selection.front()->getScene()->getAmbientLight();
+      auto current = renderScene->getAmbientLight();
+      renderScene->setAmbientLight({base.r, base.g, base.b, current.a});
+    }
+
+    for (auto const &batch : mCameraBatches) {
+      for (auto const &camera : batch->getCameras()) {
+        if (camera->getInternalRenderScene() == renderScene) {
+          camera->getInternalRenderer().uploadCpuSceneLightState();
+        }
+      }
+    }
+
+    auto &versions = mLightStateVersions.at(i);
+    for (uint32_t j = 0; j < selection.size(); ++j) {
+      versions[j] = selection[j]->getLightStateVersion();
+    }
+  }
   SAPIEN_PROFILE_BLOCK_END;
 }
 
@@ -1016,6 +1239,12 @@ BatchedRenderSystem ::~BatchedRenderSystem() {
   }
   for (auto const &body : mSealedStaticBodies) {
     body->internalReleaseStaticPoseSeal();
+  }
+  for (auto const &pointCloud : mSealedPointClouds) {
+    pointCloud->internalReleaseStaticPoseSeal();
+  }
+  for (auto const &light : mSealedLights) {
+    light->internalReleaseGroupStateSeal();
   }
   SapienRenderEngine::Get()->getContext()->getDevice().waitIdle();
 #ifdef SAPIEN_CUDA

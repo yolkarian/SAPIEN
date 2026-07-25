@@ -9,6 +9,7 @@ import sapien
 
 CUDA_MEMCPY_HOST_TO_DEVICE = 1
 CUDA_MEMCPY_DEVICE_TO_HOST = 2
+CUDA_STREAM_NON_BLOCKING = 1
 
 
 def _load_cudart() -> ctypes.CDLL:
@@ -24,6 +25,15 @@ def _load_cudart() -> ctypes.CDLL:
     ]
     cudart.cudaMemcpy.restype = ctypes.c_int
     cudart.cudaDeviceSynchronize.restype = ctypes.c_int
+    cudart.cudaStreamCreateWithFlags.argtypes = [
+        ctypes.POINTER(ctypes.c_void_p),
+        ctypes.c_uint,
+    ]
+    cudart.cudaStreamCreateWithFlags.restype = ctypes.c_int
+    cudart.cudaStreamSynchronize.argtypes = [ctypes.c_void_p]
+    cudart.cudaStreamSynchronize.restype = ctypes.c_int
+    cudart.cudaStreamDestroy.argtypes = [ctypes.c_void_p]
+    cudart.cudaStreamDestroy.restype = ctypes.c_int
     return cudart
 
 
@@ -186,11 +196,12 @@ class TestScene(unittest.TestCase):
                 [main_render, shared_render]
             )
             camera_group = group.create_camera_group([camera], ["Color"])
+            camera_group.set_pose_mode(camera, "cuda")
             group.gpu_init()
-            # Free cameras in a group expose their CUDA-owned camera buffer and
-            # a group pose row seeded from the CPU pose at gpu_init().
+            # cuda-mode cameras expose their CUDA-owned camera buffer and a group
+            # pose row seeded from the CPU pose at gpu_init().
             self.assertGreater(camera._cuda_buffer.shape[0], 0)
-            self.assertEqual(camera_group.get_free_camera_cuda_pose_index(camera), 0)
+            self.assertEqual(camera_group.get_cuda_pose_index(camera), 0)
             camera_group.take_picture()
             self.assertEqual(
                 camera_group.get_picture_cuda("Color").shape, [1, 64, 64, 4]
@@ -221,21 +232,48 @@ class TestScene(unittest.TestCase):
         camera_group = group.create_camera_group([camera], ["Color"])
         with self.assertRaisesRegex(RuntimeError, "already belongs"):
             group.create_camera_group([camera], ["Color"])
+        camera_group.set_pose_mode(camera, "cuda")
+        self.assertEqual(camera.pose_mode, "cuda")
 
-        # A free-camera-only group needs no unrelated primary object pose source.
+        # A cuda-camera-only group needs no unrelated primary object pose source.
         group.gpu_init()
-        camera_group.set_free_camera_pose(camera, sapien.Pose([-3.0, 0.2, 0.0]))
+        with self.assertRaisesRegex(RuntimeError, "already initialized"):
+            camera_group.set_pose_mode(camera, "cpu")
+        camera_group.set_cuda_pose(camera, sapien.Pose([-3.0, 0.2, 0.0]))
         group.update_render()
         camera.take_picture()
         self.assertGreater(float(np.max(camera.get_picture("Color")[..., :3])), 0.01)
 
-        # Every CPU-side pose/configuration source is sealed while the group owns it.
+        # The CPU pose source is sealed while the group owns it; projection stays
+        # CPU real-time in every mode.
         with self.assertRaisesRegex(RuntimeError, "sealed"):
             camera.set_gpu_pose_batch_index(0)
-        with self.assertRaisesRegex(RuntimeError, "sealed"):
-            camera.set_fovx(np.deg2rad(50))
+        version = camera.camera_state_version
+        camera.set_fovx(np.deg2rad(50))
+        self.assertGreater(camera.camera_state_version, version)
+        group.update_render()
+        camera.take_picture()
+        self.assertGreater(float(np.max(camera.get_picture("Color")[..., :3])), 0.01)
+
+        # The dirty projection upload must not override the CUDA pose: the inverse
+        # view translation in the camera buffer stays at the CUDA row pose, not the
+        # stale CPU pose [-3, 0, 0].
+        cudart = _load_cudart()
+        camera_buffer = np.empty(48, np.float32)
+        self.assertEqual(
+            cudart.cudaMemcpy(
+                ctypes.c_void_p(camera_buffer.ctypes.data),
+                ctypes.c_void_p(camera._cuda_buffer.ptr),
+                camera_buffer.nbytes,
+                CUDA_MEMCPY_DEVICE_TO_HOST,
+            ),
+            0,
+        )
+        np.testing.assert_allclose(
+            camera_buffer[44:47], [-3.0, 0.2, 0.0], rtol=0, atol=1e-6
+        )
         camera.entity.set_pose(sapien.Pose([0.0, 0.1, 0.0]))
-        with self.assertRaisesRegex(RuntimeError, "CPU pose changed"):
+        with self.assertRaisesRegex(RuntimeError, "pose mode is 'cuda'"):
             scene.update_render()
         camera.entity.set_pose(sapien.Pose())
         scene.update_render()
@@ -249,8 +287,454 @@ class TestScene(unittest.TestCase):
         camera.take_picture()
         self.assertGreater(float(np.max(camera.get_picture("Color")[..., :3])), 0.01)
 
+    def test_static_default_and_cpu_camera_modes(self) -> None:
+        device = sapien.Device("cuda")
+        render_system = sapien.render.RenderSystem(device)
+        scene = sapien.Scene([sapien.physx.PhysxCpuSystem(), render_system])
+        scene.set_ambient_light([0.5, 0.5, 0.5])
+        builder = scene.create_actor_builder()
+        builder.add_box_visual(
+            half_size=[0.3, 0.3, 0.3], material=[0.8, 0.05, 0.05]
+        )
+        builder.build_kinematic()
+
+        static_camera = scene.add_camera(
+            "static_camera", 64, 64, np.deg2rad(45), 0.05, 10
+        )
+        static_camera.set_local_pose(sapien.Pose([-3.0, 0.0, 0.0]))
+        cpu_camera = scene.add_camera(
+            "cpu_camera", 64, 64, np.deg2rad(45), 0.05, 10
+        )
+        cpu_camera.set_local_pose(sapien.Pose([-3.0, 0.0, 0.0]))
+
+        group = sapien.render.RenderSystemGroup([render_system])
+        camera_group = group.create_camera_group(
+            [static_camera, cpu_camera], ["Color"]
+        )
+        camera_group.set_pose_mode(cpu_camera, "cpu")
+        group.gpu_init()
+
+        # Free cameras default to 'static': no CUDA row is allocated anywhere.
+        self.assertEqual(static_camera.pose_mode, "static")
+        with self.assertRaisesRegex(RuntimeError, "no cameras with pose mode 'cuda'"):
+            camera_group.cuda_poses
+        with self.assertRaisesRegex(RuntimeError, "not 'cuda'"):
+            camera_group.get_cuda_pose_index(static_camera)
+        with self.assertRaisesRegex(RuntimeError, "pose mode is 'static'"):
+            static_camera.set_local_pose(sapien.Pose([-3.0, 0.5, 0.0]))
+
+        def red_mask(image: np.ndarray) -> np.ndarray:
+            # channel dominance excludes the gray ambient background
+            return (image[..., 0] > 0.2) & (image[..., 0] > image[..., 1] + 0.1)
+
+        def red_columns(camera) -> float:
+            camera.take_picture()
+            mask = red_mask(camera.get_picture("Color"))
+            self.assertGreater(int(np.count_nonzero(mask)), 20)
+            return float(np.argwhere(mask)[:, 1].mean())
+
+        group.update_render()
+        static_before = red_columns(static_camera)
+        cpu_before = red_columns(cpu_camera)
+
+        # A cpu-mode camera moves in real time through its CPU pose; the static
+        # camera keeps its snapshot.
+        cpu_camera.set_local_pose(sapien.Pose([-3.0, 0.4, 0.0]))
+        group.update_render()
+        static_after = red_columns(static_camera)
+        cpu_after = red_columns(cpu_camera)
+        self.assertLess(abs(static_after - static_before), 1.0)
+        self.assertGreater(abs(cpu_after - cpu_before), 4.0)
+
+        # Steady state: no CPU state changes, no version movement (zero uploads).
+        static_version = static_camera.camera_state_version
+        cpu_version = cpu_camera.camera_state_version
+        light_version = render_system.scene_light_state_version
+        group.update_render()
+        group.update_render()
+        self.assertEqual(static_camera.camera_state_version, static_version)
+        self.assertEqual(cpu_camera.camera_state_version, cpu_version)
+        self.assertEqual(render_system.scene_light_state_version, light_version)
+
+        # Static-camera projection stays CPU real-time: a narrower FOV zooms in and
+        # the box covers more pixels.
+        static_camera.take_picture()
+        red_count_before = int(
+            np.count_nonzero(red_mask(static_camera.get_picture("Color")))
+        )
+        static_camera.set_fovx(np.deg2rad(20))
+        group.update_render()
+        static_camera.take_picture()
+        red_count_after = int(
+            np.count_nonzero(red_mask(static_camera.get_picture("Color")))
+        )
+        self.assertGreater(red_count_after, red_count_before * 2)
+
+        # Static tampering is surfaced by the group update itself.
+        static_camera.entity.set_pose(sapien.Pose([0.0, 0.1, 0.0]))
+        with self.assertRaisesRegex(RuntimeError, "pose mode is 'static'"):
+            group.update_render()
+        static_camera.entity.set_pose(sapien.Pose())
+        group.update_render()
+
+    def test_group_seals_point_cloud_and_unseals_light_properties(self) -> None:
+        device = sapien.Device("cuda")
+        render_system = sapien.render.RenderSystem(device)
+        scene = sapien.Scene([sapien.physx.PhysxCpuSystem(), render_system])
+
+        point_entity = sapien.Entity()
+        point_cloud = sapien.render.RenderPointCloudComponent(1)
+        point_cloud.set_vertices(np.array([[0.0, 0.0, 0.0]], np.float32))
+        point_entity.add_component(point_cloud)
+        scene.add_entity(point_entity)
+
+        static_light_entity = sapien.Entity()
+        static_light = sapien.render.RenderPointLightComponent()
+        static_light_entity.add_component(static_light)
+        scene.add_entity(static_light_entity)
+
+        cpu_light_entity = sapien.Entity()
+        cpu_light = sapien.render.RenderSpotLightComponent()
+        cpu_light.set_pose_mode("cpu")
+        cpu_light_entity.add_component(cpu_light)
+        scene.add_entity(cpu_light_entity)
+
+        camera = scene.add_camera(
+            "camera", 64, 64, np.deg2rad(45), 0.05, 10
+        )
+        camera.set_local_pose(sapien.Pose([-3.0, 0.0, 0.0]))
+        group = sapien.render.RenderSystemGroup([render_system])
+        camera_group = group.create_camera_group([camera], ["Color"])
+        group.gpu_init()
+
+        with self.assertRaisesRegex(RuntimeError, "point cloud.*static snapshot"):
+            point_cloud.set_vertices(np.array([[0.1, 0.0, 0.0]], np.float32))
+
+        # Light properties stay CPU real-time after gpu_init(); only the pose of a
+        # static-mode light and setup-only fields are sealed.
+        light_version = render_system.scene_light_state_version
+        static_light.set_color([0.5, 0.5, 0.5])
+        static_light.set_shadow_near(0.05)
+        static_light.set_shadow_far(5.0)
+        cpu_light.set_inner_fov(0.4)
+        cpu_light.set_outer_fov(0.8)
+        scene.set_ambient_light([0.3, 0.3, 0.3])
+        self.assertGreater(render_system.scene_light_state_version, light_version)
+
+        with self.assertRaisesRegex(RuntimeError, "pose mode is 'static'"):
+            static_light.set_local_pose(sapien.Pose([0.0, 0.1, 0.0]))
+        with self.assertRaisesRegex(RuntimeError, "setup-only"):
+            static_light.set_shadow_map_size(1024)
+        with self.assertRaisesRegex(RuntimeError, "setup-only"):
+            static_light.disable_shadow()
+        with self.assertRaisesRegex(RuntimeError, "sealed"):
+            static_light.set_pose_mode("cpu")
+
+        # cpu-mode light poses stay CPU real-time.
+        cpu_light_entity.set_pose(sapien.Pose([0.0, 0.2, 0.0]))
+        cpu_light.set_local_pose(sapien.Pose([0.0, 0.0, 0.1]))
+        group.update_render()
+
+        point_entity.set_pose(sapien.Pose([0.0, 0.1, 0.0]))
+        with self.assertRaisesRegex(RuntimeError, "point cloud.*static snapshot"):
+            scene.update_render()
+        point_entity.set_pose(sapien.Pose())
+        scene.update_render()
+
+        static_light_entity.set_pose(sapien.Pose([0.0, 0.1, 0.0]))
+        with self.assertRaisesRegex(RuntimeError, "pose mode is 'static'"):
+            scene.update_render()
+        static_light_entity.set_pose(sapien.Pose())
+        scene.update_render()
+
+        del camera_group
+        del group
+        gc.collect()
+        point_entity.set_pose(sapien.Pose([0.0, 0.1, 0.0]))
+        static_light.set_local_pose(sapien.Pose([0.0, 0.1, 0.0]))
+        static_light.set_shadow_map_size(1024)
+        static_light.set_pose_mode("cpu")
+        scene.update_render()
+
+    def test_cuda_camera_pose_uses_configured_cuda_stream(self) -> None:
+        cudart = _load_cudart()
+        stream = ctypes.c_void_p()
+        self.assertEqual(
+            cudart.cudaStreamCreateWithFlags(
+                ctypes.byref(stream), CUDA_STREAM_NON_BLOCKING
+            ),
+            0,
+        )
+
+        group = None
+        camera_group = None
+        try:
+            device = sapien.Device("cuda")
+            render_system = sapien.render.RenderSystem(device)
+            scene = sapien.Scene([sapien.physx.PhysxCpuSystem(), render_system])
+            camera = scene.add_camera(
+                "camera", 64, 64, np.deg2rad(45), 0.05, 10
+            )
+            camera.set_local_pose(sapien.Pose([-3.0, 0.0, 0.0]))
+
+            group = sapien.render.RenderSystemGroup([render_system])
+            group.set_cuda_stream(stream.value)
+            camera_group = group.create_camera_group([camera], ["Color"])
+            camera_group.set_pose_mode(camera, "cuda")
+            group.gpu_init()
+
+            final_pose = sapien.Pose([-3.0, 0.4, 0.2])
+            for y in (0.1, 0.2, 0.3, 0.4):
+                camera_group.set_cuda_pose(
+                    camera, sapien.Pose([-3.0, y, 0.2])
+                )
+                group.update_render()
+            self.assertEqual(cudart.cudaStreamSynchronize(stream), 0)
+
+            host_pose = np.empty(7, dtype=np.float32)
+            cuda_pose = camera_group.cuda_poses
+            self.assertEqual(
+                cudart.cudaMemcpy(
+                    ctypes.c_void_p(host_pose.ctypes.data),
+                    ctypes.c_void_p(cuda_pose.ptr),
+                    host_pose.nbytes,
+                    CUDA_MEMCPY_DEVICE_TO_HOST,
+                ),
+                0,
+            )
+            np.testing.assert_allclose(
+                host_pose,
+                [*final_pose.p, *final_pose.q],
+                rtol=0,
+                atol=1e-6,
+            )
+        finally:
+            camera_group = None
+            group = None
+            gc.collect()
+            self.assertEqual(cudart.cudaStreamDestroy(stream), 0)
+
+    def _run_light_realtime_updates(self, shader: str) -> None:
+        """Static lights keep their pose but their color and shadow parameters stay
+        CPU real-time; cpu-mode lights move in real time; ambient stays CPU
+        real-time. Raster and RT are covered separately."""
+        sapien.render.set_camera_shader_dir(shader)
+        if shader == "rt":
+            sapien.render.set_ray_tracing_samples_per_pixel(4)
+            sapien.render.set_ray_tracing_path_depth(2)
+            sapien.render.set_ray_tracing_denoiser("none")
+
+        try:
+            device = sapien.Device("cuda")
+            render_system = sapien.render.RenderSystem(device)
+            scene = sapien.Scene([sapien.physx.PhysxCpuSystem(), render_system])
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(
+                half_size=[0.5, 0.5, 0.5], material=[0.8, 0.8, 0.8]
+            )
+            builder.build_kinematic()
+
+            light_entity = sapien.Entity()
+            static_light = sapien.render.RenderPointLightComponent()
+            static_light.set_color([0.0, 0.0, 0.0])
+            light_entity.add_component(static_light)
+            light_entity.set_pose(sapien.Pose([-2.0, 0.0, 0.0]))
+            scene.add_entity(light_entity)
+
+            cpu_light_entity = sapien.Entity()
+            cpu_light = sapien.render.RenderPointLightComponent()
+            cpu_light.set_pose_mode("cpu")
+            cpu_light.set_color([0.0, 0.0, 0.0])
+            cpu_light_entity.add_component(cpu_light)
+            cpu_light_entity.set_pose(sapien.Pose([-2.0, 0.0, 30.0]))
+            scene.add_entity(cpu_light_entity)
+
+            camera = scene.add_camera(
+                "camera", 64, 64, np.deg2rad(45), 0.05, 10
+            )
+            camera.set_local_pose(sapien.Pose([-3.0, 0.0, 0.0]))
+            if shader == "rt":
+                camera.set_property("toneMapper", 1)
+            group = sapien.render.RenderSystemGroup([render_system])
+            group.create_camera_group([camera], ["Color"])
+            group.gpu_init()
+
+            def brightness() -> float:
+                group.update_render()
+                camera.take_picture()
+                image = camera.get_picture("Color")
+                return float(np.mean(image[..., :3]))
+
+            dark = brightness()
+
+            # Static light color is CPU real-time after gpu_init().
+            static_light.set_color([20.0, 20.0, 20.0])
+            lit = brightness()
+            self.assertGreater(lit, dark + 0.05)
+            static_light.set_color([0.0, 0.0, 0.0])
+            self.assertLess(brightness(), dark + 0.02)
+
+            # A cpu-mode light pose is CPU real-time: bring the far light close.
+            cpu_light.set_color([20.0, 20.0, 20.0])
+            far_lit = brightness()
+            cpu_light_entity.set_pose(sapien.Pose([-2.0, 0.0, 0.0]))
+            near_lit = brightness()
+            self.assertGreater(near_lit, far_lit + 0.05)
+
+            # Ambient light stays CPU real-time.
+            cpu_light.set_color([0.0, 0.0, 0.0])
+            base = brightness()
+            scene.set_ambient_light([0.6, 0.6, 0.6])
+            self.assertGreater(brightness(), base + 0.05)
+        finally:
+            sapien.render.set_camera_shader_dir("default")
+
+    def test_raster_light_realtime_updates(self) -> None:
+        self._run_light_realtime_updates("default")
+
+    def test_rt_light_realtime_updates(self) -> None:
+        self._run_light_realtime_updates("rt")
+
+    def test_batched_light_setters(self) -> None:
+        lights = [
+            sapien.render.RenderPointLightComponent(),
+            sapien.render.RenderDirectionalLightComponent(),
+            sapien.render.RenderSpotLightComponent(),
+        ]
+
+        colors = np.array(
+            [[1.0, 0.0, 0.0], [0.0, 2.0, 0.0], [0.0, 0.0, 3.0]], np.float32
+        )
+        sapien.render.set_light_colors(lights, colors)
+        for light, color in zip(lights, colors):
+            np.testing.assert_allclose(light.color, color)
+
+        poses = np.array(
+            [
+                [1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
+                [0.0, 2.0, 0.0, 0.0, 2.0, 0.0, 0.0],
+                [0.0, 0.0, 3.0, 1.0, 0.0, 0.0, 0.0],
+            ],
+            np.float32,
+        )
+        sapien.render.set_light_poses(lights, poses)
+        np.testing.assert_allclose(lights[1].local_pose.q, [0.0, 1.0, 0.0, 0.0])
+        np.testing.assert_allclose(lights[2].local_pose.p, [0.0, 0.0, 3.0])
+
+        # Directions apply to directional/spot lights only and keep the position.
+        directions = np.array([[0.0, 0.0, -1.0], [1.0, 0.0, 0.0]], np.float32)
+        sapien.render.set_light_directions(lights[1:], directions)
+        np.testing.assert_allclose(lights[1].local_pose.p, [0.0, 2.0, 0.0])
+        rotated = lights[1].local_pose
+        np.testing.assert_allclose(
+            rotated.to_transformation_matrix()[:3, 0], [0.0, 0.0, -1.0], atol=1e-6
+        )
+        with self.assertRaisesRegex(RuntimeError, "no direction"):
+            sapien.render.set_light_directions([lights[0]], directions[:1])
+
+        # Validation failures leave the batch untouched (validate-then-apply).
+        before = [light.color.copy() for light in lights]
+        bad_colors = np.array(
+            [[1.0, 1.0, 1.0], [1.0, 1.0, 1.0], [-1.0, 0.0, 0.0]], np.float32
+        )
+        with self.assertRaisesRegex(RuntimeError, "non-negative"):
+            sapien.render.set_light_colors(lights, bad_colors)
+        for light, color in zip(lights, before):
+            np.testing.assert_allclose(light.color, color)
+        with self.assertRaisesRegex(RuntimeError, "one row per light"):
+            sapien.render.set_light_poses(lights, poses[:2])
+        bad_poses = poses.copy()
+        bad_poses[1, 3:] = 0.0
+        with self.assertRaisesRegex(RuntimeError, "quaternion"):
+            sapien.render.set_light_poses(lights, bad_poses)
+
 
 class TestSceneGPU(unittest.TestCase):
+    def test_implicit_shared_dynamic_requires_and_tracks_cuda_poses(self) -> None:
+        sapien.physx.enable_gpu()
+        cudart = _load_cudart()
+        device = sapien.Device("cuda")
+
+        main_render = sapien.render.RenderSystem(device)
+        main_scene = sapien.Scene(
+            [sapien.physx.PhysxCpuSystem(), main_render]
+        )
+        main_scene.set_ambient_light([0.5, 0.5, 0.5])
+        camera = main_scene.add_camera(
+            "camera", 64, 64, np.deg2rad(45), 0.05, 10
+        )
+        camera.set_local_pose(sapien.Pose([-3.0, 0.0, 0.0]))
+
+        physx = sapien.physx.PhysxGpuSystem(device)
+        shared_render = sapien.render.RenderSystem(device)
+        shared_render.batched_render_shared = True
+        shared_scene = sapien.Scene([physx, shared_render])
+        shared_scene.set_ambient_light([0.5, 0.5, 0.5])
+        builder = shared_scene.create_actor_builder()
+        builder.add_box_collision(half_size=[0.3, 0.3, 0.3])
+        builder.add_box_visual(
+            half_size=[0.3, 0.3, 0.3], material=[0.8, 0.05, 0.05]
+        )
+        builder.initial_pose = sapien.Pose([0.0, 0.0, -50.0])
+        actor = builder.build()
+        body = actor.find_component_by_type(
+            sapien.physx.PhysxRigidDynamicComponent
+        )
+
+        # The shared render system is intentionally omitted. Camera scene
+        # resolution must still discover it and validate its PhysX GPU system.
+        group = sapien.render.RenderSystemGroup([main_render])
+        camera_group = group.create_camera_group([camera], ["Color"])
+        with self.assertRaisesRegex(RuntimeError, "PhysxGpuSystem.*gpu_init"):
+            group.gpu_init()
+
+        physx.gpu_init()
+        with self.assertRaisesRegex(RuntimeError, "require set_cuda_poses"):
+            group.gpu_init()
+
+        pose_buffer = physx.cuda_rigid_body_data
+        pose = np.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], np.float32)
+        self.assertEqual(
+            cudart.cudaMemcpy(
+                ctypes.c_void_p(
+                    pose_buffer.ptr + body.gpu_pose_index * pose_buffer.strides[0]
+                ),
+                ctypes.c_void_p(pose.ctypes.data),
+                pose.nbytes,
+                CUDA_MEMCPY_HOST_TO_DEVICE,
+            ),
+            0,
+        )
+        group.set_cuda_poses(pose_buffer)
+        group.gpu_init()
+        group.update_render()
+        camera_group.take_picture()
+        image = camera_group.get_picture_cuda("Color")
+        host = np.empty((64, 64, 4), np.float32)
+        self.assertEqual(
+            cudart.cudaMemcpy(
+                ctypes.c_void_p(host.ctypes.data),
+                ctypes.c_void_p(image.ptr),
+                host.nbytes,
+                CUDA_MEMCPY_DEVICE_TO_HOST,
+            ),
+            0,
+        )
+        red = host[..., 0]
+        self.assertGreater(int(np.count_nonzero(red > 0.2)), 20)
+
+        extra_entity = sapien.Entity()
+        extra_body = sapien.render.RenderBodyComponent()
+        extra_body.attach(
+            sapien.render.RenderShapeBox(
+                [0.1, 0.1, 0.1], sapien.render.RenderMaterial()
+            )
+        )
+        extra_entity.add_component(extra_body)
+        shared_scene.add_entity(extra_entity)
+        with self.assertRaisesRegex(RuntimeError, "Modifying a scene"):
+            group.update_render()
+
     def test_mounted_camera_binding_waits_for_physx_gpu_init(self) -> None:
         sapien.physx.enable_gpu()
         device = sapien.Device("cuda")
@@ -282,7 +766,7 @@ class TestSceneGPU(unittest.TestCase):
         group.set_cuda_poses(physx.cuda_rigid_body_data)
         group.gpu_init()
         with self.assertRaisesRegex(RuntimeError, "mounted GPU parent"):
-            camera_group.get_free_camera_cuda_pose_index(camera)
+            camera_group.get_cuda_pose_index(camera)
 
         # CPU debug synchronization may update the mounted entity pose, but the
         # sealed camera still derives its world transform from the GPU parent row.
@@ -304,6 +788,136 @@ class TestSceneGPU(unittest.TestCase):
         physx.gpu_apply_rigid_dynamic_data()
         physx.sync_poses_gpu_to_cpu()
         scene.update_render()
+
+    def test_cpu_light_on_gpu_body_entity_rejected(self) -> None:
+        sapien.physx.enable_gpu()
+        device = sapien.Device("cuda")
+        physx = sapien.physx.PhysxGpuSystem(device)
+        render_system = sapien.render.RenderSystem(device)
+        scene = sapien.Scene([physx, render_system])
+
+        builder = scene.create_actor_builder()
+        builder.add_box_collision(half_size=[0.2, 0.2, 0.2])
+        builder.add_box_visual(half_size=[0.2, 0.2, 0.2])
+        actor = builder.build()
+
+        # A cpu-mode light on the same entity as a PhysX GPU body has no
+        # authoritative CPU pose: gpu_init() must reject the configuration.
+        light = sapien.render.RenderPointLightComponent()
+        light.set_pose_mode("cpu")
+        actor.add_component(light)
+
+        camera = scene.add_camera(
+            "camera", 64, 64, np.deg2rad(45), 0.05, 10
+        )
+        camera.set_local_pose(sapien.Pose([-3.0, 0.0, 0.0]))
+
+        physx.gpu_init()
+        group = sapien.render.RenderSystemGroup([render_system])
+        group.set_cuda_poses(physx.cuda_rigid_body_data)
+        group.create_camera_group([camera], ["Color"])
+        with self.assertRaisesRegex(RuntimeError, "cpu-mode light shares its entity"):
+            group.gpu_init()
+
+    def test_viewer_controller_camera_stays_cpu_beside_sealed_group(self) -> None:
+        """The Viewer keeps its architecture next to a sealed RenderSystemGroup:
+        the controller camera stays CPU-managed, joins no camera group, and
+        allocates no CUDA pose row, while direct transport and grouped capture
+        keep working side by side. The Viewer opens before gpu_init() because the
+        group freezes scene topology, including the controller camera node."""
+        from sapien.utils import Viewer
+
+        sapien.physx.enable_gpu()
+        cudart = _load_cudart()
+        device = sapien.Device("cuda")
+        physx = sapien.physx.PhysxGpuSystem(device)
+        render_system = sapien.render.RenderSystem(device)
+        scene = sapien.Scene([physx, render_system])
+        scene.set_ambient_light([0.5, 0.5, 0.5])
+
+        builder = scene.create_actor_builder()
+        builder.add_box_collision(half_size=[0.3, 0.3, 0.3])
+        builder.add_box_visual(
+            half_size=[0.3, 0.3, 0.3], material=[0.8, 0.05, 0.05]
+        )
+        builder.initial_pose = sapien.Pose([0.0, 0.0, -50.0])
+        actor = builder.build()
+        body = actor.find_component_by_type(
+            sapien.physx.PhysxRigidDynamicComponent
+        )
+
+        camera = scene.add_camera(
+            "camera", 64, 64, np.deg2rad(45), 0.05, 10
+        )
+        camera.set_local_pose(sapien.Pose([-3.0, 0.0, 0.0]))
+
+        physx.gpu_init()
+
+        # Apply the pose so the Viewer's direct transport, which refreshes the pose
+        # buffer from PhysX simulation state, sees the actor at the origin.
+        pose = np.array([0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0], np.float32)
+        pose_buffer = physx.cuda_rigid_body_data
+        self.assertEqual(
+            cudart.cudaMemcpy(
+                ctypes.c_void_p(
+                    pose_buffer.ptr + body.gpu_pose_index * pose_buffer.strides[0]
+                ),
+                ctypes.c_void_p(pose.ctypes.data),
+                pose.nbytes,
+                CUDA_MEMCPY_HOST_TO_DEVICE,
+            ),
+            0,
+        )
+        physx.gpu_apply_rigid_dynamic_data()
+
+        viewer = Viewer(resolutions=(320, 240))
+        try:
+            viewer.configure_physx_gpu_rendering(physx, "direct")
+            viewer.set_scene(scene)
+            # Camera-lineset helper visuals would add nodes to the shared render
+            # scene after the group froze its topology; keep the overlay off.
+            viewer.control_window.show_camera_linesets = False
+
+            group = sapien.render.RenderSystemGroup([render_system])
+            group.set_cuda_poses(physx.cuda_rigid_body_data)
+            camera_group = group.create_camera_group([camera], ["Color"])
+            camera_group.set_pose_mode(camera, "cuda")
+            group.gpu_init()
+
+            # The controller camera stays CPU-managed after the group sealed its
+            # member cameras: free navigation never raises and needs no pose row.
+            viewer.set_camera_xyz(-4.0, 0.0, 0.0)
+            viewer.update_render()
+            viewer.render()
+            viewer.set_camera_xyz(-4.0, 0.5, 0.2)
+            viewer.update_render()
+            viewer.render()
+            segmentation = viewer.window.get_picture("Segmentation")
+            self.assertGreater(
+                int(np.count_nonzero(segmentation[..., 0] == actor.per_scene_id)),
+                20,
+            )
+
+            # The sealed group keeps capturing beside the open Viewer, and the
+            # controller camera occupies no group CUDA pose row.
+            group.update_render()
+            camera_group.take_picture()
+            image = camera_group.get_picture_cuda("Color")
+            host = np.empty((64, 64, 4), np.float32)
+            self.assertEqual(
+                cudart.cudaMemcpy(
+                    ctypes.c_void_p(host.ctypes.data),
+                    ctypes.c_void_p(image.ptr),
+                    host.nbytes,
+                    CUDA_MEMCPY_DEVICE_TO_HOST,
+                ),
+                0,
+            )
+            self.assertGreater(int(np.count_nonzero(host[..., 0] > 0.2)), 20)
+            self.assertEqual(camera_group.cuda_poses.shape, [1, 7])
+            self.assertEqual(physx._sync_poses_gpu_to_cpu_count, 0)
+        finally:
+            viewer.close()
 
     def test_live_group_protects_shared_scene_from_released_camera(self) -> None:
         sapien.physx.enable_gpu()
@@ -542,12 +1156,12 @@ class TestSceneGPU(unittest.TestCase):
 
     def _run_free_camera_articulation_updates(self, shader: str) -> None:
         """One group update + one capture per frame must show every articulation
-        link at its CUDA pose and honor per-frame free-camera CUDA pose writes.
+        link at its CUDA pose and honor per-frame cuda-camera pose-row writes.
 
-        Contract: after create_camera_group() every camera transform is
-        GPU-owned. Free cameras move through the group's CUDA pose rows
-        (set_free_camera_pose / cuda_free_camera_poses); CPU set_local_pose()
-        is rejected, and no scene.update_render() participates in capture.
+        Contract: after gpu_init() every grouped camera pose is owned per its
+        configured mode. Cuda-mode cameras move through the group's CUDA pose rows
+        (set_cuda_pose / cuda_poses); CPU set_local_pose() is rejected, and no
+        scene.update_render() participates in capture.
         """
         # This is a required GPU test: CUDA or PhysX GPU initialization
         # failures must fail the test instead of being converted to skips.
@@ -608,8 +1222,8 @@ class TestSceneGPU(unittest.TestCase):
             static_entity.set_pose(sapien.Pose([0.0, 0.0, -5.0]))
             scene.add_entity(static_entity)
 
-            # Free camera: no sibling PhysX body, no GPU pose batch index. Its
-            # CPU pose set before group creation seeds the CUDA pose row.
+            # Free camera configured 'cuda': no sibling PhysX body, no GPU pose batch
+            # index. Its CPU pose set before group creation seeds the CUDA pose row.
             camera = scene.add_camera("camera", width, height, np.deg2rad(60), 0.05, 20)
             camera.set_local_pose(sapien.Pose([-3.0, 0.0, 1.0]))
 
@@ -618,6 +1232,7 @@ class TestSceneGPU(unittest.TestCase):
             group = sapien.render.RenderSystemGroup([render_system])
             group.set_cuda_poses(physx.cuda_rigid_body_data)
             camera_group = group.create_camera_group([camera], ["Color"])
+            camera_group.set_pose_mode(camera, "cuda")
 
             # Steady-state APIs require explicit initialization.
             with self.assertRaisesRegex(RuntimeError, "gpu_init"):
@@ -628,14 +1243,14 @@ class TestSceneGPU(unittest.TestCase):
             group.gpu_init()
 
             # gpu_init() seals the group: no further camera groups, no CPU pose
-            # writes on member cameras, and the free camera has row 0.
+            # writes on member cameras, and the cuda camera has row 0.
             with self.assertRaisesRegex(RuntimeError, "already initialized"):
                 group.create_camera_group([camera], ["Color"])
-            with self.assertRaisesRegex(RuntimeError, "owned by a RenderCameraGroup"):
+            with self.assertRaisesRegex(RuntimeError, "pose mode is 'cuda'"):
                 camera.set_local_pose(sapien.Pose([-3.0, 0.0, 1.0]))
-            self.assertEqual(camera_group.get_free_camera_cuda_pose_index(camera), 0)
-            free_camera_poses = camera_group.cuda_free_camera_poses
-            self.assertEqual(free_camera_poses.shape, [1, 7])
+            self.assertEqual(camera_group.get_cuda_pose_index(camera), 0)
+            cuda_camera_poses = camera_group.cuda_poses
+            self.assertEqual(cuda_camera_poses.shape, [1, 7])
 
             pose_buffer = physx.cuda_rigid_body_data
             root_row_ptr = (
@@ -705,7 +1320,7 @@ class TestSceneGPU(unittest.TestCase):
 
             # Frame 2: move only the free camera through its CUDA pose row; the
             # links must shift the opposite way in the image.
-            camera_group.set_free_camera_pose(camera, sapien.Pose([-3.0, 0.3, 1.0]))
+            camera_group.set_cuda_pose(camera, sapien.Pose([-3.0, 0.3, 1.0]))
             columns_2 = link_centroid_columns(capture(), 2)
             camera_shift = columns_2 - columns_1
             for shift in camera_shift:
@@ -739,11 +1354,11 @@ class TestSceneGPU(unittest.TestCase):
                 self.assertLess(abs(float(delta)), 2.0)
 
             # Writing the CUDA pose row directly is equivalent to
-            # set_free_camera_pose: move the camera back and expect the image
+            # set_cuda_pose: move the camera back and expect the image
             # to shift opposite to the frame-2 camera move.
             raw_pose = np.array([-3.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float32)
             status = cudart.cudaMemcpy(
-                ctypes.c_void_p(free_camera_poses.ptr),
+                ctypes.c_void_p(cuda_camera_poses.ptr),
                 ctypes.c_void_p(raw_pose.ctypes.data),
                 raw_pose.nbytes,
                 CUDA_MEMCPY_HOST_TO_DEVICE,

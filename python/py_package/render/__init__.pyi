@@ -54,6 +54,9 @@ from sapien.pysapien.render import load_scene as load_scene
 from sapien.pysapien.render import set_camera_shader_dir as set_camera_shader_dir
 from sapien.pysapien.render import set_global_config as set_global_config
 from sapien.pysapien.render import set_imgui_ini_filename as set_imgui_ini_filename
+from sapien.pysapien.render import set_light_colors as set_light_colors
+from sapien.pysapien.render import set_light_directions as set_light_directions
+from sapien.pysapien.render import set_light_poses as set_light_poses
 from sapien.pysapien.render import set_log_level as set_log_level
 from sapien.pysapien.render import set_msaa as set_msaa
 from sapien.pysapien.render import set_picture_format as set_picture_format

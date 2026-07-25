@@ -114,61 +114,165 @@ void SapienRenderParallelogramLightComponent::setShape(float halfWidth, float ha
   if (mParallelogramLight) {
     mParallelogramLight->setShape({mHalfWidth, mHalfHeight}, mAngle);
   }
+  markLightStateDirty();
 }
 
 void SapienRenderPointLightComponent::internalUpdate() {
-  auto pose = getGlobalPose() * POSE_GL_TO_ROS;
+  Pose globalPose = getGlobalPose();
+  internalNotePoseUpdate(globalPose);
+  auto pose = globalPose * POSE_GL_TO_ROS;
   mPointLight->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                              .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z}});
 }
 void SapienRenderDirectionalLightComponent::internalUpdate() {
-  auto pose = getGlobalPose() * POSE_GL_TO_ROS;
+  Pose globalPose = getGlobalPose();
+  internalNotePoseUpdate(globalPose);
+  auto pose = globalPose * POSE_GL_TO_ROS;
   mDirectionalLight->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                                    .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z}});
 }
 void SapienRenderSpotLightComponent::internalUpdate() {
-  auto pose = getGlobalPose() * POSE_GL_TO_ROS;
+  Pose globalPose = getGlobalPose();
+  internalNotePoseUpdate(globalPose);
+  auto pose = globalPose * POSE_GL_TO_ROS;
   mSpotLight->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                             .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z}});
 }
 void SapienRenderTexturedLightComponent::internalUpdate() {
-  auto pose = getGlobalPose() * POSE_GL_TO_ROS;
+  Pose globalPose = getGlobalPose();
+  internalNotePoseUpdate(globalPose);
+  auto pose = globalPose * POSE_GL_TO_ROS;
   mSpotLight->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                             .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z}});
 }
 void SapienRenderParallelogramLightComponent::internalUpdate() {
-  auto pose = getGlobalPose() * POSE_GL_TO_ROS;
+  Pose globalPose = getGlobalPose();
+  internalNotePoseUpdate(globalPose);
+  auto pose = globalPose * POSE_GL_TO_ROS;
   mParallelogramLight->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                                      .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z}});
 }
 
-void SapienRenderLightComponent::setLocalPose(Pose const &pose) { mLocalPose = pose; }
+void SapienRenderLightComponent::setLocalPose(Pose const &pose) {
+  if (mGroupSealCount > 0 && mPoseMode == LightPoseMode::eStatic) {
+    throw std::runtime_error(
+        "failed to set light local pose: the light pose mode is 'static' (default) and its pose "
+        "is a snapshot sealed by a render system group; set pose mode 'cpu' before "
+        "RenderSystemGroup.gpu_init() to move it");
+  }
+  mLocalPose = pose;
+}
 Pose SapienRenderLightComponent::getLocalPose() const { return mLocalPose; }
 Pose SapienRenderLightComponent::getGlobalPose() const { return getPose() * mLocalPose; }
 
-void SapienRenderLightComponent::setColor(Vec3 color) { mColor = color; }
+void SapienRenderLightComponent::setPoseMode(LightPoseMode mode) {
+  if (mGroupSealCount > 0) {
+    throw std::runtime_error(
+        "failed to set light pose mode: the mode is sealed by a render system group; configure "
+        "it before RenderSystemGroup.gpu_init()");
+  }
+  mPoseMode = mode;
+}
+
+void SapienRenderLightComponent::checkSetupMutable(char const *operation) const {
+  if (mGroupSealCount > 0) {
+    throw std::runtime_error(std::string("failed to ") + operation +
+                             ": this is a setup-only light property sealed by a render system "
+                             "group; destroy the group before changing it");
+  }
+}
+
+void SapienRenderLightComponent::internalNotePoseUpdate(Pose const &globalPose) {
+  if (mGroupSealCount == 0) {
+    return;
+  }
+  bool poseChanged =
+      globalPose.p.x != mLastCpuStatePose.p.x || globalPose.p.y != mLastCpuStatePose.p.y ||
+      globalPose.p.z != mLastCpuStatePose.p.z || globalPose.q.w != mLastCpuStatePose.q.w ||
+      globalPose.q.x != mLastCpuStatePose.q.x || globalPose.q.y != mLastCpuStatePose.q.y ||
+      globalPose.q.z != mLastCpuStatePose.q.z;
+  if (!poseChanged) {
+    return;
+  }
+  if (mPoseMode == LightPoseMode::eStatic) {
+    throw std::runtime_error(
+        "failed to update light: its pose changed after RenderSystemGroup.gpu_init() but the "
+        "light pose mode is 'static' (default); set pose mode 'cpu' before gpu_init() to move "
+        "it");
+  }
+  // CPU pose stays authoritative: propagate and mark the scene light state dirty so the
+  // owning group re-uploads light state at its next update_render().
+  mLastCpuStatePose = globalPose;
+  markLightStateDirty();
+}
+
+void SapienRenderLightComponent::internalSealGroupState() {
+  if (mGroupSealCount++ == 0) {
+    mSealedGlobalPose = getGlobalPose();
+    mLastCpuStatePose = mSealedGlobalPose;
+  }
+}
+
+void SapienRenderLightComponent::internalReleaseGroupStateSeal() {
+  if (mGroupSealCount == 0) {
+    throw std::runtime_error("light group state seal count is already zero");
+  }
+  --mGroupSealCount;
+}
+
+void SapienRenderLightComponent::markLightStateDirty() {
+  if (auto scene = getScene()) {
+    scene->getSapienRendererSystem()->internalNotifyLightStateChanged();
+  }
+}
+
+void SapienRenderLightComponent::setColor(Vec3 color) {
+  mColor = color;
+  markLightStateDirty();
+}
 void SapienRenderPointLightComponent::setColor(Vec3 color) {
   mColor = color;
   if (mPointLight) {
     mPointLight->setColor({color.x, color.y, color.z});
   }
+  markLightStateDirty();
 }
 void SapienRenderDirectionalLightComponent::setColor(Vec3 color) {
   mColor = color;
   if (mDirectionalLight) {
     mDirectionalLight->setColor({color.x, color.y, color.z});
   }
+  markLightStateDirty();
 }
 void SapienRenderSpotLightComponent::setColor(Vec3 color) {
   mColor = color;
   if (mSpotLight) {
     mSpotLight->setColor({color.x, color.y, color.z});
   }
+  markLightStateDirty();
 }
 void SapienRenderParallelogramLightComponent::setColor(Vec3 color) {
   mColor = color;
   if (mParallelogramLight) {
     mParallelogramLight->setColor({color.x, color.y, color.z});
+  }
+  markLightStateDirty();
+}
+
+void SapienRenderPointLightComponent::internalApplyShadowParameters() {
+  if (mPointLight) {
+    mPointLight->setShadowParameters(mShadowNear, mShadowFar, mShadowMapSize);
+  }
+}
+void SapienRenderDirectionalLightComponent::internalApplyShadowParameters() {
+  if (mDirectionalLight) {
+    mDirectionalLight->setShadowParameters(mShadowNear, mShadowFar, mShadowHalfSize,
+                                           mShadowMapSize);
+  }
+}
+void SapienRenderSpotLightComponent::internalApplyShadowParameters() {
+  if (mSpotLight) {
+    mSpotLight->setShadowParameters(mShadowNear, mShadowFar, mShadowMapSize);
   }
 }
 

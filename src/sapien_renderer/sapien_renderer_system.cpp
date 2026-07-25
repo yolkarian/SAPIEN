@@ -148,6 +148,7 @@ void SapienRendererSystem::setAmbientLight(Vec3 l) {
   // Alpha is an internal flag indicating whether the raster shader should use its fallback IBL.
   auto ambient = mScene->getAmbientLight();
   mScene->setAmbientLight({l.x, l.y, l.z, ambient.a});
+  internalNotifyLightStateChanged();
 }
 
 void SapienRendererSystem::setCubemap(std::shared_ptr<SapienRenderCubemap> cubemap) {

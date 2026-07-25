@@ -455,7 +455,8 @@ Mat34 SapienRenderCameraComponent::getExtrinsicMatrix() const {
 void SapienRenderCameraComponent::setPerspectiveParameters(float near, float far, float fx,
                                                            float fy, float cx, float cy,
                                                            float skew) {
-  checkGpuOwnershipMutable("set perspective parameters");
+  // Projection/intrinsics stay CPU-authoritative in every grouped pose mode; the CUDA
+  // kernel only writes view/inverse-view, and dirty uploads propagate this change.
   mMode = CameraMode::ePerspective;
   mNear = near;
   mFar = far;
@@ -464,6 +465,7 @@ void SapienRenderCameraComponent::setPerspectiveParameters(float near, float far
   mCx = cx;
   mCy = cy;
   mSkew = skew;
+  ++mCameraStateVersion;
   if (mCamera) {
     mCamera->mCamera->setPerspectiveParameters(mNear, mFar, mFx, mFy, mCx, mCy, mWidth, mHeight,
                                                mSkew);
@@ -477,7 +479,6 @@ void SapienRenderCameraComponent::setOrthographicParameters(float near, float fa
 
 void SapienRenderCameraComponent::setOrthographicParameters(float near, float far, float left,
                                                             float right, float bottom, float top) {
-  checkGpuOwnershipMutable("set orthographic parameters");
   mMode = CameraMode::eOrthographic;
   mNear = near;
   mFar = far;
@@ -485,6 +486,7 @@ void SapienRenderCameraComponent::setOrthographicParameters(float near, float fa
   mRight = right;
   mBottom = bottom;
   mTop = top;
+  ++mCameraStateVersion;
   if (mCamera) {
     mCamera->mCamera->setOrthographicParameters(near, far, left, right, bottom, top, mWidth,
                                                 mHeight);
@@ -531,12 +533,23 @@ void SapienRenderCameraComponent::setSkew(float s) {
 }
 
 void SapienRenderCameraComponent::setLocalPose(Pose const &pose) {
-  if (mGpuOwnershipSealed) {
+  if (mGpuOwnershipSealed && mPoseMode != CameraPoseMode::eCpu) {
+    if (mGpuPoseIndex >= 0) {
+      throw std::runtime_error(
+          "failed to set camera local pose: the camera is CUDA-attached to its GPU parent "
+          "body/link; its local pose is fixed at RenderSystemGroup.gpu_init(). Move the parent "
+          "body instead.");
+    }
+    if (mPoseMode == CameraPoseMode::eCuda) {
+      throw std::runtime_error(
+          "failed to set camera local pose: the camera pose mode is 'cuda'. Write its CUDA pose "
+          "row (RenderCameraGroup.cuda_poses or set_cuda_pose) instead.");
+    }
     throw std::runtime_error(
-        "failed to set camera local pose: the camera transform is owned by a RenderCameraGroup. "
-        "Free cameras update through the group's CUDA pose row (RenderCameraGroup."
-        "set_free_camera_pose or cuda_free_camera_poses); mounted cameras follow their GPU "
-        "parent body with the local pose fixed at group creation.");
+        "failed to set camera local pose: the camera pose mode is 'static' (default) and its "
+        "pose is a snapshot sealed at RenderSystemGroup.gpu_init(). Configure "
+        "RenderCameraGroup.set_pose_mode(camera, 'cpu') or 'cuda' before gpu_init() to move "
+        "it.");
   }
   mLocalPose = pose;
 }
@@ -559,6 +572,19 @@ void SapienRenderCameraComponent::internalRegisterGpuOwnership(void const *owner
   mGpuOwnershipOwner = owner;
 }
 
+void SapienRenderCameraComponent::internalSetPoseMode(void const *owner, CameraPoseMode mode) {
+  if (mGpuOwnershipOwner != owner) {
+    throw std::runtime_error("failed to set camera pose mode: the camera does not belong to "
+                             "this RenderCameraGroup");
+  }
+  if (mGpuOwnershipSealed) {
+    throw std::runtime_error("failed to set camera pose mode: the pose mode is sealed at "
+                             "RenderSystemGroup.gpu_init(); configure it before initialization");
+  }
+  mPoseMode = mode;
+  mPoseModeConfigured = true;
+}
+
 void SapienRenderCameraComponent::internalSealGpuOwnership(void const *owner) {
   if (mGpuOwnershipOwner != owner) {
     throw std::runtime_error("failed to seal camera GPU ownership: owner mismatch");
@@ -567,6 +593,7 @@ void SapienRenderCameraComponent::internalSealGpuOwnership(void const *owner) {
     return;
   }
   mSealedCpuGlobalPose = getGlobalPose();
+  mLastCpuStatePose = mSealedCpuGlobalPose;
   mGpuOwnershipSealed = true;
 }
 
@@ -593,20 +620,38 @@ Pose SapienRenderCameraComponent::getGlobalPose() const { return getPose() * mLo
 
 void SapienRenderCameraComponent::internalUpdate() {
   Pose globalPose = getGlobalPose();
-  // A mounted/direct GPU camera derives its world pose from its CUDA pose row.
-  // sync_poses_gpu_to_cpu() may legitimately update its parent entity's CPU pose
-  // for debugging, so only free cameras enforce an unchanged CPU seed pose.
-  if (mGpuOwnershipSealed && mGpuPoseIndex < 0 &&
-      (globalPose.p.x != mSealedCpuGlobalPose.p.x ||
-       globalPose.p.y != mSealedCpuGlobalPose.p.y ||
-       globalPose.p.z != mSealedCpuGlobalPose.p.z ||
-       globalPose.q.w != mSealedCpuGlobalPose.q.w ||
-       globalPose.q.x != mSealedCpuGlobalPose.q.x ||
-       globalPose.q.y != mSealedCpuGlobalPose.q.y ||
-       globalPose.q.z != mSealedCpuGlobalPose.q.z)) {
-    throw std::runtime_error(
-        "failed to update camera: its CPU pose changed after RenderSystemGroup.gpu_init(); "
-        "write a free-camera CUDA pose row or move the mounted GPU parent instead");
+  if (mGpuOwnershipSealed && mGpuPoseIndex < 0) {
+    // A CUDA-attached camera derives its world pose from its GPU parent row and
+    // sync_poses_gpu_to_cpu() may legitimately update the parent entity's CPU pose,
+    // so only cameras without a GPU pose batch index are checked here.
+    bool poseChanged = globalPose.p.x != mLastCpuStatePose.p.x ||
+                       globalPose.p.y != mLastCpuStatePose.p.y ||
+                       globalPose.p.z != mLastCpuStatePose.p.z ||
+                       globalPose.q.w != mLastCpuStatePose.q.w ||
+                       globalPose.q.x != mLastCpuStatePose.q.x ||
+                       globalPose.q.y != mLastCpuStatePose.q.y ||
+                       globalPose.q.z != mLastCpuStatePose.q.z;
+    if (poseChanged) {
+      switch (mPoseMode) {
+      case CameraPoseMode::eCpu:
+        // CPU pose stays authoritative: fold the change into the dirty version so the
+        // owning group uploads the camera state at its next update_render().
+        mLastCpuStatePose = globalPose;
+        ++mCameraStateVersion;
+        break;
+      case CameraPoseMode::eCuda:
+        throw std::runtime_error(
+            "failed to update camera: its CPU pose changed after RenderSystemGroup.gpu_init() "
+            "but the camera pose mode is 'cuda'; write its CUDA pose row "
+            "(RenderCameraGroup.cuda_poses or set_cuda_pose) instead");
+      case CameraPoseMode::eStatic:
+        throw std::runtime_error(
+            "failed to update camera: its CPU pose changed after RenderSystemGroup.gpu_init() "
+            "but the camera pose mode is 'static' (default); configure "
+            "RenderCameraGroup.set_pose_mode(camera, 'cpu') or 'cuda' before gpu_init() to "
+            "move it");
+      }
+    }
   }
   if (mCamera) {
     auto pose = globalPose * POSE_GL_TO_ROS;

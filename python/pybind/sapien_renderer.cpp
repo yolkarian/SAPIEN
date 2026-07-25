@@ -46,6 +46,65 @@ template <> struct type_caster<CameraMode> {
   }
 };
 
+template <> struct type_caster<CameraPoseMode> {
+  PYBIND11_TYPE_CASTER(CameraPoseMode, _("typing.Literal['static', 'cpu', 'cuda']"));
+
+  bool load(py::handle src, bool convert) {
+    std::string name = py::cast<std::string>(src);
+    if (name == "static") {
+      value = CameraPoseMode::eStatic;
+      return true;
+    } else if (name == "cpu") {
+      value = CameraPoseMode::eCpu;
+      return true;
+    } else if (name == "cuda") {
+      value = CameraPoseMode::eCuda;
+      return true;
+    }
+    return false;
+  }
+
+  static py::handle cast(CameraPoseMode const &src, py::return_value_policy policy,
+                         py::handle parent) {
+    switch (src) {
+    case CameraPoseMode::eCpu:
+      return py::str("cpu").release();
+    case CameraPoseMode::eCuda:
+      return py::str("cuda").release();
+    case CameraPoseMode::eStatic:
+    default:
+      return py::str("static").release();
+    }
+  }
+};
+
+template <> struct type_caster<LightPoseMode> {
+  PYBIND11_TYPE_CASTER(LightPoseMode, _("typing.Literal['static', 'cpu']"));
+
+  bool load(py::handle src, bool convert) {
+    std::string name = py::cast<std::string>(src);
+    if (name == "static") {
+      value = LightPoseMode::eStatic;
+      return true;
+    } else if (name == "cpu") {
+      value = LightPoseMode::eCpu;
+      return true;
+    }
+    return false;
+  }
+
+  static py::handle cast(LightPoseMode const &src, py::return_value_policy policy,
+                         py::handle parent) {
+    switch (src) {
+    case LightPoseMode::eCpu:
+      return py::str("cpu").release();
+    case LightPoseMode::eStatic:
+    default:
+      return py::str("static").release();
+    }
+  }
+};
+
 template <> struct type_caster<svulkan2::renderer::RTRenderer::DenoiserType> {
   PYBIND11_TYPE_CASTER(svulkan2::renderer::RTRenderer::DenoiserType,
                        _("typing.Literal['none', 'oidn', 'optix']"));
@@ -500,7 +559,48 @@ void init_sapien_renderer(py::module &sapien) {
            py::arg("max_num_materials") = 128, py::arg("max_num_textures") = 512,
            py::arg("default_mipmap_levels") = 1, py::arg("do_not_load_texture") = false,
            "Sets global properties for SAPIEN renderer. This function should only be called "
-           "before creating any renderer-related objects.");
+           "before creating any renderer-related objects.")
+
+      .def("set_light_poses", &batchSetLightPoses, py::arg("lights"), py::arg("poses"),
+           R"doc(
+Batch-set the local pose of lights, primarily for per-environment lighting randomization.
+Each row of poses is [x, y, z, qw, qx, qy, qz] (the world pose when the owning entity pose is
+identity); quaternions are normalized before being applied.
+
+The whole batch is validated first and a failed call never leaves it partially applied.
+Lights sealed by a RenderSystemGroup must use pose mode 'cpu'; the poses take effect at the
+next update_render().
+
+Args:
+    lights: list of RenderLightComponent
+    poses: [N, 7] array of poses, one [x, y, z, qw, qx, qy, qz] row per light)doc")
+      .def("set_light_directions", &batchSetLightDirections, py::arg("lights"),
+           py::arg("directions"),
+           R"doc(
+Batch-point directional/spot/textured lights along directions, primarily for per-environment
+lighting randomization. SAPIEN lights shine along +x of their pose; each light's local
+position is kept. Point and parallelogram lights are rejected.
+
+The whole batch is validated first and a failed call never leaves it partially applied.
+Lights sealed by a RenderSystemGroup must use pose mode 'cpu'; the directions take effect at
+the next update_render().
+
+Args:
+    lights: list of RenderDirectionalLightComponent / RenderSpotLightComponent /
+        RenderTexturedLightComponent
+    directions: [N, 3] array of finite non-zero directions, one row per light)doc")
+      .def("set_light_colors", &batchSetLightColors, py::arg("lights"), py::arg("colors"),
+           R"doc(
+Batch-set light colors, primarily for per-environment lighting randomization. Colors are
+finite non-negative [r, g, b] rows; values above 1 are valid HDR intensities.
+
+The whole batch is validated first and a failed call never leaves it partially applied.
+Colors stay CPU real-time in every pose mode; they take effect at the next update_render()
+(or immediately for ordinary CPU rendering).
+
+Args:
+    lights: list of RenderLightComponent
+    colors: [N, 3] array of colors, one row per light)doc");
 
   ////////// end global //////////
 
@@ -575,36 +675,53 @@ void init_sapien_renderer(py::module &sapien) {
       .def("set_cuda_poses", &BatchedRenderSystem::setPoseSource, py::arg("pose_buffer"))
       .def("gpu_init", &BatchedRenderSystem::gpuInit,
            R"doc(
-One-time initialization and seal. Validates referenced PhysX GPU systems, resolves mounted camera
-bindings and output render scenes, prepares resources, takes the one-time CPU snapshots, seals
-transform ownership, and freezes topology. Configure create_camera_group() and, when GPU objects
-or mounted cameras exist, set_cuda_poses() before calling; afterwards the steady state is
-update_render() plus capture only.)doc")
+One-time initialization and seal. Resolves final output selections including shared scenes,
+validates their PhysX GPU systems, binds dynamic bodies and mounted cameras, parses camera and
+light pose modes, prepares resources, snapshots static state, seals pose ownership, and freezes
+topology. Configure create_camera_group(), pose modes, and, when GPU objects or mounted cameras
+exist, set_cuda_poses() before calling; afterwards the steady state is update_render() plus
+capture only.)doc")
       .def("update_render", &BatchedRenderSystem::update,
            R"doc(
-This function performs CUDA operations to transfer poses from the CUDA buffer provided by :func:`set_cuda_poses` into render systems.
-It updates the transformation matrices of objects and cameras. With a ray-tracing shader pack, it also updates rigid TLAS instances and resets accumulation.
+Per-frame grouped update. It refreshes CPU components (raising if a sealed static pose was
+tampered with), uploads dirty CPU camera state (projection/intrinsics and cpu-mode poses) and
+dirty scene/light state (colors, FOVs, shapes, shadow parameters, ambient, cpu-mode light
+poses), then performs CUDA operations to transfer poses from the buffer provided by
+:func:`set_cuda_poses` into render systems: object transforms plus the view matrices of mounted
+and cuda-mode cameras. With a ray-tracing shader pack, it also updates rigid TLAS instances and
+resets accumulation. When nothing changed on the CPU, no CPU upload is performed.
 
 This function waits for any pending CUDA operations on cuda stream provided by :func:`set_cuda_stream`.
 )doc");
 
   PyCameraGroup.def("take_picture", &BatchedCamera::takePicture)
       .def("get_picture_cuda", &BatchedCamera::getPictureCuda, py::arg("name"))
-      .def_property_readonly("cuda_free_camera_poses", &BatchedCamera::getFreeCameraPoseHandle,
+      .def("set_pose_mode", &BatchedCamera::setPoseMode, py::arg("camera"), py::arg("mode"),
+           R"doc(
+Configure a member camera's pose source before RenderSystemGroup.gpu_init():
+'static' (default): the pose is a one-time snapshot at gpu_init(); CPU pose setters raise.
+'cpu': the CPU pose stays authoritative; set_local_pose()/entity pose changes upload at the
+next update_render().
+'cuda': the camera receives a group-owned CUDA pose row [px, py, pz, qw, qx, qy, qz]
+(cuda_poses / set_cuda_pose); CPU pose setters raise.
+Cameras mounted on PhysX GPU bodies are automatically CUDA-attached (they follow the parent
+pose row without a group row) and cannot be configured 'cpu' or 'static'.
+Projection/intrinsics stay CPU real-time in every mode.)doc")
+      .def_property_readonly("cuda_poses", &BatchedCamera::getCudaPoseHandle,
                              R"doc(
-CUDA buffer of world pose rows [px, py, pz, qw, qx, qy, qz] for the group-owned free cameras
-(cameras without a GPU pose batch index). Rows are seeded once from the CPU pose at group
-creation; write rows on the GPU (or copy explicitly) before update_render().)doc")
-      .def("get_free_camera_cuda_pose_index", &BatchedCamera::getFreeCameraPoseIndex,
-           py::arg("camera"),
+CUDA buffer of world pose rows [px, py, pz, qw, qx, qy, qz] for the cameras configured with
+pose mode 'cuda'. Rows are seeded once from the CPU pose at gpu_init(); write rows on the GPU
+(or copy explicitly) before update_render(). The buffer only exists when at least one camera
+uses pose mode 'cuda'.)doc")
+      .def("get_cuda_pose_index", &BatchedCamera::getCudaPoseIndex, py::arg("camera"),
            R"doc(
-Row index of a free camera in cuda_free_camera_poses. Raises for mounted cameras, whose pose is
-derived from their GPU parent body/link.)doc")
-      .def("set_free_camera_pose", &BatchedCamera::setFreeCameraPose, py::arg("camera"),
-           py::arg("pose"),
+Row index of a cuda-mode camera in cuda_poses. Raises for mounted cameras (their pose derives
+from the GPU parent) and for cameras with pose mode 'static' or 'cpu'.)doc")
+      .def("set_cuda_pose", &BatchedCamera::setCudaPose, py::arg("camera"), py::arg("pose"),
            R"doc(
-Explicitly copy one CPU-authored world pose into a free camera's CUDA pose row. Equivalent to
-writing the row of cuda_free_camera_poses directly; takes effect at the next update_render().)doc");
+Copy one CPU-authored world pose into a cuda-mode camera's CUDA pose row on the camera group's
+configured CUDA stream. This synchronous convenience call is ordered with transform updates on
+that stream; the pose takes effect at the next update_render().)doc");
 
   PyRenderSystem
       .def(py::init([](std::shared_ptr<Device> device) {
@@ -620,6 +737,12 @@ writing the row of cuda_free_camera_poses directly; takes effect at the next upd
                     &SapienRendererSystem::setAmbientLight)
       .def("get_ambient_light", &SapienRendererSystem::getAmbientLight)
       .def("set_ambient_light", &SapienRendererSystem::setAmbientLight, py::arg("color"))
+      .def_property_readonly("scene_light_state_version",
+                             &SapienRendererSystem::getLightStateVersion,
+                             R"doc(
+Coarse dirty version of the CPU scene/light state (light properties, cpu-mode light poses,
+ambient light). RenderSystemGroup.update_render() re-uploads light state only when this
+version moved; an unchanged version means zero per-frame light uploads.)doc")
 
       .def_property_readonly("cameras", &SapienRendererSystem::getCameraComponents)
       .def("get_cameras", &SapienRendererSystem::getCameraComponents)
@@ -1069,6 +1192,15 @@ writing the row of cuda_free_camera_poses directly; takes effect at the next upd
           "transformaion matrices, sizes, and user-defined shader fields.")
       .def("set_gpu_pose_batch_index", &SapienRenderCameraComponent::setGpuBatchedPoseIndex,
            py::arg("index"))
+      .def_property_readonly("camera_state_version",
+                             &SapienRenderCameraComponent::getCameraStateVersion,
+                             R"doc(
+Coarse dirty version of the CPU camera state (projection/intrinsics in every pose mode, plus
+the pose in 'cpu' mode). RenderSystemGroup.update_render() re-uploads camera state only when
+this version moved; an unchanged version means zero per-frame camera uploads.)doc")
+      .def_property_readonly("pose_mode", &SapienRenderCameraComponent::getPoseMode,
+                             "Grouped pose source configured through "
+                             "RenderCameraGroup.set_pose_mode(); 'static' by default.")
 
       .def(
           "get_picture_cuda",
@@ -1130,7 +1262,18 @@ consumer library. Make a copy if needed.
       .def_property("shadow_map_size", &SapienRenderLightComponent::getShadowMapSize,
                     &SapienRenderLightComponent::setShadowMapSize)
       .def("get_shadow_map_size", &SapienRenderLightComponent::getShadowMapSize)
-      .def("set_shadow_map_size", &SapienRenderLightComponent::setShadowMapSize, py::arg("size"));
+      .def("set_shadow_map_size", &SapienRenderLightComponent::setShadowMapSize, py::arg("size"))
+
+      .def_property("pose_mode", &SapienRenderLightComponent::getPoseMode,
+                    &SapienRenderLightComponent::setPoseMode)
+      .def("get_pose_mode", &SapienRenderLightComponent::getPoseMode)
+      .def("set_pose_mode", &SapienRenderLightComponent::setPoseMode, py::arg("mode"),
+           R"doc(
+Configure the light's grouped pose source before RenderSystemGroup.gpu_init():
+'static' (default): the pose is a one-time snapshot at gpu_init(); changing it raises.
+'cpu': the CPU pose stays authoritative; entity/local pose changes upload at the next
+update_render(). A cpu-mode light must not share its entity with a PhysX GPU body.
+Color, FOV, shape, and shadow near/far/half-size stay CPU real-time in both modes.)doc");
 
   PyRenderPointLightComponent.def(py::init<>());
   PyRenderDirectionalLightComponent.def(py::init<>())

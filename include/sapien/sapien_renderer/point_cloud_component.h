@@ -29,6 +29,8 @@ public:
   void onRemoveFromScene(Scene &scene) override;
 
   void internalUpdate();
+  void internalSealStaticPose();
+  void internalReleaseStaticPoseSeal();
 
   CudaArrayHandle getCudaArray() const;
 
@@ -42,12 +44,16 @@ public:
 
 private:
   svulkan2::scene::Transform getTransform() const;
+  void checkSnapshotMutable(char const *operation) const;
+  void checkStaticPose() const;
 
   std::shared_ptr<SapienRenderEngine> mEngine;
   Pose mLocalPose{};
   std::shared_ptr<svulkan2::resource::SVPointSet> mPointSet;
   svulkan2::scene::PointObject *mObject{};
   Vec3 mScale{1.f};
+  uint32_t mStaticPoseSealCount{0};
+  Pose mSealedPose;
 };
 
 } // namespace sapien_renderer

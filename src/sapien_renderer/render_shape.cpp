@@ -326,7 +326,10 @@ AABB RenderShape::getGlobalAABBFast() {
 AABB RenderShape::computeGlobalAABBTight() { return getGlobalAABBFast(); }
 
 void RenderShape::setGpuBatchedPoseIndex(int index) {
-  if (mBatchedPoseIndexSealCount > 0) {
+  if (mBatchedPoseIndexSealCount > 0 && index != mBatchedPoseIndex) {
+    // The seal freezes the bound row value while a render system group consumes it.
+    // Restating the identical index is a no-op so another consumer (e.g. the Viewer's
+    // direct transport) may bind the same PhysX pose row beside a sealed group.
     throw std::runtime_error(
         "failed to set GPU pose batch index: the shape is sealed by a render system group");
   }

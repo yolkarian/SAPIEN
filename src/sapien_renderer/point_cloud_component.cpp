@@ -25,6 +25,7 @@ Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> PointCloudComponent::ge
 std::shared_ptr<PointCloudComponent> PointCloudComponent::setAttribute(
     std::string const &name,
     Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> const &attribute) {
+  checkSnapshotMutable("set point-cloud attribute");
   std::vector<float> data(attribute.data(), attribute.data() + attribute.size());
   mPointSet->setVertexAttribute(name, data);
   return std::static_pointer_cast<PointCloudComponent>(shared_from_this());
@@ -47,10 +48,47 @@ void PointCloudComponent::onRemoveFromScene(Scene &scene) {
 
 // called by system to sync pose
 void PointCloudComponent::internalUpdate() {
+  checkStaticPose();
   auto pose = getEntity()->getPose();
   mObject->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                          .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z},
                          .scale = mObject->getScale()});
+}
+
+void PointCloudComponent::checkSnapshotMutable(char const *operation) const {
+  if (mStaticPoseSealCount > 0) {
+    throw std::runtime_error(std::string("failed to ") + operation +
+                             ": the point cloud is a static snapshot sealed by a render system "
+                             "group");
+  }
+}
+
+void PointCloudComponent::checkStaticPose() const {
+  if (mStaticPoseSealCount == 0) {
+    return;
+  }
+  Pose pose = getEntity()->getPose();
+  if (pose.p.x != mSealedPose.p.x || pose.p.y != mSealedPose.p.y ||
+      pose.p.z != mSealedPose.p.z || pose.q.w != mSealedPose.q.w ||
+      pose.q.x != mSealedPose.q.x || pose.q.y != mSealedPose.q.y ||
+      pose.q.z != mSealedPose.q.z) {
+    throw std::runtime_error(
+        "failed to update point cloud: its pose is a static snapshot sealed by a render system "
+        "group; destroy the group before moving it");
+  }
+}
+
+void PointCloudComponent::internalSealStaticPose() {
+  if (mStaticPoseSealCount++ == 0) {
+    mSealedPose = getEntity()->getPose();
+  }
+}
+
+void PointCloudComponent::internalReleaseStaticPoseSeal() {
+  if (mStaticPoseSealCount == 0) {
+    throw std::runtime_error("point-cloud static pose seal count is already zero");
+  }
+  --mStaticPoseSealCount;
 }
 
 CudaArrayHandle PointCloudComponent::getCudaArray() const {
