@@ -28,6 +28,9 @@ No notable changes yet.
 - Fixed `RenderCameraGroup.take_picture()` reading stale or reused render target images after a renderer rebuild; the image copy commands are re-recorded whenever the render target images change. Raster group captures previously returned segmentation-view contents instead of the requested target.
 - Fixed dynamic bodies in implicitly discovered `batched_render_shared` scenes being excluded from grouped GPU updates. Final camera output selections now participate in PhysX GPU initialization validation, automatic pose-index binding, and CUDA pose-source requirements.
 - Fixed multi-scene render groups uploading zero raster lights: `svulkan2` scene/light uploads now use the aggregated light lists, so lights from `batched_render_shared` member scenes reach the raster light buffers of cameras rendering a scene group.
+- The grouped CPU camera upload now waits for its copy to complete. It previously resubmitted the shared upload command buffer without waiting, so a camera whose state changed on consecutive `update_render()` calls without an intervening capture could resubmit a still-pending command buffer and rewrite the staging buffer it reads. Steady state is unaffected, because grouped uploads only run when CPU state actually changed.
+- Light components now clear their `svulkan2` back-pointer when removed from a scene, so the real-time color, FOV, shape, and shadow-parameter setters cannot touch a node that has already been released.
+- `RenderCameraComponent.pose_mode` now reports the effective pose source. A PhysX-mounted camera auto-attached at `gpu_init()`, or a camera given an explicit `set_gpu_pose_batch_index()`, reports `'cuda'` instead of the unconfigured default `'static'`, matching the transform that actually drives it.
 
 ### Changed
 

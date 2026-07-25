@@ -22,6 +22,9 @@ void SapienRenderPointLightComponent::onRemoveFromScene(Scene &scene) {
   auto system = scene.getSapienRendererSystem();
   auto s = system->getScene();
   s->removeNode(*mPointLight);
+  // The node is destroyed at the next forceRemove(); drop the back-pointer so the
+  // real-time color/shadow setters cannot dereference it after removal.
+  mPointLight = nullptr;
   system->unregisterComponent(
       std::static_pointer_cast<SapienRenderLightComponent>(shared_from_this()));
 }
@@ -41,6 +44,7 @@ void SapienRenderDirectionalLightComponent::onRemoveFromScene(Scene &scene) {
   auto system = scene.getSapienRendererSystem();
   auto s = system->getScene();
   s->removeNode(*mDirectionalLight);
+  mDirectionalLight = nullptr;
   system->unregisterComponent(
       std::static_pointer_cast<SapienRenderLightComponent>(shared_from_this()));
 }
@@ -62,6 +66,7 @@ void SapienRenderSpotLightComponent::onRemoveFromScene(Scene &scene) {
   auto system = scene.getSapienRendererSystem();
   auto s = system->getScene();
   s->removeNode(*mSpotLight);
+  mSpotLight = nullptr;
   system->unregisterComponent(
       std::static_pointer_cast<SapienRenderLightComponent>(shared_from_this()));
 }
@@ -84,6 +89,7 @@ void SapienRenderTexturedLightComponent::onRemoveFromScene(Scene &scene) {
   auto system = scene.getSapienRendererSystem();
   auto s = system->getScene();
   s->removeNode(*mSpotLight);
+  mSpotLight = nullptr;
   system->unregisterComponent(
       std::static_pointer_cast<SapienRenderLightComponent>(shared_from_this()));
 }
@@ -102,6 +108,7 @@ void SapienRenderParallelogramLightComponent::onRemoveFromScene(Scene &scene) {
   auto system = scene.getSapienRendererSystem();
   auto s = system->getScene();
   s->removeNode(*mParallelogramLight);
+  mParallelogramLight = nullptr;
   system->unregisterComponent(
       std::static_pointer_cast<SapienRenderLightComponent>(shared_from_this()));
 }
@@ -120,6 +127,9 @@ void SapienRenderParallelogramLightComponent::setShape(float halfWidth, float ha
 void SapienRenderPointLightComponent::internalUpdate() {
   Pose globalPose = getGlobalPose();
   internalNotePoseUpdate(globalPose);
+  if (!mPointLight) {
+    return;
+  }
   auto pose = globalPose * POSE_GL_TO_ROS;
   mPointLight->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                              .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z}});
@@ -127,6 +137,9 @@ void SapienRenderPointLightComponent::internalUpdate() {
 void SapienRenderDirectionalLightComponent::internalUpdate() {
   Pose globalPose = getGlobalPose();
   internalNotePoseUpdate(globalPose);
+  if (!mDirectionalLight) {
+    return;
+  }
   auto pose = globalPose * POSE_GL_TO_ROS;
   mDirectionalLight->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                                    .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z}});
@@ -134,6 +147,9 @@ void SapienRenderDirectionalLightComponent::internalUpdate() {
 void SapienRenderSpotLightComponent::internalUpdate() {
   Pose globalPose = getGlobalPose();
   internalNotePoseUpdate(globalPose);
+  if (!mSpotLight) {
+    return;
+  }
   auto pose = globalPose * POSE_GL_TO_ROS;
   mSpotLight->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                             .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z}});
@@ -141,6 +157,9 @@ void SapienRenderSpotLightComponent::internalUpdate() {
 void SapienRenderTexturedLightComponent::internalUpdate() {
   Pose globalPose = getGlobalPose();
   internalNotePoseUpdate(globalPose);
+  if (!mSpotLight) {
+    return;
+  }
   auto pose = globalPose * POSE_GL_TO_ROS;
   mSpotLight->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                             .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z}});
@@ -148,6 +167,9 @@ void SapienRenderTexturedLightComponent::internalUpdate() {
 void SapienRenderParallelogramLightComponent::internalUpdate() {
   Pose globalPose = getGlobalPose();
   internalNotePoseUpdate(globalPose);
+  if (!mParallelogramLight) {
+    return;
+  }
   auto pose = globalPose * POSE_GL_TO_ROS;
   mParallelogramLight->setTransform({.position = {pose.p.x, pose.p.y, pose.p.z},
                                      .rotation = {pose.q.w, pose.q.x, pose.q.y, pose.q.z}});

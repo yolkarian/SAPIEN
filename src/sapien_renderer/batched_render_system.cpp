@@ -115,7 +115,7 @@ void BatchedCamera::internalGpuInit() {
   // before touching any renderer state.
   for (auto &cam : mCameras) {
     if (cam->getGpuBatchedPoseIndex() >= 0 && cam->isPoseModeConfigured() &&
-        cam->getPoseMode() != CameraPoseMode::eCuda) {
+        cam->getConfiguredPoseMode() != CameraPoseMode::eCuda) {
       throw std::runtime_error(
           "failed to initialize camera group: a camera with a GPU pose batch index is "
           "CUDA-attached to its parent body/link and cannot use pose mode 'cpu' or 'static'");

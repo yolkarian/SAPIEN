@@ -193,7 +193,10 @@ class RenderCameraComponent(sapien.pysapien.Component):
     @property
     def pose_mode(self) -> typing.Literal['static', 'cpu', 'cuda']:
         """
-        Grouped pose source configured through RenderCameraGroup.set_pose_mode(); 'static' by default.
+        Effective grouped pose source. Normally the mode configured through
+        RenderCameraGroup.set_pose_mode() ('static' by default), but a camera bound to a GPU pose
+        row (a PhysX-mounted camera, or an explicit set_gpu_pose_batch_index()) reports 'cuda'
+        because its transform is driven by that row.
         """
     @property
     def ortho_bottom(self) -> float:

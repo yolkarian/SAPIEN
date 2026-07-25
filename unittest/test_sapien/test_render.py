@@ -377,6 +377,59 @@ class TestScene(unittest.TestCase):
         static_camera.entity.set_pose(sapien.Pose())
         group.update_render()
 
+    def test_repeated_dirty_updates_without_capture(self) -> None:
+        """A cpu-mode camera that moves every step but is captured only every few
+        steps drives several dirty CPU uploads between renders. Each upload must
+        complete before the next one rewrites the shared staging buffer, and the
+        kept frame must show the newest pose."""
+        device = sapien.Device("cuda")
+        render_system = sapien.render.RenderSystem(device)
+        scene = sapien.Scene([sapien.physx.PhysxCpuSystem(), render_system])
+        scene.set_ambient_light([0.5, 0.5, 0.5])
+        builder = scene.create_actor_builder()
+        builder.add_box_visual(
+            half_size=[0.3, 0.3, 0.3], material=[0.8, 0.05, 0.05]
+        )
+        builder.build_kinematic()
+
+        camera = scene.add_camera(
+            "camera", 64, 64, np.deg2rad(45), 0.05, 10
+        )
+        camera.set_local_pose(sapien.Pose([-3.0, 0.0, 0.0]))
+        group = sapien.render.RenderSystemGroup([render_system])
+        camera_group = group.create_camera_group([camera], ["Color"])
+        camera_group.set_pose_mode(camera, "cpu")
+        group.gpu_init()
+
+        def red_column() -> float:
+            camera.take_picture()
+            image = camera.get_picture("Color")
+            mask = (image[..., 0] > 0.2) & (image[..., 0] > image[..., 1] + 0.1)
+            self.assertGreater(int(np.count_nonzero(mask)), 20)
+            return float(np.argwhere(mask)[:, 1].mean())
+
+        group.update_render()
+        baseline = red_column()
+
+        # Several dirty uploads back to back, with no capture in between.
+        for y in (0.1, 0.2, 0.3, 0.4):
+            camera.set_local_pose(sapien.Pose([-3.0, y, 0.0]))
+            group.update_render()
+
+        # Projection is dirty in the same uncaptured window as the pose.
+        camera.set_fovx(np.deg2rad(50))
+        group.update_render()
+
+        moved = red_column()
+        self.assertGreater(abs(moved - baseline), 4.0)
+
+        # The group is still usable and settles once nothing is dirty.
+        version = camera.camera_state_version
+        group.update_render()
+        group.update_render()
+        self.assertEqual(camera.camera_state_version, version)
+        self.assertLess(abs(red_column() - moved), 1.0)
+
     def test_group_seals_point_cloud_and_unseals_light_properties(self) -> None:
         device = sapien.Device("cuda")
         render_system = sapien.render.RenderSystem(device)
@@ -767,6 +820,10 @@ class TestSceneGPU(unittest.TestCase):
         group.gpu_init()
         with self.assertRaisesRegex(RuntimeError, "mounted GPU parent"):
             camera_group.get_cuda_pose_index(camera)
+
+        # A mounted camera is CUDA-attached to its PhysX parent row even though no
+        # pose mode was configured, so it must report the effective mode, not 'static'.
+        self.assertEqual(camera.pose_mode, "cuda")
 
         # CPU debug synchronization may update the mounted entity pose, but the
         # sealed camera still derives its world transform from the GPU parent row.

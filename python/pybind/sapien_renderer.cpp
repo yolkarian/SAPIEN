@@ -1199,8 +1199,11 @@ Coarse dirty version of the CPU camera state (projection/intrinsics in every pos
 the pose in 'cpu' mode). RenderSystemGroup.update_render() re-uploads camera state only when
 this version moved; an unchanged version means zero per-frame camera uploads.)doc")
       .def_property_readonly("pose_mode", &SapienRenderCameraComponent::getPoseMode,
-                             "Grouped pose source configured through "
-                             "RenderCameraGroup.set_pose_mode(); 'static' by default.")
+                             R"doc(
+Effective grouped pose source. Normally the mode configured through
+RenderCameraGroup.set_pose_mode() ('static' by default), but a camera bound to a GPU pose row
+(a PhysX-mounted camera auto-attached at gpu_init(), or an explicit set_gpu_pose_batch_index())
+reports 'cuda' because its transform is driven by that row.)doc")
 
       .def(
           "get_picture_cuda",

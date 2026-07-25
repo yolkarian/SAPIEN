@@ -103,7 +103,14 @@ public:
   void internalRegisterGpuOwnership(void const *owner);
   /** configure the grouped pose mode; only valid for the registered owner before seal */
   void internalSetPoseMode(void const *owner, CameraPoseMode mode);
-  CameraPoseMode getPoseMode() const { return mPoseMode; }
+  /** Effective pose source. A camera bound to a GPU pose row (a PhysX-mounted camera
+   *  auto-attached at gpu_init(), or an explicit set_gpu_pose_batch_index()) is
+   *  CUDA-driven regardless of the configured mode. */
+  CameraPoseMode getPoseMode() const {
+    return mGpuPoseIndex >= 0 ? CameraPoseMode::eCuda : mPoseMode;
+  }
+  /** mode explicitly requested through RenderCameraGroup.set_pose_mode() */
+  CameraPoseMode getConfiguredPoseMode() const { return mPoseMode; }
   /** true when a RenderCameraGroup explicitly configured the pose mode */
   bool isPoseModeConfigured() const { return mPoseModeConfigured; }
   /** seal the registered camera pose after its one-time CPU snapshot */
