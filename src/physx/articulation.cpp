@@ -148,12 +148,14 @@ void PhysxArticulation::internalAddPxArticulationToScene(Scene &scene) {
     pose.p = pose.p + PxVec3(offset.x, offset.y, offset.z);
     getPxArticulation()->setRootGlobalPose(pose);
 
-    // Set GPU broadphase environment ID on each link before adding to scene
-    uint32_t envId = s->getSceneEnvironmentId(scene.shared_from_this());
+    // Set GPU broadphase environment ID on each link before adding to scene, placed in the
+    // band window that still overlaps shared objects.
+    uint32_t envId = s->getBroadphaseEnvironmentId(scene.shared_from_this());
     for (auto link : mLinks) {
       if (!link->getPxActor()->setEnvironmentID(envId)) {
         throw std::runtime_error("failed to set PhysX GPU environment ID on articulation link");
       }
+      s->applyCollisionGroupSceneId(scene.shared_from_this(), *link);
     }
   }
 #endif

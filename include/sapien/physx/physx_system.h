@@ -137,6 +137,10 @@ struct PhysxGpuContactBodyImpulseQuery {
 
 class PhysxSystemGpu : public PhysxSystem {
 public:
+  /** Reads the environment-ID declaration from `PhysxSceneConfig`: `gpuBroadPhaseNumScenes`,
+   *  `gpuBroadPhaseWithSharedScene` and the per-axis bit counts are snapshotted here and frozen.
+   *  This is the only point where they apply -- PhysX bakes the bit count into the scene at
+   *  `createScene` and refuses `PxActor::setEnvironmentID` once an actor is in a scene. */
   PhysxSystemGpu(std::shared_ptr<Device> device);
 
   void registerComponent(std::shared_ptr<PhysxRigidDynamicComponent> component) override;
@@ -343,6 +347,57 @@ public:
   /** Get a scene's already assigned environment ID without assigning a new one. */
   std::optional<uint32_t> getAssignedSceneEnvironmentId(std::shared_ptr<Scene> scene) const;
 
+  /** Whether any scene is registered as shared (`PX_INVALID_U32`), such as one holding a ground
+   *  plane that every environment must collide with. */
+  bool hasSharedEnvironmentScene() const;
+
+  /** Whether this system was constructed with `numScenes`, so SAPIEN derives the broadphase
+   *  environment IDs itself. Without it scene environment IDs reach PhysX verbatim. */
+  bool hasManagedBroadphaseEnvIds() const { return mManagedBroadphaseEnvIds; }
+
+  /** The range of scene environment IDs that get a private broadphase band.
+   *
+   *  PhysX relocates environment `e` into the encoded broadphase band
+   *  `[e << (32 - b), (e + 1) << (32 - b))`, but gives shared objects the fixed encoded interval
+   *  `[gEncodedMinExtent, gEncodedMaxExtent]` that does not follow the banding. The bands at
+   *  either end of the range fall outside it, so those environments silently stop generating
+   *  contacts with shared objects -- a ground plane stops holding them up.
+   *
+   *  Managed with `sharedScene` set, SAPIEN places the low `b` bits of every ID it hands to
+   *  PhysX inside this window. The window depends only on the configured bit count, never on
+   *  how many scenes exist: PhysX freezes an actor's environment ID at `PxScene::addActor`, so
+   *  the value must be final when the first body binds. Unmanaged, or managed without a shared
+   *  scene, nothing is reserved and this spans the whole usable range. */
+  BroadphaseEnvIdWindow getBroadphaseEnvIdWindow() const;
+
+  /** How many environments land in distinct broadphase bands with the current bit configuration.
+   *  Environments beyond this share bands, which costs spreading but stays correct. */
+  uint32_t getBroadphaseEnvBandCount() const;
+
+  /** The PhysX broadphase environment ID for a scene, i.e. what `PxActor::setEnvironmentID`
+   *  receives. Unmanaged this is the scene's environment ID verbatim. Managed, the low `b` bits
+   *  are placed inside the usable window and any count above it rides in the high bits, which
+   *  PhysX discards when it places the box but compares exactly when it filters the pair.
+   *  Returns `PX_INVALID_U32` for shared scenes. Stored on first use so every body of a scene is
+   *  bound to the same value, and dropped by `setSceneEnvironmentId` so a changed ID cannot
+   *  leave a stale binding. Throws when no band is usable, or past `maxBroadphaseEnvCount`. */
+  uint32_t getBroadphaseEnvironmentId(std::shared_ptr<Scene> scene);
+
+  /** Whether SAPIEN also stamps each scene's environment ID into the collision-group scene
+   *  field, so its own filter shader rejects cross-environment pairs exactly. Only enabled by
+   *  constructing with both `numScenes` and `withSharedScene`; every other combination leaves
+   *  the collision groups alone for the caller to drive. */
+  bool managesCollisionGroupSceneIds() const { return mManagedCollisionGroupSceneIds; }
+
+  /** Write the scene's environment ID into the high 16 bits of every shape's fourth collision
+   *  group word, where SAPIEN's filter shader reads it. Unlike the broadphase ID this is the
+   *  raw environment ID with no band offset: the field is compared for equality, never encoded
+   *  into bounds. Shared scenes get `0xffff`, which collides with every environment. No-op
+   *  unless `managesCollisionGroupSceneIds()`. Throws past 65534 environments, the largest the
+   *  16-bit field can distinguish. */
+  void applyCollisionGroupSceneId(std::shared_ptr<Scene> scene,
+                                  PhysxRigidBaseComponent &component);
+
   /** Convenience: set environment IDs for multiple scenes at once. */
   void setSceneEnvironmentIds(
       std::vector<std::pair<std::shared_ptr<Scene>, int64_t>> const &mapping,
@@ -360,6 +415,15 @@ private:
   std::map<std::weak_ptr<Scene>, Vec3, std::owner_less<>> mSceneOffset;
   std::map<std::weak_ptr<Scene>, uint32_t, std::owner_less<>> mSceneEnvironmentIds;
   uint32_t mNextSceneEnvironmentId{0};
+
+  // The PhysX broadphase environment ID actually bound to each scene's bodies, kept so every
+  // body of a scene lands in the same band. PhysX freezes an actor's environment ID at
+  // PxScene::addActor, so this is decided when a scene's first body binds and never revisited.
+  std::map<std::weak_ptr<Scene>, uint32_t, std::owner_less<>> mBroadphaseEnvironmentIds;
+  // Declared at construction: the only point where the environment total is knowable.
+  bool mManagedBroadphaseEnvIds{false};
+  bool mReserveSharedBands{false};
+  bool mManagedCollisionGroupSceneIds{false};
 
   uint32_t allocateSceneEnvironmentId();
   bool sceneHasPhysxBodies(std::shared_ptr<Scene> scene) const;

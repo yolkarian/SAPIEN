@@ -604,7 +604,24 @@ class PhysxGpuContactPairImpulseQuery:
 class PhysxGpuSystem(PhysxSystem):
     @typing.overload
     def __init__(self, device: str = 'cuda') -> None:
-        ...
+        """
+        Create a PhysX GPU system.
+
+        The environment-ID declaration is read from `PhysxSceneConfig` and frozen here: PhysX
+        bakes the broadphase bit count into the scene at createScene and refuses
+        PxActor::setEnvironmentID once an actor is in a scene.
+
+        num_scenes  with_shared_scene  what SAPIEN does
+        ----------  -----------------  ------------------------------------------------
+        None        False              nothing; environment IDs reach PhysX verbatim and
+                                       an unset scene is environment 0
+        None        True               offsets every ID into the bands that overlap shared
+                                       objects, over the bits you configured, and drives
+                                       SAPIEN's own collision-group filter
+        N           False              sizes the bit count for N environments, gives unset
+                                       scenes a fresh unique ID, derives what PhysX receives
+        N           True               both
+        """
     @typing.overload
     def __init__(self, device: sapien.pysapien.Device) -> None:
         ...
@@ -657,6 +674,57 @@ class PhysxGpuSystem(PhysxSystem):
         ...
     def get_assigned_scene_environment_id(self, scene: sapien.pysapien.Scene) -> int | None:
         ...
+    def get_broadphase_environment_id(self, scene: sapien.pysapien.Scene) -> int:
+        """
+        The PhysX broadphase environment ID SAPIEN uses for this scene: the ID placed inside
+        the usable band window, with any count past the window riding in the high bits. Only
+        the low `bits` have to land in the window, because PhysX discards the rest when it
+        places the box but compares the full 32-bit value when it filters the pair. Shared
+        scenes keep 0xFFFFFFFF. Stored on first use so every body of a scene shares a band, and
+        dropped by set_scene_environment_id so a changed ID cannot leave a stale binding.
+        """
+    @property
+    def has_shared_environment_scene(self) -> bool:
+        """
+        Whether any scene is currently registered as shared (environment ID -1). Reporting
+        only; what SAPIEN reserves is fixed by `with_shared_scene` at construction.
+        """
+    @property
+    def has_managed_broadphase_env_ids(self) -> bool:
+        """
+        Whether this system was constructed with `num_scenes` or `with_shared_scene`. When
+        true SAPIEN derives what PhysX receives from each scene's environment ID; when false
+        they reach PhysX verbatim and choosing safe bands is the caller's job.
+        """
+    @property
+    def manages_collision_group_scene_ids(self) -> bool:
+        """
+        Whether SAPIEN also drives its own collision-group filter, enabled only by passing
+        both `num_scenes` and `with_shared_scene`. Each scene's raw environment ID -- no band
+        offset, since the field is compared for equality rather than encoded into bounds --
+        is written into the high 16 bits of every shape's fourth collision group word, where
+        SAPIEN's filter shader compares it. Shared scenes get 0xffff. Every other constructor
+        combination leaves the collision groups untouched.
+        """
+    @property
+    def broadphase_env_id_window(self) -> tuple[int, int]:
+        """
+        The (offset, capacity) of scene environment IDs that get a private broadphase band.
+
+        PhysX gives objects shared by all environments a fixed encoded interval that does not
+        follow the per-environment banding, so the outermost bands never overlap them. SAPIEN
+        places the low `bits` of every ID inside this window. It depends only on the configured
+        bit count, never on which scenes exist: PxActor::setEnvironmentID is refused once an
+        actor is in a scene, so the value must be final when the first body binds. `capacity`
+        is how many environments get a private band, not a ceiling -- the rest wrap into the
+        high bits of the ID and still collide correctly.
+        """
+    @property
+    def broadphase_env_band_count(self) -> int:
+        """
+        How many environments land in distinct broadphase bands: `2 ** max(x, y, z)`, not the
+        product, because PhysX shifts the same environment ID on every axis.
+        """
     def set_scene_environment_id(
         self, scene: sapien.pysapien.Scene, env_id: int, allow_duplicate: bool = False
     ) -> None:
@@ -1159,9 +1227,66 @@ class PhysxSceneConfig:
     friction_correlation_distance:float
     cpu_workers: int
     gpu_broadphase_env_id_bits: int
+    """
+    Environment-ID bits, as the widest axis carries them. Defaults to 5.
+
+    Reading reports max(x, y, z) -- the axes are not independent, so that alone decides the
+    band count. Writing puts the bits on Z and clears X and Y: the band count is
+    2 ** max(x, y, z) either way, so spreading them would only cost coordinate precision on
+    the extra axes, because SAPIEN raises PhysX's "snap to grid" shift to match on each.
+    Assign the per-axis fields directly to choose a different axis.
+
+    Five is the widest count that needs no offset: every band it produces still reaches the
+    fixed encoded interval PhysX gives shared objects.
+    """
     gpu_broadphase_nb_bits_env_id_x: int
     gpu_broadphase_nb_bits_env_id_y: int
     gpu_broadphase_nb_bits_env_id_z: int
+    gpu_broadphase_num_scenes: int | None
+    """
+    How many scenes the system will hold, or None. When set, SAPIEN sizes
+    gpu_broadphase_env_id_bits from it, hands unset scenes a fresh unique environment ID, and
+    derives what PxActor::setEnvironmentID receives. Unset, SAPIEN invents nothing: an
+    untouched scene is environment 0 and the IDs reach PhysX exactly as given. Read when the
+    system is constructed and frozen there.
+    """
+    gpu_broadphase_with_shared_scene: bool
+    """
+    Whether a scene will be marked shared (environment ID -1). PhysX gives shared objects a
+    fixed encoded interval that the outermost bands fall outside of, so bodies there silently
+    stop colliding with the shared ground. Setting this offsets every ID into the bands that
+    still overlap it, and stamps the raw ID into the collision-group scene field so SAPIEN's
+    own filter shader rejects cross-environment pairs exactly. Read when the system is
+    constructed and frozen there.
+    """
+    def set_gpu_broadphase_env_count(
+        self, env_count: int, with_shared_objects: bool = True
+    ) -> None:
+        """
+        Give every one of `env_count` environments its own broadphase band, when one is
+        available. PhysX reserves the outermost bands for objects shared by all environments,
+        so a bit count that exactly fits is one bit too small: 4096 environments need 13 bits,
+        not 12. Pass with_shared_objects=False when nothing is shared, which makes all
+        2 ** bits bands usable.
+
+        A private band is a broadphase-spreading optimisation, not a correctness requirement:
+        environments past the band window wrap into the high bits of the ID and still collide
+        correctly, because PhysX filters candidate pairs on the full 32-bit environment ID.
+        Raises only past max_broadphase_env_count.
+        """
+    @property
+    def gpu_broadphase_env_band_count(self) -> int:
+        """
+        How many environments land in distinct broadphase bands: 2 ** max(x, y, z), not the
+        product of the three per-axis counts.
+        """
+    @property
+    def gpu_broadphase_max_env_count(self) -> int:
+        """
+        How many environments get a private broadphase band with this bit configuration, about
+        1.2% below the band count. Environments past it wrap into the high bits of the ID and
+        still collide correctly.
+        """
     def __getstate__(self) -> tuple:
         ...
     def __init__(self) -> None:
@@ -1216,6 +1341,37 @@ class PhysxSystem(sapien.pysapien.System):
         ...
 def _enable_gpu() -> None:
     ...
+def broadphase_env_id_bits_for_env_count(
+    env_count: int, with_shared_objects: bool = True
+) -> int:
+    """
+    The smallest uniform per-axis bit count that gives `env_count` environments a private
+    broadphase band, falling back to the widest count when they only fit by wrapping, or 0
+    past max_broadphase_env_count. Sizing for a shared object (the default) reserves about
+    1.2% of the bands, so for counts up to the band count this is usually one more than
+    ceil(log2(env_count)): 4096 environments need 13 bits, not 12.
+
+    A private band is a broadphase-spreading optimisation, not a correctness requirement:
+    environments past the band window wrap into the high bits of the ID and still collide
+    correctly.
+    """
+def broadphase_env_id_window(bits_x: int, bits_y: int, bits_z: int) -> tuple[int, int]:
+    """
+    The (offset, capacity) of environment IDs whose broadphase band still overlaps objects
+    shared by all environments, for a per-axis bit configuration.
+
+    For simulations managing environment IDs by hand -- a PhysxGpuSystem built without
+    num_scenes or with_shared_scene. Keep every ID you hand out in
+    range(offset, offset + capacity), or wrap past it by whole multiples of
+    2 ** max(bits_x, bits_y, bits_z): PhysX drops the higher bits when it places the box but
+    compares the full 32-bit ID when it filters the pair.
+    """
+def max_broadphase_env_count(with_shared_objects: bool = True) -> int:
+    """
+    The largest environment count the banding can address in total. Only the low `bits` of
+    the ID have to stay inside the usable window; the rest of the count rides above it, so
+    this is far larger than the band count when a shared object is present.
+    """
 def get_body_config() -> PhysxBodyConfig:
     ...
 def get_default_material() -> PhysxMaterial:

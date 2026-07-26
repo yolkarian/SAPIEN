@@ -247,11 +247,13 @@ void PhysxRigidStaticComponent::onAddToScene(Scene &scene) {
     pose.p = pose.p + PxVec3(offset.x, offset.y, offset.z);
     getPxActor()->setGlobalPose(pose);
 
-    // Set GPU broadphase environment ID before adding to scene
-    uint32_t envId = s->getSceneEnvironmentId(scene.shared_from_this());
+    // Set GPU broadphase environment ID before adding to scene, placed in the band window that
+    // still overlaps shared objects.
+    uint32_t envId = s->getBroadphaseEnvironmentId(scene.shared_from_this());
     if (!getPxActor()->setEnvironmentID(envId)) {
       throw std::runtime_error("failed to set PhysX GPU environment ID on rigid static actor");
     }
+    s->applyCollisionGroupSceneId(scene.shared_from_this(), *this);
   }
 #endif
 
@@ -280,11 +282,13 @@ void PhysxRigidDynamicComponent::onAddToScene(Scene &scene) {
     pose.p = pose.p + PxVec3(offset.x, offset.y, offset.z);
     getPxActor()->setGlobalPose(pose);
 
-    // Set GPU broadphase environment ID before adding to scene
-    uint32_t envId = s->getSceneEnvironmentId(scene.shared_from_this());
+    // Set GPU broadphase environment ID before adding to scene, placed in the band window that
+    // still overlaps shared objects.
+    uint32_t envId = s->getBroadphaseEnvironmentId(scene.shared_from_this());
     if (!getPxActor()->setEnvironmentID(envId)) {
       throw std::runtime_error("failed to set PhysX GPU environment ID on rigid dynamic actor");
     }
+    s->applyCollisionGroupSceneId(scene.shared_from_this(), *this);
   }
 #endif
 

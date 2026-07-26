@@ -101,6 +101,17 @@ PhysxSystemGpu::PhysxSystemGpu(std::shared_ptr<Device> device) {
   }
   mDevice = device;
 
+  // The declaration is snapshotted here and frozen: PhysX bakes the bit count into the scene at
+  // createScene and refuses setEnvironmentID once an actor is in a scene, so by the time scenes
+  // are being built nothing below can still be changed.
+  mReserveSharedBands = mSceneConfig.gpuBroadPhaseWithSharedScene;
+  mManagedCollisionGroupSceneIds = mSceneConfig.gpuBroadPhaseWithSharedScene;
+  mManagedBroadphaseEnvIds = mSceneConfig.gpuBroadPhaseNumScenes.has_value();
+  if (mManagedBroadphaseEnvIds) {
+    mSceneConfig.setGpuBroadPhaseEnvCount(*mSceneConfig.gpuBroadPhaseNumScenes,
+                                          mReserveSharedBands);
+  }
+
   auto &config = mSceneConfig;
   PxSceneDesc sceneDesc(mEngine->getPxPhysics()->getTolerancesScale());
   sceneDesc.gravity = Vec3ToPxVec3(config.gravity);
@@ -194,8 +205,7 @@ PhysxSystemGpu::PhysxSystemGpu(std::shared_ptr<Device> device) {
 }
 #else
 PhysxSystemGpu::PhysxSystemGpu(std::shared_ptr<Device> device) {
-  throw std::runtime_error(
-        "Does not support PhysX GPU system.");
+  throw std::runtime_error("Does not support PhysX GPU system.");
 }
 #endif
 
@@ -452,6 +462,14 @@ int PhysxSystem::computeArticulationMaxLinkCount() const {
 
 #ifdef SAPIEN_CUDA
 void PhysxSystemGpu::gpuInit() {
+  // Everything is built by now, so this is the first point where an unused reservation shows.
+  if (mReserveSharedBands && !hasSharedEnvironmentScene()) {
+    logger::warn(
+        "PhysxGpuSystem was created with with_shared_scene=True but no scene was given "
+        "environment ID -1. Bands were reserved for a shared object that does not exist, which "
+        "only costs about 1.2% of them; drop with_shared_scene if nothing is shared.");
+  }
+
   ++mTotalSteps;
   ensureCudaDevice();
   mPxScene->simulate(mTimestep);
@@ -1733,8 +1751,6 @@ Vec3 PhysxSystemGpu::getSceneOffset(std::shared_ptr<Scene> scene) const {
 }
 
 namespace {
-constexpr uint32_t kMaxSceneEnvironmentId = 1u << 24;
-
 uint32_t normalizeSceneEnvironmentId(int64_t envId) {
   if (envId == -1 || envId == static_cast<int64_t>(PX_INVALID_U32)) {
     return PX_INVALID_U32;
@@ -1746,7 +1762,7 @@ uint32_t normalizeSceneEnvironmentId(int64_t envId) {
   }
   return static_cast<uint32_t>(envId);
 }
-}
+} // namespace
 
 bool PhysxSystemGpu::sceneHasPhysxBodies(std::shared_ptr<Scene> scene) const {
   if (!scene) {
@@ -1802,6 +1818,7 @@ void PhysxSystemGpu::setSceneEnvironmentId(std::shared_ptr<Scene> scene, int64_t
 
   if (mSceneEnvironmentIds.size() % 1024 == 0) {
     std::erase_if(mSceneEnvironmentIds, [](const auto &p) { return p.first.expired(); });
+    std::erase_if(mBroadphaseEnvironmentIds, [](const auto &p) { return p.first.expired(); });
   }
 
   if (mSceneEnvironmentIds.contains(scene)) {
@@ -1826,7 +1843,40 @@ void PhysxSystemGpu::setSceneEnvironmentId(std::shared_ptr<Scene> scene, int64_t
         "scene. Pass allow_duplicate=True to intentionally share a non-shared env_id");
   }
 
+  // The collision-group scene field is only 16 bits, so managing it caps the usable IDs well
+  // below what the broadphase can address. Fail here rather than when the first body binds.
+  if (mManagedCollisionGroupSceneIds && envId != PX_INVALID_U32 &&
+      envId >= kCollisionGroupSharedId) {
+    throw std::runtime_error(
+        "failed to set PhysX GPU scene environment ID: " + std::to_string(envId) +
+        " does not fit the collision-group scene field, which is 16 bits wide with 0xffff "
+        "reserved for shared scenes. Construct PhysxGpuSystem without with_shared_scene and "
+        "drive the collision groups yourself past " +
+        std::to_string(kCollisionGroupSharedId) + " environments.");
+  }
+
+  // Sharing a scene is what makes the outermost bands unusable. If the system was not told to
+  // expect one, no bands were reserved and the environments in them will quietly stop
+  // colliding with whatever this scene holds.
+  if (envId == PX_INVALID_U32 && !mReserveSharedBands && getBroadphaseEnvBandCount() > 0) {
+    // The advice differs: a managed system just needs the declaration, but a manual one cannot
+    // take it -- with_shared_scene requires num_scenes -- so point it at the helper instead.
+    logger::warn(
+        "a scene was marked shared (environment ID -1) but no broadphase bands were reserved "
+        "for it. PhysX gives shared objects a fixed encoded interval that the outermost bands "
+        "fall outside of, so the environments in those bands will silently stop colliding with "
+        "this scene. {}",
+        mManagedBroadphaseEnvIds
+            ? "Pass with_shared_scene=True when creating the system."
+            : "This system does not manage environment IDs, so keep every ID you hand out "
+              "inside the window sapien.physx.broadphase_env_id_window(x, y, z) reports, or "
+              "create the system with num_scenes and with_shared_scene=True.");
+  }
+
   mSceneEnvironmentIds[scene] = envId;
+  // A cached broadphase ID was derived from the old value; the scene has no bodies yet, so
+  // dropping it is safe and keeps the next binding consistent with the ID just set.
+  mBroadphaseEnvironmentIds.erase(scene);
 }
 
 uint32_t PhysxSystemGpu::getSceneEnvironmentId(std::shared_ptr<Scene> scene) {
@@ -1836,10 +1886,19 @@ uint32_t PhysxSystemGpu::getSceneEnvironmentId(std::shared_ptr<Scene> scene) {
 
   if (mSceneEnvironmentIds.size() % 1024 == 0) {
     std::erase_if(mSceneEnvironmentIds, [](const auto &p) { return p.first.expired(); });
+    std::erase_if(mBroadphaseEnvironmentIds, [](const auto &p) { return p.first.expired(); });
   }
 
   if (mSceneEnvironmentIds.contains(scene)) {
     return mSceneEnvironmentIds.at(scene);
+  }
+
+  // Unmanaged, SAPIEN makes no decisions: an unset scene is environment 0, the same as PhysX's
+  // own default of no separation. Nothing is recorded, so the caller can still set any ID and
+  // the duplicate check does not trip over IDs SAPIEN invented. Managed, hand out a fresh
+  // unique one -- that is the whole point of declaring the count.
+  if (!mManagedBroadphaseEnvIds) {
+    return 0;
   }
 
   uint32_t envId = allocateSceneEnvironmentId();
@@ -1856,6 +1915,114 @@ PhysxSystemGpu::getAssignedSceneEnvironmentId(std::shared_ptr<Scene> scene) cons
     return mSceneEnvironmentIds.at(scene);
   }
   return std::nullopt;
+}
+
+bool PhysxSystemGpu::hasSharedEnvironmentScene() const {
+  for (auto const &[scene, envId] : mSceneEnvironmentIds) {
+    if (envId == PX_INVALID_U32 && !scene.expired()) {
+      return true;
+    }
+  }
+  return false;
+}
+
+BroadphaseEnvIdWindow PhysxSystemGpu::getBroadphaseEnvIdWindow() const {
+  auto const &config = getSceneConfig();
+  const uint32_t bands =
+      broadphaseEnvBandCount(config.gpuBroadPhaseNbBitsEnvIDX, config.gpuBroadPhaseNbBitsEnvIDY,
+                             config.gpuBroadPhaseNbBitsEnvIDZ);
+  // Bands are only unusable when something is shared. Sizing from a count is a separate
+  // favour: `with_shared_scene` alone still earns the offset, over whatever bits are configured.
+  if (!mReserveSharedBands) {
+    return {0, bands == 0 ? kMaxSceneEnvironmentId : bands};
+  }
+  return broadphaseEnvIdWindow(config.gpuBroadPhaseNbBitsEnvIDX, config.gpuBroadPhaseNbBitsEnvIDY,
+                               config.gpuBroadPhaseNbBitsEnvIDZ);
+}
+
+uint32_t PhysxSystemGpu::getBroadphaseEnvBandCount() const {
+  auto const &config = getSceneConfig();
+  return broadphaseEnvBandCount(config.gpuBroadPhaseNbBitsEnvIDX,
+                                config.gpuBroadPhaseNbBitsEnvIDY,
+                                config.gpuBroadPhaseNbBitsEnvIDZ);
+}
+
+uint32_t PhysxSystemGpu::getBroadphaseEnvironmentId(std::shared_ptr<Scene> scene) {
+  uint32_t envId = getSceneEnvironmentId(scene);
+  if (envId == PX_INVALID_U32) {
+    return envId;
+  }
+
+  // Neither favour declared: SAPIEN does not reinterpret the caller's IDs. PhysX gets exactly
+  // what was set, and keeping every band reachable is their job.
+  if (!mManagedBroadphaseEnvIds && !mReserveSharedBands) {
+    return envId;
+  }
+
+  // Reuse the value already bound to this scene so every one of its bodies shares a band.
+  if (mBroadphaseEnvironmentIds.contains(scene)) {
+    return mBroadphaseEnvironmentIds.at(scene);
+  }
+
+  auto const window = getBroadphaseEnvIdWindow();
+  if (window.capacity == 0) {
+    throw std::runtime_error(
+        "the GPU broadphase environment-ID bit count is too small to host any environment: no "
+        "band lies entirely inside the fixed encoded interval PhysX gives objects shared by all "
+        "environments, so every environment would silently stop colliding with a shared ground. "
+        "Raise the bit count, for example with PhysxSceneConfig.set_gpu_broadphase_env_count().");
+  }
+
+  // PhysX bands on the low `bits` of the ID (`envId << (32 - bits)` in 32-bit arithmetic
+  // discards everything above), but `filtering()` compares the full 32-bit value. So only the
+  // band has to land inside the window; the count above it rides in the high bits, where it
+  // keeps environments distinct without moving them out of a reachable band.
+  const uint32_t bandCount = getBroadphaseEnvBandCount();
+  const uint32_t band = window.offset + envId % window.capacity;
+  const uint32_t wrap = envId / window.capacity;
+  const uint64_t broadphaseId = uint64_t{band} + uint64_t{wrap} * bandCount;
+  if (broadphaseId >= kMaxSceneEnvironmentId) {
+    throw std::runtime_error(
+        "PhysX GPU broadphase environment ID " + std::to_string(envId) + " exceeds the " +
+        std::to_string(maxBroadphaseEnvCount(true)) +
+        " environments the banding can address. Environments past the band window wrap into the "
+        "high bits of the ID, which PhysX still filters on exactly, but the result must stay "
+        "below " +
+        std::to_string(kMaxSceneEnvironmentId) + ".");
+  }
+
+  mBroadphaseEnvironmentIds[scene] = static_cast<uint32_t>(broadphaseId);
+  return static_cast<uint32_t>(broadphaseId);
+}
+
+void PhysxSystemGpu::applyCollisionGroupSceneId(std::shared_ptr<Scene> scene,
+                                                PhysxRigidBaseComponent &component) {
+  if (!mManagedCollisionGroupSceneIds) {
+    return;
+  }
+
+  // The raw environment ID, deliberately without the broadphase band offset: this field is only
+  // ever compared for equality in SAPIEN's filter shader, never encoded into bounds, so the
+  // offset that keeps bands overlapping shared objects would be meaningless noise here.
+  uint32_t envId = getSceneEnvironmentId(scene);
+  uint32_t sceneId = kCollisionGroupSharedId;
+  if (envId != PX_INVALID_U32) {
+    if (envId >= kCollisionGroupSharedId) {
+      throw std::runtime_error(
+          "environment ID " + std::to_string(envId) +
+          " does not fit the collision-group scene field, which is 16 bits wide with 0xffff "
+          "reserved for shared scenes. Construct PhysxGpuSystem without with_shared_scene and "
+          "drive the collision groups yourself past " +
+          std::to_string(kCollisionGroupSharedId) + " environments.");
+    }
+    sceneId = envId;
+  }
+
+  for (auto &shape : component.getCollisionShapes()) {
+    auto groups = shape->getCollisionGroups();
+    groups[3] = (groups[3] & kCollisionGroupIgnoreIdMask) | (sceneId << 16);
+    shape->setCollisionGroups(groups);
+  }
 }
 
 void PhysxSystemGpu::setSceneEnvironmentIds(
