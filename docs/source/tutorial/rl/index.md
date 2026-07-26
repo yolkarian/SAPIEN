@@ -222,3 +222,51 @@ disturbing GPU-side poses, velocities, or joint states, so no state re-upload or
 re-initialization is needed. Note that joint state randomization (qpos, qvel, drive
 targets) is separate: on the GPU it goes through the CUDA buffers and
 `gpu_apply_*` functions.
+
+(batched_light_randomization)=
+
+### Batched lighting randomization
+
+`sapien.render` provides the same validate-then-apply behavior for reset-time
+lighting randomization. The three setters require one array row per light,
+validate the entire batch before changing any light, and therefore never leave
+a failed batch partially applied:
+
+```python
+# One directional light per environment being reset.
+lights = directional_lights
+n = len(lights)
+
+# Required before group.gpu_init() when a RenderSystemGroup will seal the lights.
+for light in lights:
+    light.set_pose_mode("cpu")
+
+poses = np.tile(
+    np.array([0.0, 0.0, 2.0, 1.0, 0.0, 0.0, 0.0], np.float32),
+    (n, 1),
+)
+directions = np.tile(np.array([1.0, 0.0, -1.0], np.float32), (n, 1))
+colors = np.random.uniform(0.5, 1.5, (n, 3)).astype(np.float32)
+
+sapien.render.set_light_poses(lights, poses)
+sapien.render.set_light_directions(lights, directions)
+sapien.render.set_light_colors(lights, colors)
+```
+
+- `set_light_poses` takes `[N, 7]` rows of
+  `[x, y, z, qw, qx, qy, qz]` and normalizes each quaternion. These are local
+  poses relative to the light's owning entity; they are world poses only when
+  that entity has the identity pose.
+- `set_light_directions` takes finite, non-zero `[N, 3]` directions for
+  directional lights. A light shines along the local `+x` axis, so each
+  direction is interpreted in the owning entity's local frame; the setter
+  changes the local orientation while preserving the local position. Every
+  other light type is rejected.
+- `set_light_colors` takes finite, non-negative `[N, 3]` RGB rows. Values above
+  `1` are valid HDR intensities.
+- A light sealed by `RenderSystemGroup.gpu_init()` defaults to static pose
+  ownership. To randomize its pose or direction later, call
+  `light.set_pose_mode("cpu")` before `gpu_init()`; updates then become visible
+  at the next `group.update_render()`. Colors remain CPU-mutable in every pose
+  mode. For partial resets, pass only the lights belonging to the environments
+  being reset.
