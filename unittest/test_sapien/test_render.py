@@ -674,16 +674,17 @@ class TestScene(unittest.TestCase):
         np.testing.assert_allclose(lights[1].local_pose.q, [0.0, 1.0, 0.0, 0.0])
         np.testing.assert_allclose(lights[2].local_pose.p, [0.0, 0.0, 3.0])
 
-        # Directions apply to directional/spot lights only and keep the position.
-        directions = np.array([[0.0, 0.0, -1.0], [1.0, 0.0, 0.0]], np.float32)
-        sapien.render.set_light_directions(lights[1:], directions)
+        # Directions apply to directional lights only and keep the position.
+        directions = np.array([[0.0, 0.0, -1.0]], np.float32)
+        sapien.render.set_light_directions(lights[1:2], directions)
         np.testing.assert_allclose(lights[1].local_pose.p, [0.0, 2.0, 0.0])
         rotated = lights[1].local_pose
         np.testing.assert_allclose(
             rotated.to_transformation_matrix()[:3, 0], [0.0, 0.0, -1.0], atol=1e-6
         )
-        with self.assertRaisesRegex(RuntimeError, "no direction"):
-            sapien.render.set_light_directions([lights[0]], directions[:1])
+        for other in (lights[0], lights[2]):  # point and spot are both rejected
+            with self.assertRaisesRegex(RuntimeError, "not a directional light"):
+                sapien.render.set_light_directions([other], directions)
 
         # Validation failures leave the batch untouched (validate-then-apply).
         before = [light.color.copy() for light in lights]

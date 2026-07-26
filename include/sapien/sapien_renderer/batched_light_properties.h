@@ -22,9 +22,9 @@ class SapienRenderLightComponent;
 void batchSetLightPoses(std::vector<std::shared_ptr<SapienRenderLightComponent>> const &lights,
                         Eigen::Matrix<float, Eigen::Dynamic, 7, Eigen::RowMajor> const &poses);
 
-/** Point each directional/spot/textured light along a direction (SAPIEN lights shine
- *  along +x of their pose). Each row of directions is a non-zero [x, y, z]; the light's
- *  local position is kept. Point and parallelogram lights are rejected. */
+/** Point each directional light along a direction (SAPIEN lights shine along +x of their
+ *  pose). Each row of directions is a non-zero [x, y, z]; the light's local position is
+ *  kept. Every other light type is rejected. */
 void batchSetLightDirections(
     std::vector<std::shared_ptr<SapienRenderLightComponent>> const &lights,
     Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> const &directions);

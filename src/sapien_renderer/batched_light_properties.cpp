@@ -77,11 +77,10 @@ void batchSetLightDirections(
   for (size_t i = 0; i < lights.size(); ++i) {
     checkLight(lights[i], i);
     checkPoseMutable(lights[i], i);
-    if (!std::dynamic_pointer_cast<SapienRenderDirectionalLightComponent>(lights[i]) &&
-        !std::dynamic_pointer_cast<SapienRenderSpotLightComponent>(lights[i])) {
-      throw std::runtime_error(
-          "batched light setter failed: light " + std::to_string(i) +
-          " has no direction; only directional, spot, and textured lights are supported");
+    if (!std::dynamic_pointer_cast<SapienRenderDirectionalLightComponent>(lights[i])) {
+      throw std::runtime_error("batched light setter failed: light " + std::to_string(i) +
+                               " is not a directional light; only directional lights are "
+                               "supported");
     }
     auto row = directions.row(static_cast<Eigen::Index>(i));
     Vec3 direction(row(0), row(1), row(2));

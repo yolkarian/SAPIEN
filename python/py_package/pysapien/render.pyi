@@ -1146,17 +1146,16 @@ def set_light_colors(lights: list[RenderLightComponent], colors: numpy.ndarray[t
     """
 def set_light_directions(lights: list[RenderLightComponent], directions: numpy.ndarray[tuple[M, typing.Literal[3]], numpy.dtype[numpy.float32]]) -> None:
     """
-    Batch-point directional/spot/textured lights along directions, primarily for per-environment
-    lighting randomization. SAPIEN lights shine along +x of their pose; each light's local
-    position is kept. Point and parallelogram lights are rejected.
+    Batch-point directional lights along directions, primarily for per-environment lighting
+    randomization. SAPIEN lights shine along +x of their pose; each light's local position is
+    kept. Every other light type is rejected.
 
     The whole batch is validated first and a failed call never leaves it partially applied.
     Lights sealed by a RenderSystemGroup must use pose mode 'cpu'; the directions take effect at
     the next update_render().
 
     Args:
-        lights: list of RenderDirectionalLightComponent / RenderSpotLightComponent /
-            RenderTexturedLightComponent
+        lights: list of RenderDirectionalLightComponent
         directions: [N, 3] array of finite non-zero directions, one row per light
     """
 def set_light_poses(lights: list[RenderLightComponent], poses: numpy.ndarray[tuple[M, typing.Literal[7]], numpy.dtype[numpy.float32]]) -> None:
