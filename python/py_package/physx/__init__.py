@@ -41,7 +41,7 @@ def enable_gpu():
             / "release"
             / "libPhysXGpu_64.so",
         ]
-        url = f"https://github.com/yolkarian/physx-release/releases/download/{physx_version}/physxgpu-linux-clang.zip"
+        url = f"https://github.com/yolkarian/physx-release/releases/download/{physx_version}-Linux/physxgpu-linux-clang.zip"
     else:
         raise RuntimeError("Unsupported platform")
 

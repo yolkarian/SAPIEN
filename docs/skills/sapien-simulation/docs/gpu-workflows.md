@@ -89,7 +89,7 @@ If neither exists, SAPIEN prints:
 ```text
 Downloading PhysX GPU library to $HOME/.sapien/physx/107.3-physx-5.6.1 from Github.
 This can take several minutes. If it fails to download, please manually download
-https://github.com/yolkarian/physx-release/releases/download/107.3-physx-5.6.1/physxgpu-linux-clang.zip
+https://github.com/yolkarian/physx-release/releases/download/107.3-physx-5.6.1-Linux/physxgpu-linux-clang.zip
 and unzip at $HOME/.sapien/physx/107.3-physx-5.6.1.
 ```
 
@@ -105,7 +105,7 @@ RUN export VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json \
     && physx_version="$(python -c 'import sapien.physx as physx; print(physx.version())')" \
     && sapien_home="${SAPIEN_HOME:-${HOME}}" \
     && parent="${sapien_home}/.sapien/physx/${physx_version}" \
-    && url="https://github.com/yolkarian/physx-release/releases/download/${physx_version}/physxgpu-linux-clang.zip" \
+    && url="https://github.com/yolkarian/physx-release/releases/download/${physx_version}-Linux/physxgpu-linux-clang.zip" \
     && mkdir -p "${parent}" \
     && tmp_zip="$(mktemp)" \
     && curl -fsSL "${url}" -o "${tmp_zip}" \

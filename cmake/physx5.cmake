@@ -50,13 +50,13 @@ else()
   if (UNIX)
     FetchContent_Declare(
       physx5cpu
-      URL https://github.com/yolkarian/physx-release/releases/download/${PHYSX_VERSION}/physxcpu-linux-clang.zip
-      URL_HASH SHA256=06d419123ef30dd8ad9396f2cc61af39a57d87ad4cdad110836d17294d937276
+      URL https://github.com/yolkarian/physx-release/releases/download/${PHYSX_VERSION}-Linux/physxcpu-linux-clang.zip
+      URL_HASH SHA256=6982b76cbb53726f278e8f93d27af646129a7542125f84358fc3400d1c70ce94
     )
     FetchContent_Declare(
       physx5gpu
-      URL https://github.com/yolkarian/physx-release/releases/download/${PHYSX_VERSION}/physxgpu-linux-clang.zip
-      URL_HASH SHA256=a390b9b11a63a28305c4cab871dc7f5a0dfd7380d2e540ce58011d558c87d68a
+      URL https://github.com/yolkarian/physx-release/releases/download/${PHYSX_VERSION}-Linux/physxgpu-linux-clang.zip
+      URL_HASH SHA256=5e063869d375cdd51184d822faf5cfe470a3cc768e6b0dfb511e9312ade31b48
     )
     FetchContent_MakeAvailable(physx5cpu physx5gpu)
     _sapien_normalize_physx_root("${physx5cpu_SOURCE_DIR}" physx5_CPU_SOURCE_DIR)
