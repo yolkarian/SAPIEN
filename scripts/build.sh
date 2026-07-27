@@ -113,6 +113,51 @@ function build_pybind() {
   # libcuda.so.1 is the host NVIDIA driver API. It is required by the OIDN CUDA
   # module but must remain external and be supplied by the NVIDIA driver/runtime.
   auditwheel repair ${WHEEL_NAME} --exclude 'libvulkan*' --exclude 'libOpenImageDenoise*' --exclude 'libcuda.so*' --internal libsapien --internal libsvulkan2
+
+  # auditwheel derives the platform tag from versioned glibc symbols alone, so anything glibc
+  # exports unversioned is invisible to it. A PhysX build on glibc 2.38+ dragged in
+  # __isoc23_strtoul and friends -- unversioned, introduced in 2.38 -- and the wheel still got
+  # tagged manylinux_2_28 while failing to import on everything below 2.38. Every other symbol
+  # in those libraries topped out at GLIBC_2.2.5, so the tag was the only thing that lied.
+  #
+  # Fail the build rather than ship that again. Keep the inferred tag: it is correct once the
+  # unversioned blind spot is empty.
+  local repaired
+  repaired=$(ls -1 wheelhouse/sapien-${PACKAGE_VERSION}-cp${PY_VERSION}-cp${PY_VERSION}${EXT}-manylinux*_x86_64.whl 2>/dev/null | head -1)
+  if [ -z "${repaired}" ]; then
+    echo "auditwheel produced no manylinux wheel for cp${PY_VERSION}" >&2
+    exit 1
+  fi
+  ${BIN} - "${repaired}" <<'PYCHECK'
+import re, subprocess, sys, zipfile, tempfile, pathlib
+
+wheel = pathlib.Path(sys.argv[1])
+# Unversioned glibc symbols that pin a floor auditwheel cannot see. __isoc23_* arrived in 2.38.
+suspect = re.compile(r"__isoc23_\w+")
+found = {}
+with tempfile.TemporaryDirectory() as tmp:
+    with zipfile.ZipFile(wheel) as zf:
+        shared = [n for n in zf.namelist() if ".so" in n]
+        zf.extractall(tmp, members=shared)
+    for name in shared:
+        path = pathlib.Path(tmp) / name
+        out = subprocess.run(["nm", "-D", "--undefined-only", str(path)],
+                             capture_output=True, text=True).stdout
+        hits = sorted(set(suspect.findall(out)))
+        if hits:
+            found[name] = hits
+
+if found:
+    print(f"{wheel.name} carries unversioned glibc symbols the platform tag does not cover:",
+          file=sys.stderr)
+    for name, hits in found.items():
+        print(f"  {name}: {', '.join(hits)}", file=sys.stderr)
+    print("Rebuild the dependency on an older glibc; the tag would understate the real floor.",
+          file=sys.stderr)
+    sys.exit(1)
+
+print(f"{wheel.name}: no unversioned glibc floor beyond the inferred tag")
+PYCHECK
 }
 
 build_sapien
