@@ -109,9 +109,22 @@ you later create a changelog/release-prep commit, rerun this snippet so
    ```
 
    Summarize in human-facing Markdown. Prefer grouped bullets such as
-   `Highlights`, `Fixes`, `Build and packaging`, `Documentation`, and
-   `Validation` when applicable. Do not publish a raw commit log, private paths,
-   temporary files, or unrelated local validation details.
+   `Highlights`, `Breaking`, `Fixes`, `Build and packaging`, and
+   `Documentation` when applicable. Do not publish a raw commit log, private
+   paths, temporary files, or unrelated local validation details.
+
+   Release notes are a summary, not a copy of the changelog section. The
+   changelog carries the reasoning and the evidence; the release note says what
+   changed and what the reader has to do about it. Keep it scannable:
+
+   - One or two lines per entry. Lead with the observable effect, then the
+     action the reader must take.
+   - Name the replacement for anything removed or renamed, on the same line.
+   - Move mechanism, measurements, symbol names, and file-level detail to
+     `CHANGELOG.md`; point there once rather than repeating it.
+   - Drop entries with no user-visible or integrator-visible effect.
+   - Aim for well under 100 lines total. If it reads like documentation, it is
+     too long.
 
 3. Write release notes and update the changelog if needed:
 
@@ -156,6 +169,7 @@ you later create a changelog/release-prep commit, rerun this snippet so
 - The workflow only consumes `release_notes`; it must not generate final release notes itself.
 - Always read/analyze commits since the previous release tag before composing release notes.
 - Do not publish raw commit logs as release descriptions unless the user explicitly asks.
+- Do not paste changelog sections into release notes verbatim; summarize to one or two lines per entry and leave the reasoning in `CHANGELOG.md`.
 - Do not overwrite or delete an existing GitHub release or stable release tag without explicit user approval.
 - Ignore `nightly` when computing the previous release tag; it is a moving test release.
 - If the user does not clearly specify the release commit/ref (`GIT_REF`), use the current `HEAD` commit, not `dev`, `main`, or another moving branch.
