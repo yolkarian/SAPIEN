@@ -26,6 +26,7 @@ Conventions:
 | [`sensors-assets-math.md`](sensors-assets-math.md) | Math utilities, sensors, SimSense, assets |
 | [`internal-renderer-ui.md`](internal-renderer-ui.md) | Low-level internal renderer + ImGui widgets |
 | [`misc-python-tools.md`](misc-python-tools.md) | Asset/URDF/export/show helper modules |
+| [`api-changes.md`](api-changes.md) | Removals and behavior changes per fork release |
 
 ## Fast import map
 
