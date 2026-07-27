@@ -3,7 +3,7 @@
 Notable user-facing and developer-facing changes are documented here.
 Release descriptions are written from reviewed commits and diffs, then passed to the tagged release workflow as input.
 
-## Unreleased
+## 3.0.0+fork.14 - 2026-07-27
 
 ### Fixed
 
