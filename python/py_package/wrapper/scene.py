@@ -355,48 +355,88 @@ class Scene(_Scene):
     def get_contacts(self):
         return self.physx_system.get_contacts()
 
-    def set_environment_id(self, env_id: int, allow_duplicate: bool = False):
-        """Set the PhysX GPU broadphase environment ID for this scene.
-
-        In GPU mode, all SAPIEN scenes share one PhysX scene. The environment ID
-        is used by the GPU broadphase to avoid cross-environment broadphase pairs.
-        Actors with the same envId collide. ``-1``/``0xFFFFFFFF`` means
-        "shared" and collides with all environments.
-
-        Must be called BEFORE adding actors/articulations to the scene.
-        Non-shared env IDs must be unique by default. Pass
-        ``allow_duplicate=True`` to intentionally share a non-shared env ID.
-        """
-        if not hasattr(self.physx_system, "set_scene_environment_id"):
-            raise RuntimeError("environment_id is only available for PhysxGpuSystem")
-        self.physx_system.set_scene_environment_id(
-            self, env_id, allow_duplicate=allow_duplicate
-        )
+    def _gpu_physx_system(self, what: str):
+        system = self.physx_system
+        if not hasattr(system, "_get_assigned_scene_environment_id"):
+            raise RuntimeError(f"{what} is only available for PhysxGpuSystem")
+        return system
 
     def get_environment_id(self) -> int | None:
-        """Return the already assigned PhysX GPU broadphase environment ID.
+        """Return this scene's raw SAPIEN environment ID.
 
-        Returns ``None`` if no environment ID has been assigned yet. This method
-        has no side effects; use :meth:`get_or_assign_environment_id` to lazily
-        assign a unique ID.
+        This is the *raw* environment ID SAPIEN's own filter shader compares, not the
+        PhysX broadphase effective ID: a dense non-negative integer starting at 0, or ``-1``
+        for a scene marked with :meth:`set_shared_environment`. Returns ``None`` while the
+        scene has none assigned. Reading has no side effects; use
+        :meth:`get_or_assign_environment_id` to have one assigned. For the broadphase
+        effective ID PhysX receives (which with a shared scene is the raw ID shifted into a
+        band overlapping the shared object, and is generally NOT equal to this value), see
+        :meth:`sapien.physx.PhysxGpuSystem.get_broadphase_environment_id`.
         """
-        if not hasattr(self.physx_system, "get_assigned_scene_environment_id"):
-            raise RuntimeError("environment_id is only available for PhysxGpuSystem")
-        return self.physx_system.get_assigned_scene_environment_id(self)
+        env_id = self._gpu_physx_system("environment_id")._get_assigned_scene_environment_id(
+            self
+        )
+        if env_id == 0xFFFFFFFF:
+            return -1
+        return env_id
 
     def get_or_assign_environment_id(self) -> int:
-        """Return this scene's environment ID, assigning a unique one if needed."""
-        if not hasattr(self.physx_system, "get_or_assign_scene_environment_id"):
-            raise RuntimeError("environment_id is only available for PhysxGpuSystem")
-        return self.physx_system.get_or_assign_scene_environment_id(self)
+        """Return this scene's raw environment ID, assigning a unique one if needed.
+
+        Returns the *raw* SAPIEN environment ID (see :meth:`get_environment_id`), not the
+        PhysX broadphase effective ID, and ``-1`` for a scene already marked with
+        :meth:`set_shared_environment`. Only SAPIEN assigns ordinary environment IDs, and
+        only when the scene config declared ``num_scenes`` before the GPU system was
+        created. Without that declaration every scene is environment 0 and this raises;
+        separate scenes with ``set_scene_offset`` instead. ``num_scenes`` is a hard cap, so
+        this raises once that many ordinary scenes have an ID.
+        """
+        env_id = self._gpu_physx_system(
+            "environment_id"
+        )._get_or_assign_scene_environment_id(self)
+        if env_id == 0xFFFFFFFF:
+            return -1
+        return env_id
+
+    def set_environment_id(self, env_id: int) -> None:
+        """Number this scene by hand, for simulations that manage environments themselves.
+
+        Only available when the scene config left ``num_scenes`` unset; declaring it makes
+        SAPIEN the sole assigner and this raises. Must be called before this scene gets any
+        actor or articulation, since a body freezes its environment ID in PhysX.
+
+        ``env_id`` is the *raw, unshifted* ID: :attr:`environment_id` reads back exactly what
+        you passed, and the broadphase band offset is applied only on the way to PhysX (see
+        :meth:`sapien.physx.PhysxGpuSystem.get_broadphase_environment_id`). Duplicates are
+        allowed and meaningful -- giving several scenes the same ID is how they end up in one
+        environment and collide with each other. Use :meth:`set_shared_environment` for the
+        shared scene rather than passing a sentinel.
+        """
+        self._gpu_physx_system("set_environment_id")._set_scene_environment_id(self, env_id)
+
+    def set_shared_environment(self) -> None:
+        """Mark this scene as shared, so every environment collides with it.
+
+        For the one scene holding objects common to all environments, such as a
+        ground plane. After this the scene's :attr:`environment_id` reports ``-1`` (the raw
+        shared ID, ``PX_INVALID_U32`` in C++). Requires ``with_shared_scene`` on the scene
+        config, and must be called before this scene gets any actor or articulation, since a
+        body freezes its environment ID in PhysX. A shared scene is outside the
+        ``num_scenes`` budget, so if one was already assigned to it -- by
+        :meth:`get_or_assign_environment_id`, say -- that ID is released and the next scene
+        gets it. Calling this again on an already shared scene is a no-op.
+        """
+        self._gpu_physx_system("set_shared_environment")._mark_scene_shared(self)
 
     environment_id = property(
         get_environment_id,
-        set_environment_id,
         doc=(
-            "Already assigned PhysX GPU broadphase environment ID. Reading this "
-            "property has no side effects and returns None until an ID is assigned "
-            "explicitly or via get_or_assign_environment_id()."
+            "Read-only raw SAPIEN environment ID: a dense non-negative integer for an "
+            "ordinary scene, -1 for a shared one, and None until one is assigned. Assigned "
+            "by SAPIEN when the config declared num_scenes, or by set_environment_id() when "
+            "it did not. This is the raw ID SAPIEN's filter shader compares, NOT the PhysX "
+            "broadphase effective ID; see "
+            "PhysxGpuSystem.get_broadphase_environment_id() for the effective ID."
         ),
     )
 
