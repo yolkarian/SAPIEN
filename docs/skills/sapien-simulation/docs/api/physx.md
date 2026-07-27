@@ -798,11 +798,12 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `enable_tgs` | `bool` |  |  |
 | `friction_correlation_distance` | `float` |  |  |
 | `friction_offset_threshold` | `float` |  |  |
-| `gpu_broadphase_env_id_bits` | `int` |  |  |
-| `gpu_broadphase_nb_bits_env_id_x` | `int` |  |  |
-| `gpu_broadphase_nb_bits_env_id_y` | `int` |  |  |
-| `gpu_broadphase_nb_bits_env_id_z` | `int` |  |  |
+| `gpu_broadphase_nb_bits_env_id_x` | `int` | Read-only per-axis GPU broadphase environment-ID bit count. | Read-only; sole writer `set_gpu_broadphase_env_id_bits`. Default 0. |
+| `gpu_broadphase_nb_bits_env_id_y` | `int` | Read-only per-axis GPU broadphase environment-ID bit count. | Read-only; sole writer `set_gpu_broadphase_env_id_bits`. Default 0. |
+| `gpu_broadphase_nb_bits_env_id_z` | `int` | Read-only per-axis GPU broadphase environment-ID bit count. | Read-only; sole writer `set_gpu_broadphase_env_id_bits`. Default 4. |
 | `gravity` | `np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |
+| `num_scenes` | `int \| None` | How many ordinary, non-shared scenes the simulation will hold. | When set, SAPIEN assigns each scene a unique environment ID and derives the per-axis bit counts, ignoring explicit ones: `(0, 0, b)` without a shared scene, `(b, b, b)` with one. Read when the GPU system is constructed. |
+| `with_shared_scene` | `bool` | Whether one scene is shared (e.g. a ground plane) every environment collides with. | Shifts every environment ID into bands that reach the shared object. With it, all non-zero per-axis bit counts must be equal and SAPIEN widens them to `(b, b, b)`. Read when the GPU system is constructed. |
 
 ### Methods/properties
 
@@ -812,6 +813,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `__init__` | method | `__init__(self) -> None` |  |  |
 | `__repr__` | method | `__repr__(self) -> str` |  |  |
 | `__setstate__` | method | `__setstate__(self, arg0: tuple) -> None` |  |  |
+| `set_gpu_broadphase_env_id_bits` | method | `set_gpu_broadphase_env_id_bits(self, bits_x: int, bits_y: int, bits_z: int) -> None` | Set the per-axis GPU broadphase environment-ID bit counts. | Sole writer for the read-only per-axis bit-count properties. Each count in `[0, 16]`. Default `(0, 0, 4)`. Ignored when `num_scenes` is set. With `with_shared_scene`, every non-zero count must be equal. |
 
 ## `sapien.physx.PhysxShapeConfig`
 

@@ -2,7 +2,7 @@
 
 Agent-facing high-level construction wrappers. Prefer these for ordinary Python code; direct component APIs are in `physx.md` and `render.md`.
 
-Critical GPU-agent rule: assign Scene environment id (`scene.set_environment_id(...)` or `get_or_assign_environment_id()`) before adding bodies. Parse identical URDF once and reuse cached builder via `builder.set_scene(scene)` before each build. Add static terrain/height fields before `PhysxGpuSystem.gpu_init()`.
+Critical GPU-agent rule: pick an environment-ID mode on `PhysxSceneConfig` before creating the GPU system (read once and frozen). Managed mode (`num_scenes = N`): SAPIEN assigns each scene a unique id, lazily or via `scene.get_or_assign_environment_id()`, before bodies are added; `set_environment_id()` raises. Manual mode (`num_scenes` unset): number scenes yourself with `scene.set_environment_id(env_id)` before any body; duplicates are legal and merge scenes into one environment; `get_or_assign_environment_id()` raises. In both modes, `with_shared_scene` plus `scene.set_shared_environment()` (before any body; reports `environment_id == -1`, costs no `num_scenes` slot) mark the one shared scene. Parse identical URDF once and reuse cached builder via `builder.set_scene(scene)` before each build. Add static terrain/height fields before `PhysxGpuSystem.gpu_init()`.
 
 ## Scene wrapper API
 
@@ -27,7 +27,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
-| `environment_id` | `` |  |  |
+| `environment_id` | `int \| None` | Read-only raw SAPIEN environment ID: dense non-negative int from 0, `-1` for a shared scene, `None` until assigned. | The raw ID SAPIEN's filter shader compares — NOT the broadphase effective ID; see `PhysxGpuSystem.get_broadphase_environment_id()`. Assigned by SAPIEN in managed mode (`num_scenes` set) or by `set_environment_id()` in manual mode. |
 
 ### Methods/properties
 
@@ -54,9 +54,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_all_articulations` | method | `get_all_articulations(self)` |  |  |
 | `get_cameras` | method | `get_cameras(self)` |  |  |
 | `get_contacts` | method | `get_contacts(self)` |  |  |
-| `get_environment_id` | method | `get_environment_id(self) -> int \| None` | Return the already assigned PhysX GPU broadphase environment ID. Returns ``None`` if no environment ID has been assigned yet. This method has no side effects; use :met... |  |
+| `get_environment_id` | method | `get_environment_id(self) -> int \| None` | Return this scene's RAW SAPIEN environment ID: a dense non-negative integer from 0, or `-1` for a scene marked with `set_shared_environment()`. Returns `None` until one is assigned. No side effects; use `get_or_assign_environment_id()` to have one assigned. For the PhysX broadphase effective ID, see `PhysxGpuSystem.get_broadphase_environment_id()`. |  |
 | `get_mounted_cameras` | method | `get_mounted_cameras(self)` |  |  |
-| `get_or_assign_environment_id` | method | `get_or_assign_environment_id(self) -> int` | Return this scene's environment ID, assigning a unique one if needed. |  |
+| `get_or_assign_environment_id` | method | `get_or_assign_environment_id(self) -> int` | Return this scene's environment ID, assigning a unique one if needed. | Raises unless `num_scenes` was declared on the config. |
 | `get_timestep` | method | `get_timestep(self)` |  |  |
 | `remove_actor` | method | `remove_actor(self, actor)` |  |  |
 | `remove_articulation` | method | `remove_articulation(self, articulation)` |  |  |
@@ -64,7 +64,8 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `remove_light` | method | `remove_light(self, light)` |  |  |
 | `render_id_to_visual_name` | property | `render_id_to_visual_name(self)` |  |  |
 | `set_ambient_light` | method | `set_ambient_light(self, color)` |  |  |
-| `set_environment_id` | method | `set_environment_id(self, env_id: int, allow_duplicate: bool=False)` | Set the PhysX GPU broadphase environment ID for this scene. In GPU mode, all SAPIEN scenes share one PhysX scene. The environment ID is used by the GPU broadphase to a... | Must be set before adding PhysX bodies; -1/0xffffffff means shared. |
+| `set_shared_environment` | method | `set_shared_environment(self) -> None` | Mark this scene as shared, so every environment collides with it. | Requires `with_shared_scene` on the config; must be called before adding PhysX bodies. |
+| `set_environment_id` | method | `set_environment_id(self, env_id: int) -> None` | Number this scene by hand, for simulations that manage environments themselves. | Manual mode only (`num_scenes` unset); raises in managed mode. Call before the scene gets any actor/articulation. `env_id` is the raw, unshifted ID — `environment_id` reads it back. Duplicates are legal: several Scenes sharing one ID collide as one environment. Use `set_shared_environment()` for the shared scene. |
 | `set_environment_map` | method | `set_environment_map(self, cubemap: str \| RenderCubemap)` |  |  |
 | `set_environment_map_from_files` | method | `set_environment_map_from_files(self, px: str, nx: str, py: str, ny: str, pz: str, nz: str)` |  |  |
 | `set_timestep` | method | `set_timestep(self, timestep)` | Set the simulation timestep. |  |
