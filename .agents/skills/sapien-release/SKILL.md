@@ -135,10 +135,11 @@ you later create a changelog/release-prep commit, rerun this snippet so
    ```
 
    Update `CHANGELOG.md` before dispatch when the release includes changes not
-   yet recorded there. Add a dated section for `RELEASE_TAG` and keep the
-   changelog curated and concise. Commit and push that release-preparation
-   change, then rerun step 1 so `GIT_REF`, `TARGET_COMMIT`, and `RANGE` reflect
-   the final pushed commit.
+   yet recorded there. Rename the standing `## Unreleased` heading to a dated
+   `RELEASE_TAG` section, then add a fresh empty `## Unreleased` above it so the
+   next change has somewhere to land. Keep the changelog curated and concise.
+   Commit and push that release-preparation change, then rerun step 1 so
+   `GIT_REF`, `TARGET_COMMIT`, and `RANGE` reflect the final pushed commit.
 
 4. Dispatch the workflow with the reviewed notes:
 
@@ -180,3 +181,4 @@ you later create a changelog/release-prep commit, rerun this snippet so
 - Pass boolean workflow inputs to `gh workflow run --json` as strings.
 - Do not watch long release builds by default; report the run URL/status and wait only when asked.
 - Keep `CHANGELOG.md` curated and human-readable.
+- Leave a standing empty `## Unreleased` section at the top of `CHANGELOG.md` after every release.
