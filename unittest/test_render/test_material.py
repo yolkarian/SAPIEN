@@ -131,12 +131,6 @@ class TestMaterial(unittest.TestCase):
         self.assertEqual(mat.emission_texture, emission_tex)
         self.assertEqual(mat.transmission_texture, transmission_tex)
 
-        # deprecated diffuse
-        mat.set_diffuse_texture(None)
-        self.assertIsNone(mat.get_base_color_texture())
-        mat.diffuse_texture = color_tex
-        self.assertEqual(mat.base_color_texture, color_tex)
-
         # get set
         mat.set_base_color_texture(None)
         self.assertIsNone(mat.get_base_color_texture())

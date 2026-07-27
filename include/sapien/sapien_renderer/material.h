@@ -46,7 +46,7 @@ public:
 
   // TODO: support the following?
   // void setEmissionTextureFromFilename(std::string_view filename);
-  // void setDiffuseTextureFromFilename(std::string_view filename);
+  // void setBaseColorTextureFromFilename(std::string_view filename);
   // void setRoughnessTextureFromFilename(std::string_view filename);
   // void setMetallicTextureFromFilename(std::string_view filename);
   // void setNormalTextureFromFilename(std::string_view filename);

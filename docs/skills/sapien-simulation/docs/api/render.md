@@ -305,7 +305,6 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 |---|---|---|---|
 | `base_color` | `Annotated[list[float], FixedSize(4)]` |  |  |
 | `base_color_texture` | `RenderTexture2D` |  |  |
-| `diffuse_texture` | `` |  |  |
 | `emission` | `Annotated[list[float], FixedSize(4)]` |  |  |
 | `emission_texture` | `RenderTexture2D` |  |  |
 | `ior` | `float` |  |  |
@@ -325,7 +324,6 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 |---|---|---|---|---|
 | `get_base_color` | method | `get_base_color(self) -> Annotated[list[float], FixedSize(4)]` |  |  |
 | `get_base_color_texture` | method | `get_base_color_texture(self) -> RenderTexture2D` |  |  |
-| `get_diffuse_texture` | method | `get_diffuse_texture(self)` |  |  |
 | `get_emission` | method | `get_emission(self) -> Annotated[list[float], FixedSize(4)]` |  |  |
 | `get_emission_texture` | method | `get_emission_texture(self) -> RenderTexture2D` |  |  |
 | `get_ior` | method | `get_ior(self) -> float` |  |  |
@@ -340,7 +338,6 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_transmission_texture` | method | `get_transmission_texture(self) -> RenderTexture2D` |  |  |
 | `set_base_color` | method | `set_base_color(self, color: Annotated[list[float], FixedSize(4)]) -> None` |  |  |
 | `set_base_color_texture` | method | `set_base_color_texture(self, texture: RenderTexture2D) -> None` |  |  |
-| `set_diffuse_texture` | method | `set_diffuse_texture(self, texture)` |  |  |
 | `set_emission` | method | `set_emission(self, emission: Annotated[list[float], FixedSize(4)]) -> None` |  |  |
 | `set_emission_texture` | method | `set_emission_texture(self, texture: RenderTexture2D) -> None` |  |  |
 | `set_ior` | method | `set_ior(self, ior: float) -> None` |  |  |

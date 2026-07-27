@@ -311,7 +311,7 @@ class URDFLoader:
                 if visual.material.color is not None:
                     material.base_color = visual.material.color
                 elif visual.material.texture is not None:
-                    material.diffuse_texture = RenderTexture2D(
+                    material.base_color_texture = RenderTexture2D(
                         _try_very_hard_to_find_file(
                             visual.material.texture.filename,
                             self.urdf_dir,
