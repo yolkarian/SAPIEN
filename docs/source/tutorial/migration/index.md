@@ -179,12 +179,12 @@ ID before adding bodies:
 sapien.physx.enable_gpu()
 
 config = sapien.physx.PhysxSceneConfig()
-config.gpu_broadphase_env_id_bits = 8  # holds 252 envs, not 256; see the RL tutorial
+config.num_scenes = 8  # SAPIEN derives the broadphase bits; see the RL tutorial
 sapien.physx.set_scene_config(config)
 
 physx_system = sapien.physx.PhysxGpuSystem()
 scene = sapien.Scene([physx_system])
-scene.set_environment_id(0)
+scene.get_or_assign_environment_id()
 
 # add actors/articulations, then initialize GPU buffers
 physx_system.gpu_init()

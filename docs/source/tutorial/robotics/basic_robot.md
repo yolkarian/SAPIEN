@@ -169,14 +169,14 @@ all bodies are added.
 sapien.physx.enable_gpu()
 
 config = sapien.physx.PhysxSceneConfig()
-config.gpu_broadphase_env_id_bits = 8  # holds 252 envs, not 256; see the RL tutorial
+config.num_scenes = 8  # SAPIEN derives the broadphase bits; see the RL tutorial
 sapien.physx.set_scene_config(config)
 
 device = sapien.Device("cuda")
 physx_system = sapien.physx.PhysxGpuSystem(device)
 render_system = sapien.render.RenderSystem(device)
 scene = sapien.Scene([physx_system, render_system])
-scene.set_environment_id(0)
+scene.get_or_assign_environment_id()
 
 # load/build robots here, then:
 physx_system.gpu_init()

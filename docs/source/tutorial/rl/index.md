@@ -14,9 +14,8 @@ This tutorial focuses on how to use SAPIEN for reinforcement learning.
 ## GPU multi-environment isolation
 
 When using `PhysxGpuSystem`, multiple SAPIEN scenes share one PhysX scene for
-GPU Direct simulation. For batched reinforcement learning, configure PhysX GPU
-broadphase environment ID bits before creating the GPU system, then let SAPIEN
-assign one unique environment ID per scene automatically:
+GPU Direct simulation. Declare the shape of the run on the scene config and
+SAPIEN handles the environment IDs that keep those scenes apart:
 
 ```python
 import sapien
@@ -24,141 +23,110 @@ import sapien
 sapien.physx.enable_gpu()
 
 config = sapien.physx.PhysxSceneConfig()
-config.gpu_broadphase_env_id_bits = 8
+config.num_scenes = 4096          # how many ordinary environments
+config.with_shared_scene = True   # one scene holds the ground everyone stands on
 sapien.physx.set_scene_config(config)
 
-physx_system = sapien.physx.PhysxGpuSystem()
+physx_system = sapien.physx.PhysxGpuSystem()   # reads and freezes the declaration
+```
+
+Construction is the only point where the declaration applies. PhysX bakes the
+broadphase bit count into the scene at `createScene`, and refuses
+`PxActor::setEnvironmentID` once an actor is in a scene — so by the time
+environments are being built, everything is already frozen. Changing the config
+afterwards affects the next system, never this one.
+
+With `num_scenes` declared, SAPIEN hands each scene a unique ID on request:
+
+```python
 scene0 = sapien.Scene([physx_system])
 scene1 = sapien.Scene([physx_system])
 
-env_id0 = scene0.get_or_assign_environment_id()  # 0
-env_id1 = scene1.get_or_assign_environment_id()  # 1
+scene0.get_or_assign_environment_id()  # 0
+scene1.get_or_assign_environment_id()  # 1
+scene0.environment_id                  # 0, read-only
 ```
 
-The environment ID must be assigned before adding actors or articulations to a
-scene. If you do not assign it manually, SAPIEN lazily assigns a unique ID when
-one is needed, including when the first PhysX body is added. Non-shared IDs are
-unique by default; assigning the same non-shared ID to two live scenes raises an
-error. Use `allow_duplicate=True` only when you intentionally want two SAPIEN
-scenes to share one PhysX broadphase environment:
+That is managed mode: SAPIEN is the sole assigner, so two scenes can never
+collide over the same value. An ID is assigned lazily, at the latest when the
+scene's first PhysX body is added, and `set_environment_id()` raises.
 
-```python
-scene0.set_environment_id(7)
-scene1.set_environment_id(7, allow_duplicate=True)
-```
+Leaving `num_scenes` unset selects manual mode: SAPIEN numbers nothing, an
+unnumbered scene is environment 0, and you number scenes yourself with
+`scene.set_environment_id(env_id)` before the scene gets any actor or
+articulation (a body freezes its env ID at `PxScene::addActor`). `env_id` is
+the raw, unshifted ID — `scene.environment_id` reads back exactly what you
+passed — and `get_or_assign_environment_id()` raises. Duplicates are legal
+and meaningful: giving several scenes the same ID puts them in one
+environment so they collide with each other, which auto-assignment cannot
+express. Without env IDs at all, separate scenes with
+[`set_scene_offset`](#scene-offsets) instead.
 
-Use `-1` or `0xFFFFFFFF` for a shared scene/object that collides with all
-environments:
+The one scene holding objects common to every environment is marked with no ID
+at all, and must be marked before it gets any body:
 
 ```python
 shared_scene = sapien.Scene([physx_system])
-shared_scene.set_environment_id(-1)
+shared_scene.set_shared_environment()
+shared_scene.environment_id            # -1
 ```
 
-### Declaring the environment layout
+### Tuning the broadphase bits
 
-Describe the shape of the run on the scene config and SAPIEN handles the environment IDs:
+Merging the environment ID into an axis's broadphase bounds spreads environments apart so
+sweep-and-prune has fewer candidate pairs to reject. `num_scenes` derives the counts for
+you; set them by hand only when you have not declared a count:
 
 ```python
-config = sapien.physx.PhysxSceneConfig()
-config.gpu_broadphase_num_scenes = 4096
-config.gpu_broadphase_with_shared_scene = True
-sapien.physx.set_scene_config(config)
-
-physx_system = sapien.physx.PhysxGpuSystem()   # reads and freezes it here
+config.set_gpu_broadphase_env_id_bits(0, 0, 6)   # the only way to write them
+config.gpu_broadphase_nb_bits_env_id_z           # 6, read-only
 ```
 
-Construction is the only point where the declaration applies. PhysX bakes the broadphase
-bit count into the scene at `createScene`, and refuses `PxActor::setEnvironmentID` once an
-actor is in a scene — so by the time environments are being built, everything is already
-frozen. Changing the config afterwards affects the next system, never this one.
+The default is `(0, 0, 4)`. Four matches PhysX's own "snap to grid" shift, so the banding
+costs no coordinate precision at all; raising a count spends one bit of precision on that
+axis. The axes are not independent — PhysX shifts the *same* environment ID on each, so
+every axis keeps the low bits of one value and the distinct band count is
+`2 ** max(x, y, z)`, never the product. Putting the bits on one axis is therefore as good
+as spreading them, and cheaper; pick whichever axis can best afford the precision.
 
-The two settings are independent:
-
-| `gpu_broadphase_num_scenes` | `gpu_broadphase_with_shared_scene` | what SAPIEN does |
-|---|---|---|
-| `None` | `False` | nothing; IDs reach PhysX verbatim, an unset scene is environment 0 |
-| `None` | `True` | offsets every ID into the bands that overlap shared objects, over the bits you configured, and drives its own collision-group filter |
-| `N` | `False` | sizes the bit count for N environments, assigns unset scenes a fresh ID, derives what PhysX gets |
-| `N` | `True` | both |
-
-#### Choosing the bits yourself
-
-`gpu_broadphase_env_id_bits` defaults to **5**, written to **Z alone**:
-
-```python
-config.gpu_broadphase_env_id_bits          # 5
-config.gpu_broadphase_nb_bits_env_id_z     # 5, x and y stay 0
-config.gpu_broadphase_env_band_count       # 32
+```{warning}
+With `with_shared_scene`, every non-zero count must be equal. A narrower axis keeps fewer
+of the shifted ID's low bits, so an environment that sits inside the widest axis's usable
+band can wrap back out of it there and silently stop colliding with the shared object.
+SAPIEN rejects mixed counts like `(12, 8, 0)` at construction, and widens a single-axis
+layout such as the default to `(4, 4, 4)`.
 ```
 
-The axes are not independent — PhysX shifts the *same* environment ID on each — so the band
-count is `2 ** max(x, y, z)`, never the product. Spreading the bits therefore buys no bands
-and costs coordinate precision on every axis it touches, because SAPIEN has to raise PhysX's
-"snap to grid" shift to match. Z-only leaves X and Y at PhysX's own shift. Assign the
-per-axis fields directly to put them on a different axis; five is the widest count that
-still reaches shared objects from every band, so the default needs no offset at all.
-
-#### Why the offset exists
+#### Why a shared scene needs the shift
 
 PhysX relocates environment `e` into the encoded broadphase band
 `[e << (32 - b), (e + 1) << (32 - b))`, but gives objects shared by all environments a
-*fixed* encoded interval that does not follow the banding. The bands at either end of
-the range fall outside that interval, so bodies there silently stop colliding with
-shared objects: a shared ground plane stops holding them up and they fall through it
-forever, while everything else keeps working. `gpu_broadphase_with_shared_scene` shifts
-every ID into the bands that still reach it, which costs about 1.2% of them — so a bit
-count that exactly fits the environment count is one bit too small, and declaring 4096
-scenes picks 13 bits rather than 12.
+*fixed* encoded interval that does not follow the banding. The bands at either end of the
+range fall outside that interval, so bodies there silently stop colliding with shared
+objects: a shared ground plane stops holding them up and they fall through it forever,
+while everything else keeps working and the aggregate metrics still look healthy.
+
+`with_shared_scene` shifts every environment ID into the bands that still reach the shared
+object. That reserves about 1.2% of them, which is why declaring 4096 scenes picks 13 bits
+rather than 12. The user-visible ID never moves:
 
 ```python
-offset, capacity = physx_system.broadphase_env_id_window
-# num_scenes=4096, with_shared_scene=True -> offset 48, capacity 8096
-
-scene.get_environment_id()                          # 0, what you set
+scene.environment_id                                # 0, what SAPIEN assigned you
 physx_system.get_broadphase_environment_id(scene)   # 48, what PhysX receives
 ```
 
-`capacity` is how many environments get a *private* band, not a hard ceiling. PhysX
-discards the bits above `b` when it places the box but compares the full 32-bit
-environment ID when it filters the pair, so environments past the window wrap into the
-high bits and still collide correctly — they share a band only in the broadphase
-spreading sense. Under-declaring is therefore safe: declare 64, build 300, and every
-one still lands in a reachable band. The hard ceiling is far above the band count:
+Declaring more scenes than the banding can give private bands to is fine — the surplus
+wraps into the high bits of the ID, which PhysX drops when it places the box but compares
+exactly when it filters the pair, so those environments stay correct and only share a band
+in the spreading sense. With a shared scene the hard ceiling is 65535 ordinary
+environments, because SAPIEN keeps the scene ID in a 16-bit collision-group field and
+reserves `0xffff` for the shared scene itself.
 
-```python
-sapien.physx.max_broadphase_env_count()  # 16_580_608, not 8192
-```
-
-#### Managing the IDs yourself
-
-With neither setting SAPIEN stays out of the way: it invents no IDs, applies no offset,
-and leaves the collision groups alone. An untouched scene is environment 0. Keep every ID
-you hand out inside the safe window, which is a pure function of the bits you chose:
-
-```python
-offset, capacity = sapien.physx.broadphase_env_id_window(0, 0, 12)
-scene.set_environment_id(offset + i)
-```
-
-The window is derived from `max(x, y, z)` — the widest axis alone decides how environments
-are banded, so it alone decides which bands reach shared objects.
-
-Set a scene's environment ID before adding any body to it; after that both SAPIEN and
-PhysX refuse the change. Marking a scene shared (`-1`) without having declared
-`gpu_broadphase_with_shared_scene` warns, because no bands were reserved for it — and
-declaring it while never marking one warns at `gpu_init`.
-
-Environment IDs affect PhysX broadphase membership only. Viewer and camera
-scene selection never turns environment IDs into render offsets; place entities
-at different poses explicitly when environments should appear separated.
-
-`scene.environment_id` and `scene.get_environment_id()` only inspect the
-already assigned ID and return `None` if no ID exists yet; they do not allocate
-a new ID. Use `scene.get_or_assign_environment_id()` when you want explicit
-lazy allocation. Environment IDs are only available with `PhysxGpuSystem` and
-do not change SAPIEN GPU state-buffer indexing such as `gpu_index` or
-`gpu_pose_index`.
+Environment IDs affect PhysX broadphase membership only. Viewer and camera scene selection
+never turns environment IDs into render offsets; place entities at different poses
+explicitly when environments should appear separated. They are available only with
+`PhysxGpuSystem`, and do not change SAPIEN GPU state-buffer indexing such as `gpu_index`
+or `gpu_pose_index`.
 
 For batched rendering and the Viewer, a render scene whose environment ID is shared
 (`-1`/`0xFFFFFFFF`) is also marked as shared for
