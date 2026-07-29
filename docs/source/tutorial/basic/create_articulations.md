@@ -89,7 +89,7 @@ joint.
 
 ```python
 for joint in articulation.active_joints:
-   joint.set_drive_property(stiffness=50.0, damping=5.0, force_limit=100.0)
+   joint.set_drive_properties(stiffness=50.0, damping=5.0, force_limit=100.0)
    joint.set_drive_target(0.3)
    joint.set_drive_velocity_target(0.0)
 

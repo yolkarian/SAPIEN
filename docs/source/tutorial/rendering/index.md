@@ -8,6 +8,7 @@ This tutorial focuses on basic and advanced rendering in SAPIEN.
 .. toctree::
 
    camera
+   server
    raytracing_renderer
    customize_shaders
    depth_sensor

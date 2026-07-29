@@ -1,4 +1,4 @@
-# Welcome to sapien's documentation!
+# SAPIEN Documentation
 
 ```{eval-rst}
 .. toctree::

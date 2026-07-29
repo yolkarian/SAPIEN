@@ -15,7 +15,7 @@ help:
 .PHONY: help Makefile
 
 apidoc:
-	sphinx-apidoc -o "$(SOURCEDIR)/apidoc" `python3 -c 'import sapien,os; print(os.path.dirname(sapien.__file__))'`
+	python3 generate_api_docs.py
 
 # Catch-all target: route all unknown targets to Sphinx using the new
 # "make mode" option.  $(O) is meant as a shortcut for $(SPHINXOPTS).

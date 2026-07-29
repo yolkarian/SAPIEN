@@ -6,66 +6,81 @@
 .. highlight:: python
 ```
 
-SAPIEN does not include a built-in motion planner. The tutorials use
-[mplib](https://pypi.org/project/mplib/), a standalone Python package for
-sampling-based planning, inverse kinematics, and simple environment collision
-models.
+SAPIEN does not include a motion planner. These tutorials use
+[mplib](https://motion-planning-lib.readthedocs.io/), a standalone package for
+sampling-based planning, inverse kinematics, and collision checking.
 
-Install `mplib` separately:
+The examples below target the current stable `mplib` 0.2.1 API. Install it
+separately:
 
 ```bash
-python -m pip install mplib
+python -m pip install "mplib==0.2.1"
 ```
 
-Check the `mplib` package metadata for its current Python and platform support.
+`mplib` 0.2.1 requires NumPy `< 2`. Check the
+[`mplib.Planner` reference](https://motion-planning-lib.readthedocs.io/stable/reference/Planner.html)
+when using another release.
 
-## Load the robot in SAPIEN
+## Load the same robot in SAPIEN and mplib
+
+Load the robot in SAPIEN first so the planner can use exactly the same active
+joint and link order:
 
 ```python
-import numpy as np
+from pathlib import Path
+
+import mplib
 import sapien
+
+urdf_path = Path("/path/to/panda.urdf")
+srdf_path = Path("/path/to/panda.srdf")
 
 scene = sapien.Scene()
 loader = scene.create_urdf_loader()
 loader.fix_root_link = True
-robot = loader.load("/path/to/panda.urdf", package_dir="/path/to/package")
-```
-
-## Set up an mplib planner
-
-`mplib` needs the same URDF/SRDF files and the link/joint names used by
-SAPIEN. Use active joints for `user_joint_names`.
-
-```python
-import mplib
+robot = loader.load(str(urdf_path), package_dir="/path/to/package")
 
 link_names = [link.name for link in robot.links]
 joint_names = [joint.name for joint in robot.active_joints]
 
 planner = mplib.Planner(
-   urdf="/path/to/panda.urdf",
-   srdf="/path/to/panda.srdf",
+   urdf=urdf_path,
+   srdf=srdf_path,
+   move_group="panda_hand",
    user_link_names=link_names,
    user_joint_names=joint_names,
-   move_group="panda_hand",
-   joint_vel_limits=np.ones(len(joint_names)),
-   joint_acc_limits=np.ones(len(joint_names)),
 )
 ```
 
-The exact `mplib.Planner` constructor may vary across `mplib` releases; keep
-the SAPIEN side synchronized by deriving names from the loaded articulation.
+`move_group` is the link whose pose the planner controls, usually the
+end-effector. `user_joint_names` contains active joints only; fixed joints must
+not be included.
 
-## Configuration notes
+The planner defaults to velocity and acceleration limits of `1` for every joint
+that affects `move_group`. If custom limits are supplied to the constructor,
+their length must equal `len(planner.move_group_joint_indices)`, not necessarily
+`robot.dof` (a Panda planner usually controls seven arm joints while the SAPIEN
+articulation also contains two finger joints).
 
-- URDF describes the robot kinematics and geometry.
-- SRDF complements URDF with planning-specific information, especially disabled
-  self-collision pairs.
-- `user_link_names` and `user_joint_names` align the planner's vectors with
-  SAPIEN's articulation order.
-- `move_group` is the target end-effector link.
-- `joint_vel_limits` and `joint_acc_limits` constrain path parameterization.
+## Pose and frame conventions
 
-After configuration, use {ref}`plan_a_path` for path planning,
-{ref}`inverse_kinematics` for IK, and {ref}`collision_avoidance` for point-cloud
-and attached-object collision models.
+SAPIEN and mplib both store quaternions in `wxyz` order, but they use different
+`Pose` classes. Construct an mplib pose explicitly:
+
+```python
+goal_pose = mplib.Pose(
+   [0.4, 0.0, 0.4],       # xyz
+   [1.0, 0.0, 0.0, 0.0], # wxyz
+)
+```
+
+`mplib.Pose(sapien_pose)` also accepts a `sapien.Pose` directly. Do not pass a
+single seven-element list to `mplib.Pose`; that overload is interpreted as a
+4-by-4 transformation matrix and raises.
+
+`Planner.plan_pose` and `Planner.plan_screw` interpret goals in the world frame
+by default. Pass `wrt_world=False` to interpret a goal in the robot base frame.
+`Planner.IK` works directly in the robot base frame.
+
+After configuration, continue with {ref}`plan_a_path`, {ref}`inverse_kinematics`,
+and {ref}`collision_avoidance`.

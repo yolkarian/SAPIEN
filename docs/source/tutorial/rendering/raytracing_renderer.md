@@ -26,9 +26,10 @@ soft shadows, at a higher cost.
 
 :::{figure} assets/rst_vs_rt.png
 :align: center
-:width: 540px
+:width: 900px
 
-From *A Shader-Based Ray Tracing Engine*, Park et al.
+The same SAPIEN material scene rendered with the current raster and ray-tracing
+shader packs.
 :::
 
 ## Enable ray tracing
@@ -70,11 +71,6 @@ sapien.render.set_ray_tracing_denoiser("oidn")
 `oidn` uses the packaged Open Image Denoise integration. `optix` requires a
 compatible NVIDIA RTX driver stack. If either denoiser is unavailable on your
 machine, use `"none"`.
-
-:::{figure} assets/rt_color.png
-:align: center
-:width: 540px
-:::
 
 ## Materials for ray tracing
 
@@ -136,7 +132,8 @@ color = camera.get_picture("Color")
 :align: center
 :width: 720px
 
-Example result with the ray-tracing shader pack
+Current SAPIEN ray-traced output for dielectric, metallic, and transmissive
+materials.
 :::
 
 ## Batched GPU rendering
@@ -185,6 +182,12 @@ that should follow a GPU body, put the light on a separate entity, set its pose
 mode to `'cpu'` via `light.set_pose_mode("cpu")`, and write the pose from
 downloaded state each frame (`gpu_init()` rejects a `'cpu'` light sharing its
 entity with a PhysX GPU body).
+
+For per-environment host-side lighting randomization, batch updates with
+`sapien.render.set_light_poses`, `sapien.render.set_light_directions`, and
+`sapien.render.set_light_colors`. Their array shapes, local-frame direction
+convention, validate-then-apply guarantee, and sealed-light pose-mode
+requirements are covered in {ref}`batched_light_randomization`.
 
 The interactive Viewer uses the same direct pose source when configured after
 PhysX GPU initialization:

@@ -59,8 +59,9 @@ the raw, unshifted ID — `scene.environment_id` reads back exactly what you
 passed — and `get_or_assign_environment_id()` raises. Duplicates are legal
 and meaningful: giving several scenes the same ID puts them in one
 environment so they collide with each other, which auto-assignment cannot
-express. Without env IDs at all, separate scenes with
-[`set_scene_offset`](#scene-offsets) instead.
+express. Without environment IDs, call
+`physx_system.set_scene_offset(scene, offset)` before adding bodies and keep
+scene contents spatially disjoint.
 
 The one scene holding objects common to every environment is marked with no ID
 at all, and must be marked before it gets any body:

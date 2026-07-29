@@ -151,7 +151,7 @@ PhysX drives live on active joints. The current API sets targets per joint.
 
 ```python
 for joint in robot.active_joints:
-   joint.set_drive_property(stiffness=1000, damping=100, force_limit=1000)
+   joint.set_drive_properties(stiffness=1000, damping=100, force_limit=1000)
    joint.set_drive_target(0.0)
    joint.set_drive_velocity_target(0.0)
 ```

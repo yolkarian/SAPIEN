@@ -6,96 +6,125 @@
 .. highlight:: python
 ```
 
-This page shows the SAPIEN-side workflow for executing a path produced by
-`mplib`. It avoids references to old repository example files that are no
-longer shipped in the current tree.
+This page uses the `mplib` 0.2.1 API configured in {ref}`motion_planning_getting_started`.
 
-## Plan with sampling-based algorithms
+## Plan to an end-effector pose
 
-`mplib` planners accept an end-effector target pose and the current active
-joint positions. A target pose is commonly represented as
-`[x, y, z, qw, qx, qy, qz]` in the robot root frame.
+Use `Planner.plan_pose` for sampling-based pose planning. The goal is an
+`mplib.Pose`; it is in the world frame unless `wrt_world=False` is passed.
 
 ```python
-target_pose = [0.4, 0.0, 0.4, 1.0, 0.0, 0.0, 0.0]
+goal_pose = mplib.Pose(
+   [0.4, 0.0, 0.4],
+   [1.0, 0.0, 0.0, 0.0],
+)
 current_qpos = robot.qpos.copy()
 
-result = planner.plan(
-   target_pose,
+result = planner.plan_pose(
+   goal_pose,
    current_qpos,
    time_step=scene.timestep,
    planning_time=1.0,
 )
 ```
 
-Typical result dictionaries include:
+Use `plan_qpos` instead when the goal is one or more joint configurations.
 
-- `status`: e.g. `"Success"`, `"IK Failed"`, or `"RRT Failed"`;
-- `position`: waypoint joint positions, shape `(n, m)`;
-- `velocity`: waypoint joint velocities, shape `(n, m)`;
-- `acceleration`: waypoint joint accelerations, shape `(n, m)`;
-- `time` and `duration`.
+A successful result contains:
 
-Consult the installed `mplib` version for the exact set of supported keyword
-arguments.
+- `status`: exactly `"Success"` on success; otherwise an IK or RRT failure
+  message;
+- `position`: waypoint positions with shape `(n, move_group_dof)`;
+- `velocity`: waypoint velocities with the same shape;
+- `acceleration`: waypoint accelerations;
+- `time`: sample times;
+- `duration`: trajectory duration.
 
-## Follow a path in SAPIEN
+Only read trajectory arrays after checking `result["status"]`.
 
-Configure PhysX drives on the active joints that the planner controls. The
-current SAPIEN API sets targets per joint.
+## Follow the path in SAPIEN
+
+The result columns follow `planner.move_group_joint_indices`. Select the
+matching SAPIEN joints instead of assuming that the controlled joints are a
+prefix of `robot.active_joints`.
 
 ```python
+controlled_joints = [
+   robot.active_joints[index]
+   for index in planner.move_group_joint_indices
+]
+for joint in controlled_joints:
+   joint.set_drive_properties(
+      stiffness=1000.0,
+      damping=100.0,
+      force_limit=1000.0,
+   )
+
 if result["status"] == "Success":
-   controlled_joints = robot.active_joints[: result["position"].shape[1]]
-   for joint in controlled_joints:
-      joint.set_drive_property(stiffness=1000, damping=100, force_limit=1000)
+   for step_index, (qpos, qvel) in enumerate(
+      zip(result["position"], result["velocity"])
+   ):
+      for joint, position, velocity in zip(controlled_joints, qpos, qvel):
+         joint.set_drive_target(float(position))
+         joint.set_drive_velocity_target(float(velocity))
 
-   for qpos, qvel in zip(result["position"], result["velocity"]):
-      for joint, p, v in zip(controlled_joints, qpos, qvel):
-         joint.set_drive_target(float(p))
-         joint.set_drive_velocity_target(float(v))
-
-      qf = robot.compute_passive_force(True, True)
-      robot.set_qf(qf)
+      robot.qf = robot.compute_passive_force(
+         gravity=True,
+         coriolis_and_centrifugal=True,
+      )
       scene.step()
-      scene.update_render()
+
+      if step_index % 4 == 0:
+         viewer.update_render()
+         viewer.render()
 ```
 
-If the robot does not follow the path, first check the drive stiffness, damping,
-force limits, timestep, and whether passive forces are compensated.
+Current Viewer rendering requires `viewer.update_render()` before
+`viewer.render()`. Calling only `scene.update_render()` does not submit a new
+Viewer frame.
 
-## Plan with screw motion
+If the robot does not follow a valid path, check drive stiffness, damping,
+force limits, timestep, and passive-force compensation before changing planner
+settings.
 
-Some `mplib` versions provide `plan_screw` for direct Cartesian motion of the
-`move_group` link. It can be faster than sampling-based planning but usually
-fails if the straight motion is in collision.
+## Plan a screw motion
+
+`Planner.plan_screw` attempts a direct Cartesian screw motion. It is faster and
+straighter than sampling-based planning, but it cannot detour around an
+obstacle.
 
 ```python
 result = planner.plan_screw(
-   target_pose,
+   goal_pose,
    robot.qpos.copy(),
    time_step=scene.timestep,
-   use_point_cloud=True,
-   use_attach=True,
 )
 
 if result["status"] != "Success":
-   result = planner.plan(target_pose, robot.qpos.copy(), time_step=scene.timestep)
+   result = planner.plan_pose(
+      goal_pose,
+      robot.qpos.copy(),
+      time_step=scene.timestep,
+   )
 ```
+
+Collision objects previously added to the planning world are considered
+automatically; see {ref}`collision_avoidance`.
 
 ## Gripper control
 
-For grippers with active finger joints, set their drive targets just like arm
-joints.
+Gripper joints usually are not in `planner.move_group_joint_indices`, so control
+them separately:
 
 ```python
 finger_joints = robot.active_joints[-2:]
 
-def set_gripper(width):
-   half_width = width / 2
+for joint in finger_joints:
+   joint.set_drive_properties(stiffness=500.0, damping=50.0, force_limit=100.0)
+
+
+def set_gripper(width: float) -> None:
+   half_width = width / 2.0
    for joint in finger_joints:
-      joint.set_drive_property(stiffness=500, damping=50, force_limit=100)
       joint.set_drive_target(half_width)
 ```
-
-Collision-aware planning is covered in {ref}`collision_avoidance`.

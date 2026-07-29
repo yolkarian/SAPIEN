@@ -20,7 +20,7 @@ Configure each active joint's drive properties and targets.
 
 ```python
 for joint in robot.active_joints:
-   joint.set_drive_property(
+   joint.set_drive_properties(
       stiffness=1000.0,
       damping=100.0,
       force_limit=1000.0,

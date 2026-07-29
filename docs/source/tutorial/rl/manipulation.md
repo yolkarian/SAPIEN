@@ -57,7 +57,7 @@ arm_joints = robot.active_joints[:7]
 finger_joints = robot.active_joints[7:]
 
 for joint in arm_joints:
-   joint.set_drive_property(stiffness=0.0, damping=200.0, force_limit=100.0)
+   joint.set_drive_properties(stiffness=0.0, damping=200.0, force_limit=100.0)
 
 def apply_action(action):
    target_vel = action[: len(arm_joints)]

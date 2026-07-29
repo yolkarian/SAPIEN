@@ -46,8 +46,10 @@ The packaged offscreen example renders a red cube and writes
 python -m sapien.example.offscreen
 ```
 
-On a server without a display, Vulkan/EGL may print display-related warnings.
-They can be ignored if the script exits successfully and the image is produced.
+An absent desktop may produce benign display messages, but do not ignore
+`Failed to find Vulkan ICD file`. That warning means Vulkan driver discovery is
+incomplete even if CUDA works. Fix `VK_ICD_FILENAMES` and the NVIDIA ICD
+manifest as described in {ref}`server_rendering`.
 
 :::{figure} assets/example.offscreen.png
 :align: center

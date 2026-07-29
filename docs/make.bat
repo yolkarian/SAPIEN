@@ -25,6 +25,9 @@ if errorlevel 9009 (
 	exit /b 1
 )
 
+python generate_api_docs.py
+if errorlevel 1 exit /b 1
+
 %SPHINXBUILD% -M %1 %SOURCEDIR% %BUILDDIR% %SPHINXOPTS% %O%
 goto end
 
