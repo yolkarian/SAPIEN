@@ -21,6 +21,7 @@ new code should use ``sapien``, ``sapien.physx``, and ``sapien.render``.
    sapien
    sapien.physx
    sapien.render
+   sapien.math
    sapien.sensor
    sapien.utils
    sapien.asset
@@ -29,7 +30,8 @@ new code should use ``sapien``, ``sapien.physx``, and ``sapien.render``.
 ===================
 
 .. automodule:: sapien
-   :members: Scene, Entity, Component, System, Pose, Device, CudaArray, ActorBuilder, ArticulationBuilder, profile, set_log_level
+   :members: Scene, Entity, Component, System, Pose, Device, CudaArray, ActorBuilder, ArticulationBuilder, PinocchioModel, profile, set_log_level
+   :imported-members:
    :show-inheritance:
    :undoc-members:
 """,
@@ -38,24 +40,61 @@ new code should use ``sapien``, ``sapien.physx``, and ``sapien.render``.
 
 .. automodule:: sapien.physx
    :members:
-   :exclude-members: PhysxEngine
+   :imported-members:
+   :exclude-members: Path, PhysxEngine, ZipFile, platform, requests, set_locked_motion_axes
    :show-inheritance:
    :undoc-members:
+
+Additional native method
+------------------------
+
+.. py:method:: PhysxRigidDynamicComponent.set_locked_motion_axes(axes)
+
+   Lock selected rigid-body degrees of freedom.
+
+   :param axes: Six Boolean values in linear X, Y, Z, then angular X, Y, Z
+      order. ``True`` locks the corresponding axis.
 """,
     "sapien.render.rst": """``sapien.render``
 =================
 
 .. automodule:: sapien.render
    :members:
+   :imported-members:
    :exclude-members: SapienRenderer
    :show-inheritance:
    :undoc-members:
+""",
+    "sapien.math.rst": """``sapien.math``
+=================
+
+The math helpers are exposed publicly as ``sapien.math``. Their implementation
+module name is shown below because they are native bindings.
+
+.. automodule:: sapien.pysapien.math
+   :members:
+   :show-inheritance:
+   :undoc-members:
+
+Coordinate-frame constants
+--------------------------
+
+.. py:data:: sapien.math.pose_gl_to_ros
+
+   Fixed pose that converts the renderer/OpenGL camera convention to the
+   robotics camera convention.
+
+.. py:data:: sapien.math.pose_ros_to_gl
+
+   Inverse fixed pose that converts the robotics camera convention to the
+   renderer/OpenGL camera convention.
 """,
     "sapien.sensor.rst": """``sapien.sensor``
 =================
 
 .. automodule:: sapien.sensor
    :members:
+   :imported-members:
    :show-inheritance:
    :undoc-members:
 """,
@@ -64,6 +103,7 @@ new code should use ``sapien``, ``sapien.physx``, and ``sapien.render``.
 
 .. automodule:: sapien.utils
    :members:
+   :imported-members:
    :show-inheritance:
    :undoc-members:
 """,

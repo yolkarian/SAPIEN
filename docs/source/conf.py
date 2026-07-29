@@ -6,6 +6,8 @@
 
 # -- Path setup --------------------------------------------------------------
 
+from typing import Any
+
 # If extensions (or modules to document with autodoc) are in another directory,
 # add these directories to sys.path here. If the directory is relative to the
 # documentation root, use os.path.abspath to make it absolute, like shown here.
@@ -33,6 +35,7 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.intersphinx',
     'sphinx.ext.mathjax',
+    'sphinx.ext.napoleon',
     'sphinx.ext.viewcode',
     'sphinx.ext.githubpages',
     'sphinx.ext.todo',
@@ -86,3 +89,43 @@ html_theme_options = {
         'color-brand-content': '#90caf9',
     },
 }
+
+
+def _normalize_native_docstring_blocks(
+    app: Any,
+    what: str,
+    name: str,
+    obj: Any,
+    options: Any,
+    lines: list[str],
+) -> None:
+    """Make indented blocks in native binding docstrings valid reStructuredText."""
+    normalized: list[str] = []
+    for index, line in enumerate(lines):
+        normalized.append(line)
+        if index + 1 >= len(lines):
+            continue
+
+        next_line = lines[index + 1]
+        starts_indented_block = line.rstrip().endswith(":") and next_line.startswith(
+            (" ", "\t")
+        )
+        current_indent = len(line) - len(line.lstrip())
+        next_indent = len(next_line) - len(next_line.lstrip())
+        ends_indented_block = (
+            line.strip()
+            and next_line.strip()
+            and current_indent > next_indent
+        )
+        if starts_indented_block or ends_indented_block:
+            normalized.append("")
+    lines[:] = normalized
+
+
+def setup(app: Any) -> None:
+    """Register documentation-build hooks."""
+    app.connect(
+        "autodoc-process-docstring",
+        _normalize_native_docstring_blocks,
+        priority=1000,
+    )
