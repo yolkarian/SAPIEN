@@ -92,7 +92,7 @@ std::shared_ptr<PhysxCudaContextLease> PhysxEngine::acquireCudaContextLease(int 
     throw std::runtime_error(
         "failed to acquire PhysX CUDA context: the PhysX engine was shut down");
   }
-#if PX_SUPPORT_GPU_PHYSX
+#ifdef SAPIEN_CUDA
   {
     auto it = mCudaContextLeases.find(cudaId);
     if (it != mCudaContextLeases.end()) {
@@ -211,14 +211,6 @@ PhysxLiveObjectGuard::~PhysxLiveObjectGuard() {
 }
 
 PhysxEngine::~PhysxEngine() {
-  // Defensive cleanup: managers are owned by leases, so anything left here means the
-  // object graph was torn down abnormally; release them rather than leak.
-  for (auto &[cudaId, weakLease] : mCudaContextLeases) {
-    if (weakLease.expired()) {
-      continue;
-    }
-    logger::error("PhysX engine destroyed with a live CUDA context lease on cuda:{}", cudaId);
-  }
   if (mShutdown) {
     return;
   }

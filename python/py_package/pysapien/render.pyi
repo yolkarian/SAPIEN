@@ -733,6 +733,9 @@ class RenderSystem(sapien.pysapien.System):
     def is_closed(self) -> bool:
         ...
     @property
+    def outstanding_cuda_view_count(self) -> int:
+        ...
+    @property
     def scene_light_state_version(self) -> int:
         """
         Coarse dirty version of the CPU scene/light state (light properties, cpu-mode light poses,

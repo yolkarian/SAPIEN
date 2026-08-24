@@ -24,7 +24,7 @@ public:
 
 protected:
   /** Back-pointer used by Scene::close() to detach systems. Not a public registration
-   *  API; Scene::addSystem/removeSystem drive it. */
+   *  API; Scene::addSystem() attaches and Scene::close() -> onSceneClosed() detaches. */
   virtual void internalAddScene(Scene &scene);
   virtual void internalRemoveScene(Scene &scene);
   friend class Scene;

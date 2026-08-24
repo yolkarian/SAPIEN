@@ -42,6 +42,7 @@ public:
   std::shared_ptr<Device> getDevice() const { return mDevice; }
 
   void registerRenderSystem(std::shared_ptr<SapienRendererSystem> const &system);
+  void unregisterRenderSystem(SapienRendererSystem const *system);
   std::vector<std::shared_ptr<SapienRendererSystem>> getRenderSystems();
 
   void shutdown();
@@ -113,6 +114,8 @@ public:
   std::string getName() const override { return "render"; }
 
   CudaArrayHandle getTransformCudaArray();
+  CudaArrayHandle trackView(CudaArrayHandle handle) const;
+  int64_t outstandingCudaViewCount() const { return mViewLifecycle->viewCount(); }
 
   void close();
   bool isClosed() const { return mClosed; }
@@ -139,6 +142,7 @@ private:
   std::set<std::shared_ptr<CudaDeformableMeshComponent>, comp_cmp> mCudaDeformableMeshComponents;
 
   std::shared_ptr<SapienRenderCubemap> mCubemap;
+  std::shared_ptr<CudaArrayLifecycle> mViewLifecycle{std::make_shared<CudaArrayLifecycle>()};
   bool mClosed{false};
 };
 

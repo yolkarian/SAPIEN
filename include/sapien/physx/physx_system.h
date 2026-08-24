@@ -629,6 +629,9 @@ public:
   bool isGpu() const override { return true; }
 
   ~PhysxSystemGpu() {}
+
+private:
+  void closeImpl() override {}
 };
 #endif
 

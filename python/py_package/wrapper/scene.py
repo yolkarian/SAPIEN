@@ -16,6 +16,15 @@ _DEFAULT_GROUND_TEXTURES: dict[
 ] = {}
 
 
+def _clear_default_ground_texture_cache() -> None:
+    """Release module-owned ground textures before job-scope render shutdown."""
+    _DEFAULT_GROUND_TEXTURES.clear()
+
+
+def _default_ground_texture_cache_size() -> int:
+    return len(_DEFAULT_GROUND_TEXTURES)
+
+
 def _validate_height_field(height_field) -> np.ndarray:
     samples = np.asarray(height_field)
     if samples.ndim != 2:

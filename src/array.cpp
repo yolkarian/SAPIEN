@@ -190,8 +190,8 @@ CudaArray &CudaArray::operator=(CudaArray &&other) {
     other.shape.clear();
     other.ptr = nullptr;
   }
-  return *this;
 #endif
+  return *this;
 }
 
 CudaArray::~CudaArray() {
@@ -243,8 +243,8 @@ CudaHostArray &CudaHostArray::operator=(CudaHostArray &&other) {
     other.shape.clear();
     other.ptr = nullptr;
   }
-  return *this;
 #endif
+  return *this;
 }
 
 void CudaHostArray::copyFrom(const CudaArray &array) {

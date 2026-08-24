@@ -10,7 +10,13 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 - Added terminal, idempotent lifecycle APIs for job-scoped teardown: `Scene.close()` / `is_closed`, `PhysxSystem.close()` / `is_closed`, `PhysxGpuSystem.wait_idle()` and context-manager support. A PhysX system refuses to close while scenes, registered components, or exported CUDA views remain alive; closed objects reject steady-state use.
 - Added explicit render lifecycle APIs: `RenderCameraGroup.close()`, `RenderSystemGroup.close()`, `RenderSystem.close()`, `sapien.render.get_live_resources()` / `can_shutdown()` / `shutdown()`, and top-level `sapien.get_live_resources()` / `can_shutdown()` / `shutdown()`. Top-level shutdown preflights both subsystems, closes render before PhysX, waits for Vulkan/CUDA work and recreates the weak RenderEngine/Vulkan context on the next job.
 - Added `sapien.physx.get_live_resources()`, `can_shutdown()` and `shutdown()`. Shutdown clears SAPIEN-owned PhysX mesh/default caches, releases per-device `PxCudaContextManager` leases, destroys `PhysxEngine` (`PxPhysics` / `PxFoundation`) and resets PhysX defaults so a new job can initialize PhysX again in the same Python process.
-- Added owner-backed DLPack exports for PhysX-owned CUDA arrays. `.torch()`, `.jax()`, `.cupy()` and `.dlpack()` keep a lifecycle guard until every consumer is released, and raw `__cuda_array_interface__` export is rejected for these buffers to prevent silent use-after-free.
+- Added owner-backed DLPack exports for PhysX system CUDA arrays, RenderSystem transform arrays, and RenderCameraGroup image/pose arrays. `.torch()`, `.jax()`, `.cupy()` and `.dlpack()` keep a lifecycle guard until every consumer is released, and raw `__cuda_array_interface__` export is rejected for these tracked buffers to prevent silent use-after-free. Component/shape-owned CUDA buffers that have no explicit close owner retain their existing borrowed-view semantics.
+
+### Fixed
+
+- Fixed CPU-only (`SAPIEN_CUDA=OFF`) pybind builds by compiling the Torch DLPack exporter and PhysX CUDA-context acquisition only when CUDA support is enabled, and by keeping the non-CUDA GPU-system stub concrete.
+- Fixed render shutdown with closed-but-still-referenced `RenderSystem` objects by unregistering them from `SapienRenderEngine`; later jobs can create cameras without waiting for Python garbage collection.
+- Treat the high-level Scene wrapper's default ground texture cache as library-owned render state and clear it during `sapien.render.shutdown()`, so `add_ground()` no longer permanently blocks job-scoped shutdown.
 
 ### Changed
 

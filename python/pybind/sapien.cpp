@@ -323,6 +323,7 @@ mark the scene closed. Unlike clear(), a closed scene cannot be reused. Idempote
                                 py::make_tuple(reinterpret_cast<intptr_t>(array.ptr), false),
                             "version"_a = 2);
           })
+#ifdef SAPIEN_CUDA
       .def("torch",
            [](CudaArrayHandle &array) {
              // torch does not support uint except uint8
@@ -337,7 +338,6 @@ mark the scene closed. Unlike clear(), a closed scene cannot be reused. Idempote
              auto capsule = DLPackToCapsule(newArray.toDLPack());
              return from_dlpack(capsule);
            })
-#ifdef SAPIEN_CUDA
       .def("jax",
            [](CudaArrayHandle &array) {
              auto from_dlpack = py::module_::import("jax").attr("dlpack").attr("from_dlpack");

@@ -757,6 +757,8 @@ that stream; the pose takes effect at the next update_render().)doc");
            py::arg("device"))
       .def("close", &SapienRendererSystem::close)
       .def_property_readonly("is_closed", &SapienRendererSystem::isClosed)
+      .def_property_readonly("outstanding_cuda_view_count",
+                             &SapienRendererSystem::outstandingCudaViewCount)
       .def("__enter__", [](py::object self) { return self; })
       .def("__exit__", [](SapienRendererSystem &s, py::object const &, py::object const &,
                            py::object const &) { s.close(); })

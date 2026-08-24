@@ -183,9 +183,19 @@ void SapienRenderEngine::registerRenderSystem(
   mRenderSystems.push_back(system);
 }
 
+void SapienRenderEngine::unregisterRenderSystem(SapienRendererSystem const *system) {
+  std::erase_if(mRenderSystems, [system](auto const &candidate) {
+    auto locked = candidate.lock();
+    return !locked || locked.get() == system;
+  });
+}
+
 std::vector<std::shared_ptr<SapienRendererSystem>> SapienRenderEngine::getRenderSystems() {
   std::vector<std::shared_ptr<SapienRendererSystem>> systems;
-  std::erase_if(mRenderSystems, [](auto const &candidate) { return candidate.expired(); });
+  std::erase_if(mRenderSystems, [](auto const &candidate) {
+    auto locked = candidate.lock();
+    return !locked || locked->isClosed();
+  });
   systems.reserve(mRenderSystems.size());
   for (auto const &candidate : mRenderSystems) {
     if (auto system = candidate.lock()) {
@@ -304,16 +314,23 @@ CudaArrayHandle SapienRendererSystem::getTransformCudaArray() {
 
   auto buffer = mScene->getObjectTransformBuffer();
 #ifdef SAPIEN_CUDA
-  return CudaArrayHandle{.shape = {static_cast<int>(buffer->getSize() / offset), 4, 4},
-                         .strides = {offset, 16, 4},
-                         .type = "f4",
-                         .cudaId = buffer->getCudaDeviceId(),
-                         .ptr = buffer->getCudaPtr()};
+  return trackView(CudaArrayHandle{
+      .shape = {static_cast<int>(buffer->getSize() / offset), 4, 4},
+      .strides = {offset, 16, 4},
+      .type = "f4",
+      .cudaId = buffer->getCudaDeviceId(),
+      .ptr = buffer->getCudaPtr()});
 #else
   return CudaArrayHandle{.shape = {static_cast<int>(buffer->getSize() / offset), 4, 4},
                          .strides = {offset, 16, 4},
                          .type = "f4"};
 #endif
+}
+
+CudaArrayHandle SapienRendererSystem::trackView(CudaArrayHandle handle) const {
+  checkNotClosed();
+  handle.viewGuard = std::make_shared<CudaArrayViewGuard>(mViewLifecycle);
+  return handle;
 }
 
 void SapienRendererSystem::internalAddScene(Scene &scene) {
@@ -344,7 +361,12 @@ void SapienRendererSystem::close() {
                              std::to_string(components) +
                              " components remain registered");
   }
+  if (int64_t views = mViewLifecycle->viewCount(); views != 0) {
+    throw std::runtime_error("failed to close RenderSystem: " + std::to_string(views) +
+                             " exported cuda_object_transforms views are still alive");
+  }
   mEngine->getContext()->getDevice().waitIdle();
+  mEngine->unregisterRenderSystem(this);
   mCubemap.reset();
   mScene.reset();
   mEngine.reset();
@@ -356,6 +378,9 @@ void SapienRendererSystem::closeNoThrow() {
     close();
   } catch (std::exception const &e) {
     logger::error("failed to close RenderSystem during destruction: {}", e.what());
+    if (mEngine) {
+      mEngine->unregisterRenderSystem(this);
+    }
     mCubemap.reset();
     mScene.reset();
     mEngine.reset();
