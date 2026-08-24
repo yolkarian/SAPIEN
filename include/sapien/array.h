@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.hpp>
@@ -10,12 +12,38 @@ namespace sapien {
 
 std::vector<int> ShapeToStrides(std::vector<int> const &shape, int elemSize);
 
+/** Lifecycle counter shared by every view exported from one owner (e.g. one
+ *  PhysxGpuSystem). The owner refuses to close while views are outstanding. */
+struct CudaArrayLifecycle {
+  std::atomic<int64_t> views{0};
+  int64_t viewCount() const { return views.load(std::memory_order_acquire); }
+};
+
+/** RAII guard for one logical external view chain into an owned CUDA buffer. All
+ *  copies of a CudaArrayHandle share the guard; DLPack exports share it as well, so
+ *  the count drops only when every exported owner is gone. */
+struct CudaArrayViewGuard {
+  explicit CudaArrayViewGuard(std::shared_ptr<CudaArrayLifecycle> lifecycle)
+      : lifecycle(std::move(lifecycle)) {
+    this->lifecycle->views.fetch_add(1, std::memory_order_acq_rel);
+  }
+  ~CudaArrayViewGuard() { lifecycle->views.fetch_sub(1, std::memory_order_acq_rel); }
+  CudaArrayViewGuard(CudaArrayViewGuard const &) = delete;
+  CudaArrayViewGuard &operator=(CudaArrayViewGuard const &) = delete;
+
+  std::shared_ptr<CudaArrayLifecycle> lifecycle;
+};
+
 struct CudaArrayHandle {
   std::vector<int> shape;
   std::vector<int> strides;
   std::string type;
   int cudaId{-1};
   void *ptr{nullptr};
+
+  /** Set by the owning system when this handle views its internal buffers. Null for
+   *  handles built from external __cuda_array_interface__ objects. */
+  std::shared_ptr<CudaArrayViewGuard> viewGuard{};
 
   bool isContiguous() const;
   DLManagedTensor *toDLPack() const;
@@ -104,7 +132,7 @@ struct CudaArray {
 };
 
 struct CudaHostArray {
-  CudaHostArray(){};
+  CudaHostArray() {};
   CudaHostArray(std::vector<int> shape_, std::string type_);
 
   void copyFrom(CudaArray const &array);

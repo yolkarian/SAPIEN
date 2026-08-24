@@ -25,8 +25,8 @@ struct PhysxSceneConfig {
   bool enableCCD = false;                 // use continuous collision detection
   bool enableEnhancedDeterminism = false; // improve determinism
   bool enableFrictionEveryIteration =
-      true;                // better friction calculation, recommended for robotics
-  float frictionOffsetThreshold = 0.04f;   
+      true; // better friction calculation, recommended for robotics
+  float frictionOffsetThreshold = 0.04f;
   float frictionCorrelationDistance = 0.025f;
   uint32_t cpuWorkers = 0; // CPU workers, 0 for using main thread
 
@@ -91,9 +91,8 @@ struct PhysxSDFShapeConfig {
   uint32_t resolution = 0;
   uint32_t bitsPerSubgridPixel = 16;
   float narrowBandThickness = 0.01f;
-  float margin = 0.f; // currently ignored by SAPIEN's plain PhysX SDF cooking path
-  bool enableRemeshing =
-      false; // currently ignored by SAPIEN's plain PhysX SDF cooking path
+  float margin = 0.f;           // currently ignored by SAPIEN's plain PhysX SDF cooking path
+  bool enableRemeshing = false; // currently ignored by SAPIEN's plain PhysX SDF cooking path
   float triangleCountReductionFactor =
       1.f; // currently ignored by SAPIEN's plain PhysX SDF cooking path
 };
@@ -127,8 +126,7 @@ public:
   static PhysxShapeConfig const &getShapeConfig();
 
   static void setSDFShapeConfig(float spacing = 0.01f, uint32_t subgridSize = 6,
-                                uint32_t numThreadsForConstruction = 4,
-                                uint32_t resolution = 0,
+                                uint32_t numThreadsForConstruction = 4, uint32_t resolution = 0,
                                 uint32_t bitsPerSubgridPixel = 16,
                                 float narrowBandThickness = 0.01f, float margin = 0.f,
                                 bool enableRemeshing = false,
@@ -139,6 +137,14 @@ public:
   // enable GPU simulation, may not be disabled
   static void EnableGPU();
   static bool GetGPUEnabled();
+
+  /** Whether the lazily created default material is still alive. */
+  static bool HasDefaultMaterial();
+
+  /** Restore every module-level default to its fresh-process value: configs, GPU
+   *  enabled flag, GPU memory config and the default material cache. Called by the
+   *  job-scope shutdown after all PhysX objects are gone. */
+  static void Reset();
 
   static std::string getPhysxVersion();
 };

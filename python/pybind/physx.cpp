@@ -1,6 +1,7 @@
 #include "sapien/physx/physx.h"
 #include "./array.hpp"
 #include "generator.hpp"
+#include "sapien/physx/physx_lifecycle.h"
 #include "sapien/sapien_renderer/sapien_renderer_system.h"
 #include "sapien_type_caster.h"
 #include <pybind11/eigen.h>
@@ -482,6 +483,17 @@ Args:
 
       .def_property_readonly("config", &PhysxSystem::getSceneConfig)
       .def("get_config", &PhysxSystem::getSceneConfig)
+      .def("close", &PhysxSystem::close,
+           R"doc(Terminally close this system. All scenes owned by the system must be closed
+first so actors and components unbind with the system still alive. Idempotent; steady-state
+APIs raise afterwards. Destructors fall back to the same release as a noisy safety net.)doc")
+      .def_property_readonly("is_closed", &PhysxSystem::isClosed)
+      .def("__enter__", [](py::object self) { return self; })
+      .def("__exit__",
+           [](PhysxSystem &s, py::object const &, py::object const &,
+              py::object const &) { s.close(); })
+      .def("wait_idle", &PhysxSystem::waitIdle,
+           "Wait until all simulation and fetch work of this system completed.")
       .def_property("timestep", &PhysxSystem::getTimestep, &PhysxSystem::setTimestep)
       .def("get_timestep", &PhysxSystem::getTimestep)
       .def("set_timestep", &PhysxSystem::setTimestep, py::arg("timestep"))
@@ -534,6 +546,13 @@ Args:
     syncRenderSharedWithOptionalRenderer(scene, envId == 0xffffffffu);
   };
 
+  // Wrap every export of a PhysX-owned CUDA buffer with trackView(): the returned
+  // handle carries a lifecycle guard so close() fails fast while external views live
+  // and exporting after close raises instead of dangling.
+  auto trackGpuView = [](CudaArrayHandle (PhysxSystemGpu::*getter)() const) {
+    return [getter](PhysxSystemGpu &system) { return system.trackView((system.*getter)()); };
+  };
+
   PyPhysxSystemGpu
       .def(py::init([](std::string const &device) {
              return std::make_shared<PhysxSystemGpu>(findDevice(device));
@@ -546,6 +565,8 @@ Args:
       .def_property_readonly("device", &PhysxSystemGpu::getDevice)
       .def_property_readonly("is_initialized", &PhysxSystemGpu::isInitialized)
       .def_property_readonly("total_steps", &PhysxSystemGpu::getTotalSteps)
+      .def_property_readonly("outstanding_cuda_view_count",
+                             &PhysxSystemGpu::outstandingCudaViewCount)
       .def_property_readonly("_sync_poses_gpu_to_cpu_count",
                              &PhysxSystemGpu::getSyncPosesGpuToCpuCount)
       .def_property_readonly("_gpu_fetch_rigid_dynamic_data_count",
@@ -614,11 +635,11 @@ Args:
     stream: integer representation of a cuda stream pointer
 )doc")
 
-      .def_property_readonly("cuda_rigid_body_data", &PhysxSystemGpu::gpuGetRigidBodyCudaHandle)
+      .def_property_readonly("cuda_rigid_body_data", trackGpuView(&PhysxSystemGpu::gpuGetRigidBodyCudaHandle))
       .def_property_readonly("cuda_rigid_dynamic_data",
-                             &PhysxSystemGpu::gpuGetRigidDynamicCudaHandle)
+                             trackGpuView(&PhysxSystemGpu::gpuGetRigidDynamicCudaHandle))
       .def_property_readonly("cuda_articulation_link_data",
-                             &PhysxSystemGpu::gpuGetArticulationLinkCudaHandle,
+                             trackGpuView(&PhysxSystemGpu::gpuGetArticulationLinkCudaHandle),
                              R"doc(Padded articulation link pose and velocity buffer.
 
 The tensor shape is ``(articulation_count, max_links, 13)``. Rows are indexed by
@@ -634,15 +655,15 @@ velocity is ``cuda_articulation_link_data[:, 0, 7:13]``.
 )doc")
 
       .def_property_readonly("cuda_rigid_body_force",
-                             &PhysxSystemGpu::gpuGetRigidBodyForceCudaHandle)
+                             trackGpuView(&PhysxSystemGpu::gpuGetRigidBodyForceCudaHandle))
       .def_property_readonly("cuda_rigid_dynamic_force",
-                             &PhysxSystemGpu::gpuGetRigidDynamicForceCudaHandle)
+                             trackGpuView(&PhysxSystemGpu::gpuGetRigidDynamicForceCudaHandle))
       .def_property_readonly("cuda_rigid_body_torque",
-                             &PhysxSystemGpu::gpuGetRigidBodyTorqueCudaHandle)
+                             trackGpuView(&PhysxSystemGpu::gpuGetRigidBodyTorqueCudaHandle))
       .def_property_readonly("cuda_rigid_dynamic_torque",
-                             &PhysxSystemGpu::gpuGetRigidDynamicTorqueCudaHandle)
+                             trackGpuView(&PhysxSystemGpu::gpuGetRigidDynamicTorqueCudaHandle))
       .def_property_readonly("cuda_articulation_link_force",
-                             &PhysxSystemGpu::gpuGetArticulationLinkForceCudaHandle,
+                             trackGpuView(&PhysxSystemGpu::gpuGetArticulationLinkForceCudaHandle),
                              R"doc(Padded world-space articulation link force buffer.
 
 The tensor shape is ``(articulation_count, max_links, 4)``. Rows are indexed by
@@ -650,7 +671,7 @@ The tensor shape is ``(articulation_count, max_links, 4)``. Rows are indexed by
 channels store the world-space force vector and the fourth channel is padding.
 )doc")
       .def_property_readonly("cuda_articulation_link_torque",
-                             &PhysxSystemGpu::gpuGetArticulationLinkTorqueCudaHandle,
+                             trackGpuView(&PhysxSystemGpu::gpuGetArticulationLinkTorqueCudaHandle),
                              R"doc(Padded world-space articulation link torque buffer.
 
 The tensor shape is ``(articulation_count, max_links, 4)``. Rows are indexed by
@@ -659,16 +680,16 @@ channels store the world-space torque vector and the fourth channel is padding.
 )doc")
 
       .def_property_readonly("cuda_articulation_qpos",
-                             &PhysxSystemGpu::gpuGetArticulationQposCudaHandle)
+                             trackGpuView(&PhysxSystemGpu::gpuGetArticulationQposCudaHandle))
       .def_property_readonly("cuda_articulation_qvel",
-                             &PhysxSystemGpu::gpuGetArticulationQvelCudaHandle)
+                             trackGpuView(&PhysxSystemGpu::gpuGetArticulationQvelCudaHandle))
       .def_property_readonly("cuda_articulation_qacc",
-                             &PhysxSystemGpu::gpuGetArticulationQaccCudaHandle)
+                             trackGpuView(&PhysxSystemGpu::gpuGetArticulationQaccCudaHandle))
       .def_property_readonly("cuda_articulation_qf",
-                             &PhysxSystemGpu::gpuGetArticulationQfCudaHandle)
+                             trackGpuView(&PhysxSystemGpu::gpuGetArticulationQfCudaHandle))
       .def_property_readonly(
           "cuda_articulation_gravity_compensation",
-          &PhysxSystemGpu::gpuGetArticulationGravityCompensationCudaHandle,
+          trackGpuView(&PhysxSystemGpu::gpuGetArticulationGravityCompensationCudaHandle),
           R"doc(Padded joint gravity compensation on the GPU.
 
 The tensor shape is ``(articulation_count, max_dofs)``. Rows are indexed by
@@ -677,7 +698,7 @@ and padding as ``cuda_articulation_qf``.
 )doc")
       .def_property_readonly(
           "cuda_articulation_coriolis_and_centrifugal_compensation",
-          &PhysxSystemGpu::gpuGetArticulationCoriolisAndCentrifugalCompensationCudaHandle,
+          trackGpuView(&PhysxSystemGpu::gpuGetArticulationCoriolisAndCentrifugalCompensationCudaHandle),
           R"doc(Padded joint Coriolis and centrifugal compensation on the GPU.
 
 The tensor shape is ``(articulation_count, max_dofs)``. Rows are indexed by
@@ -685,11 +706,11 @@ The tensor shape is ``(articulation_count, max_dofs)``. Rows are indexed by
 and padding as ``cuda_articulation_qf``.
 )doc")
       .def_property_readonly("cuda_articulation_target_qpos",
-                             &PhysxSystemGpu::gpuGetArticulationQTargetPosCudaHandle)
+                             trackGpuView(&PhysxSystemGpu::gpuGetArticulationQTargetPosCudaHandle))
       .def_property_readonly("cuda_articulation_target_qvel",
-                             &PhysxSystemGpu::gpuGetArticulationQTargetVelCudaHandle)
+                             trackGpuView(&PhysxSystemGpu::gpuGetArticulationQTargetVelCudaHandle))
       .def_property_readonly("cuda_articulation_jacobian",
-                             &PhysxSystemGpu::gpuGetArticulationJacobianCudaHandle, R"doc(
+                             trackGpuView(&PhysxSystemGpu::gpuGetArticulationJacobianCudaHandle), R"doc(
 Padded dense articulation Jacobians on the GPU.
 
 The tensor shape is ``(articulation_count, max_rows, max_cols)`` where
@@ -707,7 +728,7 @@ frame is the link frame origin, shift the linear Jacobian rows accordingly in
 application code.
 )doc")
       .def_property_readonly("cuda_articulation_jacobian_shape",
-                             &PhysxSystemGpu::gpuGetArticulationJacobianShapeCudaHandle,
+                             trackGpuView(&PhysxSystemGpu::gpuGetArticulationJacobianShapeCudaHandle),
                              R"doc(Valid dense Jacobian shape for each articulation.
 
 The tensor shape is ``(articulation_count, 2)`` with dtype ``uint32``. Rows are
@@ -715,7 +736,7 @@ indexed by ``articulation.gpu_index`` and columns are ``[rows, cols]`` for the
 valid submatrix inside ``cuda_articulation_jacobian``.
 )doc")
       .def_property_readonly("cuda_articulation_link_incoming_joint_forces",
-                             &PhysxSystemGpu::gpuGetArticulationLinkIncomingJointForceHandle)
+                             trackGpuView(&PhysxSystemGpu::gpuGetArticulationLinkIncomingJointForceHandle))
 
       .def("gpu_fetch_rigid_dynamic_data", &PhysxSystemGpu::gpuFetchRigidDynamicData)
       .def("gpu_fetch_articulation_link_pose", &PhysxSystemGpu::gpuFetchArticulationLinkPose)
@@ -1738,7 +1759,36 @@ This method is available in CPU simulation. In GPU simulation, use
 
   ////////// global //////////
 
-  m.def("set_default_material", &PhysxDefault::SetDefaultMaterial, py::arg("static_friction"),
+  m.def("get_live_resources",
+        []() {
+          auto r = physxLiveResources();
+          py::dict out;
+          out["scenes"] = r.scenes;
+          out["entities"] = r.entities;
+          out["systems"] = r.systems;
+          out["gpu_systems"] = r.gpuSystems;
+          out["physx_objects"] = r.physxObjects;
+          out["cached_meshes"] = r.cachedMeshes;
+          out["externally_held_cached_meshes"] = r.externallyHeldCachedMeshes;
+          out["default_material"] = r.defaultMaterial;
+          out["engine_exists"] = r.engineExists;
+          return out;
+        },
+        R"doc(Snapshot of the resources that must be gone before a job-scope shutdown.
+Used by can_shutdown() and shutdown() and useful for diagnosing leaked scenes,
+systems, materials, meshes, builders and CUDA views.)doc")
+      .def("can_shutdown", &physxCanShutdown,
+           R"doc(True when sapien.physx.shutdown() would succeed right now. Checks that no
+PhysX system is open and no caller-owned PhysX object or CUDA view is alive. Does not
+mutate any state.)doc")
+      .def("shutdown", &physxShutdown,
+           R"doc(Job-scope terminal shutdown of SAPIEN PhysX. Clears SAPIEN-owned caches,
+releases every PhysX CUDA context manager whose lease was returned, destroys the
+PhysX engine and restores module-level defaults, so a new job can call enable_gpu()
+and build a fresh runtime in the same process. Never calls cudaDeviceReset, so
+torch/JAX CUDA state survives. Idempotent; raises when caller-owned resources are
+still alive.)doc")
+      .def("set_default_material", &PhysxDefault::SetDefaultMaterial, py::arg("static_friction"),
         py::arg("dynamic_friction"), py::arg("restitution"))
       .def("get_default_material", &PhysxDefault::GetDefaultMaterial)
       .def("_enable_gpu", &PhysxDefault::EnableGPU)

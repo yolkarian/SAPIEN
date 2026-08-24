@@ -1,4 +1,5 @@
 #include "sapien/sapien_renderer/batched_render_system.h"
+#include "../logger.h"
 #include "./batched_render_system.cuh"
 #include "render_scene_resolver.h"
 #include "sapien/entity.h"
@@ -51,7 +52,7 @@ CudaArrayHandle getTransformCudaArray(std::shared_ptr<svulkan2::scene::Scene> co
 
 BatchedCamera::BatchedCamera(std::vector<std::shared_ptr<SapienRenderCameraComponent>> cameras,
                              std::vector<std::string> renderTargets)
-    : mCameras(cameras) {
+    : mEngine(SapienRenderEngine::Get()), mCameras(cameras) {
   if (cameras.empty()) {
     throw std::runtime_error("failed to create BatchedCamera: empty cameras");
   }
@@ -86,6 +87,9 @@ BatchedCamera::BatchedCamera(std::vector<std::shared_ptr<SapienRenderCameraCompo
 }
 
 void BatchedCamera::checkGpuInitialized() const {
+  if (mClosed) {
+    throw std::runtime_error("the camera group is closed");
+  }
   if (!mGpuInitialized) {
     throw std::runtime_error(
         "the camera group is not initialized: call RenderSystemGroup.gpu_init() first");
@@ -362,11 +366,12 @@ CudaArrayHandle BatchedCamera::getCudaPoseHandle() const {
         "this camera group has no cameras with pose mode 'cuda'; configure "
         "RenderCameraGroup.set_pose_mode(camera, 'cuda') before gpu_init()");
   }
-  return CudaArrayHandle{.shape = {static_cast<int>(mCudaRowCameras.size()), 7},
-                         .strides = {28, 4},
-                         .type = "f4",
-                         .cudaId = mCudaRowPoseBuffer.cudaId,
-                         .ptr = mCudaRowPoseBuffer.ptr};
+  return trackView(CudaArrayHandle{
+      .shape = {static_cast<int>(mCudaRowCameras.size()), 7},
+      .strides = {28, 4},
+      .type = "f4",
+      .cudaId = mCudaRowPoseBuffer.cudaId,
+      .ptr = mCudaRowPoseBuffer.ptr});
 #else
   throw std::runtime_error("sapien is not compiled with CUDA support");
 #endif
@@ -416,14 +421,46 @@ CudaArrayHandle BatchedCamera::getPictureCuda(std::string const &name) {
     throw std::runtime_error("Failed to get image with name :" + name +
                              ". Did you forget to specify it in create_camera_group?");
   }
-  return mCudaImageHandles.at(name);
+  return trackView(mCudaImageHandles.at(name));
 }
 
-BatchedCamera::~BatchedCamera() {
-  SapienRenderEngine::Get()->getContext()->getDevice().waitIdle();
+CudaArrayHandle BatchedCamera::trackView(CudaArrayHandle handle) const {
+  if (mClosed) {
+    throw std::runtime_error("failed to export CUDA view: the camera group is closed");
+  }
+  handle.viewGuard = std::make_shared<CudaArrayViewGuard>(mViewLifecycle);
+  return handle;
+}
+
+void BatchedCamera::close() {
+  if (mClosed) {
+    return;
+  }
+  if (int64_t views = mViewLifecycle->viewCount(); views != 0) {
+    throw std::runtime_error("failed to close RenderCameraGroup: " +
+                             std::to_string(views) +
+                             " exported CUDA image/pose views are still alive");
+  }
+  closeImpl();
+}
+
+void BatchedCamera::closeImpl() {
+  if (mClosed) {
+    return;
+  }
+  if (mGpuInitialized) {
+    internalWaitForRendersIdle();
+  }
+  mEngine->getContext()->getDevice().waitIdle();
+#ifdef SAPIEN_CUDA
+  checkCudaErrors(cudaSetDevice(mEngine->getDevice()->cudaId));
+  checkCudaErrors(cudaStreamSynchronize(mCudaStream));
+  checkCudaErrors(cudaDeviceSynchronize());
+#endif
 #ifdef SAPIEN_CUDA
   if (mCudaSem) {
     cudaDestroyExternalSemaphore(mCudaSem);
+    mCudaSem = nullptr;
   }
 #endif
   for (auto &camera : mCameras) {
@@ -432,11 +469,46 @@ BatchedCamera::~BatchedCamera() {
   for (auto const &scene : mOwnedRenderScenes) {
     scene->releaseExternalTransformOwnership(this);
   }
+  // Follow C++ member destruction order: command/synchronization objects may retain
+  // references to render images and CUDA row buffers, so destroy them first.
+  mSemaphore.reset();
+  mCommandBuffer.reset();
+  mCommandPool.reset();
+  mRecordedCopyImages.clear();
+  mUploadedStateVersions.clear();
+  mCudaRowCameraDataBuffer = CudaArray{};
+  mCudaRowPoseBuffer = CudaArray{};
+  mOwnedRenderScenes.clear();
+  mCudaRowCameras.clear();
+  mCameras.clear();
+  mCudaImageHandles.clear();
+  mCudaImageBuffers.clear();
+  mGpuInitialized = false;
+  mClosed = true;
+  mEngine.reset();
 }
+
+void BatchedCamera::closeNoThrow() {
+  try {
+    close();
+    return;
+  } catch (std::exception const &e) {
+    logger::error("failed to close RenderCameraGroup during destruction: {}", e.what());
+  } catch (...) {
+    logger::error("failed to close RenderCameraGroup during destruction");
+  }
+  try {
+    closeImpl();
+  } catch (...) {
+    logger::error("RenderCameraGroup forced destructor cleanup failed");
+  }
+}
+
+BatchedCamera::~BatchedCamera() { closeNoThrow(); }
 
 BatchedRenderSystem::BatchedRenderSystem(
     std::vector<std::shared_ptr<SapienRendererSystem>> systems)
-    : mSystems(RenderSceneResolver::resolve(systems, {})) {
+    : mEngine(SapienRenderEngine::Get()), mSystems(RenderSceneResolver::resolve(systems, {})) {
   if (mSystems.empty()) {
     throw std::runtime_error("systems must not be empty");
   }
@@ -446,7 +518,8 @@ BatchedRenderSystem::BatchedRenderSystem(
     std::vector<std::shared_ptr<SapienRendererSystem>> systems,
     std::shared_ptr<svulkan2::scene::Scene> renderScene,
     std::vector<std::shared_ptr<SapienRenderBodyComponent>> gpuSourcedBodies)
-    : mSystems(RenderSceneResolver::resolve(systems, {})), mFixedRenderScene(renderScene),
+    : mEngine(SapienRenderEngine::Get()),
+      mSystems(RenderSceneResolver::resolve(systems, {})), mFixedRenderScene(renderScene),
       mAutoBindPhysxGpuPoses(false), mFixedGpuSourcedBodies(gpuSourcedBodies) {
   if (mSystems.empty()) {
     throw std::runtime_error("systems must not be empty");
@@ -457,6 +530,7 @@ BatchedRenderSystem::BatchedRenderSystem(
 }
 
 void BatchedRenderSystem::init() {
+  checkNotClosed();
   for (auto const &body : mGpuSourcedBodies) {
     body->internalReleaseGpuPoseSource();
   }
@@ -649,6 +723,7 @@ void BatchedRenderSystem::init() {
 }
 
 void BatchedRenderSystem::setPoseSource(CudaArrayHandle const &poses) {
+  checkNotClosed();
   if (mGpuInitialized) {
     throw std::runtime_error(
         "failed to set CUDA poses: the render system group is already initialized");
@@ -708,6 +783,7 @@ void BatchedRenderSystem::assignCameraRenderScenes() {
 std::shared_ptr<BatchedCamera> BatchedRenderSystem::createCameraBatch(
     std::vector<std::shared_ptr<SapienRenderCameraComponent>> cameras,
     std::vector<std::string> renderTargets) {
+  checkNotClosed();
   if (mGpuInitialized) {
     throw std::runtime_error(
         "failed to create camera group: the render system group is already initialized; create "
@@ -722,6 +798,7 @@ std::shared_ptr<BatchedCamera> BatchedRenderSystem::createCameraBatch(
 }
 
 void BatchedRenderSystem::gpuInit() {
+  checkNotClosed();
   if (mGpuInitialized) {
     throw std::runtime_error("the render system group is already initialized");
   }
@@ -996,6 +1073,7 @@ void BatchedRenderSystem::gpuInit() {
 }
 
 void BatchedRenderSystem::update() {
+  checkNotClosed();
   SAPIEN_PROFILE_FUNCTION;
   if (!mGpuInitialized) {
     throw std::runtime_error(
@@ -1224,13 +1302,40 @@ void BatchedRenderSystem::notifyUpdate() {
 }
 
 void BatchedRenderSystem::setCudaStream(uintptr_t stream) {
+  checkNotClosed();
   mCudaStream = (cudaStream_t)stream;
   for (auto &c : mCameraBatches) {
     c->setCudaStream(mCudaStream);
   }
 }
 
-BatchedRenderSystem ::~BatchedRenderSystem() {
+void BatchedRenderSystem::checkNotClosed() const {
+  if (mClosed) {
+    throw std::runtime_error("failed to use RenderSystemGroup: the group is closed");
+  }
+}
+
+void BatchedRenderSystem::close() {
+  if (mClosed) {
+    return;
+  }
+  // Camera groups own image/pose views and external semaphores. Closing them first
+  // prevents renderer resources from outliving the group they were created from.
+  for (auto const &batch : mCameraBatches) {
+    batch->close();
+  }
+  closeImpl();
+}
+
+void BatchedRenderSystem::closeImpl() {
+  if (mClosed) {
+    return;
+  }
+  mEngine->getContext()->getDevice().waitIdle();
+#ifdef SAPIEN_CUDA
+  checkCudaErrors(cudaStreamSynchronize(mCudaStream));
+  checkCudaErrors(cudaDeviceSynchronize());
+#endif
   for (auto const &body : mGpuSourcedBodies) {
     body->internalReleaseGpuPoseSource();
   }
@@ -1246,13 +1351,56 @@ BatchedRenderSystem ::~BatchedRenderSystem() {
   for (auto const &light : mSealedLights) {
     light->internalReleaseGroupStateSeal();
   }
-  SapienRenderEngine::Get()->getContext()->getDevice().waitIdle();
 #ifdef SAPIEN_CUDA
   if (mCudaSem) {
     cudaDestroyExternalSemaphore(mCudaSem);
+    mCudaSem = nullptr;
   }
 #endif
+  mCameraBatches.clear();
+  mGpuSourcedBodies.clear();
+  mSealedShapes.clear();
+  mSealedStaticBodies.clear();
+  mSealedPointClouds.clear();
+  mSealedLights.clear();
+  mSystems.clear();
+  mTrackedSystems.clear();
+  mRenderScenes.clear();
+  mRenderSceneSystems.clear();
+  mAdditionalRenderSelections.clear();
+  mFixedGpuSourcedBodies.clear();
+  mFixedRenderScene.reset();
+  mCudaPoseHandle = {};
+  mCudaSceneTransformRefBuffer = CudaArray{};
+  mCudaRTInstanceRefBuffer = CudaArray{};
+  mCudaShapeDataBuffer = CudaArray{};
+  mCudaCameraDataBuffer = CudaArray{};
+  mSem.reset();
+  mGpuInitialized = false;
+  mClosed = true;
+  mEngine.reset();
 }
+
+void BatchedRenderSystem::closeNoThrow() {
+  try {
+    close();
+    return;
+  } catch (std::exception const &e) {
+    logger::error("failed to close RenderSystemGroup during destruction: {}", e.what());
+  } catch (...) {
+    logger::error("failed to close RenderSystemGroup during destruction");
+  }
+  for (auto const &batch : mCameraBatches) {
+    batch->closeNoThrow();
+  }
+  try {
+    closeImpl();
+  } catch (...) {
+    logger::error("RenderSystemGroup forced destructor cleanup failed");
+  }
+}
+
+BatchedRenderSystem::~BatchedRenderSystem() { closeNoThrow(); }
 
 } // namespace sapien_renderer
 } // namespace sapien

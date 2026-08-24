@@ -10,6 +10,7 @@
 #include "mesh_manager.h"
 #include "physx_default.h"
 #include "physx_engine.h"
+#include "physx_lifecycle.h"
 #include "physx_system.h"
 #include "rigid_component.h"
 #include "scene_query.h"

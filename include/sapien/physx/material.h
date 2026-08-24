@@ -1,4 +1,5 @@
 #pragma once
+#include "./physx_engine.h"
 #include <PxPhysicsAPI.h>
 #include <memory>
 
@@ -29,6 +30,7 @@ public:
   ~PhysxMaterial();
 
 private:
+  PhysxLiveObjectGuard mLiveGuard;
   std::shared_ptr<PhysxEngine> mEngine;
   ::physx::PxMaterial *mMaterial;
 };

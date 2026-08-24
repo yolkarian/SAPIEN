@@ -1,4 +1,5 @@
 #include "sapien/sapien_renderer/sapien_renderer_system.h"
+#include "../logger.h"
 #include "sapien/sapien_renderer/camera_component.h"
 #include "sapien/sapien_renderer/cubemap.h"
 #include "sapien/sapien_renderer/deformable_mesh_component.h"
@@ -21,18 +22,42 @@
 namespace sapien {
 namespace sapien_renderer {
 
+static std::weak_ptr<SapienRenderEngine> gRenderEngine;
+
 std::shared_ptr<SapienRenderEngine> SapienRenderEngine::Get(std::shared_ptr<Device> device) {
-  static std::weak_ptr<SapienRenderEngine> gEngine;
-  std::shared_ptr<SapienRenderEngine> engine;
-  if ((engine = gEngine.lock())) {
+  auto engine = gRenderEngine.lock();
+  if (engine && engine->isShutdown()) {
+    engine.reset();
+    gRenderEngine.reset();
+  }
+  if (engine) {
     if (device && engine->mDevice != device) {
       throw std::runtime_error("failed to create renderer on device \"" + device->getAlias() +
                                "\": current SAPIEN version only supports single-GPU rendering.");
     }
     return engine;
   }
-  gEngine = engine = std::make_shared<SapienRenderEngine>(device);
+  gRenderEngine = engine = std::make_shared<SapienRenderEngine>(device);
   return engine;
+}
+
+std::shared_ptr<SapienRenderEngine> SapienRenderEngine::GetIfExists() {
+  return gRenderEngine.lock();
+}
+
+std::shared_ptr<svulkan2::core::Context> SapienRenderEngine::getContext() const {
+  if (mShutdown) {
+    throw std::runtime_error("failed to use render engine: the engine was shut down");
+  }
+  return mContext;
+}
+
+std::shared_ptr<svulkan2::resource::SVResourceManager>
+SapienRenderEngine::getResourceManager() const {
+  if (mShutdown) {
+    throw std::runtime_error("failed to use render engine: the engine was shut down");
+  }
+  return mResourceManager;
 }
 
 std::string SapienRenderEngine::getSummary() {
@@ -98,7 +123,38 @@ std::shared_ptr<svulkan2::resource::SVMesh> SapienRenderEngine::getBoxMesh() {
   return mBoxMesh;
 }
 
-SapienRenderEngine::~SapienRenderEngine() {}
+void SapienRenderEngine::shutdown() {
+  if (mShutdown) {
+    return;
+  }
+  if (!getRenderSystems().empty()) {
+    throw std::runtime_error(
+        "failed to shut down render engine: renderer systems are still alive");
+  }
+  if (mContext) {
+    mContext->getDevice().waitIdle();
+  }
+  mSphereMesh.reset();
+  mPlaneMesh.reset();
+  mBoxMesh.reset();
+  mRenderSystems.clear();
+  mResourceManager.reset();
+  mContext.reset();
+  mDevice.reset();
+  mShutdown = true;
+}
+
+SapienRenderEngine::~SapienRenderEngine() {
+  if (mShutdown) {
+    return;
+  }
+  try {
+    shutdown();
+  } catch (...) {
+    // The remaining objects still hold their own context/resource references. Avoid
+    // throwing from a destructor; normal job boundaries call render.shutdown() first.
+  }
+}
 
 SapienRendererSystem::SapienRendererSystem(std::shared_ptr<Device> device) {
   mEngine = SapienRenderEngine::Get(device);
@@ -107,10 +163,12 @@ SapienRendererSystem::SapienRendererSystem(std::shared_ptr<Device> device) {
 }
 
 void SapienRendererSystem::setBatchedRenderShared(bool shared) {
+  checkNotClosed();
   mScene->setBatchedRenderShared(shared);
 }
 
 bool SapienRendererSystem::isBatchedRenderShared() const {
+  checkNotClosed();
   return mScene->isBatchedRenderShared();
 }
 
@@ -137,14 +195,24 @@ std::vector<std::shared_ptr<SapienRendererSystem>> SapienRenderEngine::getRender
   return systems;
 }
 
-std::shared_ptr<Device> SapienRendererSystem::getDevice() const { return mEngine->getDevice(); }
+std::shared_ptr<svulkan2::scene::Scene> SapienRendererSystem::getScene() {
+  checkNotClosed();
+  return mScene;
+}
+
+std::shared_ptr<Device> SapienRendererSystem::getDevice() const {
+  checkNotClosed();
+  return mEngine->getDevice();
+}
 
 Vec3 SapienRendererSystem::getAmbientLight() const {
+  checkNotClosed();
   auto l = mScene->getAmbientLight();
   return {l.r, l.g, l.b};
 }
 
 void SapienRendererSystem::setAmbientLight(Vec3 l) {
+  checkNotClosed();
   // Alpha is an internal flag indicating whether the raster shader should use its fallback IBL.
   auto ambient = mScene->getAmbientLight();
   mScene->setAmbientLight({l.x, l.y, l.z, ambient.a});
@@ -152,31 +220,40 @@ void SapienRendererSystem::setAmbientLight(Vec3 l) {
 }
 
 void SapienRendererSystem::setCubemap(std::shared_ptr<SapienRenderCubemap> cubemap) {
+  checkNotClosed();
   mScene->setEnvironmentMap(cubemap ? cubemap->getCubemap() : nullptr);
   auto ambient = mScene->getAmbientLight();
   ambient.a = cubemap ? 0.f : 1.f;
   mScene->setAmbientLight(ambient);
   mCubemap = cubemap;
 }
-std::shared_ptr<SapienRenderCubemap> SapienRendererSystem::getCubemap() const { return mCubemap; }
+std::shared_ptr<SapienRenderCubemap> SapienRendererSystem::getCubemap() const {
+  checkNotClosed();
+  return mCubemap;
+}
 
 void SapienRendererSystem::registerComponent(std::shared_ptr<SapienRenderBodyComponent> c) {
+  checkNotClosed();
   mRenderBodyComponents.insert(c);
 }
 
 void SapienRendererSystem::registerComponent(std::shared_ptr<SapienRenderCameraComponent> c) {
+  checkNotClosed();
   mRenderCameraComponents.insert(c);
 }
 
 void SapienRendererSystem::registerComponent(std::shared_ptr<SapienRenderLightComponent> c) {
+  checkNotClosed();
   mRenderLightComponents.insert(c);
 }
 
 void SapienRendererSystem::registerComponent(std::shared_ptr<PointCloudComponent> c) {
+  checkNotClosed();
   mPointCloudComponents.insert(c);
 }
 
 void SapienRendererSystem::registerComponent(std::shared_ptr<CudaDeformableMeshComponent> c) {
+  checkNotClosed();
   mCudaDeformableMeshComponents.insert(c);
 }
 
@@ -201,6 +278,7 @@ void SapienRendererSystem::unregisterComponent(std::shared_ptr<CudaDeformableMes
 }
 
 void SapienRendererSystem::step() {
+  checkNotClosed();
   for (auto c : mRenderBodyComponents) {
     c->internalUpdate();
   }
@@ -220,6 +298,7 @@ void SapienRendererSystem::step() {
 }
 
 CudaArrayHandle SapienRendererSystem::getTransformCudaArray() {
+  checkNotClosed();
   mScene->prepareObjectTransformBuffer();
   int offset = mScene->getGpuTransformBufferSize();
 
@@ -237,7 +316,54 @@ CudaArrayHandle SapienRendererSystem::getTransformCudaArray() {
 #endif
 }
 
-SapienRendererSystem::~SapienRendererSystem() {}
+void SapienRendererSystem::internalAddScene(Scene &scene) {
+  checkNotClosed();
+  System::internalAddScene(scene);
+}
+
+void SapienRendererSystem::checkNotClosed() const {
+  if (mClosed) {
+    throw std::runtime_error("failed to use RenderSystem: the system is closed");
+  }
+}
+
+void SapienRendererSystem::close() {
+  if (mClosed) {
+    return;
+  }
+  if (!mScenes.empty()) {
+    throw std::runtime_error("failed to close RenderSystem: " +
+                             std::to_string(mScenes.size()) +
+                             " scenes are still attached; close every scene first");
+  }
+  size_t components = mRenderBodyComponents.size() + mRenderCameraComponents.size() +
+                      mRenderLightComponents.size() + mPointCloudComponents.size() +
+                      mCudaDeformableMeshComponents.size();
+  if (components != 0) {
+    throw std::runtime_error("failed to close RenderSystem: " +
+                             std::to_string(components) +
+                             " components remain registered");
+  }
+  mEngine->getContext()->getDevice().waitIdle();
+  mCubemap.reset();
+  mScene.reset();
+  mEngine.reset();
+  mClosed = true;
+}
+
+void SapienRendererSystem::closeNoThrow() {
+  try {
+    close();
+  } catch (std::exception const &e) {
+    logger::error("failed to close RenderSystem during destruction: {}", e.what());
+    mCubemap.reset();
+    mScene.reset();
+    mEngine.reset();
+    mClosed = true;
+  }
+}
+
+SapienRendererSystem::~SapienRendererSystem() { closeNoThrow(); }
 
 } // namespace sapien_renderer
 } // namespace sapien

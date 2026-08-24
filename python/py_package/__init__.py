@@ -19,6 +19,33 @@ from .pysapien import simsense
 from . import physx
 from . import render
 
+
+def get_live_resources() -> dict[str, dict[str, object]]:
+    """Snapshot of render and PhysX resources that block job-scope shutdown."""
+    return {
+        "render": render.get_live_resources(),
+        "physx": physx.get_live_resources(),
+    }
+
+
+def can_shutdown() -> bool:
+    """Whether :func:`shutdown` can complete without invalidating caller-owned objects."""
+    return render.can_shutdown() and physx.can_shutdown()
+
+
+def shutdown() -> None:
+    """Terminally shut down SAPIEN-owned render then PhysX state for one job.
+
+    The preflight is side-effect-free; if either subsystem still has caller-owned
+    resources, nothing is shut down. CUDA primary context state shared with Torch/JAX
+    is intentionally preserved.
+    """
+    resources = get_live_resources()
+    if not can_shutdown():
+        raise RuntimeError(f"SAPIEN resources are still alive: {resources}")
+    render.shutdown()
+    physx.shutdown()
+
 from . import _vulkan_tricks
 
 from .wrapper.scene import Scene, SceneConfig, Widget

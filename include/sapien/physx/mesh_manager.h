@@ -18,6 +18,11 @@ public:
   static std::shared_ptr<MeshManager> Get();
   static void Clear();
 
+  /** Number of cached meshes across all registries, for shutdown diagnostics. */
+  static size_t CachedMeshCount();
+  /** Cached mesh objects with at least one owner outside MeshManager. */
+  static size_t ExternallyHeldMeshCount();
+
   MeshManager();
 
   std::shared_ptr<PhysxTriangleMesh> loadTriangleMesh(const std::string &filename);

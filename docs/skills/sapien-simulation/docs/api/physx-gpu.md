@@ -16,6 +16,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | API | Signature | Use | Notes |
 |---|---|---|---|
 | `sapien.physx.enable_gpu` | `enable_gpu() -> None` | Enable the PhysX GPU runtime; call before creating a PhysxGpuSystem. | Pre-bake the PhysX GPU .so into the package to avoid runtime download. |
+| `sapien.physx.get_live_resources` | `get_live_resources() -> dict[str, object]` | Diagnose job-scoped lifecycle blockers. | Reports open systems, PhysX-backed objects and library-owned mesh/default caches. |
+| `sapien.physx.can_shutdown` | `can_shutdown() -> bool` | Side-effect-free shutdown preflight. | False while caller-owned systems/objects/CUDA views remain. |
+| `sapien.physx.shutdown` | `shutdown() -> None` | Release SAPIEN-owned PhysX caches/context managers/engine and reset defaults. | Idempotent; never calls cudaDeviceReset; process-exit-equivalent CUDA isolation still requires a fresh process. |
 
 ## Class index
 
@@ -56,6 +59,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
+| `close` | method | `close(self) -> None` | Terminally release this system after every owning Scene is closed and exported CUDA view is dropped. | Idempotent; closed systems reject steady-state APIs. |
+| `wait_idle` | method | `wait_idle(self) -> None` | Finish in-flight simulate/fetch and synchronize SAPIEN CUDA work. | Called by close(). |
+| `is_closed` | property | `is_closed(self) -> bool` | Terminal lifecycle state. | Inherited from PhysxSystem. |
+| `outstanding_cuda_view_count` | property | `outstanding_cuda_view_count(self) -> int` | Number of owner-backed view chains into this system's CUDA buffers. | close() raises while non-zero. |
 | `cuda_articulation_coriolis_and_centrifugal_compensation` | property | `cuda_articulation_coriolis_and_centrifugal_compensation(self) -> sapien.CudaArray` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
 | `cuda_articulation_gravity_compensation` | property | `cuda_articulation_gravity_compensation(self) -> sapien.CudaArray` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
 | `cuda_articulation_link_data` | property | `cuda_articulation_link_data(self) -> sapien.CudaArray` | Padded articulation link pose/velocity buffer. | Shape `(articulation_count, max_links, 13)` indexed by `articulation.gpu_index` and low-level `link.index`; channels `0:3` position, `3:7` quaternion `wxyz`, `7:10` linear velocity, `10:13` angular velocity. |

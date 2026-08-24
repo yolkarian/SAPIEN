@@ -33,6 +33,9 @@ class PhysxArticulationLinkComponent;
 // environment-ID config, never handed to callers.
 struct BroadphaseEnvIdWindow;
 
+class PhysxSystemCpu;
+class PhysxSystemGpu;
+
 class PhysxSystem : public System {
 
 public:
@@ -57,6 +60,10 @@ public:
   void setTimestep(float step) { mTimestep = step; };
   float getTimestep() const { return mTimestep; }
 
+  /** Wait for all simulation and fetch work of this system to complete. GPU systems
+   *  also synchronize their CUDA stream; a no-op for CPU systems. */
+  virtual void waitIdle() {}
+
   std::string getName() const override { return "physx"; }
   virtual bool isGpu() const = 0;
 
@@ -72,21 +79,41 @@ public:
   void setSceneCollisionId(int id) { mSceneCollisionId = id; }
   int getSceneCollisionId() const { return mSceneCollisionId; }
 
+  /** Terminal close of this system. Releases the PhysX scene, the CPU dispatcher, and
+   *  every system-local GPU resource. All scenes owned by this system must be closed
+   *  first so actors/articulations are unregistered with the system still alive.
+   *  Idempotent; steady-state APIs raise after close; destructors fall back to
+   *  close() as a noexcept safety net. */
+  void close();
+  bool isClosed() const { return mClosed; }
+
   ~PhysxSystem();
 
 protected:
   PhysxSystem();
 
+  void internalAddScene(Scene &scene) override;
+
+  /** Release implementation called by close(); never called twice. */
+  virtual void closeImpl() = 0;
+  /** Safety net for destructors: never throws; logs and force-releases on failure. */
+  void closeNoThrow();
+  void checkNotClosed() const;
+
   PhysxSceneConfig mSceneConfig;
   std::shared_ptr<PhysxEngine> mEngine;
 
-  ::physx::PxScene *mPxScene;
+  ::physx::PxScene *mPxScene{};
   float mTimestep{0.01f};
 
-  ::physx::PxDefaultCpuDispatcher *mPxCPUDispatcher;
+  ::physx::PxDefaultCpuDispatcher *mPxCPUDispatcher{};
 
   int mSceneCollisionId{0};
 
+  bool mClosed{false};
+  // Generic engine registration for shutdown accounting. Registered once at
+  // construction, unregistered once at close() or destruction.
+  bool mRegisteredSystem{false};
 };
 
 class PhysxSystemCpu : public PhysxSystem {
@@ -119,6 +146,8 @@ public:
   ~PhysxSystemCpu();
 
 private:
+  void closeImpl() override;
+
   DefaultEventCallback mSimulationCallback;
 
   std::set<std::shared_ptr<PhysxRigidDynamicComponent>, comp_cmp> mRigidDynamicComponents;
@@ -164,11 +193,26 @@ public:
   void stepStart();
   void stepFinish();
 
+  /** Wait until the in-flight simulate (if any) is fetched and all SAPIEN CUDA work
+   *  of this system has completed on the device. */
+  void waitIdle() override;
+
   bool isGpu() const override { return true; }
 
   void gpuInit();
   bool isInitialized() const { return mGpuInitialized; }
   void checkGpuInitialized() const;
+
+  /** Attach this system's view lifecycle token to an exported buffer handle. Throws
+   *  when the system is closed. close() refuses while tracked views are alive. */
+  CudaArrayHandle trackView(CudaArrayHandle handle) const;
+
+  /** Number of external view chains into this system's CUDA buffers still alive. */
+  int64_t outstandingCudaViewCount() const;
+
+  /** Scene::close() hook: drop scene offset and environment-ID bookkeeping, returning
+   *  a managed environment-ID slot to the free list immediately. */
+  void onSceneClosed(Scene &scene) override;
 
   /** Set the CUDA stream for all GPU operations.
    *  gpuQuery* and gpuApply* will be synchronized with the stream
@@ -322,9 +366,7 @@ public:
   uint64_t getTotalSteps() const { return mTotalSteps; }
   uint64_t getSyncPosesGpuToCpuCount() const { return mSyncPosesGpuToCpuCount; }
   uint64_t getRigidDynamicFetchCount() const { return mRigidDynamicFetchCount; }
-  uint64_t getArticulationLinkPoseFetchCount() const {
-    return mArticulationLinkPoseFetchCount;
-  }
+  uint64_t getArticulationLinkPoseFetchCount() const { return mArticulationLinkPoseFetchCount; }
 
   std::vector<float> gpuDownloadArticulationQpos(int index);
   std::vector<float> gpuDownloadArticulationQTargetPos(int index);
@@ -380,6 +422,8 @@ public:
   ~PhysxSystemGpu();
 
 private:
+  void closeImpl() override;
+
   // The components call applyCollisionGroupSceneId as they bind to a PhysX scene; it is an
   // internal registration step, not something a caller drives.
   friend class PhysxRigidStaticComponent;
@@ -447,6 +491,18 @@ private:
   std::set<std::shared_ptr<PhysxRigidStaticComponent>, comp_cmp> mRigidStaticComponents;
   std::set<std::shared_ptr<PhysxArticulationLinkComponent>, comp_cmp> mArticulationLinkComponents;
 
+  /** RAII ownership of this device's PhysX CUDA context manager; released in close()
+   *  right after the PxScene of this system is released. */
+  std::shared_ptr<PhysxCudaContextLease> mCudaContextLease;
+  // GPU-specific engine registration flag for close()/destructor accounting.
+  bool mRegisteredGpuSystem{false};
+
+  /** Lifecycle token shared with every exported CUDA view of this system. */
+  std::shared_ptr<CudaArrayLifecycle> mViewLifecycle{std::make_shared<CudaArrayLifecycle>()};
+
+  /** step_start() without a matching step_finish(). */
+  bool mSimulateInFlight{false};
+
   uint64_t mTotalSteps{};
 
   bool mGpuInitialized{false};
@@ -479,9 +535,9 @@ private:
   CudaArray mCudaArticulationIndexScratch;
 
   void allocateCudaBuffers();
-  void gpuComputeArticulationCompensation(
-      CudaArrayHandle const &indices, CudaArrayHandle const &output,
-      ::physx::PxArticulationGPUAPIComputeType::Enum computeType);
+  void
+  gpuComputeArticulationCompensation(CudaArrayHandle const &indices, CudaArrayHandle const &output,
+                                     ::physx::PxArticulationGPUAPIComputeType::Enum computeType);
 
   // indx buffer for all rigid dynamic bodies
   CudaArray mCudaRigidDynamicIndexBuffer;
@@ -557,11 +613,17 @@ public:
   void unregisterComponent(std::shared_ptr<PhysxRigidStaticComponent> component) override {}
   void unregisterComponent(std::shared_ptr<PhysxArticulationLinkComponent> component) override {}
   std::vector<std::shared_ptr<PhysxRigidDynamicComponent>>
-  getRigidDynamicComponents() const override { return {}; }
+  getRigidDynamicComponents() const override {
+    return {};
+  }
   std::vector<std::shared_ptr<PhysxRigidStaticComponent>>
-  getRigidStaticComponents() const override { return {}; }
+  getRigidStaticComponents() const override {
+    return {};
+  }
   std::vector<std::shared_ptr<PhysxArticulationLinkComponent>>
-  getArticulationLinkComponents() const override { return {}; }
+  getArticulationLinkComponents() const override {
+    return {};
+  }
 
   void step() override {}
   bool isGpu() const override { return true; }

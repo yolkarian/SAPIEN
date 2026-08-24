@@ -11,6 +11,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | API | Signature | Use | Notes |
 |---|---|---|---|
 | `sapien.render.clear_cache` | `clear_cache(models: bool=True, images: bool=True, shaders: bool=False) -> None` | Call clear cache. |  |
+| `sapien.render.get_live_resources` | `get_live_resources() -> dict[str, object]` | Diagnose render resources blocking job-scope shutdown. | Reports renderer systems and external RenderEngine owners. |
+| `sapien.render.can_shutdown` | `can_shutdown() -> bool` | Side-effect-free render shutdown preflight. | False while viewers/groups/systems/materials/textures remain. |
+| `sapien.render.shutdown` | `shutdown() -> None` | Wait for Vulkan work and destroy the weak RenderEngine/context. | Idempotent; raises without mutation while resources remain. |
 | `sapien.render.enable_vr` | `enable_vr() -> None` | Enable VR via Steam. Must be called before creating RenderSystem or sapien Scene. |  |
 | `sapien.render.get_camera_shader_dir` | `get_camera_shader_dir() -> str` | Get camera shader dir. |  |
 | `sapien.render.get_device_summary` | `get_device_summary() -> str` | Get device summary. |  |
@@ -187,6 +190,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
+| `close` | method | `close(self) -> None` | Wait for render/CUDA work, release camera/scene ownership and external semaphores. | Idempotent; raises while exported CUDA image/pose views remain. |
+| `is_closed` | property | `is_closed(self) -> bool` | Terminal lifecycle state. |  |
+| `outstanding_cuda_view_count` | property | `outstanding_cuda_view_count(self) -> int` | Owner-backed exported image/pose views. | close() raises while non-zero. |
 | `cuda_poses` | property | `cuda_poses(self) -> sapien.CudaArray` | World pose rows `[px, py, pz, qw, qx, qy, qz]` of the group's `'cuda'`-mode cameras. | Raises when no `'cuda'`-mode camera exists. Write rows on GPU (torch) or via `set_cuda_pose`; consumed by the next `update_render()`. |
 | `get_cuda_pose_index` | method | `get_cuda_pose_index(self, camera: RenderCameraComponent) -> int` | Row index of a `'cuda'`-mode camera. | Raises for mounted cameras and for `'static'`/`'cpu'` cameras. |
 | `get_picture_cuda` | method | `get_picture_cuda(self, name: str) -> sapien.CudaArray` | Read CUDA image buffer; avoids CPU copy. | Direct GPU render path; no sync_poses_gpu_to_cpu needed. |
@@ -618,6 +624,8 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
+| `close` | method | `close(self) -> None` | Terminally release the render scene/component registry after owning Scenes close. | Idempotent. |
+| `is_closed` | property | `is_closed(self) -> bool` | Terminal lifecycle state. |  |
 | `cameras` | property | `cameras(self) -> list[RenderCameraComponent]` |  |  |
 | `cuda_object_transforms` | property | `cuda_object_transforms(self) -> sapien.CudaArray` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
 | `device` | property | `device(self) -> sapien.Device` |  |  |
@@ -646,6 +654,8 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
+| `close` | method | `close(self) -> None` | Close camera groups, release sealed pose sources/objects and destroy Vulkan/CUDA synchronization resources. | Idempotent. |
+| `is_closed` | property | `is_closed(self) -> bool` | Terminal lifecycle state. |  |
 | `create_camera_group` | method | `create_camera_group(self, cameras: list[RenderCameraComponent], picture_names: list[str]) -> RenderCameraGroup` | Create a batched camera group. |  |
 | `set_cuda_poses` | method | `set_cuda_poses(self, pose_buffer: sapien.CudaArray) -> None` | Bind a RenderSystemGroup to a PhysX CUDA pose buffer. | Direct GPU render path; no sync_poses_gpu_to_cpu needed. |
 | `gpu_init` | method | `gpu_init(self) -> None` | One-time initialization and seal; call after `set_cuda_poses`, `create_camera_group`, and `set_pose_mode`. | Prepares resources, seeds CPU snapshots and `'cuda'`-mode camera rows, seals ownership, freezes topology. |

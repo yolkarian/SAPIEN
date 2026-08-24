@@ -150,7 +150,14 @@ Generator<int> init_sapien(py::module &m) {
       .def(
           "unpack_poses", [](Scene &s, py::bytes data) { s.unpackEntityPoses(data); },
           py::arg("data"))
-      .def("clear", &Scene::clear);
+      .def("clear", &Scene::clear)
+      .def("close", &Scene::close,
+           R"doc(Terminally close the scene: remove all entities, detach all systems, and
+mark the scene closed. Unlike clear(), a closed scene cannot be reused. Idempotent.)doc")
+      .def("__enter__", [](py::object self) { return self; })
+      .def("__exit__",
+           [](Scene &s, py::object const &, py::object const &, py::object const &) { s.close(); })
+      .def_property_readonly("is_closed", &Scene::isClosed);
 
   PyEntity.def(py::init<>())
       .def_property_readonly("per_scene_id", &Entity::getPerSceneId)
@@ -296,6 +303,12 @@ Generator<int> init_sapien(py::module &m) {
       .def_property_readonly(
           "__cuda_array_interface__",
           [](CudaArrayHandle &array) {
+            if (array.viewGuard) {
+              throw std::runtime_error(
+                  "raw __cuda_array_interface__ export is disabled for SAPIEN-owned CUDA "
+                  "buffers because the consumer can outlive the producing system; use "
+                  ".torch(), .jax(), .cupy() or .dlpack() so ownership is tracked");
+            }
             py::tuple shape = py::cast(array.shape);
             py::tuple strides = py::cast(array.strides);
             std::string type = array.type;
@@ -317,10 +330,12 @@ Generator<int> init_sapien(py::module &m) {
              if (array.type != "u1" && array.type[0] == 'u') {
                newArray.type = "i" + array.type.substr(1);
              }
-
-             py::object obj = py::cast(newArray);
-             auto as_tensor = py::module_::import("torch").attr("as_tensor");
-             return as_tensor("data"_a = obj, "device"_a = "cuda");
+             // Route through DLPack so the producer's view lifecycle guard is held by
+             // the tensor until it is freed; a raw __cuda_array_interface__ view would
+             // silently outlive the producer.
+             auto from_dlpack = py::module_::import("torch").attr("from_dlpack");
+             auto capsule = DLPackToCapsule(newArray.toDLPack());
+             return from_dlpack(capsule);
            })
 #ifdef SAPIEN_CUDA
       .def("jax",
@@ -335,10 +350,11 @@ Generator<int> init_sapien(py::module &m) {
              auto capsule = DLPackToCapsule(array.toDLPack());
              return from_dlpack(capsule);
            })
-      .def("dlpack", [](CudaArrayHandle &array) -> py::object {
-        auto capsule = DLPackToCapsule(array.toDLPack());
-        return capsule;
-      })
+      .def("dlpack",
+           [](CudaArrayHandle &array) -> py::object {
+             auto capsule = DLPackToCapsule(array.toDLPack());
+             return capsule;
+           })
 #endif
       ;
 #ifdef _MSC_VER

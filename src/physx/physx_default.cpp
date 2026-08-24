@@ -15,8 +15,7 @@ void PhysxSceneConfig::setGpuBroadPhaseEnvIdBits(uint8_t bitsX, uint8_t bitsY, u
        {std::pair{bitsX, 'x'}, std::pair{bitsY, 'y'}, std::pair{bitsZ, 'z'}}) {
     if (bits > kMaxBroadphaseEnvIdBits) {
       throw std::runtime_error(std::string("gpu broadphase env ID bits on axis ") + axis +
-                               " must be in [0, " + std::to_string(kMaxBroadphaseEnvIdBits) +
-                               "]");
+                               " must be in [0, " + std::to_string(kMaxBroadphaseEnvIdBits) + "]");
     }
   }
   mBitsEnvIDX = bitsX;
@@ -109,18 +108,35 @@ void PhysxDefault::setShapeConfig(PhysxShapeConfig const &config) { gShapeConfig
 PhysxShapeConfig const &PhysxDefault::getShapeConfig() { return gShapeConfig; }
 
 void PhysxDefault::EnableGPU() {
-  if (PhysxEngine::GetIfExists()) {
+  // A zombie engine left by sapien.physx.shutdown() must not block a fresh job. Only
+  // a live engine means GPU PhysX state may have already been committed elsewhere.
+  auto engine = PhysxEngine::GetIfExists();
+  if (engine && !engine->isShutdown()) {
     throw std::runtime_error(
         "GPU PhysX can only be enabled once before any other code involving PhysX");
   }
   gGPUEnabled = true;
 }
 
+bool PhysxDefault::HasDefaultMaterial() { return static_cast<bool>(gDefaultMaterial.lock()); }
+
+void PhysxDefault::Reset() {
+  gDefaultMaterial.reset();
+  gStaticFriction = 0.3f;
+  gDynamicFriction = 0.3f;
+  gRestitution = 0.1f;
+  gGPUEnabled = false;
+  gSceneConfig = PhysxSceneConfig{};
+  gBodyConfig = PhysxBodyConfig{};
+  gShapeConfig = PhysxShapeConfig{};
+  gSDFConfig = PhysxSDFShapeConfig{};
+  gGpuMemoryConfig = ::physx::PxGpuDynamicsMemoryConfig{};
+}
+
 void PhysxDefault::setSDFShapeConfig(float spacing, uint32_t subgridSize,
-                                     uint32_t numThreadsForConstruction,
-                                     uint32_t resolution, uint32_t bitsPerSubgridPixel,
-                                     float narrowBandThickness, float margin,
-                                     bool enableRemeshing,
+                                     uint32_t numThreadsForConstruction, uint32_t resolution,
+                                     uint32_t bitsPerSubgridPixel, float narrowBandThickness,
+                                     float margin, bool enableRemeshing,
                                      float triangleCountReductionFactor) {
   gSDFConfig.spacing = spacing;
   gSDFConfig.subgridSize = subgridSize;

@@ -12,6 +12,7 @@
 
 #include "material.h"
 #include "mesh.h"
+#include "physx_engine.h"
 
 namespace sapien {
 namespace physx {
@@ -24,6 +25,12 @@ class PhysxTriangleMesh;
 class PhysxRigidBaseComponent;
 
 class PhysxCollisionShape {
+private:
+  /** Live-object accounting for the job-scope shutdown preflight. Must stay the first
+   *  field so the PxShape is released (in the destructor body) before the guard releases
+   *  its engine reference. */
+  PhysxLiveObjectGuard mLiveGuard;
+
 public:
   PhysxCollisionShape() {}
   inline ::physx::PxShape *getPxShape() const { return mPxShape; }
@@ -189,8 +196,8 @@ public:
                                  std::shared_ptr<PhysxMaterial> material = nullptr);
 
   // internal use only
-  PhysxCollisionShapeHeightField(std::shared_ptr<PhysxHeightField> heightField,
-                                 float rowScale, float columnScale, float heightScale,
+  PhysxCollisionShapeHeightField(std::shared_ptr<PhysxHeightField> heightField, float rowScale,
+                                 float columnScale, float heightScale,
                                  std::shared_ptr<PhysxMaterial> material = nullptr);
 
   float getRowScale() const { return mRowScale; }
@@ -222,8 +229,8 @@ public:
   PhysxCollisionShapeTriangleMesh(
       Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> const &vertices,
       Eigen::Matrix<uint32_t, Eigen::Dynamic, 3, Eigen::RowMajor> const &triangles,
-      Vec3 const &scale, std::shared_ptr<PhysxMaterial> material = nullptr,
-      bool sdf = false, std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt);
+      Vec3 const &scale, std::shared_ptr<PhysxMaterial> material = nullptr, bool sdf = false,
+      std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt);
 
   // internal use only
   PhysxCollisionShapeTriangleMesh(std::shared_ptr<PhysxTriangleMesh> mesh, Vec3 const &scale,

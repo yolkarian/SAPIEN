@@ -239,3 +239,39 @@ sapien.render.set_light_colors(lights, colors)
   at the next `group.update_render()`. Colors remain CPU-mutable in every pose
   mode. For partial resets, pass only the lights belonging to the environments
   being reset.
+
+## Job-scoped teardown
+
+Long-lived experiment launchers may run several jobs in one Python process. Close
+all objects owned by a job in dependency order, then shut down PhysX:
+
+```python
+try:
+    run_one_job()
+finally:
+    # Close render groups/viewers first when the job created them.
+    for scene in scenes:
+        scene.close()
+    physx_system.close()
+
+    ok = sapien.can_shutdown()
+    if not ok:
+        raise RuntimeError(sapien.get_live_resources())
+    sapien.shutdown()
+```
+
+`Scene.close()` is terminal: unlike `clear()`, it removes all entities, detaches
+its systems, returns managed environment-ID slots immediately, and rejects reuse.
+A PhysX system rejects `close()` while scenes, components, or CUDA views exported
+from its `cuda_*` buffers remain alive. Use `.torch()`, `.jax()`, `.cupy()` or
+`.dlpack()` for those buffers; their DLPack owner keeps the lifecycle tracked.
+
+`sapien.shutdown()` first waits for and releases SAPIEN-owned render groups/engine
+(the caller must close viewers/groups/systems), then clears PhysX caches, releases the
+PhysX CUDA context manager and destroys `PhysxEngine`, `PxPhysics` and
+`PxFoundation`. Physics-only callers may use `sapien.physx.shutdown()` directly. No
+shutdown API calls `cudaDeviceReset()`: the CUDA primary context is shared with
+Torch/JAX, and resetting
+it invalidates a live JAX PJRT client. Therefore this API provides deterministic
+SAPIEN resource teardown, but a launcher requiring process-exit-equivalent CUDA
+isolation must still run each job in a fresh process.

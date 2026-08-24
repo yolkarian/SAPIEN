@@ -666,8 +666,25 @@ Args:
   PySapienRenderer.def(py::init(&SapienRenderEngine::Get), py::arg("device") = nullptr)
       .def_property_readonly("_internal_context", &SapienRenderEngine::getContext);
 
+  m.def("get_live_resources", []() {
+     auto r = renderLiveResources();
+     return py::dict("renderer_systems"_a = r.rendererSystems,
+                     "external_engine_owners"_a = r.externalEngineOwners,
+                     "engine_exists"_a = r.engineExists);
+   })
+      .def("can_shutdown", &renderCanShutdown)
+      .def("shutdown", &renderShutdown,
+           R"doc(Job-scope terminal shutdown of SAPIEN rendering. Waits for Vulkan work and
+destroys RenderEngine/context after every viewer, camera/system group, renderer system and
+render object is released. Idempotent; raises without mutation while resources remain.)doc");
+
   PyRenderSystemGroup
       .def(py::init<std::vector<std::shared_ptr<SapienRendererSystem>>>(), py::arg("systems"))
+      .def("close", &BatchedRenderSystem::close)
+      .def_property_readonly("is_closed", &BatchedRenderSystem::isClosed)
+      .def("__enter__", [](py::object self) { return self; })
+      .def("__exit__", [](BatchedRenderSystem &s, py::object const &, py::object const &,
+                           py::object const &) { s.close(); })
       .def("create_camera_group", &BatchedRenderSystem::createCameraBatch, py::arg("cameras"),
            py::arg("picture_names"))
       .def("set_cuda_stream", &BatchedRenderSystem::setCudaStream, py::arg("stream"))
@@ -693,7 +710,14 @@ resets accumulation. When nothing changed on the CPU, no CPU upload is performed
 This function waits for any pending CUDA operations on cuda stream provided by :func:`set_cuda_stream`.
 )doc");
 
-  PyCameraGroup.def("take_picture", &BatchedCamera::takePicture)
+  PyCameraGroup.def("close", &BatchedCamera::close)
+      .def_property_readonly("is_closed", &BatchedCamera::isClosed)
+      .def_property_readonly("outstanding_cuda_view_count",
+                             &BatchedCamera::outstandingCudaViewCount)
+      .def("__enter__", [](py::object self) { return self; })
+      .def("__exit__", [](BatchedCamera &s, py::object const &, py::object const &,
+                           py::object const &) { s.close(); })
+      .def("take_picture", &BatchedCamera::takePicture)
       .def("get_picture_cuda", &BatchedCamera::getPictureCuda, py::arg("name"))
       .def("set_pose_mode", &BatchedCamera::setPoseMode, py::arg("camera"), py::arg("mode"),
            R"doc(
@@ -731,6 +755,11 @@ that stream; the pose takes effect at the next update_render().)doc");
              return std::make_shared<SapienRendererSystem>(findDevice(device));
            }),
            py::arg("device"))
+      .def("close", &SapienRendererSystem::close)
+      .def_property_readonly("is_closed", &SapienRendererSystem::isClosed)
+      .def("__enter__", [](py::object self) { return self; })
+      .def("__exit__", [](SapienRendererSystem &s, py::object const &, py::object const &,
+                           py::object const &) { s.close(); })
       .def_property_readonly("device", &SapienRendererSystem::getDevice)
       .def_property("ambient_light", &SapienRendererSystem::getAmbientLight,
                     &SapienRendererSystem::setAmbientLight)

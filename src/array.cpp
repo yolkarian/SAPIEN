@@ -1,11 +1,11 @@
-#include <sstream>
 #include "sapien/array.h"
 #include "sapien/utils/cuda.h"
 #include "sapien/utils/typestr.h"
+#include <sstream>
 
 #ifdef SAPIEN_CUDA
-#include <dlpack/dlpack.h>
 #include <cuda_runtime.h>
+#include <dlpack/dlpack.h>
 #endif
 
 namespace sapien {
@@ -105,12 +105,18 @@ int CudaArrayHandle::bytes() const {
 static void DLManagedTensorDeleter(DLManagedTensor *self) {
   delete self->dl_tensor.strides;
   delete self->dl_tensor.shape;
+  // manager_ctx owns a copy of the view guard so the producing system observes the
+  // export until every DLPack consumer has released it.
+  if (self->manager_ctx) {
+    delete static_cast<std::shared_ptr<CudaArrayViewGuard> *>(self->manager_ctx);
+    self->manager_ctx = nullptr;
+  }
   delete self;
 }
 
 DLManagedTensor *CudaArrayHandle::toDLPack() const {
   auto tensor = new DLManagedTensor();
-  tensor->manager_ctx = nullptr;
+  tensor->manager_ctx = new std::shared_ptr<CudaArrayViewGuard>(viewGuard); // may hold nullptr
   tensor->deleter = &DLManagedTensorDeleter;
 
   tensor->dl_tensor.data = ptr;

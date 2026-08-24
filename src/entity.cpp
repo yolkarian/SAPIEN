@@ -95,6 +95,8 @@ void Entity::removeFromScene() {
   mScene->removeEntity(shared_from_this());
 }
 
+uint64_t Entity::liveCount() { return gEntityCount; }
+
 Entity::~Entity() {
   gEntityCount--;
   logger::info("Deleting Entity {}, total {}", mId, gEntityCount);

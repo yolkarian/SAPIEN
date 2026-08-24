@@ -19,11 +19,13 @@ Scene::Scene(std::vector<std::shared_ptr<System>> const &systems) : mId(gNextSce
 }
 
 void Scene::addSystem(std::shared_ptr<System> system) {
+  checkNotClosed();
   auto name = system->getName();
   if (mSystems.contains(name)) {
     throw std::runtime_error("faedil to add system: a system with name [" + name +
                              "] is already added to scene");
   }
+  system->internalAddScene(*this);
   mSystems[name] = system;
   if (auto renderSystem =
           std::dynamic_pointer_cast<sapien_renderer::SapienRendererSystem>(system)) {
@@ -49,10 +51,17 @@ std::shared_ptr<sapien_renderer::SapienRendererSystem> Scene::getSapienRendererS
   return std::dynamic_pointer_cast<sapien_renderer::SapienRendererSystem>(getSystem("render"));
 }
 
-void Scene::step() { getPhysxSystem()->step(); }
-void Scene::updateRender() { getSapienRendererSystem()->step(); }
+void Scene::step() {
+  checkNotClosed();
+  getPhysxSystem()->step();
+}
+void Scene::updateRender() {
+  checkNotClosed();
+  getSapienRendererSystem()->step();
+}
 
 void Scene::addEntity(std::shared_ptr<Entity> entity) {
+  checkNotClosed();
   if (!entity) {
     throw std::runtime_error("failed to add entity to scene: entity is null");
   }
@@ -68,6 +77,7 @@ void Scene::addEntity(std::shared_ptr<Entity> entity) {
 }
 
 void Scene::removeEntity(std::shared_ptr<Entity> entity) {
+  checkNotClosed();
   auto count = std::erase_if(mEntities, [=](auto &e) { return e == entity; });
   if (count == 0) {
     throw std::runtime_error("failed to remove entity: not added");
@@ -105,15 +115,35 @@ void Scene::clear() {
   mEntities.clear();
 }
 
+void Scene::close() {
+  if (mClosed) {
+    return;
+  }
+  // Clear entities first: removing them unregisters their components from the
+  // attached systems and removes the PhysX actors while the systems are still alive
+  // and functional.
+  clear();
+  // A system may hold per-scene state (GPU scene offsets, environment IDs). Notify
+  // every attached system about the terminal close, then detach.
+  for (auto &[name, system] : mSystems) {
+    system->onSceneClosed(*this);
+  }
+  mSystems.clear();
+  mClosed = true;
+}
+
+void Scene::checkNotClosed() const {
+  if (mClosed) {
+    throw std::runtime_error("failed to use scene: the scene is closed");
+  }
+}
+
+uint64_t Scene::liveCount() { return gSceneCount; }
+
 Scene::~Scene() {
   gSceneCount--;
   logger::info("Deleting Scene {}, total {}", mId, gSceneCount);
-  for (auto &entity : mEntities) {
-    entity->onRemoveFromScene(*this);
-    entity->internalSetPerSceneId(0);
-    entity->internalSetScene(nullptr);
-  }
-  mEntities.clear();
+  close();
 }
 
 } // namespace sapien

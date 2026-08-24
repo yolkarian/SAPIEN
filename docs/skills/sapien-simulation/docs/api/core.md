@@ -233,7 +233,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 |---|---|---|---|---|
 | `add_entity` | method | `add_entity(self, entity: Entity) -> None` |  |  |
 | `add_system` | method | `add_system(self, system: System) -> None` |  |  |
-| `clear` | method | `clear(self) -> None` |  |  |
+| `clear` | method | `clear(self) -> None` | Remove entities while keeping systems attached so the Scene can be reused. |  |
+| `close` | method | `close(self) -> None` | Terminally remove entities, detach systems and close the Scene. | Idempotent; mutating operations reject reuse. |
+| `is_closed` | property | `is_closed(self) -> bool` | Terminal lifecycle state. |  |
 | `entities` | property | `entities(self) -> list[Entity]` |  |  |
 | `get_entities` | method | `get_entities(self) -> list[Entity]` |  |  |
 | `get_id` | method | `get_id(self) -> int` |  |  |

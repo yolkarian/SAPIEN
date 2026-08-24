@@ -47,6 +47,13 @@ public:
 
   /** host-wait until every submitted render of this camera group completed */
   void internalWaitForRendersIdle();
+  /** Terminal close: wait for GPU/Vulkan work, destroy exported semaphores and release
+   *  camera/render-scene ownership. Idempotent; refuses while exported CUDA views live. */
+  void close();
+  bool isClosed() const { return mClosed; }
+  int64_t outstandingCudaViewCount() const { return mViewLifecycle->viewCount(); }
+  /** Attach this camera group's lifecycle to an exported CUDA handle. */
+  CudaArrayHandle trackView(CudaArrayHandle handle) const;
   /** true when any member camera's CPU state version moved past its uploaded state */
   bool internalHasDirtyCameraState() const;
   /** upload dirty CPU camera state (projection and cpu-mode poses); the caller must
@@ -56,10 +63,16 @@ public:
   ~BatchedCamera();
 
 private:
+  friend class BatchedRenderSystem;
   void checkGpuInitialized() const;
+  void closeImpl();
+  void closeNoThrow();
 
+  std::shared_ptr<SapienRenderEngine> mEngine;
   std::vector<std::shared_ptr<SapienRenderCameraComponent>> mCameras;
   bool mGpuInitialized{false};
+  bool mClosed{false};
+  std::shared_ptr<CudaArrayLifecycle> mViewLifecycle{std::make_shared<CudaArrayLifecycle>()};
   std::vector<std::string> mRenderTargets;
   std::map<std::string, std::shared_ptr<svulkan2::core::Buffer>> mCudaImageBuffers;
   std::map<std::string, CudaArrayHandle> mCudaImageHandles;
@@ -119,10 +132,20 @@ public:
   void update();
   void setCudaStream(uintptr_t);
 
+  /** Terminal close: closes camera groups, releases all GPU pose seals/sources and
+   *  destroys Vulkan/CUDA synchronization resources. Idempotent. */
+  void close();
+  bool isClosed() const { return mClosed; }
+
   ~BatchedRenderSystem();
 
 private:
+  void checkNotClosed() const;
+  void closeImpl();
+  void closeNoThrow();
+  std::shared_ptr<SapienRenderEngine> mEngine;
   std::vector<std::shared_ptr<SapienRendererSystem>> mSystems;
+  bool mClosed{false};
   std::shared_ptr<svulkan2::scene::Scene> mFixedRenderScene;
   bool mAutoBindPhysxGpuPoses{true};
   std::vector<std::shared_ptr<SapienRenderBodyComponent>> mFixedGpuSourcedBodies;

@@ -26,13 +26,12 @@ class SapienRenderCubemap;
 class SapienRenderEngine {
 public:
   static std::shared_ptr<SapienRenderEngine> Get(std::shared_ptr<Device> device = nullptr);
+  static std::shared_ptr<SapienRenderEngine> GetIfExists();
 
   SapienRenderEngine(std::shared_ptr<Device> device);
 
-  std::shared_ptr<svulkan2::core::Context> getContext() const { return mContext; }
-  std::shared_ptr<svulkan2::resource::SVResourceManager> getResourceManager() const {
-    return mResourceManager;
-  }
+  std::shared_ptr<svulkan2::core::Context> getContext() const;
+  std::shared_ptr<svulkan2::resource::SVResourceManager> getResourceManager() const;
 
   std::shared_ptr<svulkan2::resource::SVMesh> getSphereMesh();
   std::shared_ptr<svulkan2::resource::SVMesh> getPlaneMesh();
@@ -45,6 +44,9 @@ public:
   void registerRenderSystem(std::shared_ptr<SapienRendererSystem> const &system);
   std::vector<std::shared_ptr<SapienRendererSystem>> getRenderSystems();
 
+  void shutdown();
+  bool isShutdown() const { return mShutdown; }
+
   ~SapienRenderEngine();
 
 private:
@@ -56,6 +58,7 @@ private:
   std::shared_ptr<svulkan2::resource::SVMesh> mPlaneMesh;
   std::shared_ptr<svulkan2::resource::SVMesh> mBoxMesh;
   std::vector<std::weak_ptr<SapienRendererSystem>> mRenderSystems;
+  bool mShutdown{false};
 };
 
 class SapienRendererSystem : public System {
@@ -63,7 +66,7 @@ public:
   SapienRendererSystem(std::shared_ptr<Device> device);
   std::shared_ptr<Device> getDevice() const;
 
-  std::shared_ptr<svulkan2::scene::Scene> getScene() { return mScene; }
+  std::shared_ptr<svulkan2::scene::Scene> getScene();
   void setBatchedRenderShared(bool shared);
   bool isBatchedRenderShared() const;
 
@@ -111,11 +114,18 @@ public:
 
   CudaArrayHandle getTransformCudaArray();
 
+  void close();
+  bool isClosed() const { return mClosed; }
+
   ~SapienRendererSystem();
 
   uint64_t nextRenderId() { return mNextRenderId++; };
 
 private:
+  void internalAddScene(Scene &scene) override;
+  void checkNotClosed() const;
+  void closeNoThrow();
+
   uint64_t mNextRenderId{1};
   uint64_t mLightStateVersion{1};
 
@@ -129,6 +139,7 @@ private:
   std::set<std::shared_ptr<CudaDeformableMeshComponent>, comp_cmp> mCudaDeformableMeshComponents;
 
   std::shared_ptr<SapienRenderCubemap> mCubemap;
+  bool mClosed{false};
 };
 
 } // namespace sapien_renderer

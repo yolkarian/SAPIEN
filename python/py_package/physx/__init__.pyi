@@ -40,6 +40,8 @@ from sapien.pysapien.physx import PhysxSceneConfig as PhysxSceneConfig
 from sapien.pysapien.physx import PhysxShapeConfig as PhysxShapeConfig
 from sapien.pysapien.physx import PhysxSystem as PhysxSystem
 from sapien.pysapien.physx import _enable_gpu as _enable_gpu
+from sapien.pysapien.physx import can_shutdown as can_shutdown
+from sapien.pysapien.physx import get_live_resources as get_live_resources
 from sapien.pysapien.physx import get_body_config as get_body_config
 from sapien.pysapien.physx import get_default_material as get_default_material
 from sapien.pysapien.physx import get_scene_config as get_scene_config
@@ -59,6 +61,7 @@ from sapien.pysapien.physx import set_material_properties as set_material_proper
 from sapien.pysapien.physx import set_scene_config as set_scene_config
 from sapien.pysapien.physx import set_sdf_config as set_sdf_config
 from sapien.pysapien.physx import set_shape_config as set_shape_config
+from sapien.pysapien.physx import shutdown as shutdown
 from sapien.pysapien.physx import version as version
 
 from sapien.pysapien.physx import PhysxGpuContactBodyImpulseQuery as PhysxGpuContactBodyImpulseQuery

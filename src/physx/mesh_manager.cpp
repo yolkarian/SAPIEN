@@ -18,8 +18,7 @@ namespace physx {
 static bool sameSDFConfig(PhysxSDFShapeConfig const &lhs, PhysxSDFShapeConfig const &rhs) {
   return lhs.spacing == rhs.spacing && lhs.subgridSize == rhs.subgridSize &&
          lhs.numThreadsForConstruction == rhs.numThreadsForConstruction &&
-         lhs.resolution == rhs.resolution &&
-         lhs.bitsPerSubgridPixel == rhs.bitsPerSubgridPixel &&
+         lhs.resolution == rhs.resolution && lhs.bitsPerSubgridPixel == rhs.bitsPerSubgridPixel &&
          lhs.narrowBandThickness == rhs.narrowBandThickness && lhs.margin == rhs.margin &&
          lhs.enableRemeshing == rhs.enableRemeshing &&
          lhs.triangleCountReductionFactor == rhs.triangleCountReductionFactor;
@@ -40,6 +39,45 @@ void MeshManager::Clear() {
     gManager->mConvexMeshRegistry.clear();
     gManager->mConvexMeshGroupRegistry.clear();
   }
+}
+
+size_t MeshManager::CachedMeshCount() {
+  if (!gManager) {
+    return 0;
+  }
+  size_t count = gManager->mTriangleMeshWithSDFRegistry.size() +
+                 gManager->mTriangleMeshRegistry.size() + gManager->mConvexMeshRegistry.size();
+  for (auto const &[key, meshes] : gManager->mConvexMeshGroupRegistry) {
+    count += meshes.size();
+  }
+  return count;
+}
+
+size_t MeshManager::ExternallyHeldMeshCount() {
+  if (!gManager) {
+    return 0;
+  }
+  size_t count = 0;
+  auto addIfExternal = [&count](auto const &mesh) {
+    if (mesh && mesh.use_count() > 1) {
+      ++count;
+    }
+  };
+  for (auto const &[key, mesh] : gManager->mTriangleMeshWithSDFRegistry) {
+    addIfExternal(mesh);
+  }
+  for (auto const &[key, mesh] : gManager->mTriangleMeshRegistry) {
+    addIfExternal(mesh);
+  }
+  for (auto const &[key, mesh] : gManager->mConvexMeshRegistry) {
+    addIfExternal(mesh);
+  }
+  for (auto const &[key, meshes] : gManager->mConvexMeshGroupRegistry) {
+    for (auto const &mesh : meshes) {
+      addIfExternal(mesh);
+    }
+  }
+  return count;
 }
 
 static std::string getFullPath(std::string const &filename) {

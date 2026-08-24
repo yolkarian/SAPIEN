@@ -67,6 +67,9 @@ public:
   uint64_t getId() const { return mId; }
   void internalSetId(uint64_t id) { mId = id; }
 
+  /** Number of live Entity objects; used by SAPIEN shutdown diagnostics. */
+  static uint64_t liveCount();
+
   uint64_t getPerSceneId() const { return mPerSceneId; }
   void internalSetPerSceneId(uint64_t id) { mPerSceneId = id; }
 

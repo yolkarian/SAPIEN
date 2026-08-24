@@ -49,6 +49,16 @@ public:
 
   void clear();
 
+  /** Terminal close: clears all entities, detaches every system, and marks the scene
+   *  closed. Unlike clear(), a closed scene cannot be reused. Idempotent; all public
+   *  mutating operations raise after close. */
+  void close();
+
+  bool isClosed() const { return mClosed; }
+
+  /** Number of live Scene objects; used by SAPIEN shutdown diagnostics. */
+  static uint64_t liveCount();
+
   ~Scene();
   Scene(Scene const &) = delete;
   Scene &operator=(Scene const &) = delete;
@@ -61,6 +71,9 @@ private:
   uint64_t mId{};
   std::unordered_map<std::string, std::shared_ptr<System>> mSystems;
   std::vector<std::shared_ptr<Entity>> mEntities;
+  bool mClosed{false};
+
+  void checkNotClosed() const;
 };
 
 } // namespace sapien

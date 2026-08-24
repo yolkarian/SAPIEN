@@ -5,6 +5,23 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
+### Added
+
+- Added terminal, idempotent lifecycle APIs for job-scoped teardown: `Scene.close()` / `is_closed`, `PhysxSystem.close()` / `is_closed`, `PhysxGpuSystem.wait_idle()` and context-manager support. A PhysX system refuses to close while scenes, registered components, or exported CUDA views remain alive; closed objects reject steady-state use.
+- Added explicit render lifecycle APIs: `RenderCameraGroup.close()`, `RenderSystemGroup.close()`, `RenderSystem.close()`, `sapien.render.get_live_resources()` / `can_shutdown()` / `shutdown()`, and top-level `sapien.get_live_resources()` / `can_shutdown()` / `shutdown()`. Top-level shutdown preflights both subsystems, closes render before PhysX, waits for Vulkan/CUDA work and recreates the weak RenderEngine/Vulkan context on the next job.
+- Added `sapien.physx.get_live_resources()`, `can_shutdown()` and `shutdown()`. Shutdown clears SAPIEN-owned PhysX mesh/default caches, releases per-device `PxCudaContextManager` leases, destroys `PhysxEngine` (`PxPhysics` / `PxFoundation`) and resets PhysX defaults so a new job can initialize PhysX again in the same Python process.
+- Added owner-backed DLPack exports for PhysX-owned CUDA arrays. `.torch()`, `.jax()`, `.cupy()` and `.dlpack()` keep a lifecycle guard until every consumer is released, and raw `__cuda_array_interface__` export is rejected for these buffers to prevent silent use-after-free.
+
+### Changed
+
+- `PhysxEngine` now holds weak per-device CUDA-context leases instead of owning raw `PxCudaContextManager*` values forever; the manager is released after the last GPU system using it releases its `PxScene`.
+- Managed environment-ID slots and per-scene GPU offset/broadphase bookkeeping are released immediately by `Scene.close()` instead of waiting for weak-pointer expiry.
+
+### Known limitations
+
+- `sapien.physx.shutdown()` does not call `cudaDeviceReset()` and therefore does not recreate the CUDA primary context shared with Torch/JAX. It fully releases SAPIEN-owned PhysX resources, but applications that require process-exit-equivalent CUDA isolation between jobs must still launch each job in a fresh process; resetting the primary context invalidates a live JAX PJRT client.
+
+
 ## 3.0.0+fork.14 - 2026-07-27
 
 ### Fixed

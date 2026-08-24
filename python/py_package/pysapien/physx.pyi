@@ -5,7 +5,7 @@ import sapien.pysapien
 import sapien.wrapper.pinocchio_model
 import typing
 
-__all__ = ['PhysxArticulation', 'PhysxArticulationJoint', 'PhysxArticulationLinkComponent', 'PhysxBaseComponent', 'PhysxBodyConfig', 'PhysxCollisionShape', 'PhysxCollisionShapeBox', 'PhysxCollisionShapeCapsule', 'PhysxCollisionShapeConvexMesh', 'PhysxCollisionShapeCylinder', 'PhysxCollisionShapeHeightField', 'PhysxCollisionShapePlane', 'PhysxCollisionShapeSphere', 'PhysxCollisionShapeTriangleMesh', 'PhysxContact', 'PhysxContactPoint', 'PhysxCpuSystem', 'PhysxDistanceJointComponent', 'PhysxDriveComponent', 'PhysxEngine', 'PhysxGearComponent', 'PhysxGpuContactBodyImpulseQuery', 'PhysxGpuContactPairImpulseQuery', 'PhysxGpuSystem', 'PhysxJointComponent', 'PhysxMaterial', 'PhysxRayHit', 'PhysxRigidBaseComponent', 'PhysxRigidBodyComponent', 'PhysxRigidDynamicComponent', 'PhysxRigidStaticComponent', 'PhysxSDFConfig', 'PhysxSceneConfig', 'PhysxShapeConfig', 'PhysxSystem', 'get_body_config', 'get_default_material', 'get_scene_config', 'get_sdf_config', 'get_shape_config', 'is_gpu_enabled', 'set_body_config', 'set_body_inertias', 'set_body_cmass_local_poses', 'set_body_masses', 'set_default_material', 'set_gpu_memory_config', 'set_joint_armatures', 'set_joint_drive_properties', 'set_joint_frictions', 'set_material_properties', 'set_scene_config', 'set_sdf_config', 'set_shape_config', 'version']
+__all__ = ['PhysxArticulation', 'PhysxArticulationJoint', 'PhysxArticulationLinkComponent', 'PhysxBaseComponent', 'PhysxBodyConfig', 'PhysxCollisionShape', 'PhysxCollisionShapeBox', 'PhysxCollisionShapeCapsule', 'PhysxCollisionShapeConvexMesh', 'PhysxCollisionShapeCylinder', 'PhysxCollisionShapeHeightField', 'PhysxCollisionShapePlane', 'PhysxCollisionShapeSphere', 'PhysxCollisionShapeTriangleMesh', 'PhysxContact', 'PhysxContactPoint', 'PhysxCpuSystem', 'PhysxDistanceJointComponent', 'PhysxDriveComponent', 'PhysxEngine', 'PhysxGearComponent', 'PhysxGpuContactBodyImpulseQuery', 'PhysxGpuContactPairImpulseQuery', 'PhysxGpuSystem', 'PhysxJointComponent', 'PhysxMaterial', 'PhysxRayHit', 'PhysxRigidBaseComponent', 'PhysxRigidBodyComponent', 'PhysxRigidDynamicComponent', 'PhysxRigidStaticComponent', 'PhysxSDFConfig', 'PhysxSceneConfig', 'PhysxShapeConfig', 'PhysxSystem', 'can_shutdown', 'get_live_resources', 'get_body_config', 'get_default_material', 'get_scene_config', 'get_sdf_config', 'get_shape_config', 'is_gpu_enabled', 'set_body_config', 'set_body_inertias', 'set_body_cmass_local_poses', 'set_body_masses', 'set_default_material', 'set_gpu_memory_config', 'set_joint_armatures', 'set_joint_drive_properties', 'set_joint_frictions', 'set_material_properties', 'set_scene_config', 'set_sdf_config', 'set_shape_config', 'shutdown', 'version']
 M = typing.TypeVar("M", bound=int)
 class PhysxArticulation:
     name: str
@@ -866,6 +866,9 @@ class PhysxGpuSystem(PhysxSystem):
     def is_initialized(self) -> bool:
         ...
     @property
+    def outstanding_cuda_view_count(self) -> int:
+        ...
+    @property
     def total_steps(self) -> int:
         ...
     @property
@@ -1252,6 +1255,17 @@ class PhysxSystem(sapien.pysapien.System):
     timestep: float
     def __init__(self) -> None:
         ...
+    def __enter__(self) -> PhysxSystem:
+        ...
+    def __exit__(self, exc_type, exc, tb) -> None:
+        ...
+    def close(self) -> None:
+        """
+        Terminally close this system. All scenes owned by the system must be closed
+        first so actors and components unbind with the system still alive. Idempotent; steady-state
+        APIs raise afterwards. Destructors fall back to the same release as a noisy safety net.
+        """
+        ...
     def get_articulation_link_components(self) -> list[PhysxArticulationLinkComponent]:
         ...
     def get_config(self) -> PhysxSceneConfig:
@@ -1268,6 +1282,11 @@ class PhysxSystem(sapien.pysapien.System):
         ...
     def set_timestep(self, timestep: float) -> None:
         ...
+    def wait_idle(self) -> None:
+        """
+        Wait until all simulation and fetch work of this system completed.
+        """
+        ...
     @property
     def articulation_link_components(self) -> list[PhysxArticulationLinkComponent]:
         ...
@@ -1280,7 +1299,22 @@ class PhysxSystem(sapien.pysapien.System):
     @property
     def rigid_static_components(self) -> list[PhysxRigidStaticComponent]:
         ...
+    @property
+    def is_closed(self) -> bool:
+        ...
 def _enable_gpu() -> None:
+    ...
+def can_shutdown() -> bool:
+    """
+    True when sapien.physx.shutdown() would succeed right now. Checks that no
+    PhysX system is open and no caller-owned PhysX object or CUDA view is alive. Does not
+    mutate any state.
+    """
+    ...
+def get_live_resources() -> dict[str, object]:
+    """
+    Snapshot of resources that must be gone before job-scope shutdown.
+    """
     ...
 def get_body_config() -> PhysxBodyConfig:
     ...
@@ -1384,6 +1418,14 @@ def set_shape_config(contact_offset: float = 0.009999999776482582, rest_offset: 
     ...
 @typing.overload
 def set_shape_config(config: PhysxShapeConfig) -> None:
+    ...
+def shutdown() -> None:
+    """
+    Job-scope terminal shutdown of SAPIEN PhysX. Clears SAPIEN-owned caches,
+    releases every PhysX CUDA context manager whose lease was returned, destroys the
+    PhysX engine and restores module-level defaults. Never calls cudaDeviceReset.
+    Idempotent; raises when caller-owned resources remain alive.
+    """
     ...
 def version() -> str:
     ...

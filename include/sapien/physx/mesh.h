@@ -1,6 +1,7 @@
 #pragma once
 #include "sapien/math/bounding_box.h"
 #include "sapien/physx/physx_default.h"
+#include "sapien/physx/physx_engine.h"
 #include <Eigen/Eigen>
 #include <PxPhysicsAPI.h>
 #include <cstdint>
@@ -57,6 +58,7 @@ public:
 
 private:
   void loadMesh(Vertices const &vertices);
+  PhysxLiveObjectGuard mLiveGuard;
   std::shared_ptr<PhysxEngine> mEngine;
   ::physx::PxConvexMesh *mMesh{};
   std::optional<std::string> mFilename;
@@ -85,6 +87,7 @@ public:
   }
 
 private:
+  PhysxLiveObjectGuard mLiveGuard;
   std::shared_ptr<PhysxEngine> mEngine;
   ::physx::PxHeightField *mHeightField{};
   HeightFieldSamples mSamples;
@@ -92,8 +95,7 @@ private:
 
 class PhysxTriangleMesh {
 public:
-  PhysxTriangleMesh(Vertices const &vertices, Triangles const &triangles,
-                    bool generateSDF = false,
+  PhysxTriangleMesh(Vertices const &vertices, Triangles const &triangles, bool generateSDF = false,
                     std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt);
   PhysxTriangleMesh(Vertices const &vertices, Triangles const &triangles,
                     std::string const &filename, bool generateSDF = false,
@@ -128,6 +130,7 @@ public:
 private:
   void loadMesh(Vertices const &vertices, Triangles const &triangles, bool generateSDF,
                 std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt);
+  PhysxLiveObjectGuard mLiveGuard;
   std::shared_ptr<PhysxEngine> mEngine;
   ::physx::PxTriangleMesh *mMesh{};
   std::optional<std::string> mFilename;

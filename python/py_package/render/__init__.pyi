@@ -36,6 +36,9 @@ from sapien.pysapien.render import RenderTexturedLightComponent as RenderTexture
 from sapien.pysapien.render import RenderVRDisplay as RenderVRDisplay
 from sapien.pysapien.render import RenderWindow as RenderWindow
 from sapien.pysapien.render import SapienRenderer as SapienRenderer
+from sapien.pysapien.render import can_shutdown as can_shutdown
+from sapien.pysapien.render import get_live_resources as get_live_resources
+from sapien.pysapien.render import shutdown as shutdown
 from sapien.pysapien.render import clear_cache as clear_cache
 from sapien.pysapien.render import enable_vr as enable_vr
 from sapien.pysapien.render import get_camera_shader_dir as get_camera_shader_dir

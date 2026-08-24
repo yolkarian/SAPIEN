@@ -1,6 +1,8 @@
 #include "sapien/physx/physx_engine.h"
 #include "../logger.h"
 #include "sapien/physx/physx_default.h"
+#include <algorithm>
+#include <utility>
 
 #ifdef SAPIEN_CUDA
 #include "../utils/cuda_lib.h"
@@ -40,6 +42,13 @@ static SapienErrorCallback gDefaultErrorCallback;
 static std::weak_ptr<PhysxEngine> gEngine;
 std::shared_ptr<PhysxEngine> PhysxEngine::Get(float toleranceLength, float toleranceSpeed) {
   auto engine = gEngine.lock();
+  if (engine && engine->isShutdown()) {
+    // A previous engine was shut down under sapien.physx.shutdown() but an external
+    // shared_ptr kept the object alive. Replace the registry entry so future code gets
+    // a fresh engine; the zombie refuses all operations through its accessors.
+    engine.reset();
+    gEngine.reset();
+  }
   if (!engine) {
     gEngine = engine = std::make_shared<PhysxEngine>(toleranceLength, toleranceSpeed);
   }
@@ -47,6 +56,13 @@ std::shared_ptr<PhysxEngine> PhysxEngine::Get(float toleranceLength, float toler
 }
 
 std::shared_ptr<PhysxEngine> PhysxEngine::GetIfExists() { return gEngine.lock(); }
+
+::physx::PxPhysics *PhysxEngine::getPxPhysics() const {
+  if (mShutdown) {
+    throw std::runtime_error("failed to use PhysX engine: the engine was shut down");
+  }
+  return mPxPhysics;
+}
 
 PhysxEngine::PhysxEngine(float toleranceLength, float toleranceSpeed) {
   logger::getLogger();
@@ -59,19 +75,6 @@ PhysxEngine::PhysxEngine(float toleranceLength, float toleranceSpeed) {
 
   PxTolerancesScale toleranceScale(toleranceLength, toleranceSpeed);
 
-  // if (PhysxDefault::GetGPUEnabled()) {
-  //   PxCudaContextManagerDesc cudaContextManagerDesc;
-
-  //   CUcontext context{};
-  //   checkCudaDriverErrors(CudaLib::Get().cuCtxGetCurrent(&context));
-  //   if (!context) {
-  //     throw std::runtime_error("failed to get CUDA context.");
-  //   }
-  //   cudaContextManagerDesc.ctx = &context;
-  //   mCudaContextManager = PxCreateCudaContextManager(*mPxFoundation, cudaContextManagerDesc,
-  //                                                    PxGetProfilerCallback());
-  // }
-
   mPxPhysics = PxCreatePhysics(PX_PHYSICS_VERSION, *mPxFoundation, toleranceScale);
   if (!mPxPhysics) {
     throw std::runtime_error("PhysX creation failed");
@@ -81,13 +84,24 @@ PhysxEngine::PhysxEngine(float toleranceLength, float toleranceSpeed) {
   }
 }
 
-::physx::PxCudaContextManager *PhysxEngine::getCudaContextManager(int cudaId) {
+std::shared_ptr<PhysxCudaContextLease> PhysxEngine::acquireCudaContextLease(int cudaId) {
   if (!PhysxDefault::GetGPUEnabled()) {
     throw std::runtime_error("Using CUDA is not allowed when PhysX GPU is not enabled.");
   }
+  if (mShutdown) {
+    throw std::runtime_error(
+        "failed to acquire PhysX CUDA context: the PhysX engine was shut down");
+  }
 #if PX_SUPPORT_GPU_PHYSX
-  if (mCudaContextManagers.contains(cudaId)) {
-    return mCudaContextManagers.at(cudaId);
+  {
+    auto it = mCudaContextLeases.find(cudaId);
+    if (it != mCudaContextLeases.end()) {
+      if (auto lease = it->second.lock()) {
+        return lease;
+      }
+      mCudaContextLeases.erase(it);
+    }
+    std::erase_if(mCudaContextLeases, [](auto const &entry) { return entry.second.expired(); });
   }
 
   PxCudaContextManagerDesc cudaContextManagerDesc;
@@ -105,11 +119,12 @@ PhysxEngine::PhysxEngine(float toleranceLength, float toleranceSpeed) {
   }
 
   // NOTE: PhysX API really suggests it supports multiple GPUs, but no it doesn't.
-  if (!mCudaContextManagers.empty() && mCudaContextManagers.begin()->first != cudaId) {
+  if (!mCudaContextLeases.empty() && mCudaContextLeases.begin()->first != cudaId) {
+    int existingCudaId = mCudaContextLeases.begin()->first;
     throw std::runtime_error(
         "failed to create PhysX on cuda:" + std::to_string(cudaId) +
         ". PhysX only supports a single GPU and a scene has previously been created on cuda:" +
-        std::to_string(cudaId) + ".");
+        std::to_string(existingCudaId) + ".");
   }
 
   cudaContextManagerDesc.ctx = &context;
@@ -122,19 +137,100 @@ PhysxEngine::PhysxEngine(float toleranceLength, float toleranceSpeed) {
     throw std::runtime_error("failed to create PhysX CUDA context manager on cuda:" +
                              std::to_string(cudaId));
   }
-  mCudaContextManagers[cudaId] = manager;
-
-  return manager;
+  auto lease = std::make_shared<PhysxCudaContextLease>(shared_from_this(), manager, cudaId);
+  mCudaContextLeases[cudaId] = lease;
+  return lease;
 #else
   return nullptr;
 #endif
-  // TODO clean up
+}
+
+void PhysxEngine::shutdown() {
+  if (mShutdown) {
+    return;
+  }
+  if (liveSystemCount() != 0) {
+    throw std::runtime_error("failed to shut down PhysX engine: " +
+                             std::to_string(liveSystemCount()) + " systems are still open");
+  }
+  if (liveObjectCount() != 0) {
+    throw std::runtime_error(
+        "failed to shut down PhysX engine: " + std::to_string(liveObjectCount()) +
+        " PhysX-backed objects are still alive");
+  }
+  for (auto const &[cudaId, weakLease] : mCudaContextLeases) {
+    if (auto lease = weakLease.lock()) {
+      throw std::runtime_error("failed to shut down PhysX engine: a CUDA context lease on cuda:" +
+                               std::to_string(cudaId) +
+                               " is still held; close the owning GPU system first");
+    }
+  }
+  mCudaContextLeases.clear();
+  PxCloseExtensions();
+  if (mPxPhysics) {
+    mPxPhysics->release();
+    mPxPhysics = nullptr;
+  }
+  if (mPxFoundation) {
+    mPxFoundation->release();
+    mPxFoundation = nullptr;
+  }
+  mShutdown = true;
+}
+
+void PhysxEngine::registerSystem() { mLiveSystems.fetch_add(1, std::memory_order_acq_rel); }
+void PhysxEngine::unregisterSystem() { mLiveSystems.fetch_sub(1, std::memory_order_acq_rel); }
+void PhysxEngine::registerGpuSystem() { mLiveGpuSystems.fetch_add(1, std::memory_order_acq_rel); }
+void PhysxEngine::unregisterGpuSystem() {
+  mLiveGpuSystems.fetch_sub(1, std::memory_order_acq_rel);
+}
+void PhysxEngine::noteObjectCreated() { mLiveObjects.fetch_add(1, std::memory_order_acq_rel); }
+void PhysxEngine::noteObjectDestroyed() { mLiveObjects.fetch_sub(1, std::memory_order_acq_rel); }
+
+PhysxLiveObjectGuard::PhysxLiveObjectGuard() : mEngine(PhysxEngine::Get()) {
+  mEngine->noteObjectCreated();
+}
+
+PhysxLiveObjectGuard::PhysxLiveObjectGuard(PhysxLiveObjectGuard &&other) noexcept
+    : mEngine(std::move(other.mEngine)) {}
+
+PhysxLiveObjectGuard &PhysxLiveObjectGuard::operator=(PhysxLiveObjectGuard &&other) noexcept {
+  if (this != &other) {
+    if (mEngine) {
+      mEngine->noteObjectDestroyed();
+    }
+    mEngine = std::move(other.mEngine);
+  }
+  return *this;
+}
+
+PhysxLiveObjectGuard::~PhysxLiveObjectGuard() {
+  if (mEngine) {
+    mEngine->noteObjectDestroyed();
+  }
 }
 
 PhysxEngine::~PhysxEngine() {
+  // Defensive cleanup: managers are owned by leases, so anything left here means the
+  // object graph was torn down abnormally; release them rather than leak.
+  for (auto &[cudaId, weakLease] : mCudaContextLeases) {
+    if (weakLease.expired()) {
+      continue;
+    }
+    logger::error("PhysX engine destroyed with a live CUDA context lease on cuda:{}", cudaId);
+  }
+  if (mShutdown) {
+    return;
+  }
   PxCloseExtensions();
-  mPxPhysics->release();
-  mPxFoundation->release();
+  if (mPxPhysics) {
+    mPxPhysics->release();
+    mPxPhysics = nullptr;
+  }
+  if (mPxFoundation) {
+    mPxFoundation->release();
+    mPxFoundation = nullptr;
+  }
 }
 
 } // namespace physx

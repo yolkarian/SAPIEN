@@ -1,4 +1,5 @@
 #pragma once
+#include "physx_engine.h"
 #include "sapien/math/pose.h"
 #include <Eigen/Eigen>
 #include <PxPhysicsAPI.h>
@@ -49,7 +50,6 @@ public:
    *  Rows are stacked as [vx, vy, vz, wx, wy, wz] for each link. */
   Eigen::Matrix<float, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> computeDenseJacobian();
 
-
   Eigen::VectorXf computePassiveForce(bool gravity, bool coriolisAndCentrifugal);
 
   Pose getRootPose();
@@ -97,6 +97,8 @@ private:
   void checkDof(uint32_t n);
   void syncPose();
 
+  /** Live-object accounting; destroyed after the PxArticulation is released. */
+  PhysxLiveObjectGuard mLiveGuard;
   std::shared_ptr<PhysxEngine> mEngine;
 
   ::physx::PxArticulationReducedCoordinate *mPxArticulation{};

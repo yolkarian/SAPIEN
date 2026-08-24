@@ -34,7 +34,15 @@ struct SapienBodyDataTest {
 static_assert(sizeof(SapienBodyDataTest) == 52);
 
 PhysxSystem::PhysxSystem()
-    : mSceneConfig(PhysxDefault::getSceneConfig()), mEngine(PhysxEngine::Get()) {}
+    : mSceneConfig(PhysxDefault::getSceneConfig()), mEngine(PhysxEngine::Get()) {
+  mEngine->registerSystem();
+  mRegisteredSystem = true;
+}
+
+void PhysxSystem::internalAddScene(Scene &scene) {
+  checkNotClosed();
+  System::internalAddScene(scene);
+}
 
 PhysxSystemCpu::PhysxSystemCpu() {
   if (PhysxDefault::GetGPUEnabled()) {
@@ -122,10 +130,10 @@ PhysxSystemGpu::PhysxSystemGpu(std::shared_ptr<Device> device) {
     }
     const uint8_t bits = broadphaseEnvIdBitsForEnvCount(numScenes, mReserveSharedBands);
     if (bits == 0) {
-      throw std::runtime_error(
-          "failed to create PhysX GPU system: " + std::to_string(numScenes) +
-          " scenes exceed the maximum of " +
-          std::to_string(maxBroadphaseEnvCount(mReserveSharedBands)) + " the banding can address");
+      throw std::runtime_error("failed to create PhysX GPU system: " + std::to_string(numScenes) +
+                               " scenes exceed the maximum of " +
+                               std::to_string(maxBroadphaseEnvCount(mReserveSharedBands)) +
+                               " the banding can address");
     }
     // Only the widest axis decides the band count -- every axis shifts the same ID, so the
     // narrower ones just keep a subset of its bits. Without a shared object one axis is
@@ -238,7 +246,8 @@ PhysxSystemGpu::PhysxSystemGpu(std::shared_ptr<Device> device) {
   sceneFlags |= PxSceneFlag::eENABLE_GPU_DYNAMICS;
   sceneFlags |= PxSceneFlag::eENABLE_DIRECT_GPU_API;
   sceneDesc.broadPhaseType = PxBroadPhaseType::eGPU;
-  sceneDesc.cudaContextManager = mEngine->getCudaContextManager(device->cudaId);
+  mCudaContextLease = mEngine->acquireCudaContextLease(device->cudaId);
+  sceneDesc.cudaContextManager = mCudaContextLease->get();
   if (!config.enablePCM) {
     logger::warn("PCM must be enabled when using GPU.");
     sceneFlags |= PxSceneFlag::eENABLE_PCM;
@@ -269,6 +278,8 @@ PhysxSystemGpu::PhysxSystemGpu(std::shared_ptr<Device> device) {
         ". This usually means the GPU is out of memory: PhysX eagerly allocates the GPU heaps "
         "configured by sapien.physx.set_gpu_memory_config() when the scene is created.");
   }
+  mEngine->registerGpuSystem();
+  mRegisteredGpuSystem = true;
 }
 #else
 PhysxSystemGpu::PhysxSystemGpu(std::shared_ptr<Device> device) {
@@ -359,6 +370,7 @@ PhysxSystemGpu::getArticulationLinkComponents() const {
 
 std::unique_ptr<PhysxHitInfo> PhysxSystemCpu::raycast(Vec3 const &origin, Vec3 const &direction,
                                                       float distance) {
+  checkNotClosed();
   PxRaycastBuffer hit;
   bool status = mPxScene->raycast(Vec3ToPxVec3(origin), Vec3ToPxVec3(direction), distance, hit);
   if (status) {
@@ -371,6 +383,7 @@ std::unique_ptr<PhysxHitInfo> PhysxSystemCpu::raycast(Vec3 const &origin, Vec3 c
 }
 
 void PhysxSystemCpu::step() {
+  checkNotClosed();
   mPxScene->simulate(mTimestep);
   mPxScene->fetchResults(true);
   for (auto c : mRigidStaticComponents) {
@@ -386,8 +399,15 @@ void PhysxSystemCpu::step() {
 
 #ifdef SAPIEN_CUDA
 void PhysxSystemGpu::step() {
+  if (mClosed) {
+    throw std::runtime_error("failed to step: the PhysxGpuSystem is closed.");
+  }
   if (!mGpuInitialized) {
     throw std::runtime_error("failed to step: gpu simulation is not initialized.");
+  }
+  if (mSimulateInFlight) {
+    throw std::runtime_error(
+        "failed to step: a GPU simulation is already in flight; call step_finish() first");
   }
 
   mContactUpToDate = false;
@@ -400,20 +420,62 @@ void PhysxSystemGpu::step() {
 }
 
 void PhysxSystemGpu::stepStart() {
+  if (mClosed) {
+    throw std::runtime_error("failed to step: the PhysxGpuSystem is closed.");
+  }
   if (!mGpuInitialized) {
     throw std::runtime_error("failed to step: gpu simulation is not initialized.");
+  }
+  if (mSimulateInFlight) {
+    throw std::runtime_error("failed to start step: a GPU simulation is already in flight");
   }
 
   mContactUpToDate = false;
 
   ++mTotalSteps;
   mPxScene->simulate(mTimestep);
+  mSimulateInFlight = true;
 }
 
-void PhysxSystemGpu::stepFinish() { mPxScene->fetchResults(true); }
+void PhysxSystemGpu::stepFinish() {
+  if (mClosed) {
+    throw std::runtime_error("failed to finish step: the PhysxGpuSystem is closed.");
+  }
+  if (!mSimulateInFlight) {
+    throw std::runtime_error("failed to finish step: no GPU simulation is in flight");
+  }
+  mPxScene->fetchResults(true);
+  mSimulateInFlight = false;
+}
+
+void PhysxSystemGpu::waitIdle() {
+  if (mClosed || !mPxScene) {
+    return;
+  }
+  ensureCudaDevice();
+  if (mSimulateInFlight) {
+    mPxScene->fetchResults(true);
+    mSimulateInFlight = false;
+  }
+  if (mCudaStream) {
+    checkCudaErrors(cudaStreamSynchronize(mCudaStream));
+  }
+  checkCudaErrors(cudaDeviceSynchronize());
+}
+
+CudaArrayHandle PhysxSystemGpu::trackView(CudaArrayHandle handle) const {
+  if (mClosed) {
+    throw std::runtime_error("failed to export a CUDA array view: the PhysxGpuSystem is closed");
+  }
+  handle.viewGuard = std::make_shared<CudaArrayViewGuard>(mViewLifecycle);
+  return handle;
+}
+
+int64_t PhysxSystemGpu::outstandingCudaViewCount() const { return mViewLifecycle->viewCount(); }
 #endif
 
 std::string PhysxSystemCpu::packState() const {
+  checkNotClosed();
   std::ostringstream ss;
   for (auto &actor : mRigidDynamicComponents) {
     Pose pose = actor->getPose();
@@ -453,6 +515,7 @@ std::string PhysxSystemCpu::packState() const {
 }
 
 void PhysxSystemCpu::unpackState(std::string const &data) {
+  checkNotClosed();
   std::istringstream ss(data);
   for (auto &actor : mRigidDynamicComponents) {
     Pose pose;
@@ -529,6 +592,7 @@ int PhysxSystem::computeArticulationMaxLinkCount() const {
 
 #ifdef SAPIEN_CUDA
 void PhysxSystemGpu::gpuInit() {
+  checkNotClosed();
   // Everything is built by now, so this is the first point where an unused reservation shows.
   if (mReserveSharedBands && !hasSharedEnvironmentScene()) {
     logger::warn(
@@ -559,12 +623,18 @@ void PhysxSystemGpu::gpuInit() {
 }
 
 void PhysxSystemGpu::checkGpuInitialized() const {
+  if (mClosed) {
+    throw std::runtime_error("failed to use GPU PhysX: the PhysxGpuSystem is closed.");
+  }
   if (!isInitialized()) {
     throw std::runtime_error("GPU PhysX is not initialized.");
   }
 }
 
-void PhysxSystemGpu::gpuSetCudaStream(uintptr_t stream) { mCudaStream = (cudaStream_t)stream; }
+void PhysxSystemGpu::gpuSetCudaStream(uintptr_t stream) {
+  checkNotClosed();
+  mCudaStream = (cudaStream_t)stream;
+}
 
 std::shared_ptr<PhysxGpuContactPairImpulseQuery> PhysxSystemGpu::gpuCreateContactPairImpulseQuery(
     std::vector<std::pair<std::shared_ptr<PhysxRigidBaseComponent>,
@@ -689,6 +759,7 @@ inline void *articulationAngularVelocityScratch(CudaArray &scratch, int articula
 }
 
 void PhysxSystemGpu::copyContactData() {
+  checkGpuInitialized();
   if (mContactUpToDate) {
     return;
   }
@@ -721,6 +792,7 @@ void PhysxSystemGpu::copyContactData() {
 }
 
 void PhysxSystemGpu::gpuQueryContactPairImpulses(PhysxGpuContactPairImpulseQuery const &query) {
+  checkGpuInitialized();
   SAPIEN_PROFILE_FUNCTION;
   query.query.handle().checkShape({-1, 6});
 
@@ -732,14 +804,15 @@ void PhysxSystemGpu::gpuQueryContactPairImpulses(PhysxGpuContactPairImpulseQuery
   if (mContactCount) {
     handle_contacts((PxGpuContactPair *)mCudaContactBuffer.ptr, mContactCount,
 
-                  (ActorPairQuery *)query.query.ptr, query.query.shape.at(0),
+                    (ActorPairQuery *)query.query.ptr, query.query.shape.at(0),
 
-                  (Vec3 *)query.buffer.ptr, mCudaStream);
+                    (Vec3 *)query.buffer.ptr, mCudaStream);
   }
   cudaStreamSynchronize(mCudaStream);
 }
 
 void PhysxSystemGpu::gpuQueryContactBodyImpulses(PhysxGpuContactBodyImpulseQuery const &query) {
+  checkGpuInitialized();
   SAPIEN_PROFILE_FUNCTION;
   query.query.handle().checkShape({-1, 4});
 
@@ -750,9 +823,8 @@ void PhysxSystemGpu::gpuQueryContactBodyImpulses(PhysxGpuContactBodyImpulseQuery
 
   if (mContactCount) {
     handle_net_contact_force((PxGpuContactPair *)mCudaContactBuffer.ptr, mContactCount,
-                           (ActorQuery *)query.query.ptr, query.query.shape.at(0),
-                           (Vec3 *)query.buffer.ptr, mCudaStream);
-
+                             (ActorQuery *)query.query.ptr, query.query.shape.at(0),
+                             (Vec3 *)query.buffer.ptr, mCudaStream);
   }
   cudaStreamSynchronize(mCudaStream);
 }
@@ -1845,6 +1917,46 @@ void PhysxSystemGpu::reclaimExpiredSceneEnvironmentIds() {
   std::erase_if(mBroadphaseEnvironmentIds, [](const auto &p) { return p.first.expired(); });
 }
 
+void PhysxSystemGpu::onSceneClosed(Scene &scene) {
+  PhysxSystem::onSceneClosed(scene);
+
+  // Weak-keyed maps cannot be looked up by the scene key without a shared_ptr, so
+  // identify the entry by address; expired entries are dropped as a bonus sweep.
+  auto eraseIfScene = [&scene](auto &map) {
+    for (auto it = map.begin(); it != map.end();) {
+      auto locked = it->first.lock();
+      if (!locked || locked.get() == &scene) {
+        it = map.erase(it);
+        continue;
+      }
+      ++it;
+    }
+  };
+  eraseIfScene(mSceneOffset);
+  eraseIfScene(mBroadphaseEnvironmentIds);
+
+  // Return a managed environment-ID slot immediately instead of waiting for the lazy
+  // expiry sweep, so repeated close/recreate cycles never exhaust num_scenes.
+  for (auto it = mSceneEnvironmentIds.begin(); it != mSceneEnvironmentIds.end();) {
+    auto locked = it->first.lock();
+    if (!locked) {
+      if (it->second != PX_INVALID_U32) {
+        mFreeSceneEnvironmentIds.push_back(it->second);
+      }
+      it = mSceneEnvironmentIds.erase(it);
+      continue;
+    }
+    if (locked.get() == &scene) {
+      if (mManagedBroadphaseEnvIds && it->second != PX_INVALID_U32) {
+        mFreeSceneEnvironmentIds.push_back(it->second);
+      }
+      it = mSceneEnvironmentIds.erase(it);
+      continue;
+    }
+    ++it;
+  }
+}
+
 uint32_t PhysxSystemGpu::allocateSceneEnvironmentId() {
   // Slots handed back by scenes that were turned shared, or by scenes that were destroyed the
   // last time the counter ran out. Reuse before growing, so neither costs an environment.
@@ -2335,24 +2447,133 @@ void PhysxSystemGpu::allocateCudaBuffers() {
 void PhysxSystemGpu::ensureCudaDevice() { checkCudaErrors(cudaSetDevice(mDevice->cudaId)); }
 #endif
 
-PhysxSystem::~PhysxSystem() { logger::info("Deleting PhysxSystem"); }
+PhysxSystem::~PhysxSystem() {
+  // The leaf destructor already called close(); this catches systems whose leaf
+  // constructor threw before close() could run, so the generic counter never leaks.
+  if (mRegisteredSystem && mEngine) {
+    mEngine->unregisterSystem();
+    mRegisteredSystem = false;
+  }
+  logger::info("Deleting PhysxSystem");
+}
 
-PhysxSystemCpu::~PhysxSystemCpu() {
+void PhysxSystem::close() {
+  if (mClosed) {
+    return;
+  }
+  if (!mScenes.empty()) {
+    throw std::runtime_error("failed to close PhysX system: " + std::to_string(mScenes.size()) +
+                             " scenes are still attached; close every scene first");
+  }
+  closeImpl();
+  mClosed = true;
+  if (mRegisteredSystem) {
+    mEngine->unregisterSystem();
+    mRegisteredSystem = false;
+  }
+}
+
+void PhysxSystem::closeNoThrow() {
+  try {
+    close();
+    return;
+  } catch (std::exception const &e) {
+    logger::error("failed to close PhysX system cleanly during destruction: {}", e.what());
+  } catch (...) {
+    logger::error("failed to close PhysX system cleanly during destruction");
+  }
+  // Last resort: match the historical destructor behavior (release the scene and the
+  // dispatcher) instead of leaking; components left dangling are the caller's bug.
+  try {
+    if (mPxScene) {
+      mPxScene->release();
+      mPxScene = nullptr;
+    }
+    if (mPxCPUDispatcher) {
+      mPxCPUDispatcher->release();
+      mPxCPUDispatcher = nullptr;
+    }
+    mClosed = true;
+    if (mRegisteredSystem) {
+      mEngine->unregisterSystem();
+      mRegisteredSystem = false;
+    }
+  } catch (...) {
+    logger::error("PhysX system destructor failed to release the PhysX scene");
+  }
+}
+
+void PhysxSystem::checkNotClosed() const {
+  if (mClosed) {
+    throw std::runtime_error("failed to use PhysX system: the system is closed");
+  }
+}
+
+PhysxSystemCpu::~PhysxSystemCpu() { closeNoThrow(); }
+
+void PhysxSystemCpu::closeImpl() {
+  size_t registered = mRigidDynamicComponents.size() + mRigidStaticComponents.size() +
+                      mArticulationLinkComponents.size();
+  if (registered != 0) {
+    throw std::runtime_error(
+        "failed to close PhysxCpuSystem: " + std::to_string(registered) +
+        " components are still registered; close every scene owned by this system first");
+  }
   if (mPxScene) {
     mPxScene->release();
+    mPxScene = nullptr;
   }
   if (mPxCPUDispatcher) {
     mPxCPUDispatcher->release();
+    mPxCPUDispatcher = nullptr;
   }
 }
 
 #ifdef SAPIEN_CUDA
 PhysxSystemGpu::~PhysxSystemGpu() {
+  closeNoThrow();
+  // If the strict close failed, the base fallback released the PxScene; the lease
+  // member releases the CUDA context manager here, never before the scene.
+  if (mRegisteredGpuSystem) {
+    mEngine->unregisterGpuSystem();
+    mRegisteredGpuSystem = false;
+  }
+}
+
+void PhysxSystemGpu::closeImpl() {
+  size_t registered = mRigidDynamicComponents.size() + mRigidStaticComponents.size() +
+                      mArticulationLinkComponents.size();
+  if (registered != 0) {
+    throw std::runtime_error(
+        "failed to close PhysxGpuSystem: " + std::to_string(registered) +
+        " components are still registered; close every scene owned by this system first");
+  }
+  int64_t views = mViewLifecycle->viewCount();
+  if (views != 0) {
+    throw std::runtime_error(
+        "failed to close PhysxGpuSystem: " + std::to_string(views) +
+        " external CUDA array views of this system are still alive; drop Torch/JAX/CuPy "
+        "views exported from its cuda_* buffers first");
+  }
+
+  waitIdle();
+
   if (mPxScene) {
     mPxScene->release();
+    mPxScene = nullptr;
   }
   if (mPxCPUDispatcher) {
     mPxCPUDispatcher->release();
+    mPxCPUDispatcher = nullptr;
+  }
+  // PhysX requires every scene using a context manager to be released before the
+  // manager. Releasing the lease after the scene satisfies that; when this was the
+  // last lease for the device, the manager is released now.
+  mCudaContextLease.reset();
+  mGpuInitialized = false;
+  if (mRegisteredGpuSystem) {
+    mEngine->unregisterGpuSystem();
+    mRegisteredGpuSystem = false;
   }
 }
 #endif

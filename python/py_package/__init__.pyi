@@ -56,6 +56,9 @@ __all__ = [
     "profile",
     "pysapien",
     "render",
+    "get_live_resources",
+    "can_shutdown",
+    "shutdown",
     "set_log_level",
     "simsense",
     "utils",
@@ -63,6 +66,10 @@ __all__ = [
     "warn",
     "wrapper",
 ]
+
+def get_live_resources() -> dict[str, dict[str, object]]: ...
+def can_shutdown() -> bool: ...
+def shutdown() -> None: ...
 
 __version__: str = '3.0.0.dev20240521+6b6d61d2'
 __warningregistry__: dict = {'version': 0}
