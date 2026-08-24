@@ -5,6 +5,8 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
+## 3.0.0+fork.15 - 2026-08-24
+
 ### Added
 
 - Added terminal, idempotent lifecycle APIs for job-scoped teardown: `Scene.close()` / `is_closed`, `PhysxSystem.close()` / `is_closed`, `PhysxGpuSystem.wait_idle()` and context-manager support. A PhysX system refuses to close while scenes, registered components, or exported CUDA views remain alive; closed objects reject steady-state use.
