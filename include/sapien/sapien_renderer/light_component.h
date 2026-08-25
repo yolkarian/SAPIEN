@@ -31,15 +31,15 @@ public:
   void disableShadow() { setShadowEnabled(false); }
 
   float getShadowNear() const { return mShadowNear; }
-  void setShadowNear(float near) {
-    mShadowNear = near;
+  void setShadowNear(float value) {
+    mShadowNear = value;
     internalApplyShadowParameters();
     markLightStateDirty();
   }
 
   float getShadowFar() const { return mShadowFar; }
-  void setShadowFar(float far) {
-    mShadowFar = far;
+  void setShadowFar(float value) {
+    mShadowFar = value;
     internalApplyShadowParameters();
     markLightStateDirty();
   }

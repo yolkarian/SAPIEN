@@ -5,7 +5,7 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
-## 3.0.0+fork.15 - 2026-08-24
+## 3.0.0+fork.15.post1 - 2026-08-25
 
 ### Added
 
@@ -16,6 +16,7 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ### Fixed
 
+- Fixed the Windows release build by avoiding the legacy `near` / `far` macro names in inline light shadow setters.
 - Fixed CPU-only (`SAPIEN_CUDA=OFF`) pybind builds by compiling the Torch DLPack exporter and PhysX CUDA-context acquisition only when CUDA support is enabled, and by keeping the non-CUDA GPU-system stub concrete.
 - Fixed render shutdown with closed-but-still-referenced `RenderSystem` objects by unregistering them from `SapienRenderEngine`; later jobs can create cameras without waiting for Python garbage collection.
 - Treat the high-level Scene wrapper's default ground texture cache as library-owned render state and clear it during `sapien.render.shutdown()`, so `add_ground()` no longer permanently blocks job-scoped shutdown.
