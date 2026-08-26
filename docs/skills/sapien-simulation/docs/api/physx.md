@@ -10,8 +10,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | API | Signature | Use | Notes |
 |---|---|---|---|
+| `sapien.physx.can_shutdown` | `can_shutdown() -> bool` | Side-effect-free PhysX shutdown preflight. | False while caller-owned systems, PhysX objects, or owner-tracked CUDA views remain. |
 | `sapien.physx.get_body_config` | `get_body_config() -> PhysxBodyConfig` | Get body config. |  |
 | `sapien.physx.get_default_material` | `get_default_material() -> PhysxMaterial` | Get default material. |  |
+| `sapien.physx.get_live_resources` | `get_live_resources() -> dict[str, object]` | Diagnose resources blocking job-scoped PhysX shutdown. | Reports open systems, PhysX-backed objects, and library-owned mesh/default caches. |
 | `sapien.physx.get_scene_config` | `get_scene_config() -> PhysxSceneConfig` | Get scene config. |  |
 | `sapien.physx.get_sdf_config` | `get_sdf_config() -> PhysxSDFConfig` | Get sdf config. |  |
 | `sapien.physx.get_shape_config` | `get_shape_config() -> PhysxShapeConfig` | Get shape config. |  |
@@ -22,6 +24,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `sapien.physx.set_scene_config` | `set_scene_config(gravity: np.ndarray[Literal[3], np.dtype[np.float32]]=..., bounce_threshold: float=2.0, enable_pcm: bool=True, enable_tgs: bool=True, enable_ccd: bool=False, enable_enhanced_determinism: bool=False, enable_friction_every_iteration: bool=True, friction_offset_threshold: float=0.04, friction_correlation_distance: float=0.025, cpu_workers: int=0) -> None<br>set_scene_config(config: PhysxSceneConfig) -> None` | Set scene config. |  |
 | `sapien.physx.set_sdf_config` | `set_sdf_config(spacing: float=0.009999999776482582, subgrid_size: int=6, num_threads_for_construction: int=4, resolution: int=0, bits_per_subgrid_pixel: int=16, narrow_band_thickness: float=0.009999999776482582, margin: float=0.0, enable_remeshing: bool=False, triangle_count_reduction_factor: float=1.0) -> None<br>set_sdf_config(config: PhysxSDFConfig) -> None` | Set sdf config. |  |
 | `sapien.physx.set_shape_config` | `set_shape_config(contact_offset: float=0.009999999776482582, rest_offset: float=0.0) -> None<br>set_shape_config(config: PhysxShapeConfig) -> None` | Set shape config. |  |
+| `sapien.physx.shutdown` | `shutdown() -> None` | Release SAPIEN-owned PhysX caches, CUDA-context-manager leases, engine, and defaults. | Idempotent; never calls `cudaDeviceReset()`. |
 | `sapien.physx.version` | `version() -> str` | Call version. |  |
 
 ## Class index
@@ -840,6 +843,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 - Use: PhysX system base class; manages timestep, component list, scene collision id.
 - Bases: `sapien.System`
+- Lifecycle: supports a context manager; exit calls terminal, idempotent `close()`. Close every owning Scene first; closed systems reject steady-state APIs.
 
 ### Attributes/properties declared as fields
 
@@ -853,6 +857,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
 | `articulation_link_components` | property | `articulation_link_components(self) -> list[PhysxArticulationLinkComponent]` |  |  |
+| `close` | method | `close(self) -> None` | Terminally release the system after all owning Scenes and registered components detach. | Idempotent. |
 | `config` | property | `config(self) -> PhysxSceneConfig` |  |  |
 | `get_articulation_link_components` | method | `get_articulation_link_components(self) -> list[PhysxArticulationLinkComponent]` |  |  |
 | `get_config` | method | `get_config(self) -> PhysxSceneConfig` |  |  |
@@ -860,6 +865,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_rigid_static_components` | method | `get_rigid_static_components(self) -> list[PhysxRigidStaticComponent]` |  |  |
 | `get_scene_collision_id` | method | `get_scene_collision_id(self) -> int` |  |  |
 | `get_timestep` | method | `get_timestep(self) -> float` |  |  |
+| `is_closed` | property | `is_closed(self) -> bool` | Terminal lifecycle state. |  |
 | `rigid_dynamic_components` | property | `rigid_dynamic_components(self) -> list[PhysxRigidDynamicComponent]` |  |  |
 | `rigid_static_components` | property | `rigid_static_components(self) -> list[PhysxRigidStaticComponent]` |  |  |
 | `set_scene_collision_id` | method | `set_scene_collision_id(self, id: int) -> None` |  |  |

@@ -18,6 +18,8 @@ These are practical, lookup-oriented references (not tutorial prose): workflow r
 
 ## Maintenance notes
 
+- Treat `docs/skills/sapien-simulation/` as the source of truth. Every SAPIEN API addition, removal, rename, signature/default change, or behavior/lifecycle/ownership change must update the relevant workflow guidance and API tables, including `docs/api/api-changes.md`, in the same change.
+- During local agent work, sync the checked-in skill to `~/.agents/skills/sapien-simulation/` after editing it only when that installed skill directory already exists; do not create it when absent, and never use it as the source.
 - Keep content free of local machine details, private paths, secrets, tokens, and temporary absolute paths.
 - Prefer repository-relative paths, environment variables, or placeholder names in examples.
 - When syncing or adding a guide, adapt links, paths, commands, and examples to this repository and remove any local-only information before committing.

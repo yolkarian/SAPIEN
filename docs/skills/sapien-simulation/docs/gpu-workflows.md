@@ -13,7 +13,8 @@
 - For direct GPU camera/offscreen rendering, use GPU pose batch indices with `sapien.render.RenderSystemGroup.set_cuda_poses(physx_system.cuda_rigid_body_data)` and read images through `get_picture_cuda(...)` instead of syncing poses to CPU.
 - `RenderSystemGroup` follows an explicit lifecycle: construct, `set_cuda_poses(...)`, `create_camera_group(...)`, configure each free camera's pose mode via `RenderCameraGroup.set_pose_mode(camera, mode)`, then one `gpu_init()` that resolves output render scenes (including implicitly discovered batched-render-shared scenes), validates their PhysX GPU systems, binds all dynamic bodies, prepares resources, takes the one-time CPU snapshots, seeds cuda-mode camera pose rows, and seals transform ownership. Pose modes: `'static'` (default for free cameras) snapshots the CPU pose once at `gpu_init()`; CPU pose setters raise afterwards and there is no CUDA row. `'cpu'` keeps the CPU pose authoritative; `set_local_pose()`/entity-pose changes upload at the next `update_render()`; no CUDA row — use for host-driven follow/anchor cameras. `'cuda'` allocates a group-owned compact CUDA pose row (`RenderCameraGroup.cuda_poses`) seeded once from the CPU pose; move via GPU writes or `set_cuda_pose`; CPU pose setters raise. Mounted cameras on PhysX GPU bodies are auto-attached (reuse the PhysX parent pose row, no group row) and cannot be configured `'cpu'`/`'static'`. `update_render()` then owns every grouped transform: GPU-sourced objects and mounted/cuda cameras update from their bound CUDA pose buffer, with prior Vulkan reads and CUDA writes ordered both ways on a timeline semaphore. Camera projection/intrinsics stay CPU real-time in every mode; the CUDA kernel writes only view/inverse-view so a projection change never overrides a GPU pose. After `gpu_init()`, camera/light/point-cloud CPU setters that affect sealed snapshots raise, as do later entity-pose changes on the next `scene.update_render()`.
 - `RenderSystemGroup` supports both raster and `"rt"` camera shader packs. RT rigid-pose updates also update the TLAS and reset accumulation. SAPIEN has no deformable-body physics, but it does expose a render-only `RenderCudaMeshComponent`; supporting that component in batched RT additionally requires synchronized BLAS updates or rebuilds, shared-`SceneGroup` aggregation, and accumulation resets after vertex changes.
-- Cache `sapien.CudaArray.torch()` views once after `gpu_init()`; do not recreate them in loops.
+- Cache `sapien.CudaArray.torch()` views once after `gpu_init()`; do not recreate them in loops, and release them before job teardown. Handles and derived `.torch()` / `.jax()` / `.cupy()` / `.dlpack()` consumers from `PhysxGpuSystem`, `RenderSystem.cuda_object_transforms`, and `RenderCameraGroup` image/pose buffers are owner-tracked and block `close()` while alive. Their raw `__cuda_array_interface__` export raises because it cannot carry the guard. Component/shape-owned CUDA buffers without an explicit close owner remain borrowed views. External CUDA-array-interface objects remain valid as indexed API inputs.
+- In a reusable Python worker, close one job in dependency order: release owner-tracked CUDA handles/consumers, close Viewers and render groups, close Scenes, close detached render systems, close PhysX systems, then require `sapien.can_shutdown()` before `sapien.shutdown()`. Use `sapien.get_live_resources()` to identify blockers.
 - Cache common GPU indices once after `gpu_init()`:
   - `sapien.physx.PhysxArticulation.get_gpu_index()`
   - `sapien.physx.PhysxRigidDynamicComponent.get_gpu_index()`
@@ -313,6 +314,39 @@ physx_system.gpu_compute_articulation_jacobian(index_buffer)
   11. A Viewer may run beside a sealed `RenderSystemGroup` on the same scene: the controller camera stays CPU-managed, joins no camera group, and allocates no CUDA pose row. Open the Viewer (`set_scene`) before `RenderSystemGroup.gpu_init()` because the group freezes scene topology including the controller camera node, and keep lazily-added helper overlays off on the shared scene (`viewer.control_window.show_camera_linesets = False`; leave joint axes and origin frame off).
 - Use `sync_poses_gpu_to_cpu()` only for explicit CPU-state debugging or the Viewer `cpu-debug` transport. SAPIEN documents it as a super-slow helper that downloads all poses from GPU to CPU entities.
 - When adding policy-eval or teleoperation keyboard controls on top of the interactive viewer, do not reuse SAPIEN's built-in camera/navigation keys such as `W/A/S/D/Q/E`. Prefer a separate key cluster, for example `I/K` for forward/backward command, `J/L` for lateral command, `U/O` for yaw, `C` to clear commands, and `N` to reset.
+
+## Job-scoped teardown
+
+Long-lived launchers can run another SAPIEN job in the same Python process, but teardown must be explicit and dependency ordered:
+
+1. Stop submitting physics/render work. Release every owner-tracked `CudaArray` handle and every derived Torch/JAX/CuPy tensor or DLPack capsule. An owner cannot close while `outstanding_cuda_view_count` is non-zero.
+2. Close each `Viewer`, then close each `RenderSystemGroup`; a render group closes the `RenderCameraGroup` objects it retains. Standalone camera groups may be closed directly.
+3. Call `Scene.close()` on every Scene. This is terminal and idempotent: it removes entities, detaches systems, and immediately returns managed environment-ID slots. Use `Scene.clear()` instead only when the same Scene will be reused.
+4. Close detached `RenderSystem` objects, then close `PhysxSystem` objects. `PhysxGpuSystem.close()` calls `wait_idle()` and refuses to close while Scenes, registered components, or tracked CUDA views remain.
+5. Release any remaining caller-owned materials, textures, meshes, components, and other handles. Check `sapien.can_shutdown()` and inspect `sapien.get_live_resources()` if it is false.
+6. Call `sapien.shutdown()`. Its joint preflight is side-effect-free on failure; on success it releases render before PhysX, clears library-owned render/PhysX caches, and allows later engine recreation.
+
+```python
+# Lists here stand for references owned by one job.
+tracked_cuda_consumers.clear()
+tracked_cuda_handles.clear()
+
+if viewer is not None:
+    viewer.close()
+for render_group in render_groups:
+    render_group.close()
+for scene in scenes:
+    scene.close()
+for render_system in render_systems:
+    render_system.close()
+physx_system.close()
+
+if not sapien.can_shutdown():
+    raise RuntimeError(sapien.get_live_resources())
+sapien.shutdown()
+```
+
+`Scene`, `PhysxSystem`, `RenderSystem`, `RenderSystemGroup`, and `RenderCameraGroup` also support context managers whose exit calls `close()`. No shutdown API calls `cudaDeviceReset()`: the CUDA primary context is shared with Torch/JAX. Jobs requiring process-exit-equivalent CUDA isolation still need separate processes.
 
 ## Reset workflow
 

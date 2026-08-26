@@ -12,7 +12,8 @@ Conventions:
 - GPU PhysX: call `sapien.physx.enable_gpu()` before `PhysxGpuSystem`; configure global PhysX before creating systems; call `gpu_init()` after all bodies/lights are built.
 - No IK solver: SAPIEN has no IK solver (`GpuInverseKinematicsSolver` and `gpu_inverse_kinematics` do not exist). Exposed PhysX GPU link-data and dense-Jacobian buffers: `cuda_articulation_link_data`, `cuda_articulation_jacobian`, `cuda_articulation_jacobian_shape` (valid after `gpu_init()`).
 - For training/offscreen sensors, use CUDA buffers and `RenderSystemGroup.set_cuda_poses(...)`; use `Viewer.configure_physx_gpu_rendering(...)` for interactive GPU visualization, and reserve `sync_poses_gpu_to_cpu()` for explicit CPU debugging.
-- Cache `CudaArray.torch()/cupy()/jax()` views and GPU indices after `gpu_init()`; do not recreate in loops.
+- Cache `CudaArray.torch()/cupy()/jax()` views and GPU indices after `gpu_init()`; do not recreate in loops, and release owner-tracked handles/consumers before teardown. System/group-owned outputs reject raw `__cuda_array_interface__` export; external CUDA-array-interface index inputs remain supported.
+- For reusable Python workers, close resources in dependency order and require `sapien.can_shutdown()` before `sapien.shutdown()`; diagnose blockers with `sapien.get_live_resources()`.
 
 ## File map
 
@@ -44,5 +45,6 @@ Conventions:
 | Interactive GPU Viewer | `viewer.configure_physx_gpu_rendering(physx_system, "auto")`, then `apply_interactions()` before physics and `update_render()` before `render()` |
 | Viewer device/transport diagnostics | `sapien.Device.uuid`, `can_direct_cuda_vulkan_interop()`, `can_access_peer(...)`, `viewer.pose_transport`, `viewer.pose_transfer_bytes` |
 | GPU articulation link/Jacobian buffers | `physx_system.cuda_articulation_link_data`, `physx_system.gpu_compute_articulation_jacobian(...)`, `physx_system.cuda_articulation_jacobian_shape` after `physx_system.gpu_init()` |
-| GPU state tensors | `physx_system.cuda_*` then `.torch()`/`.cupy()`/`.jax()` |
+| GPU state tensors | `physx_system.cuda_*` then `.torch()`/`.cupy()`/`.jax()`; release views before `physx_system.close()` |
+| Job-scoped teardown | release tracked CUDA views → close Viewer/render groups → close Scenes → close render/PhysX systems → `sapien.can_shutdown()` → `sapien.shutdown()`; inspect `sapien.get_live_resources()` on failure |
 | Viewer | `sapien.utils.Viewer()` / `scene.create_viewer()` |

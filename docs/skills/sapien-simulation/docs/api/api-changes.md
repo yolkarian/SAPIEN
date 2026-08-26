@@ -1,6 +1,29 @@
 # API Changes By Release
 
-Removals and behavior changes only, newest first. Signatures and parameter meanings are discoverable at runtime with `help(...)` or `__doc__`; this file records what you would otherwise call and find missing.
+Migration-sensitive additions, removals, and behavior changes only, newest first. Signatures and parameter meanings are discoverable at runtime with `help(...)` or `__doc__`; this file records what you would otherwise call and find missing or use with the wrong lifecycle assumptions.
+
+## 3.0.0+fork.15.post1
+
+New terminal lifecycle surface:
+
+| API | Contract |
+|---|---|
+| `Scene.close()` / `is_closed` | Terminal and idempotent; removes entities, detaches systems, returns managed environment-ID slots, and rejects reuse. Use `Scene.clear()` when the Scene must remain reusable. |
+| `PhysxSystem.close()` / `is_closed` | Close every owning Scene and release exported CUDA views first. Closed systems reject steady-state APIs. `PhysxGpuSystem.wait_idle()` drains in-flight simulation/CUDA work and is called by `close()`. |
+| `RenderCameraGroup.close()`, `RenderSystemGroup.close()`, `RenderSystem.close()` | Close render groups before Scenes, then close detached render systems. `RenderSystemGroup.close()` closes its retained camera groups. |
+| `sapien.physx.get_live_resources()` / `can_shutdown()` / `shutdown()` | Diagnose blockers, preflight, then release PhysX caches, per-device CUDA-context-manager leases, engine, and defaults. |
+| `sapien.render.get_live_resources()` / `can_shutdown()` / `shutdown()` | Diagnose blockers, clear library-owned default-ground textures, wait for Vulkan/CUDA work, and release the render engine/context. |
+| `sapien.get_live_resources()` / `can_shutdown()` / `shutdown()` | Side-effect-free joint preflight; shutdown releases render before PhysX so a later job can initialize both again in the same Python process. |
+
+Behavior and ownership changes:
+
+- `Scene`, `PhysxSystem`, `RenderSystem`, `RenderSystemGroup`, and `RenderCameraGroup` support context managers whose exit calls terminal `close()`.
+- CUDA arrays owned by `PhysxGpuSystem`, `RenderSystem.cuda_object_transforms`, and `RenderCameraGroup` image/pose buffers reject raw `__cuda_array_interface__` export. Use `.torch()`, `.jax()`, `.cupy()`, or `.dlpack()`; the derived consumer carries a lifecycle guard and must be released before the owner can close. Component/shape-owned CUDA buffers without an explicit close owner retain borrowed-view semantics.
+- `sapien.shutdown()` never calls `cudaDeviceReset()`: it preserves the CUDA primary context shared with Torch/JAX. Use a fresh process when process-exit-equivalent CUDA isolation is required.
+
+Build-only post-release fix:
+
+- `fork.15.post1` renames the C++ parameter identifiers of inline light shadow setters from the Windows SDK macro names `near` / `far` to `value`. Python signatures and setter behavior are unchanged.
 
 ## 3.0.0+fork.14
 

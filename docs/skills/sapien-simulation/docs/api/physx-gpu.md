@@ -4,6 +4,8 @@ Agent-facing GPU table. Pair with `../gpu-workflows.md`; this file is lookup, no
 
 Hard rules: `enable_gpu()` before `PhysxGpuSystem`; configure memory/scene/body/shape before system creation; `gpu_init()` after building; fetch before reads; apply only modified buffers; `sync_poses_gpu_to_cpu()` only for explicit CPU debugging or Viewer `cpu-debug`. Environment IDs use one of two disjoint modes declared on `PhysxSceneConfig` before system creation and frozen at construction: managed mode (`num_scenes = N`) — SAPIEN assigns each Scene a unique ID via `get_or_assign_environment_id()` and `set_environment_id()` raises; or manual mode (`num_scenes` unset) — `set_environment_id(env_id)` numbers scenes by hand (raw unshifted ID, before any body, duplicates allowed) and `get_or_assign_environment_id()` raises. `with_shared_scene = True` works in both modes, enabling `set_shared_environment()` on the one shared scene and shifting IDs into the shared-object band. Exposed after `gpu_init()`: PhysX GPU link-data and dense-Jacobian buffers.
 
+PhysX-system CUDA output handles are owner-tracked. Export them through `.torch()`, `.jax()`, `.cupy()`, or `.dlpack()` and release both the `CudaArray` handle and every derived consumer before `PhysxGpuSystem.close()`; raw `__cuda_array_interface__` export raises. This output restriction does not affect external CUDA-array-interface objects accepted as indexed API inputs.
+
 Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper source; verify pybind/C++ when behavior matters.
 
 - Preferred import prefix: `sapien.physx`
@@ -54,6 +56,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 - Use: PhysX GPU Direct system; shares GPU scene, CUDA state buffers and batched APIs.
 - Bases: `PhysxSystem`
+- Lifecycle: supports a context manager. Close every owning Scene and release every owner-tracked CUDA handle/consumer first; `close()` calls `wait_idle()`, is terminal/idempotent, and rejects steady-state use afterwards.
 
 ### Methods/properties
 

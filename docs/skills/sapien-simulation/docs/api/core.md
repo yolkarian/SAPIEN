@@ -46,11 +46,14 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | API | Signature | Use | Notes |
 |---|---|---|---|
 | `sapien.abi_version` | `abi_version() -> int` | Call abi version. |  |
+| `sapien.can_shutdown` | `can_shutdown() -> bool` | Side-effect-free render + PhysX shutdown preflight. | Diagnose false with `get_live_resources()`. |
 | `sapien.compiled_with_cxx11_abi` | `compiled_with_cxx11_abi() -> bool` | Call compiled with cxx11 abi. |  |
+| `sapien.get_live_resources` | `get_live_resources() -> dict[str, dict[str, object]]` | Snapshot caller-owned render and PhysX resources blocking shutdown. |  |
 | `sapien.profile` | `profile(name: str) -> Profiler<br>profile(func: Callable) -> Callable` | Call profile. |  |
 | `sapien.pybind11_internals_id` | `pybind11_internals_id() -> str` | Call pybind11 internals id. |  |
 | `sapien.pybind11_use_smart_holder` | `pybind11_use_smart_holder() -> bool` | Call pybind11 use smart holder. |  |
 | `sapien.set_log_level` | `set_log_level(level: str) -> None` | Set log level. |  |
+| `sapien.shutdown` | `shutdown() -> None` | Preflight both subsystems, then terminally release render before PhysX. | No partial shutdown on failed preflight; preserves the shared CUDA primary context. |
 
 ## Class index
 
@@ -99,6 +102,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 - Use: CUDA memory view; convertible to torch/cupy/jax/DLPack.
 - Bases: `-`
+- Ownership: arrays exported from `PhysxGpuSystem`, `RenderSystem.cuda_object_transforms`, and `RenderCameraGroup` image/pose buffers are owner-tracked. Their `.torch()`, `.jax()`, `.cupy()`, and `.dlpack()` consumers keep the owner alive and block `close()` until released; raw `__cuda_array_interface__` export raises because it cannot carry that guard. Component/shape-owned CUDA buffers without an explicit close owner remain borrowed views whose original owner must stay alive.
 
 ### Methods/properties
 
@@ -111,8 +115,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `ptr` | property | `ptr(self) -> int` |  |  |
 | `shape` | property | `shape(self) -> list[int]` |  |  |
 | `strides` | property | `strides(self) -> list[int]` |  |  |
-| `torch` | method | `torch(self) -> torch.Tensor` | Return a torch CUDA tensor view; cache outside the loop. | Zero-copy view lifetime depends on the original CudaArray; do not create it in a loop. |
+| `torch` | method | `torch(self) -> torch.Tensor` | Return a torch CUDA tensor view; cache outside the loop. | Owner-tracked tensors carry the lifecycle guard themselves and must be released before owner teardown; borrowed buffers still require their original owner to remain alive. |
 | `typestr` | property | `typestr(self) -> str` |  |  |
+| `__cuda_array_interface__` | property | `__cuda_array_interface__(self) -> dict` | Export a borrowed raw CUDA view only when the buffer has no tracked close owner. | Raises for owner-tracked system/group buffers; use `.torch()`, `.jax()`, `.cupy()`, or `.dlpack()` instead. |
 | `__init__` | method | `__init__(self, data: Any) -> None` |  |  |
 
 ## `sapien.Device`
@@ -226,6 +231,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 - Use: Entity/system container; high-level wrapper also provides builder, lights, camera, ground, and other convenience functions.
 - Bases: `-`
+- Lifecycle: supports a context manager; exit calls terminal, idempotent `close()`. Use `clear()` instead when the Scene must remain reusable.
 
 ### Methods/properties
 

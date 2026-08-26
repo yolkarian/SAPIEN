@@ -184,7 +184,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 - Use: Batched camera group; take/read CUDA for multiple cameras at once.
 - Bases: `-`
 - Ownership: each camera may belong to only one camera group. `RenderSystemGroup.gpu_init()` validates referenced PhysX GPU systems, resolves final mounted-camera indices, and seals every member camera transform for GPU ownership. Cameras mounted on PhysX GPU bodies are automatically CUDA-attached (reuse the PhysX parent pose row, no group row) and cannot be configured `'static'`/`'cpu'`. Free cameras default to `'static'` pose mode (a one-time CPU snapshot at `gpu_init()`; CPU pose setters raise afterwards, no CUDA row). Configure pose mode with `set_pose_mode(camera, mode)` after `create_camera_group()` and before `gpu_init()`: `'static'` (default), `'cpu'` (CPU pose stays authoritative and uploads per `update_render()`, no CUDA row; use for host-driven follow/anchor cameras), or `'cuda'` (group-owned CUDA pose row seeded once from the CPU pose; move via GPU writes or `set_cuda_pose`; CPU pose setters raise). `cuda_poses` raises when no `'cuda'`-mode camera exists. Destroying a camera group releases its camera ownership, while scene transform buffers remain protected from CPU uploads until their last live camera group is released. Camera projection/intrinsics (fov, near/far, principal point, skew, perspective/ortho) stay CPU real-time in every mode; the CUDA kernel writes only view/inverse-view so a projection change never overrides a GPU pose.
-- Lifecycle: `RenderSystemGroup` retains every camera group it creates. Never recreate groups per frame to move a free camera; write its CUDA pose row (`cuda_poses`) for `'cuda'` mode or use `'cpu'` mode instead (see `../gpu-workflows.md`).
+- Lifecycle: supports a context manager; exit calls terminal, idempotent `close()`. `RenderSystemGroup` retains every camera group it creates and closes them when the group closes. Never recreate groups per frame to move a free camera; write its CUDA pose row (`cuda_poses`) for `'cuda'` mode or use `'cpu'` mode instead (see `../gpu-workflows.md`). Release owner-tracked image/pose `CudaArray` handles and all derived `.torch()` / `.jax()` / `.cupy()` / `.dlpack()` consumers before closing; raw `__cuda_array_interface__` export raises.
 
 ### Methods/properties
 
@@ -193,9 +193,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `close` | method | `close(self) -> None` | Wait for render/CUDA work, release camera/scene ownership and external semaphores. | Idempotent; raises while exported CUDA image/pose views remain. |
 | `is_closed` | property | `is_closed(self) -> bool` | Terminal lifecycle state. |  |
 | `outstanding_cuda_view_count` | property | `outstanding_cuda_view_count(self) -> int` | Owner-backed exported image/pose views. | close() raises while non-zero. |
-| `cuda_poses` | property | `cuda_poses(self) -> sapien.CudaArray` | World pose rows `[px, py, pz, qw, qx, qy, qz]` of the group's `'cuda'`-mode cameras. | Raises when no `'cuda'`-mode camera exists. Write rows on GPU (torch) or via `set_cuda_pose`; consumed by the next `update_render()`. |
+| `cuda_poses` | property | `cuda_poses(self) -> sapien.CudaArray` | World pose rows `[px, py, pz, qw, qx, qy, qz]` of the group's `'cuda'`-mode cameras. | Owner-tracked; raw CUDA-array-interface export raises. Use a tracked converter, and release the handle/consumer before close. Raises when no `'cuda'`-mode camera exists. |
 | `get_cuda_pose_index` | method | `get_cuda_pose_index(self, camera: RenderCameraComponent) -> int` | Row index of a `'cuda'`-mode camera. | Raises for mounted cameras and for `'static'`/`'cpu'` cameras. |
-| `get_picture_cuda` | method | `get_picture_cuda(self, name: str) -> sapien.CudaArray` | Read CUDA image buffer; avoids CPU copy. | Direct GPU render path; no sync_poses_gpu_to_cpu needed. |
+| `get_picture_cuda` | method | `get_picture_cuda(self, name: str) -> sapien.CudaArray` | Read CUDA image buffer; avoids CPU copy. | Owner-tracked; use `.torch()` / `.jax()` / `.cupy()` / `.dlpack()` and release before close. No `sync_poses_gpu_to_cpu()` needed. |
 | `set_cuda_pose` | method | `set_cuda_pose(self, camera: RenderCameraComponent, pose: sapien.Pose) -> None` | Synchronous host-to-device copy of one CPU-authored camera pose into its CUDA row, ordered on the group's configured CUDA stream. | Takes effect at the next `update_render()`. |
 | `set_pose_mode` | method | `set_pose_mode(self, camera: RenderCameraComponent, mode: Literal['static', 'cpu', 'cuda']) -> None` | Configure a free camera's pose mode after `create_camera_group()` and before `gpu_init()`. | `'static'` default (one-time CPU snapshot); `'cpu'` host-driven uploads per `update_render()`; `'cuda'` group CUDA row moved via `cuda_poses`/`set_cuda_pose`. Mounted cameras cannot be configured. |
 | `take_picture` | method | `take_picture(self) -> None` | Trigger camera/camera-group rendering. |  |
@@ -612,6 +612,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 - Use: Render system; only needed for viewer/sensor/offscreen.
 - Bases: `sapien.System`
+- Lifecycle: supports a context manager. Close owning Scenes first, then call terminal, idempotent `close()`; release `cuda_object_transforms` handles/consumers before closing.
 
 ### Attributes/properties declared as fields
 
@@ -627,7 +628,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `close` | method | `close(self) -> None` | Terminally release the render scene/component registry after owning Scenes close. | Idempotent. |
 | `is_closed` | property | `is_closed(self) -> bool` | Terminal lifecycle state. |  |
 | `cameras` | property | `cameras(self) -> list[RenderCameraComponent]` |  |  |
-| `cuda_object_transforms` | property | `cuda_object_transforms(self) -> sapien.CudaArray` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
+| `cuda_object_transforms` | property | `cuda_object_transforms(self) -> sapien.CudaArray` | Owner-tracked CUDA transform buffer. | Raw CUDA-array-interface export raises; use a tracked converter and release the handle/consumer before close. |
 | `device` | property | `device(self) -> sapien.Device` |  |  |
 | `get_ambient_light` | method | `get_ambient_light(self) -> np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |
 | `get_cameras` | method | `get_cameras(self) -> list[RenderCameraComponent]` |  |  |
@@ -636,6 +637,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_point_clouds` | method | `get_point_clouds(self) -> list[RenderPointCloudComponent]` |  |  |
 | `get_render_bodies` | method | `get_render_bodies(self) -> list[RenderBodyComponent]` |  |  |
 | `lights` | property | `lights(self) -> list[RenderLightComponent]` |  |  |
+| `outstanding_cuda_view_count` | property | `outstanding_cuda_view_count(self) -> int` | Number of owner-backed transform view chains. | `close()` raises while non-zero. |
 | `point_clouds` | property | `point_clouds(self) -> list[RenderPointCloudComponent]` |  |  |
 | `render_bodies` | property | `render_bodies(self) -> list[RenderBodyComponent]` |  |  |
 | `scene_light_state_version` | property | `scene_light_state_version(self) -> int` | Read-only scene-level light dirty version. |  |
@@ -648,7 +650,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 - Use: Batched render group over multiple RenderSystems; can bind CUDA poses.
 - Bases: `-`
-- Lifecycle note: construct, optionally `set_cuda_poses()` when GPU objects or mounted cameras exist, create every camera group, configure each free camera's pose mode via `RenderCameraGroup.set_pose_mode()` and each light's via `RenderLightComponent.set_pose_mode()`, then call `gpu_init()` once. Initialization resolves final output selections (including implicit shared scenes), validates their PhysX GPU systems, binds dynamic bodies and mounted cameras, prepares resources, snapshots static/cuda/cpu-mode state, seeds `'cuda'`-mode camera pose rows, and seals ownership. Afterwards `update_render()` owns every grouped transform: CPU component refresh (raises on static-pose tampering) → dirty CPU camera/scene-light uploads (zero when nothing changed) → Vulkan→CUDA handoff → CUDA transform patch (object transforms + mounted/cuda camera view matrices) → CUDA→Vulkan handoff; `take_picture()` only draws and copies. Camera/light/point-cloud CPU setters that affect sealed snapshots raise, as do later entity-pose changes on the next `scene.update_render()`. Camera projection/intrinsics and light color/FOV/shape/shadow-parameter/ambient stay CPU real-time; setup-only fields (shadow enable, shadow map size, light texture, `set_gpu_pose_batch_index`, `set_scenes`) raise after `gpu_init()`. Steady-state calls before `gpu_init()` raise.
+- Lifecycle note: supports a context manager. Construct, optionally `set_cuda_poses()` when GPU objects or mounted cameras exist, create every camera group, configure each free camera's pose mode via `RenderCameraGroup.set_pose_mode()` and each light's via `RenderLightComponent.set_pose_mode()`, then call `gpu_init()` once. Initialization resolves final output selections (including implicit shared scenes), validates their PhysX GPU systems, binds dynamic bodies and mounted cameras, prepares resources, snapshots static/cuda/cpu-mode state, seeds `'cuda'`-mode camera pose rows, and seals ownership. Afterwards `update_render()` owns every grouped transform: CPU component refresh (raises on static-pose tampering) → dirty CPU camera/scene-light uploads (zero when nothing changed) → Vulkan→CUDA handoff → CUDA transform patch (object transforms + mounted/cuda camera view matrices) → CUDA→Vulkan handoff; `take_picture()` only draws and copies. Camera/light/point-cloud CPU setters that affect sealed snapshots raise, as do later entity-pose changes on the next `scene.update_render()`. Camera projection/intrinsics and light color/FOV/shape/shadow-parameter/ambient stay CPU real-time; setup-only fields (shadow enable, shadow map size, light texture, `set_gpu_pose_batch_index`, `set_scenes`) raise after `gpu_init()`. Steady-state calls before `gpu_init()` raise.
 
 ### Methods/properties
 
