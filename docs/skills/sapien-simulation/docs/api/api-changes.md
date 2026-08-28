@@ -2,6 +2,20 @@
 
 Migration-sensitive additions, removals, and behavior changes only, newest first. Signatures and parameter meanings are discoverable at runtime with `help(...)` or `__doc__`; this file records what you would otherwise call and find missing or use with the wrong lifecycle assumptions.
 
+## 3.0.0+fork.15.post2
+
+PhysX GPU contact-query scheduling:
+
+| API | Contract |
+|---|---|
+| `gpu_query_contact_pair_impulses(query, synchronize=True)` | Existing behavior remains synchronous by default. `False` enqueues the query on the stream configured by `gpu_set_cuda_stream`. |
+| `gpu_query_contact_body_impulses(query, synchronize=True)` | Same optional synchronization contract for net body impulses. |
+| `gpu_wait_contact_queries()` | Synchronize queued contact copies/query kernels before host or cross-stream access. `step()` / `step_start()` also wait for an outstanding asynchronous query before the next simulation invalidates contact pointers. |
+
+Contact data storage grows automatically when the reported contact count exceeds the current capacity.
+
+Articulation qpos/qvel/qacc/target, link-velocity, and incoming-joint-force fetches are ordered onto the stream configured by `gpu_set_cuda_stream`. Existing fetch signatures are unchanged. Host download helpers wait for that stream before copying to CPU; callers performing their own host or cross-stream reads must do the same.
+
 ## 3.0.0+fork.15.post1
 
 New terminal lifecycle surface:

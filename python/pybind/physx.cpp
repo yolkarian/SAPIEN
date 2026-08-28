@@ -857,20 +857,25 @@ values.
       .def("gpu_create_contact_pair_impulse_query",
            &PhysxSystemGpu::gpuCreateContactPairImpulseQuery, py::arg("body_pairs"))
       .def("gpu_query_contact_pair_impulses", &PhysxSystemGpu::gpuQueryContactPairImpulses,
-           py::arg("query"))
+           py::arg("query"), py::arg("synchronize") = true,
+           R"doc(Query pair impulses into the query CUDA buffer.
+
+When ``synchronize`` is false, this method returns after enqueuing the query on
+the stream selected by ``gpu_set_cuda_stream``. Consume the result on that same
+stream or call ``gpu_wait_contact_queries`` before host or cross-stream access.
+)doc")
 
       .def("gpu_create_contact_body_impulse_query",
            &PhysxSystemGpu::gpuCreateContactBodyImpulseQuery, py::arg("bodies"))
       .def("gpu_query_contact_body_impulses", &PhysxSystemGpu::gpuQueryContactBodyImpulses,
-           py::arg("query"),
-           R"doc(Query net contact forces for specific bodies of the last simulation step.
-Usage:
-    query = system.gpu_create_contact_body_force_query(bodies)  # create force query in advance
+           py::arg("query"), py::arg("synchronize") = true,
+           R"doc(Query net body impulses into ``query.cuda_impulses``.
 
-    # after simulation step
-    system.gpu_query_contact_body_forces(query)
-    # query.cuda_buffer is now filled with net contact forces for each body
+When ``synchronize`` is false, consume the result on the configured CUDA stream
+or call ``gpu_wait_contact_queries`` before host or cross-stream access.
 )doc")
+      .def("gpu_wait_contact_queries", &PhysxSystemGpu::gpuWaitContactQueries,
+           R"doc(Wait for contact copies and query kernels on the configured CUDA stream.)doc")
 
       .def("gpu_update_articulation_kinematics",
            py::overload_cast<>(&PhysxSystemGpu::gpuUpdateArticulationKinematics),

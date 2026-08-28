@@ -359,8 +359,16 @@ public:
   std::shared_ptr<PhysxGpuContactBodyImpulseQuery> gpuCreateContactBodyImpulseQuery(
       std::vector<std::shared_ptr<PhysxRigidBaseComponent>> const &bodies);
 
-  void gpuQueryContactPairImpulses(PhysxGpuContactPairImpulseQuery const &query);
-  void gpuQueryContactBodyImpulses(PhysxGpuContactBodyImpulseQuery const &query);
+  /** Query pair impulses into the query's CUDA buffer. When `synchronize` is false, work is
+   *  only ordered on this system's configured CUDA stream; consume it on that stream or call
+   *  gpuWaitContactQueries() before host/cross-stream access. */
+  void gpuQueryContactPairImpulses(PhysxGpuContactPairImpulseQuery const &query,
+                                   bool synchronize = true);
+  /** Query net body impulses with the same synchronization contract as pair queries. */
+  void gpuQueryContactBodyImpulses(PhysxGpuContactBodyImpulseQuery const &query,
+                                   bool synchronize = true);
+  /** Wait for all contact copies and query kernels submitted to the configured CUDA stream. */
+  void gpuWaitContactQueries();
 
   void syncPosesGpuToCpu();
   uint64_t getTotalSteps() const { return mTotalSteps; }
@@ -441,6 +449,9 @@ private:
   std::shared_ptr<Device> mDevice;
   void ensureCudaDevice();
   uint32_t getGpuArticulationDof(int index) const;
+  void gpuFetchArticulationData(void *data,
+                                ::physx::PxArticulationGPUAPIReadType::Enum type,
+                                CudaEvent &completionEvent);
 
   std::map<std::weak_ptr<Scene>, Vec3, std::owner_less<>> mSceneOffset;
   // Scene -> environment ID, always stored unshifted. In manual mode this is pure storage:
@@ -518,6 +529,16 @@ private:
   CudaEvent mCudaRigidLinearVelocityFetchEvent;
   CudaEvent mCudaRigidAngularVelocityFetchEvent;
   CudaEvent mCudaArticulationLinkPoseFetchEvent;
+  CudaEvent mCudaArticulationLinkLinearVelocityFetchEvent;
+  CudaEvent mCudaArticulationLinkAngularVelocityFetchEvent;
+  CudaEvent mCudaArticulationQposFetchEvent;
+  CudaEvent mCudaArticulationQvelFetchEvent;
+  CudaEvent mCudaArticulationQaccFetchEvent;
+  CudaEvent mCudaArticulationTargetQposFetchEvent;
+  CudaEvent mCudaArticulationTargetQvelFetchEvent;
+  CudaEvent mCudaArticulationIncomingJointForceFetchEvent;
+  CudaEvent mCudaContactCountReadyEvent;
+  CudaEvent mCudaContactDataReadyEvent;
   cudaStream_t mCudaStream{0};
 
   std::optional<uint64_t> mRigidDynamicDataFetchedStep;
@@ -598,6 +619,7 @@ private:
   CudaArray mCudaContactCount;
 
   bool mContactUpToDate{false};
+  bool mContactQueryInFlight{false};
   int mContactCount{0}; // current contact count, valid only when contactUpdaToDate is true
   void copyContactData();
 };

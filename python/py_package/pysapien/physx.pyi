@@ -809,18 +809,20 @@ class PhysxGpuSystem(PhysxSystem):
         may call `gpu_apply_*` functions to initialize the system after calling this
         function.
         """
-    def gpu_query_contact_body_impulses(self, query: PhysxGpuContactBodyImpulseQuery) -> None:
-        """
-        Query net contact forces for specific bodies of the last simulation step.
-        Usage:
-            query = system.gpu_create_contact_body_force_query(bodies)  # create force query in advance
+    def gpu_query_contact_body_impulses(
+        self, query: PhysxGpuContactBodyImpulseQuery, synchronize: bool = True
+    ) -> None:
+        """Query net body impulses into ``query.cuda_impulses``.
 
-            # after simulation step
-            system.gpu_query_contact_body_forces(query)
-            # query.cuda_buffer is now filled with net contact forces for each body
+        With ``synchronize=False``, consume the result on the configured CUDA
+        stream or call :meth:`gpu_wait_contact_queries` before host/cross-stream access.
         """
-    def gpu_query_contact_pair_impulses(self, query: PhysxGpuContactPairImpulseQuery) -> None:
-        ...
+    def gpu_query_contact_pair_impulses(
+        self, query: PhysxGpuContactPairImpulseQuery, synchronize: bool = True
+    ) -> None:
+        """Query pair impulses with the same synchronization contract as body queries."""
+    def gpu_wait_contact_queries(self) -> None:
+        """Wait for contact copies and query kernels on the configured CUDA stream."""
     def gpu_set_cuda_stream(self, stream: int) -> None:
         """
         PhysX GPU APIs will be synchronized with the provided stream and SAPIEN's CUDA
