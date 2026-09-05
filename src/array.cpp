@@ -103,8 +103,8 @@ int CudaArrayHandle::bytes() const {
 
 #ifdef SAPIEN_CUDA
 static void DLManagedTensorDeleter(DLManagedTensor *self) {
-  delete self->dl_tensor.strides;
-  delete self->dl_tensor.shape;
+  delete[] self->dl_tensor.strides;
+  delete[] self->dl_tensor.shape;
   // manager_ctx owns a copy of the view guard so the producing system observes the
   // export until every DLPack consumer has released it.
   if (self->manager_ctx) {
@@ -273,7 +273,7 @@ CudaArrayHandle CudaArray::handle() const {
 #ifdef SAPIEN_CUDA
 static void CudaArrayDLManagedTensorDeleter(DLManagedTensor *self) {
   delete static_cast<CudaArray *>(self->manager_ctx);
-  delete self->dl_tensor.shape;
+  delete[] self->dl_tensor.shape;
   delete self;
 }
 

@@ -5,6 +5,10 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
+### Fixed
+
+- Match DLPack shape/stride metadata allocated with `new[]` with `delete[]` in both borrowed-view and owning-array deleters. This removes allocation/deallocation undefined behavior when releasing `.dlpack()` capsules or `.torch()`/`.jax()`/`.cupy()` consumers, without changing CUDA storage ownership or synchronization. Regression coverage exercises capsule, Torch-consumer, lifecycle-guard, and owning-array release; run the release tests under AddressSanitizer to detect allocation mismatches.
+
 ## 3.0.0+fork.15.post1 - 2026-08-25
 
 ### Added

@@ -1,8 +1,41 @@
+import gc
 import unittest
+
 import sapien
 
 
 class TestCudaArray(unittest.TestCase):
+    def test_dlpack_capsule_release(self) -> None:
+        """Release unconsumed exports; ASan checks metadata allocation pairing."""
+        import torch
+
+        backing = torch.arange(24, dtype=torch.float32, device="cuda").reshape(2, 3, 4)
+        for owner in (backing, backing[:, ::2, :]):
+            with self.subTest(shape=tuple(owner.shape), stride=owner.stride()):
+                array = sapien.CudaArray(owner)
+                for _ in range(32):
+                    capsule = array.dlpack()
+                    del capsule
+                gc.collect()
+                self.assertEqual(array.ptr, owner.data_ptr())
+                torch.testing.assert_close(backing.flatten(), torch.arange(24, device="cuda").float())
+
+    def test_dlpack_torch_consumer_release(self) -> None:
+        """Free consumed exports without releasing their external backing storage."""
+        import torch
+
+        backing = torch.arange(24, dtype=torch.float32, device="cuda").reshape(2, 3, 4)
+        owner = backing[:, ::2, :]
+        array = sapien.CudaArray(owner)
+        for _ in range(32):
+            consumer = array.torch()
+            self.assertEqual(consumer.data_ptr(), owner.data_ptr())
+            self.assertEqual(consumer.stride(), owner.stride())
+            torch.testing.assert_close(consumer, owner)
+            del consumer
+        gc.collect()
+        torch.testing.assert_close(backing.flatten(), torch.arange(24, device="cuda").float())
+
     def test_torch(self):
         import torch
 
