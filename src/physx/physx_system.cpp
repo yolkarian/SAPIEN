@@ -901,18 +901,21 @@ void PhysxSystemGpu::gpuFetchRigidDynamicData() {
     mCudaRigidLinearVelocityFetchEvent.init();
     mCudaRigidAngularVelocityFetchEvent.init();
   }
+  // PhysX must not overwrite scratch until the previous SAPIEN conversion and
+  // configured-stream consumers have finished reading it.
+  mCudaEventRecord.record(mCudaStream);
   SAPIEN_PROFILE_BLOCK_BEGIN("PhysX rigid data fetch");
   bool success = gpuApi.getRigidDynamicData(
       poseScratch, (PxRigidDynamicGPUIndex *)mCudaRigidDynamicIndexBuffer.ptr,
-      PxRigidDynamicGPUAPIReadType::eGLOBAL_POSE, count, nullptr,
+      PxRigidDynamicGPUAPIReadType::eGLOBAL_POSE, count, mCudaEventRecord.event,
       mCudaRigidPoseFetchEvent.event);
   success &= gpuApi.getRigidDynamicData(
       linearVelocityScratch, (PxRigidDynamicGPUIndex *)mCudaRigidDynamicIndexBuffer.ptr,
-      PxRigidDynamicGPUAPIReadType::eLINEAR_VELOCITY, count, nullptr,
+      PxRigidDynamicGPUAPIReadType::eLINEAR_VELOCITY, count, mCudaEventRecord.event,
       mCudaRigidLinearVelocityFetchEvent.event);
   success &= gpuApi.getRigidDynamicData(
       angularVelocityScratch, (PxRigidDynamicGPUIndex *)mCudaRigidDynamicIndexBuffer.ptr,
-      PxRigidDynamicGPUAPIReadType::eANGULAR_VELOCITY, count, nullptr,
+      PxRigidDynamicGPUAPIReadType::eANGULAR_VELOCITY, count, mCudaEventRecord.event,
       mCudaRigidAngularVelocityFetchEvent.event);
   SAPIEN_PROFILE_BLOCK_END;
   if (!success) {
@@ -967,11 +970,14 @@ void PhysxSystemGpu::gpuFetchArticulationLinkPose() {
   if (!mCudaArticulationLinkPoseFetchEvent.event) {
     mCudaArticulationLinkPoseFetchEvent.init();
   }
+  // The pose scratch is reused by later fetches and root-pose applies.
+  // Order its PhysX writer after earlier configured-stream readers.
+  mCudaEventRecord.record(mCudaStream);
   SAPIEN_PROFILE_BLOCK_BEGIN("PhysX articulation link pose fetch");
   bool success = gpuApi.getArticulationData(
       mCudaLinkPoseScratch.ptr,
       (PxArticulationGPUIndex *)mCudaArticulationGpuIndexBuffer.ptr,
-      PxArticulationGPUAPIReadType::eLINK_GLOBAL_POSE, count, nullptr,
+      PxArticulationGPUAPIReadType::eLINK_GLOBAL_POSE, count, mCudaEventRecord.event,
       mCudaArticulationLinkPoseFetchEvent.event);
   SAPIEN_PROFILE_BLOCK_END;
   if (!success) {

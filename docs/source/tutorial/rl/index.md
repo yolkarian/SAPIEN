@@ -9,6 +9,7 @@ This tutorial focuses on how to use SAPIEN for reinforcement learning.
 
    gym
    manipulation
+   gpu_stream_tests
 ```
 
 ## GPU multi-environment isolation

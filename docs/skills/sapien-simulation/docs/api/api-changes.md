@@ -2,6 +2,10 @@
 
 Migration-sensitive additions, removals, and behavior changes only, newest first. Signatures and parameter meanings are discoverable at runtime with `help(...)` or `__doc__`; this file records what you would otherwise call and find missing or use with the wrong lifecycle assumptions.
 
+## Unreleased
+
+`gpu_fetch_rigid_dynamic_data()` and `gpu_fetch_articulation_link_pose()` now order PhysX scratch writes after previous consumers on the configured SAPIEN CUDA stream. This fixes earlier snapshots being overwritten by a later fetch across simulation steps. Signatures are unchanged and calls remain asynchronous with respect to the CPU; host/cross-stream consumers still need an explicit wait. See `unittest/test_physx/test_gpu_stream_order.py` for delayed-consumer and contact-order regression coverage.
+
 ## 3.0.0+fork.15.post2
 
 PhysX GPU contact-query scheduling:
