@@ -40,7 +40,13 @@ void Component::setEnabled(bool enabled) {
   auto entity = getEntity();
 
   if (enabled && entity && entity->getScene()) {
-    onAddToScene(*entity->getScene());
+    try {
+      onAddToScene(*entity->getScene());
+    } catch (...) {
+      // A component that rejects the scene stays disabled rather than half-added.
+      mEnabled = false;
+      throw;
+    }
   }
   if (!enabled && entity && entity->getScene()) {
     onRemoveFromScene(*entity->getScene());

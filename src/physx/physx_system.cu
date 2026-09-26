@@ -134,6 +134,18 @@ __global__ void gather_blocks_kernel(uint32_t *__restrict__ dst, uint32_t const 
   dst[g] = src[src_block * block_size + block_offset];
 }
 
+__global__ void find_first_invalid_index_kernel(int const *__restrict__ index, int count,
+                                                int limit, int *__restrict__ first_invalid) {
+  int g = blockIdx.x * blockDim.x + threadIdx.x;
+  if (g >= count) {
+    return;
+  }
+  int value = index[g];
+  if (value < 0 || value >= limit) {
+    atomicMin(first_invalid, g);
+  }
+}
+
 __global__ void pack_vec3_kernel(Vec3 *__restrict__ dst, float const *__restrict__ src,
                                  int stride, int count) {
   int g = blockIdx.x * blockDim.x + threadIdx.x;
@@ -460,6 +472,13 @@ void gather_blocks(void *dst, void *src, void *index, int block_size, int count,
   int total = count * block_size;
   gather_blocks_kernel<<<(total + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE, 0, stream>>>(
       (uint32_t *)dst, (uint32_t *)src, (int *)index, block_size, count);
+}
+
+void find_first_invalid_index(void *index, int count, int limit, void *first_invalid,
+                              cudaStream_t stream) {
+  find_first_invalid_index_kernel<<<(count + BLOCK_SIZE - 1) / BLOCK_SIZE, BLOCK_SIZE, 0,
+                                    stream>>>((int const *)index, count, limit,
+                                              (int *)first_invalid);
 }
 
 void pack_vec3(void *dst, void *src, int stride, int count, cudaStream_t stream) {

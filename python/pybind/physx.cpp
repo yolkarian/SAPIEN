@@ -210,6 +210,18 @@ outside of, so bodies there would silently stop colliding with the shared ground
 shifts every environment ID into the bands that still reach it. Read when the GPU system is
 constructed and frozen there.
 )doc")
+      .def_readwrite("gpu_index_validation", &PhysxSceneConfig::gpuIndexValidation,
+                     R"doc(Whether indexed GPU APIs range-check caller-supplied index buffers.
+
+On (default), every indexed ``gpu_apply_*`` / ``gpu_compute_articulation_*`` /
+``gpu_update_articulation_kinematics`` call checks its ``gpu_index`` values with a small kernel
+on the configured CUDA stream and synchronizes that stream once, so an out-of-range entry raises
+``RuntimeError`` before anything is applied. Off removes that synchronization for throughput;
+out-of-range values are then undefined behavior (device out-of-bounds access that can poison
+the CUDA context). Host-side checks (dtype, contiguity, device, entry count) always run, and
+non-indexed overloads never pay the check. Read when the GPU system is constructed and frozen
+there.
+)doc")
       .def(
           "set_gpu_broadphase_env_id_bits",
           [](PhysxSceneConfig &config, uint8_t bitsX, uint8_t bitsY, uint8_t bitsZ) {
@@ -245,10 +257,11 @@ Args:
                                   config.getGpuBroadPhaseNbBitsEnvIDX(),
                                   config.getGpuBroadPhaseNbBitsEnvIDY(),
                                   config.getGpuBroadPhaseNbBitsEnvIDZ(),
-                                  config.numScenes, config.withSharedScene);
+                                  config.numScenes, config.withSharedScene,
+                                  config.gpuIndexValidation);
           },
           [](py::tuple t) {
-            if (t.size() != 15) {
+            if (t.size() != 16) {
               throw std::runtime_error("Invalid state!");
             }
             PhysxSceneConfig config;
@@ -268,6 +281,7 @@ Args:
                                              t[12].cast<uint8_t>());
             config.numScenes = t[13].cast<decltype(config.numScenes)>();
             config.withSharedScene = t[14].cast<decltype(config.withSharedScene)>();
+            config.gpuIndexValidation = t[15].cast<decltype(config.gpuIndexValidation)>();
             return config;
           }));
 

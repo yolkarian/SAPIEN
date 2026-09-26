@@ -221,6 +221,106 @@ class TestGpuArticulationBuffers(unittest.TestCase):
         jacobian = system.cuda_articulation_jacobian
         self.assertEqual(jacobian.shape, [2, 12, 7])
 
+    def test_out_of_range_indices_are_rejected_before_any_update(self):
+        """Selected-index buffers are range-checked against the gpu_index space: a rejected
+        call raises without applying its valid entries and leaves the CUDA context usable."""
+        system, scene = self._create_scene()
+        art0, _ = self._build_prismatic_articulation(scene, y=-0.25)
+        art1, _ = self._build_prismatic_articulation(scene, y=0.25)
+        builder = scene.create_actor_builder()
+        builder.add_box_collision(half_size=[0.05, 0.05, 0.05])
+        body = builder.build().find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+        system.gpu_init()
+
+        qpos = system.cuda_articulation_qpos
+        _write_float_values(qpos, (art0.gpu_index, 0), [0.4])
+        system.gpu_fetch_articulation_link_pose()
+        _cuda_synchronize()
+        link_fetches = system._gpu_fetch_articulation_link_pose_count
+
+        # one past the end, negative, and more entries than articulations
+        for values in (
+            [art0.gpu_index, 2],
+            [-1],
+            [art0.gpu_index, art1.gpu_index, art0.gpu_index],
+        ):
+            owner = _DeviceArray(np.asarray(values, dtype=np.int32))
+            try:
+                with self.assertRaises(RuntimeError, msg=str(values)):
+                    system.gpu_apply_articulation_qpos(owner)
+                with self.assertRaises(RuntimeError, msg=str(values)):
+                    system.gpu_compute_articulation_jacobian(owner)
+            finally:
+                owner.close()
+
+        bad_body = _DeviceArray(np.asarray([body.gpu_index + 1], dtype=np.int32))
+        try:
+            with self.assertRaises(RuntimeError):
+                system.gpu_apply_rigid_dynamic_force(bad_body)
+        finally:
+            bad_body.close()
+
+        # Invalid calls must not invalidate already fetched link poses either.
+        system.sync_poses_gpu_to_cpu()
+        self.assertEqual(system._gpu_fetch_articulation_link_pose_count, link_fetches)
+
+        # The rejected apply never reached PhysX, and the simulation still runs.
+        system.step()
+        system.gpu_fetch_articulation_qpos()
+        _cuda_synchronize()
+        applied = _read_values(qpos, (art0.gpu_index, 0), 1, np.float32)[0]
+        self.assertAlmostEqual(float(applied), 0.0, places=5)
+        del qpos
+        scene.close()
+        system.close()
+
+    def test_disabled_index_validation_keeps_host_checks_and_is_frozen(self):
+        """With gpu_index_validation off at construction, valid indices still apply, host-side
+        checks still reject an over-long buffer, and a later config change does not re-enable
+        the device check for that system. (Out-of-range values are undefined behavior once the
+        check is off, so they are deliberately not exercised here.)"""
+        config = sapien.physx.get_scene_config()
+        config.gpu_index_validation = False
+        sapien.physx.set_scene_config(config)
+        system, scene = self._create_scene()
+        restored = sapien.physx.get_scene_config()
+        restored.gpu_index_validation = True
+        sapien.physx.set_scene_config(restored)
+        self.assertFalse(system.config.gpu_index_validation)
+
+        art0, slider0 = self._build_prismatic_articulation(scene, y=-0.25)
+        art1, _ = self._build_prismatic_articulation(scene, y=0.25)
+        system.gpu_init()
+
+        too_long = _DeviceArray(
+            np.asarray([art0.gpu_index, art1.gpu_index, art0.gpu_index], dtype=np.int32)
+        )
+        try:
+            with self.assertRaises(RuntimeError):
+                system.gpu_apply_articulation_qpos(too_long)
+        finally:
+            too_long.close()
+
+        qpos = system.cuda_articulation_qpos
+        _write_float_values(qpos, (art0.gpu_index, 0), [0.4])
+        _cuda_synchronize()
+        index_owner = _DeviceArray(np.asarray([art0.gpu_index], dtype=np.int32))
+        try:
+            system.gpu_apply_articulation_qpos(index_owner)
+            system.gpu_update_articulation_kinematics(index_owner)
+            system.gpu_fetch_articulation_link_pose()
+            _cuda_synchronize()
+        finally:
+            index_owner.close()
+
+        link_data = system.cuda_articulation_link_data
+        root0_pos = _read_values(link_data, (art0.gpu_index, 0, 0), 3, np.float32)
+        slider0_pos = _read_values(link_data, (art0.gpu_index, slider0.index, 0), 3, np.float32)
+        self.assertGreater(slider0_pos[0] - root0_pos[0], 0.35)
+        del qpos, link_data
+        scene.close()
+        system.close()
+
 
 if __name__ == "__main__":
     unittest.main()

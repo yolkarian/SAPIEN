@@ -736,7 +736,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
-| `texture` | `RenderTexture2D` |  |  |
+| `texture` | `RenderTexture2D` | Light texture. | Required before the light is added to a scene; adding a textured light without a texture raises `RuntimeError` and leaves the entity unadded. |
 
 ### Methods/properties
 

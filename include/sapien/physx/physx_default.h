@@ -43,6 +43,14 @@ struct PhysxSceneConfig {
    *  shader. */
   bool withSharedScene = false;
 
+  /** Whether indexed GPU APIs range-check caller-supplied `gpu_index` buffers. The check runs a
+   *  kernel on the configured CUDA stream and synchronizes that stream once per indexed call, so
+   *  an out-of-range entry raises before any data is touched. Disabling it removes that
+   *  synchronization; out-of-range entries are then undefined behavior (device out-of-bounds
+   *  access that can poison the CUDA context). Host-side checks (dtype, contiguity, device,
+   *  entry count) always run. Read when the GPU system is constructed and frozen there. */
+  bool gpuIndexValidation = true;
+
   /** GPU broadphase environment ID bits, per axis. When non-zero on an axis, the environment ID
    *  is merged into that axis's broadphase bounds, spreading environments apart so sweep-and-
    *  prune has fewer candidate pairs to reject. Only used when broadPhaseType is eGPU.

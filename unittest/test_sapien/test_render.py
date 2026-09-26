@@ -1,6 +1,9 @@
 import ctypes
 import ctypes.util
 import gc
+import subprocess
+import sys
+import textwrap
 import unittest
 
 import numpy as np
@@ -566,6 +569,53 @@ class TestScene(unittest.TestCase):
             group = None
             gc.collect()
             self.assertEqual(cudart.cudaStreamDestroy(stream), 0)
+
+    def test_removing_grouped_camera_waits_for_capture_and_closes(self) -> None:
+        """Removing a grouped camera right after a capture must not destroy its render
+        targets under the in-flight capture: the group then rejects further captures, the
+        sealed camera cannot rejoin a scene, and the group still closes. Before the fix
+        close() waited forever, so the scenario runs in a child interpreter with a timeout."""
+        code = textwrap.dedent(
+            """
+            import sapien
+
+            def expect_runtime_error(action, what):
+                try:
+                    action()
+                except RuntimeError:
+                    return
+                raise SystemExit(what + " was accepted after the grouped camera was removed")
+
+            scene = sapien.Scene()
+            camera = scene.add_camera("camera", 64, 64, 1.0, 0.1, 10)
+            group = sapien.render.RenderSystemGroup([scene.render_system])
+            camera_group = group.create_camera_group([camera], ["Color"])
+            group.gpu_init()
+            group.update_render()
+            camera_group.take_picture()
+
+            entity = camera.entity
+            scene.remove_entity(entity)
+            expect_runtime_error(group.update_render, "update_render()")
+            expect_runtime_error(camera_group.take_picture, "take_picture()")
+            expect_runtime_error(lambda: scene.add_entity(entity), "re-adding the camera")
+            if entity.scene is not None:
+                raise SystemExit("a rejected add left the camera entity in the scene")
+
+            camera_group.close()
+            group.close()
+            scene.close()
+            print("closed", flush=True)
+            """
+        )
+        try:
+            result = subprocess.run(
+                [sys.executable, "-c", code], capture_output=True, text=True, timeout=120
+            )
+        except subprocess.TimeoutExpired as exc:
+            self.fail(f"closing the camera group hung: {exc.stdout!r} {exc.stderr!r}")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("closed", result.stdout)
 
     def _run_light_realtime_updates(self, shader: str) -> None:
         """Static lights keep their pose but their color and shadow parameters stay

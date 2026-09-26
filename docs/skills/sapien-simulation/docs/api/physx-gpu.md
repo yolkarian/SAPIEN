@@ -12,6 +12,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 - Source files: `python/py_package/pysapien/physx.pyi`, `python/py_package/physx/__init__.pyi`, `python/pybind/physx.cpp`, `src/physx/physx_system.cpp`
 - Notes: Use with `../gpu-workflows.md`.
 - Indexed overloads accept only `sapien.CudaArray` or CUDA-array-interface objects, for example CUDA `torch.Tensor`, `cupy.ndarray`, or Numba CUDA device arrays. Index buffers must be 1D contiguous CUDA `int32` arrays on the same CUDA device as the PhysX system and contain SAPIEN `gpu_index` values, not PhysX-internal GPU indices. NumPy arrays, Python lists, CPU tensors, `int64` tensors, non-contiguous views, and cross-device CUDA arrays are invalid.
+- Index values are range-checked: an entry outside `[0, count)` for the rigid-dynamic or articulation `gpu_index` space, or a buffer longer than that count, raises `RuntimeError` before any buffer or PhysX state changes. The value check runs a small kernel on the configured SAPIEN CUDA stream and synchronizes that stream once per indexed call; the non-indexed overloads skip it. For throughput-critical loops with trusted indices, set `PhysxSceneConfig.gpu_index_validation = False` before creating the `PhysxGpuSystem` (frozen at construction): the device check and its synchronization are removed, host-side checks (dtype, contiguity, device, entry count) still run, and out-of-range values become undefined behavior.
 
 ## Functions
 

@@ -200,7 +200,12 @@ code if your task frame is the link origin.
 Indexed GPU APIs accept `sapien.CudaArray` and CUDA-array-interface objects as
 1D contiguous CUDA `int32` arrays containing SAPIEN `articulation.gpu_index`
 values. Keep the owner of an external index tensor alive until the SAPIEN CUDA
-stream has finished using it.
+stream has finished using it. Out-of-range values raise `RuntimeError` before
+anything is applied; the check synchronizes the SAPIEN CUDA stream once per
+indexed call. When the indices are trusted and throughput matters, set
+`gpu_index_validation = False` on the `PhysxSceneConfig` passed to
+`sapien.physx.set_scene_config` before creating the `PhysxGpuSystem`; out-of-range
+values are then undefined behavior.
 
 For passive-force compensation in GPU simulation, avoid calling
 `robot.compute_passive_force()` inside the step loop. Use the GPU buffers:

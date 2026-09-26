@@ -5,10 +5,18 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
+### Added
+
+- Added `PhysxSceneConfig.gpu_index_validation` (default `True`). It controls the device-side `gpu_index` range check of indexed PhysX GPU APIs; set it to `False` before creating a `PhysxGpuSystem` to drop the per-call CUDA stream synchronization when indices are trusted. Host-side checks still run, and out-of-range values are undefined behavior with the check off. The field is read at `PhysxGpuSystem` construction and included in the config pickle state.
+
 ### Fixed
 
 - Order rigid-body and articulation-link pose fetch scratch reuse after prior configured-stream consumers. Repeated fetches across simulation steps no longer overwrite a queued earlier snapshot; the fix uses CUDA events rather than host/device-wide synchronization. Add delayed-consumer tests for default/non-default streams, joint-first state fetches, and contact-query ordering.
 - Match DLPack shape/stride metadata allocated with `new[]` with `delete[]` in both borrowed-view and owning-array deleters. This removes allocation/deallocation undefined behavior when releasing `.dlpack()` capsules or `.torch()`/`.jax()`/`.cupy()` consumers, without changing CUDA storage ownership or synchronization. Regression coverage exercises capsule, Torch-consumer, lifecycle-guard, and owning-array release; run the release tests under AddressSanitizer to detect allocation mismatches.
+- Fixed a segfault when `sapien.Scene(...)` raised during construction (for example when no Vulkan device is available or `systems` is invalid). The Python wrapper's `__del__` called `clear()` on the never-constructed C++ scene; it is removed because the C++ destructor already closes the scene.
+- Fixed `RenderCameraGroup.close()` and interpreter exit hanging forever after a grouped camera's entity was removed while a capture was still executing. Removal now waits for in-flight GPU work before destroying the camera's renderer; afterwards the group's `update_render()` / `take_picture()` raise and re-adding the sealed camera raises until the group is closed.
+- Fixed a null-pointer crash when a `RenderTexturedLightComponent` without a texture was added to a scene; the add now raises `RuntimeError`. A rejected scene add removes components that were already added and detaches the entity; GPU rigid bodies also validate their environment ID before registering with PhysX.
+- Fixed indexed PhysX GPU APIs reading and writing outside SAPIEN and PhysX buffers for out-of-range `gpu_index` values, which silently corrupted state or caused `cudaErrorIllegalAddress` and poisoned the CUDA context. Caller-supplied index buffers are now range-checked on the configured SAPIEN CUDA stream, and rejected calls raise `RuntimeError` before anything is applied; the check synchronizes that stream once per indexed call (disable it with `PhysxSceneConfig.gpu_index_validation`), while non-indexed overloads are unchanged.
 
 ## 3.0.0+fork.15.post1 - 2026-08-25
 

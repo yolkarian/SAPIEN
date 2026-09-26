@@ -1206,6 +1206,19 @@ class PhysxSceneConfig:
     non-zero per-axis bit counts must be equal, and SAPIEN widens them to `(b, b, b)`. Read
     when the GPU system is constructed and frozen there.
     """
+    gpu_index_validation: bool
+    """
+    Whether indexed GPU APIs range-check caller-supplied index buffers.
+
+    On (default), every indexed gpu_apply_* / gpu_compute_articulation_* /
+    gpu_update_articulation_kinematics call checks its gpu_index values with a small kernel on
+    the configured CUDA stream and synchronizes that stream once, so an out-of-range entry
+    raises RuntimeError before anything is applied. Off removes that synchronization for
+    throughput; out-of-range values are then undefined behavior (device out-of-bounds access
+    that can poison the CUDA context). Host-side checks (dtype, contiguity, device, entry
+    count) always run, and non-indexed overloads never pay the check. Read when the GPU system
+    is constructed and frozen there.
+    """
     @property
     def gpu_broadphase_nb_bits_env_id_x(self) -> int:
         """Read-only per-axis GPU broadphase environment-ID bit count. Sole writer: set_gpu_broadphase_env_id_bits(bits_x, bits_y, bits_z). Default 0."""

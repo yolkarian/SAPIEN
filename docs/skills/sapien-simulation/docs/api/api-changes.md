@@ -6,6 +6,22 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 `gpu_fetch_rigid_dynamic_data()` and `gpu_fetch_articulation_link_pose()` now order PhysX scratch writes after previous consumers on the configured SAPIEN CUDA stream. This fixes earlier snapshots being overwritten by a later fetch across simulation steps. Signatures are unchanged and calls remain asynchronous with respect to the CPU; host/cross-stream consumers still need an explicit wait. See `unittest/test_physx/test_gpu_stream_order.py` for delayed-consumer and contact-order regression coverage.
 
+New configuration:
+
+| API | Contract |
+|---|---|
+| `PhysxSceneConfig.gpu_index_validation` | `bool`, default `True`. Controls the device-side range check of caller-supplied index buffers (below). Set it to `False` before creating the `PhysxGpuSystem` to remove the per-call stream synchronization for trusted indices; it is frozen at construction, host-side checks (dtype, contiguity, device, entry count) still run, and out-of-range values become undefined behavior. Pickled with the config, so the pickle tuple grows from 15 to 16 fields. |
+
+Behavior changes (signatures unchanged):
+
+| API | Contract |
+|---|---|
+| Indexed `gpu_apply_*`, `gpu_compute_articulation_*`, `gpu_update_articulation_kinematics` overloads | Index values are range-checked against the rigid-dynamic or articulation `gpu_index` count. Out-of-range or negative entries, or more entries than that count, raise `RuntimeError` before any buffer or PhysX state changes; previously they read and wrote outside SAPIEN/PhysX buffers and could poison the CUDA context. The value check synchronizes the configured SAPIEN CUDA stream once per indexed call unless `PhysxSceneConfig.gpu_index_validation` is off; the entry-count check always runs. Non-indexed overloads are unchanged. |
+| `Scene.add_entity`, `Entity.add_component`, `Component.enable()` | When a component rejects an add before modifying its own scene state, previously added components are removed and the entity or component is detached. GPU rigid bodies now check the scene environment ID before registering with PhysX. |
+| `RenderTexturedLightComponent` | Adding it to a scene without a `texture` raises `RuntimeError` instead of crashing. |
+| Grouped cameras after `RenderSystemGroup.gpu_init()` | Removing the camera's entity (or closing its Scene) waits for in-flight GPU work instead of hanging the group's later `close()`. The group's `update_render()` / `take_picture()` then raise, and re-adding the sealed camera to a scene raises until the group is closed. |
+| `sapien.Scene` wrapper | Removed the redundant `__del__` that called `clear()`; `~Scene` already closes the scene. A failing `Scene(...)` constructor now raises its exception instead of segfaulting. |
+
 ## 3.0.0+fork.15.post2
 
 PhysX GPU contact-query scheduling:

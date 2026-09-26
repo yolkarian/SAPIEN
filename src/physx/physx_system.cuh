@@ -87,6 +87,10 @@ void root_vel_sapien_to_physx(void *physx_linear_velocity, void *physx_angular_v
                                CUstream_st *);
 
 void gather_blocks(void *dst, void *src, void *index, int block_size, int count, CUstream_st *);
+// atomically lower *first_invalid to the position of every entry outside [0, limit);
+// *first_invalid must start at a value >= count
+void find_first_invalid_index(void *index, int count, int limit, void *first_invalid,
+                              CUstream_st *);
 void pack_vec3(void *dst, void *src, int stride, int count, CUstream_st *);
 void compose_viewer_wrench(Vec3 *outputForce, Vec3 *outputTorque,
                            float const *applicationForce, float const *applicationTorque,

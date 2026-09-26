@@ -725,21 +725,6 @@ inline void *byteOffset(void *ptr, size_t offset) {
   return static_cast<void *>(static_cast<char *>(ptr) + offset);
 }
 
-inline void checkCudaIndexBuffer(CudaArrayHandle const &indices, int cudaId) {
-  indices.checkCongiguous();
-  indices.checkShape({-1});
-  indices.checkStride({sizeof(int)});
-  if (typestrCode(indices.type) != 'i' || typestrBytes(indices.type) != sizeof(int)) {
-    throw std::runtime_error("index buffer must be a CUDA int32 array");
-  }
-  if (!indices.shape.empty() && indices.shape.at(0) == 0) {
-    return;
-  }
-  if (indices.cudaId != cudaId) {
-    throw std::runtime_error("index buffer must be on the same CUDA device as the PhysX system");
-  }
-}
-
 inline void *rigidDynamicPoseScratch(CudaArray &scratch) { return scratch.ptr; }
 
 inline void *rigidDynamicLinearVelocityScratch(CudaArray &scratch, int count) {
@@ -763,6 +748,47 @@ inline void *articulationAngularVelocityScratch(CudaArray &scratch, int articula
   return byteOffset(scratch.ptr, static_cast<size_t>(articulationCount) * maxLinkCount *
                                      3 * sizeof(float));
 }
+}
+
+void PhysxSystemGpu::checkCudaIndexBuffer(CudaArrayHandle const &indices, int limit) {
+  indices.checkCongiguous();
+  indices.checkShape({-1});
+  indices.checkStride({sizeof(int)});
+  if (typestrCode(indices.type) != 'i' || typestrBytes(indices.type) != sizeof(int)) {
+    throw std::runtime_error("index buffer must be a CUDA int32 array");
+  }
+  int count = indices.shape.at(0);
+  if (count == 0) {
+    return;
+  }
+  if (indices.cudaId != mDevice->cudaId) {
+    throw std::runtime_error("index buffer must be on the same CUDA device as the PhysX system");
+  }
+  // per-entry scratch buffers hold one row per object
+  if (count > limit) {
+    throw std::runtime_error("index buffer has " + std::to_string(count) +
+                             " entries, more than the " + std::to_string(limit) + " objects");
+  }
+  // the value check synchronizes the stream; the all-articulation buffer is valid by construction
+  if (!mSceneConfig.gpuIndexValidation || indices.ptr == mCudaArticulationIndexBuffer.ptr) {
+    return;
+  }
+
+  ensureCudaDevice();
+  if (!mCudaIndexCheckScratch.ptr) {
+    mCudaIndexCheckScratch = CudaArray({1}, "i4");
+  }
+  int firstInvalid;
+  checkCudaErrors(cudaMemsetAsync(mCudaIndexCheckScratch.ptr, 0x7f, sizeof(int), mCudaStream));
+  find_first_invalid_index(indices.ptr, count, limit, mCudaIndexCheckScratch.ptr, mCudaStream);
+  checkCudaErrors(cudaMemcpyAsync(&firstInvalid, mCudaIndexCheckScratch.ptr, sizeof(int),
+                                  cudaMemcpyDeviceToHost, mCudaStream));
+  checkCudaErrors(cudaStreamSynchronize(mCudaStream));
+  if (firstInvalid < count) {
+    throw std::runtime_error("index buffer entry " + std::to_string(firstInvalid) +
+                             " is outside the gpu_index range [0, " + std::to_string(limit) +
+                             ")");
+  }
 }
 
 void PhysxSystemGpu::copyContactData() {
@@ -1080,7 +1106,7 @@ void PhysxSystemGpu::gpuComputeArticulationJacobian() {
 void PhysxSystemGpu::gpuComputeArticulationJacobian(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  checkCudaIndexBuffer(indices, mGpuArticulationCount);
 
   if (mGpuArticulationCount == 0) {
     return;
@@ -1148,7 +1174,7 @@ void PhysxSystemGpu::gpuComputeArticulationCompensation(
     PxArticulationGPUAPIComputeType::Enum computeType) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  checkCudaIndexBuffer(indices, mGpuArticulationCount);
 
   if (mGpuArticulationCount == 0) {
     return;
@@ -1213,8 +1239,8 @@ void PhysxSystemGpu::gpuUpdateArticulationKinematics() {
 
 void PhysxSystemGpu::gpuUpdateArticulationKinematics(CudaArrayHandle const &indices) {
   checkGpuInitialized();
+  checkCudaIndexBuffer(indices, mGpuArticulationCount);
   invalidateArticulationLinkPose();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
 
   if (mGpuArticulationCount == 0) {
     return;
@@ -1283,8 +1309,8 @@ void PhysxSystemGpu::gpuApplyRigidDynamicData() {
 void PhysxSystemGpu::gpuApplyRigidDynamicData(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
+  checkCudaIndexBuffer(indices, mCudaRigidDynamicHandle.shape.at(0));
   invalidateRigidDynamicData();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
 
   if (mRigidDynamicComponents.empty()) {
     return;
@@ -1334,7 +1360,7 @@ void PhysxSystemGpu::gpuApplyRigidDynamicForce() {
 void PhysxSystemGpu::gpuApplyRigidDynamicForce(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  checkCudaIndexBuffer(indices, mCudaRigidDynamicHandle.shape.at(0));
   auto count = static_cast<PxU32>(indices.shape[0]);
   if (count == 0) {
     return;
@@ -1374,7 +1400,7 @@ void PhysxSystemGpu::gpuApplyRigidDynamicTorque() {
 void PhysxSystemGpu::gpuApplyRigidDynamicTorque(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  checkCudaIndexBuffer(indices, mCudaRigidDynamicHandle.shape.at(0));
   auto count = static_cast<PxU32>(indices.shape[0]);
   if (count == 0) {
     return;
@@ -1401,7 +1427,7 @@ void PhysxSystemGpu::gpuApplyArticulationLinkForce() {
 void PhysxSystemGpu::gpuApplyArticulationLinkForce(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  checkCudaIndexBuffer(indices, mGpuArticulationCount);
 
   if (mGpuArticulationCount == 0) {
     return;
@@ -1440,7 +1466,7 @@ void PhysxSystemGpu::gpuApplyArticulationLinkTorque() {
 void PhysxSystemGpu::gpuApplyArticulationLinkTorque(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  checkCudaIndexBuffer(indices, mGpuArticulationCount);
 
   if (mGpuArticulationCount == 0) {
     return;
@@ -1479,8 +1505,8 @@ void PhysxSystemGpu::gpuApplyArticulationRootPose() {
 void PhysxSystemGpu::gpuApplyArticulationRootPose(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
+  checkCudaIndexBuffer(indices, mGpuArticulationCount);
   invalidateArticulationLinkPose();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
 
   if (mGpuArticulationCount == 0) {
     return;
@@ -1511,7 +1537,7 @@ void PhysxSystemGpu::gpuApplyArticulationRootVel() {
 void PhysxSystemGpu::gpuApplyArticulationRootVel(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  checkCudaIndexBuffer(indices, mGpuArticulationCount);
 
   if (mGpuArticulationCount == 0) {
     return;
@@ -1546,8 +1572,8 @@ void PhysxSystemGpu::gpuApplyArticulationQpos() {
 void PhysxSystemGpu::gpuApplyArticulationQpos(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
+  checkCudaIndexBuffer(indices, mGpuArticulationCount);
   invalidateArticulationLinkPose();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
 
   if (mGpuArticulationCount == 0) {
     return;
@@ -1579,7 +1605,7 @@ void PhysxSystemGpu::gpuApplyArticulationQvel() {
 void PhysxSystemGpu::gpuApplyArticulationQvel(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  checkCudaIndexBuffer(indices, mGpuArticulationCount);
 
   if (mGpuArticulationCount == 0) {
     return;
@@ -1611,7 +1637,7 @@ void PhysxSystemGpu::gpuApplyArticulationQf() {
 void PhysxSystemGpu::gpuApplyArticulationQf(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  checkCudaIndexBuffer(indices, mGpuArticulationCount);
 
   if (mGpuArticulationCount == 0) {
     return;
@@ -1643,7 +1669,7 @@ void PhysxSystemGpu::gpuApplyArticulationQTargetPos() {
 void PhysxSystemGpu::gpuApplyArticulationQTargetPos(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  checkCudaIndexBuffer(indices, mGpuArticulationCount);
 
   if (mGpuArticulationCount == 0) {
     return;
@@ -1675,7 +1701,7 @@ void PhysxSystemGpu::gpuApplyArticulationQTargetVel() {
 void PhysxSystemGpu::gpuApplyArticulationQTargetVel(CudaArrayHandle const &indices) {
   SAPIEN_PROFILE_FUNCTION;
   checkGpuInitialized();
-  checkCudaIndexBuffer(indices, mDevice->cudaId);
+  checkCudaIndexBuffer(indices, mGpuArticulationCount);
 
   if (mGpuArticulationCount == 0) {
     return;

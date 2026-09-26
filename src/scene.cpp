@@ -73,7 +73,15 @@ void Scene::addEntity(std::shared_ptr<Entity> entity) {
   mEntities.push_back(entity);
   entity->internalSetScene(this);
   entity->internalSetPerSceneId(mNextEntityId++);
-  entity->onAddToScene(*this);
+  try {
+    entity->onAddToScene(*this);
+  } catch (...) {
+    // Entity::onAddToScene already undid its components; detach the entity itself.
+    std::erase(mEntities, entity);
+    entity->internalSetPerSceneId(0);
+    entity->internalSetScene(nullptr);
+    throw;
+  }
 }
 
 void Scene::removeEntity(std::shared_ptr<Entity> entity) {

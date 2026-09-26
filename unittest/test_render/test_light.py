@@ -100,3 +100,29 @@ class TestLight(unittest.TestCase):
 
         l.set_texture(None)
         self.assertEqual(l.texture, None)
+
+    def test_textured_light_requires_texture_before_scene(self):
+        """Adding a textured light without a texture is rejected, and the rejected add leaves
+        no partially added entity or component behind."""
+        scene = sapien.Scene()
+        entity = sapien.Entity()
+        point = sapien.render.RenderPointLightComponent()
+        textured = sapien.render.RenderTexturedLightComponent()
+        entity.add_component(point)
+        entity.add_component(textured)
+
+        with self.assertRaisesRegex(RuntimeError, "texture"):
+            scene.add_entity(entity)
+        self.assertIsNone(entity.scene)
+        self.assertNotIn(entity, scene.entities)
+        self.assertNotIn(point, scene.render_system.lights)
+
+        textured.texture = sapien.render.RenderTexture2D(
+            np.array([[1]], dtype=np.float32), "R32Sfloat"
+        )
+        scene.add_entity(entity)
+        self.assertIn(point, scene.render_system.lights)
+        self.assertIn(textured, scene.render_system.lights)
+        scene.update_render()
+        scene.remove_entity(entity)
+        self.assertEqual(scene.render_system.lights, [])

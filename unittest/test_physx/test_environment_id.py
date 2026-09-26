@@ -43,11 +43,13 @@ class TestEnvironmentIDConfig(unittest.TestCase):
         config.set_gpu_broadphase_env_id_bits(0, 0, 9)
         config.num_scenes = 512
         config.with_shared_scene = True
+        config.gpu_index_validation = False
 
         roundtrip = pickle.loads(pickle.dumps(config))
         self.assertEqual(roundtrip.num_scenes, 512)
         self.assertTrue(roundtrip.with_shared_scene)
         self.assertEqual(roundtrip.gpu_broadphase_nb_bits_env_id_z, 9)
+        self.assertFalse(roundtrip.gpu_index_validation)
 
 
 class TestEnvironmentIDGPU(unittest.TestCase):
@@ -298,6 +300,53 @@ class TestEnvironmentIDGPU(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "declared num_scenes=4"):
             sapien.Scene([system]).get_or_assign_environment_id()
+
+    def test_failed_body_add_does_not_leave_registered_component(self):
+        system = self.make_system(num_scenes=1)
+        reserved = sapien.Scene([system])
+        reserved.get_or_assign_environment_id()
+        scene = sapien.Scene([system])
+
+        for body_type in ("dynamic", "static"):
+            builder = scene.create_actor_builder()
+            builder.set_physx_body_type(body_type)
+            builder.add_box_collision(half_size=[0.1, 0.1, 0.1])
+            with self.assertRaisesRegex(RuntimeError, "declared num_scenes=1"):
+                builder.build()
+            self.assertEqual(scene.entities, [])
+            self.assertEqual(system.get_rigid_dynamic_components(), [])
+            self.assertEqual(system.get_rigid_static_components(), [])
+
+        # Both the failed scene and the system remain reusable after the reserved slot is freed.
+        reserved.close()
+        self.add_body(scene)
+        scene.close()
+        system.close()
+
+    def test_failed_articulation_add_keeps_link_count_reusable(self):
+        system = self.make_system(num_scenes=1)
+        reserved = sapien.Scene([system])
+        reserved.get_or_assign_environment_id()
+        scene = sapien.Scene([system])
+
+        builder = scene.create_articulation_builder()
+        root = builder.create_link_builder()
+        root.add_box_collision(half_size=[0.1, 0.1, 0.1])
+        child = builder.create_link_builder(root)
+        child.add_box_collision(half_size=[0.1, 0.1, 0.1])
+        child.set_joint_properties("revolute", [[-1.0, 1.0]], sapien.Pose(), sapien.Pose())
+        with self.assertRaisesRegex(RuntimeError, "declared num_scenes=1"):
+            builder.build()
+
+        # The builder added the root before the last link failed. Removing that root must
+        # reset the articulation so it can be added to a different scene later.
+        root_entity = scene.entities[0]
+        scene.close()
+        reserved.close()
+        other = sapien.Scene([system])
+        other.add_entity(root_entity)
+        other.close()
+        system.close()
 
     def test_destroyed_scenes_return_their_slot(self):
         # IDs are assigned lazily, so a scene that never asked for one costs nothing even if it

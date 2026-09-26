@@ -121,11 +121,11 @@ void PhysxArticulation::internalNotifyAddToScene(PhysxArticulationLinkComponent 
   if (mScene && mScene != &scene) {
     throw std::runtime_error("links of the same articulation cannot be added to different scenes");
   }
-  mScene = &scene;
-  mLinksAddedToScene++;
-  if (mPxArticulation->getNbLinks() == mLinksAddedToScene) {
+  if (mPxArticulation->getNbLinks() == mLinksAddedToScene + 1) {
     internalAddPxArticulationToScene(scene);
   }
+  mScene = &scene;
+  mLinksAddedToScene++;
 }
 
 void PhysxArticulation::internalNotifyRemoveFromScene(PhysxArticulationLinkComponent *link,

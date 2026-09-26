@@ -34,7 +34,14 @@ std::shared_ptr<Entity> Entity::addComponent(std::shared_ptr<Component> componen
   component->onSetPose(mPose);
 
   if (mScene && component->getEnabled()) {
-    component->onAddToScene(*mScene);
+    try {
+      component->onAddToScene(*mScene);
+    } catch (...) {
+      // A rejected add must leave the component detached, as if it was never added.
+      mComponents.pop_back();
+      component->internalSetEntity(nullptr);
+      throw;
+    }
   }
   return shared_from_this();
 }
@@ -64,10 +71,27 @@ void Entity::removeComponent(std::shared_ptr<Component> component) {
 }
 
 void Entity::onAddToScene(Scene &scene) {
-  for (auto c : mComponents) {
-    if (c->getEnabled()) {
-      c->onAddToScene(scene);
+  size_t added = 0;
+  try {
+    for (; added < mComponents.size(); ++added) {
+      if (mComponents[added]->getEnabled()) {
+        mComponents[added]->onAddToScene(scene);
+      }
     }
+  } catch (...) {
+    // Undo the components that were already added, newest first, so a component that
+    // rejects the scene leaves no partially added entity behind.
+    for (size_t i = added; i-- > 0;) {
+      if (!mComponents[i]->getEnabled()) {
+        continue;
+      }
+      try {
+        mComponents[i]->onRemoveFromScene(scene);
+      } catch (std::exception const &e) {
+        logger::error("failed to roll back component after a rejected scene add: {}", e.what());
+      }
+    }
+    throw;
   }
 }
 void Entity::onRemoveFromScene(Scene &scene) {

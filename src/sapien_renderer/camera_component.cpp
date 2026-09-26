@@ -252,14 +252,20 @@ svulkan2::core::Image &SapienRenderCameraComponent::getInternalImage(std::string
   if (!mGpuInitialized) {
     throw std::runtime_error("The camera needs to be initialized");
   }
-  return mCamera->getRenderer().getRenderImage(name);
+  return getInternalRenderer().getRenderImage(name);
 }
 
 svulkan2::renderer::RendererBase &SapienRenderCameraComponent::getInternalRenderer() {
+  if (!mCamera) {
+    throw std::runtime_error("failed to get camera renderer: camera is not added to scene");
+  }
   return mCamera->getRenderer();
 }
 
 svulkan2::scene::Camera &SapienRenderCameraComponent::getInternalCamera() {
+  if (!mCamera) {
+    throw std::runtime_error("failed to get render camera: camera is not added to scene");
+  }
   return mCamera->getCamera();
 }
 
@@ -272,6 +278,13 @@ SapienRenderCameraComponent::getInternalRenderScene() {
 }
 
 void SapienRenderCameraComponent::onAddToScene(Scene &scene) {
+  // A sealed RenderCameraGroup recorded this camera's previous renderer; a fresh renderer
+  // would be unprepared and outside the group's transform ownership.
+  if (mGpuOwnershipSealed) {
+    throw std::runtime_error(
+        "failed to add camera to scene: it belongs to an initialized RenderCameraGroup; close "
+        "the group before adding the camera again");
+  }
   auto system = scene.getSapienRendererSystem();
   mCamera = std::make_unique<SapienRenderCameraInternal>(getWidth(), getHeight(), mShaderDir,
                                                          system->getScene());
@@ -295,6 +308,12 @@ void SapienRenderCameraComponent::onRemoveFromScene(Scene &scene) {
   mResolvedRenderScene.reset();
   mResolvedRenderSystems.clear();
   mResolvedRenderSceneVersions.clear();
+  // A RenderCameraGroup may still be executing captures that read this camera's renderer
+  // and render targets. Destroying them under that work leaves the group's timeline
+  // semaphore unsignaled, and the group's close() then waits forever; drain the device first.
+  if (mGpuOwnershipOwner && mCamera) {
+    mCamera->mEngine->getContext()->getDevice().waitIdle();
+  }
   mCamera = nullptr;
   system->unregisterComponent(
       std::static_pointer_cast<SapienRenderCameraComponent>(shared_from_this()));

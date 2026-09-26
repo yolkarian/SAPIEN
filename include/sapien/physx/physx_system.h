@@ -554,6 +554,13 @@ private:
   CudaArray mCudaLinkVelScratch;
   CudaArray mCudaRigidDynamicIndexScratch;
   CudaArray mCudaArticulationIndexScratch;
+  // position of the first out-of-range entry found by checkCudaIndexBuffer
+  CudaArray mCudaIndexCheckScratch;
+
+  /** Reject a selected-index buffer that exceeds `limit` entries or (when
+   *  `PhysxSceneConfig.gpuIndexValidation` is on) holds a value outside [0, limit); the value
+   *  check runs on and synchronizes the configured CUDA stream. SAPIEN-owned buffers skip it. */
+  void checkCudaIndexBuffer(CudaArrayHandle const &indices, int limit);
 
   void allocateCudaBuffers();
   void

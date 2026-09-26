@@ -1,3 +1,6 @@
+import subprocess
+import sys
+import textwrap
 import unittest
 
 import numpy as np
@@ -15,6 +18,28 @@ class TestScene(unittest.TestCase):
             scene.physx_system
         with self.assertRaises(RuntimeError):
             scene.render_system
+
+    def test_failed_construction_raises_instead_of_crashing(self):
+        """A Scene whose constructor raises must surface the exception. Collecting the
+        half-constructed wrapper once called clear() on a null C++ scene and segfaulted, so
+        the scenario runs in a child interpreter."""
+        code = textwrap.dedent(
+            """
+            import gc
+            import sapien
+            try:
+                sapien.Scene([object()])
+            except TypeError:
+                pass
+            else:
+                raise SystemExit("Scene([object()]) did not raise TypeError")
+            gc.collect()
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code], capture_output=True, text=True, timeout=300
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_add_system(self):
         scene = sapien.Scene([])

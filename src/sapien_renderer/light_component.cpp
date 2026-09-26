@@ -72,6 +72,11 @@ void SapienRenderSpotLightComponent::onRemoveFromScene(Scene &scene) {
 }
 
 void SapienRenderTexturedLightComponent::onAddToScene(Scene &scene) {
+  // Validate before creating the svulkan2 node so a rejected add leaves no scene state.
+  if (!mTexture) {
+    throw std::runtime_error(
+        "failed to add textured light to scene: set its texture before adding it to a scene");
+  }
   auto system = scene.getSapienRendererSystem();
   auto s = system->getScene();
   mSpotLight = &s->addTexturedLight();
