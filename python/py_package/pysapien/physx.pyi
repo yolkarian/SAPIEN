@@ -25,6 +25,22 @@ class PhysxArticulation:
         ...
     def clone_links(self) -> list[PhysxArticulationLinkComponent]:
         ...
+    def compute_dense_jacobian(self) -> numpy.ndarray[typing.Any, numpy.dtype[numpy.float32]]:
+        """
+        Compute the dense articulation Jacobian in world space.
+
+        The returned matrix maps generalized velocities to stacked link spatial
+        velocities with row order `[vx, vy, vz, wx, wy, wz]` for each link.
+
+        For fixed-base articulations, the returned shape is ``((link_count - 1) * 6, dof)``.
+        For floating-base articulations, the returned shape is
+        ``(6 + (link_count - 1) * 6, 6 + dof)`` and the first six columns are the root
+        linear and angular velocity.
+
+        Not supported for Direct GPU API articulations; use
+        :meth:`PhysxGpuSystem.gpu_compute_articulation_jacobian` and
+        ``cuda_articulation_jacobian`` instead.
+        """
     def compute_passive_force(self, gravity: bool = True, coriolis_and_centrifugal: bool = True) -> numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]]:
         ...
     def create_fixed_tendon(self, link_chain: list[PhysxArticulationLinkComponent], coefficients: list[float], recip_coefficients: list[float], rest_length: float = 0, offset: float = 0, stiffness: float = 0, damping: float = 0, low: float = -3.4028234663852886e+38, high: float = 3.4028234663852886e+38, limit_stiffness: float = 0) -> None:
@@ -39,6 +55,18 @@ class PhysxArticulation:
         ...
     def get_gpu_index(self) -> int:
         ...
+    def get_jacobian_shape(self) -> typing.Annotated[list[int], pybind11_stubgen.typing_ext.FixedSize(2)]:
+        """
+        Valid dense Jacobian shape for this articulation.
+
+        Returns ``(rows, cols)`` where:
+
+        - fixed base: ``rows = (link_count - 1) * 6`` and ``cols = dof``
+        - floating base: ``rows = 6 + (link_count - 1) * 6`` and ``cols = 6 + dof``
+
+        This matches the valid submatrix inside ``scene.physx_system.cuda_articulation_jacobian``
+        for GPU simulation.
+        """
     def get_joints(self) -> list[PhysxArticulationJoint]:
         ...
     def get_link_incoming_joint_forces(self) -> numpy.ndarray[tuple[M, typing.Literal[6]], numpy.dtype[numpy.float32]]:
@@ -110,6 +138,19 @@ class PhysxArticulation:
     @property
     def gpu_index(self) -> int:
         ...
+    @property
+    def jacobian_shape(self) -> typing.Annotated[list[int], pybind11_stubgen.typing_ext.FixedSize(2)]:
+        """
+        Valid dense Jacobian shape for this articulation.
+
+        Returns ``(rows, cols)`` where:
+
+        - fixed base: ``rows = (link_count - 1) * 6`` and ``cols = dof``
+        - floating base: ``rows = 6 + (link_count - 1) * 6`` and ``cols = 6 + dof``
+
+        This matches the valid submatrix inside ``scene.physx_system.cuda_articulation_jacobian``
+        for GPU simulation.
+        """
     @property
     def joints(self) -> list[PhysxArticulationJoint]:
         ...

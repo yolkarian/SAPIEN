@@ -19,7 +19,14 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `sapien.physx.get_shape_config` | `get_shape_config() -> PhysxShapeConfig` | Get shape config. |  |
 | `sapien.physx.is_gpu_enabled` | `is_gpu_enabled() -> bool` | Bool: gpu enabled. |  |
 | `sapien.physx.set_body_config` | `set_body_config(solver_position_iterations: int=10, solver_velocity_iterations: int=1, sleep_threshold: float=0.004999999888241291) -> None<br>set_body_config(config: PhysxBodyConfig) -> None` | Set body config. |  |
+| `sapien.physx.set_body_cmass_local_poses` | `set_body_cmass_local_poses(bodies: list[PhysxRigidBodyComponent], poses: np.ndarray[M, np.float32] \| list \| tuple) -> None` | Batch-set body center-of-mass local poses `[N, 7]` as `[x, y, z, qw, qx, qy, qz]`. | Reset-time randomization helper: accepts rigid dynamic bodies and articulation links, normalizes quaternions, and validates the whole batch before applying anything. On `PhysxGpuSystem` call after `gpu_init()` while no step is in flight. |
+| `sapien.physx.set_body_inertias` | `set_body_inertias(bodies: list[PhysxRigidBodyComponent], inertias: np.ndarray[M, np.float32] \| list \| tuple) -> None` | Batch-set diagonal inertias `[N, 3]` in the center-of-mass frame. | Same validate-then-apply and GPU timing contract as the other batch setters. |
+| `sapien.physx.set_body_masses` | `set_body_masses(bodies: list[PhysxRigidBodyComponent], masses: np.ndarray[M, np.float32] \| list \| tuple, scale_inertia: bool=True) -> None` | Batch-set body masses `[N, 1]`. | By default scales each diagonal inertia by `new_mass / old_mass` and keeps the center-of-mass pose; pass `scale_inertia=False` to set mass only. |
 | `sapien.physx.set_default_material` | `set_default_material(static_friction: float, dynamic_friction: float, restitution: float) -> None` | Set default material. |  |
+| `sapien.physx.set_joint_armatures` | `set_joint_armatures(joints: list[PhysxArticulationJoint], armatures: np.ndarray[M, np.float32] \| list \| tuple) -> None` | Batch-set one armature value per joint, applied to all of its DOFs. | Joints must have at least 1 DOF, so build the list from `articulation.active_joints`. |
+| `sapien.physx.set_joint_drive_properties` | `set_joint_drive_properties(joints: list[PhysxArticulationJoint], stiffness: np.ndarray[M, np.float32] \| list \| tuple \| None=None, damping: np.ndarray[M, np.float32] \| list \| tuple \| None=None, force_limit: np.ndarray[M, np.float32] \| list \| tuple \| None=None) -> None` | Batch-set articulation joint drive properties. | Only the fields you pass are updated; omitted fields and the drive type keep their current values. |
+| `sapien.physx.set_joint_frictions` | `set_joint_frictions(joints: list[PhysxArticulationJoint], frictions: np.ndarray[M, np.float32] \| list \| tuple) -> None` | Batch-set articulation joint friction. |  |
+| `sapien.physx.set_material_properties` | `set_material_properties(materials: list[PhysxMaterial], static_friction: np.ndarray[M, np.float32] \| list \| tuple \| None=None, dynamic_friction: np.ndarray[M, np.float32] \| list \| tuple \| None=None, restitution: np.ndarray[M, np.float32] \| list \| tuple \| None=None) -> None` | Batch-set `PhysxMaterial` friction and restitution. | Materials are shared objects, so per-environment randomization needs per-environment materials: bind a unique material per shape at build time and only change its values at reset. |
 | `sapien.physx.set_gpu_memory_config` | `set_gpu_memory_config(temp_buffer_capacity: int=16777216, max_rigid_contact_count: int=524288, max_rigid_patch_count: int=81920, heap_capacity: int=67108864, found_lost_pairs_capacity: int=262144, found_lost_aggregate_pairs_capacity: int=1024, total_aggregate_pairs_capacity: int=1024) -> None` | Set gpu memory config. |  |
 | `sapien.physx.set_scene_config` | `set_scene_config(gravity: np.ndarray[Literal[3], np.dtype[np.float32]]=..., bounce_threshold: float=2.0, enable_pcm: bool=True, enable_tgs: bool=True, enable_ccd: bool=False, enable_enhanced_determinism: bool=False, enable_friction_every_iteration: bool=True, friction_offset_threshold: float=0.04, friction_correlation_distance: float=0.025, cpu_workers: int=0) -> None<br>set_scene_config(config: PhysxSceneConfig) -> None` | Set scene config. |  |
 | `sapien.physx.set_sdf_config` | `set_sdf_config(spacing: float=0.009999999776482582, subgrid_size: int=6, num_threads_for_construction: int=4, resolution: int=0, bits_per_subgrid_pixel: int=16, narrow_band_thickness: float=0.009999999776482582, margin: float=0.0, enable_remeshing: bool=False, triangle_count_reduction_factor: float=1.0) -> None<br>set_sdf_config(config: PhysxSDFConfig) -> None` | Set sdf config. |  |
@@ -103,7 +110,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_dof` | method | `get_dof(self) -> int` |  |  |
 | `get_gpu_index` | method | `get_gpu_index(self) -> int` | Return the PhysX GPU articulation/body state index; cache after gpu_init. |  |
 | `get_joints` | method | `get_joints(self) -> list[PhysxArticulationJoint]` |  |  |
-| `get_jacobian_shape` | method | `get_jacobian_shape(self) -> tuple[int, int]` | Return valid dense Jacobian `(rows, cols)` for this articulation. | Fixed base: `((link_count - 1) * 6, dof)`; floating base: `(6 + (link_count - 1) * 6, 6 + dof)`. Use to slice `cuda_articulation_jacobian`. |
+| `get_jacobian_shape` | method | `get_jacobian_shape(self) -> Annotated[list[int], FixedSize(2)]` | Return valid dense Jacobian `(rows, cols)` for this articulation. | Fixed base: `((link_count - 1) * 6, dof)`; floating base: `(6 + (link_count - 1) * 6, 6 + dof)`. Use to slice `cuda_articulation_jacobian`. |
 | `get_link_incoming_joint_forces` | method | `get_link_incoming_joint_forces(self) -> np.ndarray[tuple[M, Literal[6]], np.dtype[np.float32]]` |  |  |
 | `get_links` | method | `get_links(self) -> list[PhysxArticulationLinkComponent]` |  |  |
 | `get_name` | method | `get_name(self) -> str` |  |  |
@@ -123,7 +130,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_solver_velocity_iterations` | method | `get_solver_velocity_iterations(self) -> int` |  |  |
 | `gpu_index` | property | `gpu_index(self) -> int` |  |  |
 | `joints` | property | `joints(self) -> list[PhysxArticulationJoint]` |  |  |
-| `jacobian_shape` | property | `jacobian_shape(self) -> tuple[int, int]` | Valid dense Jacobian shape. | Same as `get_jacobian_shape()`. |
+| `jacobian_shape` | property | `jacobian_shape(self) -> Annotated[list[int], FixedSize(2)]` | Valid dense Jacobian shape. | Same as `get_jacobian_shape()`. |
 | `link_incoming_joint_forces` | property | `link_incoming_joint_forces(self) -> np.ndarray[tuple[M, Literal[6]], np.dtype[np.float32]]` |  |  |
 | `links` | property | `links(self) -> list[PhysxArticulationLinkComponent]` |  |  |
 | `qlimit` | property | `qlimit(self) -> np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]]` |  |  |
@@ -889,4 +896,5 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `rigid_static_components` | property | `rigid_static_components(self) -> list[PhysxRigidStaticComponent]` |  |  |
 | `set_scene_collision_id` | method | `set_scene_collision_id(self, id: int) -> None` |  |  |
 | `set_timestep` | method | `set_timestep(self, timestep: float) -> None` | Set the simulation timestep. |  |
+| `wait_idle` | method | `wait_idle(self) -> None` | Wait until all simulation and fetch work of this system completed. | Defined on the base class, so CPU and GPU systems both expose it; `PhysxGpuSystem.close()` calls it to drain in-flight simulation and SAPIEN CUDA work before releasing. |
 | `__init__` | method | `__init__(self) -> None` |  |  |

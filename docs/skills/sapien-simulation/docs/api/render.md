@@ -288,6 +288,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_color` | method | `get_color(self) -> np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |
 | `get_global_pose` | method | `get_global_pose(self) -> sapien.Pose` |  |  |
 | `get_local_pose` | method | `get_local_pose(self) -> sapien.Pose` |  |  |
+| `get_pose_mode` | method | `get_pose_mode(self) -> Literal['static', 'cpu']` | Read the configured light pose mode. | Same value as the `pose_mode` property; configured by `set_pose_mode()`. |
 | `get_shadow_far` | method | `get_shadow_far(self) -> float` |  |  |
 | `get_shadow_map_size` | method | `get_shadow_map_size(self) -> int` |  |  |
 | `get_shadow_near` | method | `get_shadow_near(self) -> float` |  |  |
@@ -357,7 +358,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `set_transmission_roughness` | method | `set_transmission_roughness(self, roughness: float) -> None` |  |  |
 | `set_transmission_texture` | method | `set_transmission_texture(self, texture: RenderTexture2D) -> None` |  |  |
 | `__eq__` | method | `__eq__(self, arg0: RenderMaterial) -> bool` |  |  |
-| `__init__` | method | `__init__(self, emission: Annotated[list[float], FixedSize(4)]=[0.0, 0.0, 0.0, 0.0], base_color: Annotated[list[float], FixedSize(4)]=[1.0, 1.0, 1.0, 1.0], specular: float=0.0, roughness: float=1.0, metallic: float=0.0, transmission: float=0.0, ior: float=1.4500000476837158, transmission_roughness: float=0.0) -> None` |  |  |
+| `__init__` | method | `__init__(self, emission: Annotated[list[float], FixedSize(4)]=[0.0, 0.0, 0.0, 0.0], base_color: Annotated[list[float], FixedSize(4)]=[1.0, 1.0, 1.0, 1.0], specular: float=0.5, roughness: float=0.44999998807907104, metallic: float=0.0, transmission: float=0.0, ior: float=1.4500000476837158, transmission_roughness: float=0.0) -> None` |  |  |
 
 ## `sapien.render.RenderParallelogramLightComponent`
 
@@ -619,6 +620,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | Member | Type | Use | Notes |
 |---|---|---|---|
 | `ambient_light` | `np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |
+| `batched_render_shared` | `bool` | Whether this render system's objects and lights are shared by every environment in a `RenderSystemGroup`. | Writable. A scene whose PhysX environment ID is shared (`-1`/`0xFFFFFFFF`) starts out marked shared; shared content is included once in each resolved camera/Viewer output without a scene transform. |
 | `cubemap` | `RenderCubemap` |  |  |
 
 ### Methods/properties
@@ -631,6 +633,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `cuda_object_transforms` | property | `cuda_object_transforms(self) -> sapien.CudaArray` | Owner-tracked CUDA transform buffer. | Raw CUDA-array-interface export raises; use a tracked converter and release the handle/consumer before close. |
 | `device` | property | `device(self) -> sapien.Device` |  |  |
 | `get_ambient_light` | method | `get_ambient_light(self) -> np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |
+| `get_batched_render_shared` | method | `get_batched_render_shared(self) -> bool` | Read the shared-render-scene flag. |  |
 | `get_cameras` | method | `get_cameras(self) -> list[RenderCameraComponent]` |  |  |
 | `get_cubemap` | method | `get_cubemap(self) -> RenderCubemap` |  |  |
 | `get_lights` | method | `get_lights(self) -> list[RenderLightComponent]` |  |  |
@@ -642,6 +645,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `render_bodies` | property | `render_bodies(self) -> list[RenderBodyComponent]` |  |  |
 | `scene_light_state_version` | property | `scene_light_state_version(self) -> int` | Read-only scene-level light dirty version. |  |
 | `set_ambient_light` | method | `set_ambient_light(self, color: np.ndarray[Literal[3], np.dtype[np.float32]] \| list[float] \| tuple) -> None` |  |  |
+| `set_batched_render_shared` | method | `set_batched_render_shared(self, shared: bool) -> None` | Mark this render system's objects and lights as shared across a `RenderSystemGroup`. |  |
 | `set_cubemap` | method | `set_cubemap(self, cubemap: RenderCubemap) -> None` |  |  |
 | `__init__` | method | `__init__(self, device: sapien.Device \| None=None) -> None<br>__init__(self, device: str) -> None` |  |  |
 | `_internal_scene` | property | `_internal_scene(self) -> sapien.internal_renderer.Scene` |  |  |

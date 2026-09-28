@@ -64,7 +64,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
 | `close` | method | `close(self) -> None` | Terminally release this system after every owning Scene is closed and exported CUDA view is dropped. | Idempotent; closed systems reject steady-state APIs. |
-| `wait_idle` | method | `wait_idle(self) -> None` | Finish in-flight simulate/fetch and synchronize SAPIEN CUDA work. | Called by close(). |
+| `wait_idle` | method | `wait_idle(self) -> None` | Finish in-flight simulate/fetch and synchronize SAPIEN CUDA work. | Inherited from `PhysxSystem`, so `close()` can call it. |
 | `is_closed` | property | `is_closed(self) -> bool` | Terminal lifecycle state. | Inherited from PhysxSystem. |
 | `outstanding_cuda_view_count` | property | `outstanding_cuda_view_count(self) -> int` | Number of owner-backed view chains into this system's CUDA buffers. | close() raises while non-zero. |
 | `cuda_articulation_coriolis_and_centrifugal_compensation` | property | `cuda_articulation_coriolis_and_centrifugal_compensation(self) -> sapien.CudaArray` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
