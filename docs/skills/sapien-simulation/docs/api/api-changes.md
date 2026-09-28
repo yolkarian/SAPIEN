@@ -4,6 +4,19 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+New material/body parameters (properties and explicit `get_*`/`set_*` methods):
+
+| API | Contract |
+|---|---|
+| `PhysxMaterial.friction_combine_mode`, `restitution_combine_mode` | `Literal['average', 'min', 'multiply', 'max']`, default `average`. Invalid strings/non-strings raise `TypeError`. A contact selects the higher-priority mode (`average < min < multiply < max`); friction applies to static/dynamic coefficients independently. Shared shapes/clones observe the same material. The weak default-material cache is unchanged: retain a strong reference; these are not persistent global defaults. |
+| `PhysxRigidBodyComponent.max_linear_velocity`, `max_angular_velocity` | COM speed magnitude (length units/s) and angular speed magnitude (rad/s), for rigid dynamics and articulation links. Finite float32 `[0, 1e16f]`, inclusive; otherwise `RuntimeError` without mutation. Defaults remain dynamic `1e16/100`, link `100 * tolerance length/50` (SAPIEN's default tolerance length 0.1 gives linear 10). Articulation clone/reparent preserves limits. PhysX limits before solving, not a hard post-step cap, and link limiting can change momentum. Not joint velocity limits or kinematic target caps. |
+
+For these four new properties, CPU writes are supported between steps (all scenes
+sharing a material must be idle). GPU writes are only guaranteed before the first
+`gpu_init()`; post-init propagation is not guaranteed, not runtime-frozen, and
+CPU readback is not evidence of GPU behavior. Never write during an in-flight step.
+Constructors, batch setters, global defaults and material ownership are unchanged.
+
 `gpu_fetch_rigid_dynamic_data()` and `gpu_fetch_articulation_link_pose()` now order PhysX scratch writes after previous consumers on the configured SAPIEN CUDA stream. This fixes earlier snapshots being overwritten by a later fetch across simulation steps. Signatures are unchanged and calls remain asynchronous with respect to the CPU; host/cross-stream consumers still need an explicit wait. See `unittest/test_physx/test_gpu_stream_order.py` for delayed-consumer and contact-order regression coverage.
 
 New configuration:

@@ -588,13 +588,18 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 ## `sapien.physx.PhysxMaterial`
 
-- Use: Physical material; static/dynamic friction and restitution.
+- Use: Shared physical material; static/dynamic friction, restitution, and their combine modes.
 - Bases: `-`
+- Modes default to `average`; priority is `average < min < multiply < max` (contact selects the higher mode). Formulas: mean, minimum, product, maximum. Friction applies independently to static/dynamic coefficients; restitution is separate. Ordinary restitution formulas assume nonnegative coefficients.
+- Mutations affect every shape/clone sharing the instance. The default-material cache is weak, not persistent global configuration; retain a reference or pass explicit materials.
+- For combine modes: CPU writes between steps only (all sharing scenes idle); GPU configure before `gpu_init()`. Post-init propagation is not guaranteed and no freeze guard is enforced.
 
 ### Attributes/properties declared as fields
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
+| `friction_combine_mode` | `Literal['average', 'min', 'multiply', 'max']` | Static/dynamic friction combination. | Default average; invalid inputs raise TypeError. |
+| `restitution_combine_mode` | `Literal['average', 'min', 'multiply', 'max']` | Restitution combination. | Independent of friction mode. |
 | `dynamic_friction` | `float` |  |  |
 | `restitution` | `float` |  |  |
 | `static_friction` | `float` |  |  |
@@ -603,6 +608,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
+| `get_friction_combine_mode` | method | `get_friction_combine_mode(self) -> Literal['average', 'min', 'multiply', 'max']` | Read friction mode. | |
+| `set_friction_combine_mode` | method | `set_friction_combine_mode(self, mode: Literal['average', 'min', 'multiply', 'max']) -> None` | Set friction mode. | Shared-instance and timing contract above. |
+| `get_restitution_combine_mode` | method | `get_restitution_combine_mode(self) -> Literal['average', 'min', 'multiply', 'max']` | Read restitution mode. | |
+| `set_restitution_combine_mode` | method | `set_restitution_combine_mode(self, mode: Literal['average', 'min', 'multiply', 'max']) -> None` | Set restitution mode. | Shared-instance and timing contract above. |
 | `get_dynamic_friction` | method | `get_dynamic_friction(self) -> float` |  |  |
 | `get_restitution` | method | `get_restitution(self) -> float` |  |  |
 | `get_static_friction` | method | `get_static_friction(self) -> float` |  |  |
@@ -647,6 +656,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 - Use: Rigid-body general mass, damping, velocity, force interface.
 - Bases: `PhysxRigidBaseComponent`
+- Speed limits accept finite float32 `[0, 1e16f]` inclusive, otherwise RuntimeError without mutation. Defaults: dynamic linear ~1e16/angular 100, link linear `100 * tolerance length`/angular 50 (SAPIEN's default tolerance length 0.1 gives linear 10). Clone/reparent preserves all link limits.
+- These limit magnitudes before solving, not per-axis components or final post-step velocities; link limiting can change momentum. Not joint DOF limits or kinematic target caps.
+- CPU speed-limit writes between steps only; GPU configure before `gpu_init()`. Post-init propagation is not guaranteed and no freeze guard is enforced.
 
 ### Attributes/properties declared as fields
 
@@ -658,6 +670,8 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `inertia` | `np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |
 | `linear_damping` | `float` |  |  |
 | `mass` | `float` |  |  |
+| `max_linear_velocity` | `float` | Maximum COM speed in length units/s. | Dynamic bodies and articulation links; contract above. |
+| `max_angular_velocity` | `float` | Maximum angular speed in rad/s. | Dynamic bodies and articulation links; contract above. |
 | `max_contact_impulse` | `float` |  |  |
 | `max_depenetration_velocity` | `float` |  |  |
 
@@ -678,6 +692,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_linear_damping` | method | `get_linear_damping(self) -> float` |  |  |
 | `get_linear_velocity` | method | `get_linear_velocity(self) -> np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |
 | `get_mass` | method | `get_mass(self) -> float` |  |  |
+| `get_max_linear_velocity` | method | `get_max_linear_velocity(self) -> float` | Read COM speed limit. | |
+| `set_max_linear_velocity` | method | `set_max_linear_velocity(self, velocity: float) -> None` | Set COM speed limit. | Inclusive float32 bound and timing contract above. |
+| `get_max_angular_velocity` | method | `get_max_angular_velocity(self) -> float` | Read angular speed limit. | |
+| `set_max_angular_velocity` | method | `set_max_angular_velocity(self, velocity: float) -> None` | Set angular speed limit. | Inclusive float32 bound and timing contract above. |
 | `get_max_contact_impulse` | method | `get_max_contact_impulse(self) -> float` |  |  |
 | `get_max_depenetration_velocity` | method | `get_max_depenetration_velocity(self) -> float` |  |  |
 | `linear_velocity` | property | `linear_velocity(self) -> np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |

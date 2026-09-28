@@ -10,7 +10,7 @@ class PhysxEngine;
 class PhysxMaterial : public std::enable_shared_from_this<PhysxMaterial> {
 public:
   PhysxMaterial() : PhysxMaterial(0.f, 0.f, 0.f) {}
-  PhysxMaterial(float dynamicFriction, float staticFriction, float restitution);
+  PhysxMaterial(float staticFriction, float dynamicFriction, float restitution);
 
   inline ::physx::PxMaterial *getPxMaterial() const { return mMaterial; };
 
@@ -21,6 +21,25 @@ public:
   inline void setStaticFriction(float coef) const { mMaterial->setStaticFriction(coef); }
   inline void setDynamicFriction(float coef) const { mMaterial->setDynamicFriction(coef); }
   inline void setRestitution(float coef) const { mMaterial->setRestitution(coef); }
+
+  /** Contact pairs select the higher-priority mode: average < min < multiply < max.
+   * Friction applies to both static and dynamic coefficients; restitution is independent.
+   * Mutations affect all shapes sharing this material. Modify only between simulation steps;
+   * on GPU, configure before gpu_init() (later propagation is not guaranteed).
+   * Only the four valid PxCombineMode values may be supplied.
+   */
+  inline ::physx::PxCombineMode::Enum getFrictionCombineMode() const {
+    return mMaterial->getFrictionCombineMode();
+  }
+  inline void setFrictionCombineMode(::physx::PxCombineMode::Enum mode) const {
+    mMaterial->setFrictionCombineMode(mode);
+  }
+  inline ::physx::PxCombineMode::Enum getRestitutionCombineMode() const {
+    return mMaterial->getRestitutionCombineMode();
+  }
+  inline void setRestitutionCombineMode(::physx::PxCombineMode::Enum mode) const {
+    mMaterial->setRestitutionCombineMode(mode);
+  }
 
   PhysxMaterial(PhysxMaterial const &other) = delete;
   PhysxMaterial &operator=(PhysxMaterial const &other) = delete;

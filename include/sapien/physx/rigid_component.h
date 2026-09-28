@@ -84,6 +84,18 @@ public:
   float getAngularDamping() const;
   void setAngularDamping(float damping);
 
+  /** COM speed (length units/s) and angular speed (rad/s) limits, not per-axis limits.
+   * PhysX limits velocities before solving; final velocities may exceed these values.
+   * Articulation limits can change momentum and do not replace joint velocity limits.
+   * Set finite float32 values in [0, 1e16f]; invalid values throw without mutation.
+   * Modify only between steps. On GPU configure before gpu_init(); later propagation is
+   * not guaranteed (no initialization-time freeze guard). Kinematic targets are not limited.
+   */
+  float getMaxLinearVelocity() const;
+  void setMaxLinearVelocity(float velocity);
+  float getMaxAngularVelocity() const;
+  void setMaxAngularVelocity(float velocity);
+
   void addForceAtPoint(Vec3 const &force, Vec3 const &point, ::physx::PxForceMode::Enum mode);
   void addForceTorque(Vec3 const &force, Vec3 const &torque, ::physx::PxForceMode::Enum mode);
 

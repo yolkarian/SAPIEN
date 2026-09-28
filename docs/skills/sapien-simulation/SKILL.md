@@ -29,6 +29,24 @@ Use this skill when creating, refactoring, or reviewing SAPIEN simulation enviro
 15. For Docker/containerized SAPIEN GPU rendering, configure NVIDIA Vulkan/EGL ICD discovery explicitly: inject minimal NVIDIA ICD JSON files when needed, set `VK_ICD_FILENAMES=/etc/vulkan/icd.d/nvidia_icd.json`, and rely on NVIDIA Container Toolkit for the actual driver libraries instead of installing drivers in the image.
 16. Pre-bake the PhysX GPU runtime library into SAPIEN Docker images so `sapien.physx.enable_gpu()` does not download `physxgpu-linux-clang.zip` on every fresh container start. After SAPIEN is installed, derive `PHYSX_VERSION` from `sapien.physx.version()`, extract the matching release zip into `$HOME/.sapien/physx/<PHYSX_VERSION>/`, and verify the nested `libPhysXGpu_64.so`. Do not call `enable_gpu()` during `docker build` because it also loads `libcuda.so` and needs the runtime GPU driver. See `docs/gpu-workflows.md` for the exact Dockerfile snippet.
 
+## Material and body configuration
+
+- Before GPU `gpu_init()`, configure material `friction_combine_mode` /
+  `restitution_combine_mode` and body `max_linear_velocity` / `max_angular_velocity`
+  when needed. All have explicit `get_*`/`set_*` methods as well as properties.
+- Combine modes are strict strings: `'average' < 'min' < 'multiply' < 'max'` in
+  contact-pair priority. Friction combines static/dynamic coefficients independently;
+  restitution is separate. Changes affect every shape sharing the material. Keep
+  explicit material references; `get_default_material()` uses a weak cache, not
+  persistent global mode defaults.
+- Body limits accept finite float32 values in inclusive `[0, 1e16f]` and survive
+  articulation clone/reparent. They limit COM speed magnitude and angular speed
+  before solving, not each component or every post-step velocity. They are not
+  joint DOF limits and do not cap kinematic targets; link limiting can change momentum.
+- CPU writes are supported between completed steps; post-init GPU propagation is
+  not guaranteed and no freeze guard is enforced. Never mutate during an in-flight
+  step (for shared materials, this applies to all using scenes).
+
 ## Guardrails
 
 - Do not mix CPU state APIs with GPU runtime state updates.

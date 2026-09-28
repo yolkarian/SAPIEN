@@ -4,6 +4,7 @@
 #include "sapien/math/conversion.h"
 #include "sapien/physx/physx_system.h"
 #include "sapien/scene.h"
+#include <cmath>
 
 using namespace physx;
 
@@ -371,6 +372,26 @@ float PhysxRigidBodyComponent::getAngularDamping() const {
 }
 void PhysxRigidBodyComponent::setAngularDamping(float damping) {
   getPxActor()->setAngularDamping(damping);
+}
+
+float PhysxRigidBodyComponent::getMaxLinearVelocity() const {
+  return getPxActor()->getMaxLinearVelocity();
+}
+void PhysxRigidBodyComponent::setMaxLinearVelocity(float velocity) {
+  // PhysX accepts this float32 endpoint; it is also the rigid-dynamic default.
+  if (!std::isfinite(velocity) || velocity < 0.f || velocity > 1e16f) {
+    throw std::runtime_error("max linear velocity must be finite and in [0, 1e16f]");
+  }
+  getPxActor()->setMaxLinearVelocity(velocity);
+}
+float PhysxRigidBodyComponent::getMaxAngularVelocity() const {
+  return getPxActor()->getMaxAngularVelocity();
+}
+void PhysxRigidBodyComponent::setMaxAngularVelocity(float velocity) {
+  if (!std::isfinite(velocity) || velocity < 0.f || velocity > 1e16f) {
+    throw std::runtime_error("max angular velocity must be finite and in [0, 1e16f]");
+  }
+  getPxActor()->setMaxAngularVelocity(velocity);
 }
 
 void PhysxRigidBodyComponent::addForceAtPoint(Vec3 const &force, Vec3 const &point,

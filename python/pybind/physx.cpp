@@ -128,6 +128,45 @@ template <> struct type_caster<PhysxDriveComponent::DriveMode> {
   }
 };
 
+template <> struct type_caster<::physx::PxCombineMode::Enum> {
+  PYBIND11_TYPE_CASTER(::physx::PxCombineMode::Enum,
+                       _("typing.Literal['average', 'min', 'multiply', 'max']"));
+
+  bool load(py::handle src, bool) {
+    if (!py::isinstance<py::str>(src)) {
+      return false;
+    }
+    auto name = py::cast<std::string>(src);
+    if (name == "average") {
+      value = ::physx::PxCombineMode::eAVERAGE;
+    } else if (name == "min") {
+      value = ::physx::PxCombineMode::eMIN;
+    } else if (name == "multiply") {
+      value = ::physx::PxCombineMode::eMULTIPLY;
+    } else if (name == "max") {
+      value = ::physx::PxCombineMode::eMAX;
+    } else {
+      return false;
+    }
+    return true;
+  }
+
+  static py::handle cast(::physx::PxCombineMode::Enum src, py::return_value_policy, py::handle) {
+    switch (src) {
+    case ::physx::PxCombineMode::eAVERAGE:
+      return py::str("average").release();
+    case ::physx::PxCombineMode::eMIN:
+      return py::str("min").release();
+    case ::physx::PxCombineMode::eMULTIPLY:
+      return py::str("multiply").release();
+    case ::physx::PxCombineMode::eMAX:
+      return py::str("max").release();
+    default:
+      throw std::runtime_error("invalid combine mode");
+    }
+  }
+};
+
 template <> struct type_caster<::physx::PxForceMode::Enum> {
   PYBIND11_TYPE_CASTER(::physx::PxForceMode::Enum,
                        _("typing.Literal['force', 'acceleration', 'velocity_change', 'impulse']"));
@@ -1102,7 +1141,25 @@ SAPIEN articulation `gpu_index` values.
            }),
            py::arg("device") = "cuda");
 #endif
+  constexpr char combineModeDoc[] =
+      "Contact pairs choose the higher-priority mode: average < min < multiply < max. "
+      "Friction combines static/dynamic coefficients independently; restitution is separate. "
+      "Default: average. Only these four strings are accepted (otherwise TypeError). "
+      "Changes affect every shape sharing this material, not persistent global defaults. "
+      "Modify only while all users are between steps. On GPU configure before gpu_init(); "
+      "later propagation is not guaranteed and no initialization-time freeze is enforced.";
   PyPhysxMaterial
+      .def_property("friction_combine_mode", &PhysxMaterial::getFrictionCombineMode,
+                    &PhysxMaterial::setFrictionCombineMode, combineModeDoc)
+      .def("get_friction_combine_mode", &PhysxMaterial::getFrictionCombineMode, combineModeDoc)
+      .def("set_friction_combine_mode", &PhysxMaterial::setFrictionCombineMode, py::arg("mode"),
+           combineModeDoc)
+      .def_property("restitution_combine_mode", &PhysxMaterial::getRestitutionCombineMode,
+                    &PhysxMaterial::setRestitutionCombineMode, combineModeDoc)
+      .def("get_restitution_combine_mode", &PhysxMaterial::getRestitutionCombineMode,
+           combineModeDoc)
+      .def("set_restitution_combine_mode", &PhysxMaterial::setRestitutionCombineMode,
+           py::arg("mode"), combineModeDoc)
       .def(py::init<float, float, float>(), py::arg("static_friction"),
            py::arg("dynamic_friction"), py::arg("restitution"))
 
@@ -1264,7 +1321,27 @@ If after testing g2 and g3, the objects may collide, g0 and g1 come into play. g
 
   PyPhysxRigidStaticComponent.def(py::init<>());
 
+  constexpr char maxVelocityDoc[] =
+      "Maximum COM linear speed (length units/s) or angular speed (rad/s), not per-axis. "
+      "Finite float32 values in [0, 1e16f]; invalid values raise RuntimeError without mutation. "
+      "PhysX limits before solving, so final speed can exceed the limit. Articulation limits "
+      "can change momentum and are not joint velocity limits. Kinematic targets are not capped. "
+      "Defaults: dynamic linear 1e16f / angular 100; link linear 100 * tolerance length / "
+      "angular 50. Modify between steps only. On GPU configure before gpu_init(); later "
+      "propagation is not guaranteed and no initialization-time freeze is enforced.";
   PyPhysxRigidBodyComponent
+      .def_property("max_linear_velocity", &PhysxRigidBodyComponent::getMaxLinearVelocity,
+                    &PhysxRigidBodyComponent::setMaxLinearVelocity, maxVelocityDoc)
+      .def("get_max_linear_velocity", &PhysxRigidBodyComponent::getMaxLinearVelocity,
+           maxVelocityDoc)
+      .def("set_max_linear_velocity", &PhysxRigidBodyComponent::setMaxLinearVelocity,
+           py::arg("velocity"), maxVelocityDoc)
+      .def_property("max_angular_velocity", &PhysxRigidBodyComponent::getMaxAngularVelocity,
+                    &PhysxRigidBodyComponent::setMaxAngularVelocity, maxVelocityDoc)
+      .def("get_max_angular_velocity", &PhysxRigidBodyComponent::getMaxAngularVelocity,
+           maxVelocityDoc)
+      .def("set_max_angular_velocity", &PhysxRigidBodyComponent::setMaxAngularVelocity,
+           py::arg("velocity"), maxVelocityDoc)
       .def_property_readonly("auto_compute_mass", &PhysxRigidBodyComponent::getAutoComputeMass)
       .def("get_auto_compute_mass", &PhysxRigidBodyComponent::getAutoComputeMass)
 

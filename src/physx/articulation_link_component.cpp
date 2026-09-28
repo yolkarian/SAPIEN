@@ -433,6 +433,8 @@ void PhysxArticulationLinkComponent::setParent(
     PxTransform cmassLocalPose{};
     float linearDamping;
     float angularDamping;
+    float maxLinearVelocity;
+    float maxAngularVelocity;
 
     PxTransform linkPose{};
     PxVec3 velocity{};
@@ -467,6 +469,8 @@ void PhysxArticulationLinkComponent::setParent(
         .cmassLocalPose = pxlink->getCMassLocalPose(),
         .linearDamping = pxlink->getLinearDamping(),
         .angularDamping = pxlink->getAngularDamping(),
+        .maxLinearVelocity = pxlink->getMaxLinearVelocity(),
+        .maxAngularVelocity = pxlink->getMaxAngularVelocity(),
         .linkPose = pxlink->getGlobalPose(),
         .velocity = pxlink->getLinearVelocity(),
         .angularVelocity = pxlink->getAngularVelocity(),
@@ -538,6 +542,8 @@ void PhysxArticulationLinkComponent::setParent(
     pxlink->setCMassLocalPose(info.cmassLocalPose);
     pxlink->setLinearDamping(info.linearDamping);
     pxlink->setAngularDamping(info.angularDamping);
+    pxlink->setMaxLinearVelocity(info.maxLinearVelocity);
+    pxlink->setMaxAngularVelocity(info.maxAngularVelocity);
 
     auto joint = links[i]->getJoint();
     if (pxjoint) {
@@ -657,6 +663,8 @@ PhysxArticulationLinkComponent::cloneArticulation(
     newLink->setAngularDamping(link->getAngularDamping());
     newLink->setLinearDamping(link->getLinearDamping());
     newLink->setDisableGravity(link->getDisableGravity());
+    newLink->setMaxLinearVelocity(link->getMaxLinearVelocity());
+    newLink->setMaxAngularVelocity(link->getMaxAngularVelocity());
     newLink->setMaxContactImpulse(link->getMaxContactImpulse());
     newLink->setMaxDepenetrationVelocity(link->getMaxDepenetrationVelocity());
 

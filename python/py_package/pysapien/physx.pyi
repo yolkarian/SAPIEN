@@ -964,6 +964,16 @@ class PhysxJointComponent(PhysxBaseComponent):
     def relative_pose(self) -> sapien.pysapien.Pose:
         ...
 class PhysxMaterial:
+    friction_combine_mode: typing.Literal['average', 'min', 'multiply', 'max']
+    restitution_combine_mode: typing.Literal['average', 'min', 'multiply', 'max']
+    def get_friction_combine_mode(self) -> typing.Literal['average', 'min', 'multiply', 'max']:
+        ...
+    def set_friction_combine_mode(self, mode: typing.Literal['average', 'min', 'multiply', 'max']) -> None:
+        ...
+    def get_restitution_combine_mode(self) -> typing.Literal['average', 'min', 'multiply', 'max']:
+        ...
+    def set_restitution_combine_mode(self, mode: typing.Literal['average', 'min', 'multiply', 'max']) -> None:
+        ...
     dynamic_friction: float
     restitution: float
     static_friction: float
@@ -1015,6 +1025,16 @@ class PhysxRigidBaseComponent(PhysxBaseComponent):
     def collision_shapes(self) -> list[PhysxCollisionShape]:
         ...
 class PhysxRigidBodyComponent(PhysxRigidBaseComponent):
+    max_linear_velocity: float
+    max_angular_velocity: float
+    def get_max_linear_velocity(self) -> float:
+        ...
+    def set_max_linear_velocity(self, velocity: float) -> None:
+        ...
+    def get_max_angular_velocity(self) -> float:
+        ...
+    def set_max_angular_velocity(self, velocity: float) -> None:
+        ...
     angular_damping: float
     cmass_local_pose: sapien.pysapien.Pose
     disable_gravity: bool
