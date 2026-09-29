@@ -5,6 +5,8 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
+## 3.0.0+fork.16 - 2026-09-28
+
 ### Changed
 
 - **Breaking:** articulation joint `friction`, `set_friction()`, `set_joint_frictions()`, and builder `friction` now mean Coulomb friction effort (N for prismatic joints, N*m for rotational joints), not the deprecated load-dependent coefficient. Static and dynamic efforts are equal, default to 0.05 (0.05 N or 0.05 N*m; builder and URDF values left unset keep it), and must be finite and non-negative. URDF `<dynamics friction>` and builder values are now applied; clone/reparent preserves them. Material friction remains a dimensionless coefficient. Existing coefficient values are not physically equivalent effort values. A URDF `<dynamics>` element with `friction` but no `damping` previously failed to load; the missing damping now falls back to the default 0.
