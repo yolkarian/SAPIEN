@@ -27,7 +27,7 @@ class JointRecord:
     limits: Union[Sequence[float], Sequence[Sequence[float]]] = (-np.inf, np.inf)
     pose_in_parent: Pose = Pose()
     pose_in_child: Pose = Pose()
-    friction: float = 0
+    friction: Optional[float] = None  # None keeps the joint default (0.05)
     damping: float = 0
     effort_limit: Optional[float] = None
     velocity_limit: Optional[float] = None
@@ -52,7 +52,7 @@ class LinkBuilder(ActorBuilder):
         limits: Union[Sequence[float], Sequence[Sequence[float]]],
         pose_in_parent: Pose,
         pose_in_child: Pose,
-        friction: float = 0,
+        friction: Optional[float] = None,
         damping: float = 0,
         effort_limit: Optional[float] = None,
         velocity_limit: Optional[float] = None,
@@ -64,7 +64,9 @@ class LinkBuilder(ActorBuilder):
             limits: One flat position limit pair or per-DOF limit pairs.
             pose_in_parent: Joint frame expressed in the parent link.
             pose_in_child: Joint frame expressed in this link.
-            friction: Joint friction coefficient.
+            friction: Non-negative Coulomb friction effort (N for prismatic,
+                N*m for rotational joints). Static and dynamic efforts are equal.
+                None keeps the joint default of 0.05.
             damping: Drive damping.
             effort_limit: Optional drive force or torque limit.
             velocity_limit: Optional PhysX maximum joint velocity.
@@ -147,6 +149,8 @@ class ArticulationBuilder:
                 "revolute_unwrapped",
             ]:
                 link_component.joint.limit = np.array(b.joint_record.limits).flatten()
+                if b.joint_record.friction is not None:
+                    link_component.joint.set_friction(b.joint_record.friction)
                 if b.joint_record.effort_limit is not None:
                     link_component.joint.set_drive_property(
                         0,

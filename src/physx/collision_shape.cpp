@@ -49,12 +49,12 @@ float PhysxCollisionShape::getMinTorsionalPatchRadius() const {
 }
 
 void PhysxCollisionShape::setLocalPose(Pose const &pose) {
-  getPxShape()->setLocalPose(PoseToPxTransform(pose));
   if (mPxShape->getActor()) {
     throw std::runtime_error(
-        "failed to set shape local pose: this function should only be used befor "
+        "failed to set shape local pose: this function should only be used before "
         "the shape is attached to a rigid-body-type component");
   }
+  getPxShape()->setLocalPose(PoseToPxTransform(pose));
 }
 Pose PhysxCollisionShape::getLocalPose() const {
   return PxTransformToPose(getPxShape()->getLocalPose());
@@ -545,6 +545,7 @@ std::shared_ptr<PhysxCollisionShape> PhysxCollisionShapeCylinder::clone() const 
 std::shared_ptr<PhysxCollisionShape> PhysxCollisionShapeConvexMesh::clone() const {
   auto shape = std::make_shared<PhysxCollisionShapeConvexMesh>(getMesh(), getScale(),
                                                                getPhysicalMaterial());
+  copyProperties(*shape);
   return shape;
 }
 

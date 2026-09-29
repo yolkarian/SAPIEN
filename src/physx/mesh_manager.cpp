@@ -83,7 +83,7 @@ size_t MeshManager::ExternallyHeldMeshCount() {
 static std::string getFullPath(std::string const &filename) {
   if (!fs::is_regular_file(fs::path(filename))) {
     logger::error("File not found: {}", filename);
-    return nullptr;
+    throw std::runtime_error("File not found: " + filename);
   }
   return fs::canonical(filename).string();
 }

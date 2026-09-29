@@ -538,11 +538,12 @@ class URDFLoader:
                     "fixed" if fix_base else "undefined", [], Pose(), Pose()
                 )
             else:
-                friction = 0
+                friction = None  # absent <dynamics friction> keeps the joint default
                 damping = 0
                 if joint.dynamics:
                     friction = joint.dynamics.friction
-                    damping = joint.dynamics.damping
+                    if joint.dynamics.damping is not None:
+                        damping = joint.dynamics.damping
 
                 axis = joint.axis
                 axis_norm = np.linalg.norm(axis)

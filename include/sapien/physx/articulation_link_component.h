@@ -25,6 +25,9 @@ public:
   void setAnchorPoseInParent(Pose const &pose);
   Pose getAnchorPoseInParent() const;
 
+  /** Coulomb friction effort: N for prismatic, N*m for rotational joints.
+   *  Static and dynamic efforts are equal; new joints use kDefaultFriction, zero disables it. */
+  static constexpr float kDefaultFriction = 0.05f;
   float getFriction() const;
   void setFriction(float friction);
 

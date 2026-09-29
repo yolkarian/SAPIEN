@@ -36,7 +36,7 @@ void batchSetBodyCMassLocalPoses(
     std::vector<std::shared_ptr<PhysxRigidBodyComponent>> const &bodies,
     Eigen::Matrix<float, Eigen::Dynamic, 7, Eigen::RowMajor> const &poses);
 
-/** Set the friction coefficient of each articulation joint. Every joint must have at least
+/** Set Coulomb effort (N for prismatic, N*m for rotational joints). Every joint must have at least
  *  1 DOF. */
 void batchSetJointFrictions(std::vector<std::shared_ptr<PhysxArticulationJoint>> const &joints,
                             Eigen::VectorXf const &frictions);

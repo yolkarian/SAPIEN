@@ -89,13 +89,20 @@ Pose PhysxArticulationJoint::getAnchorPoseInParent() const {
 
 float PhysxArticulationJoint::getFriction() const {
   if (auto j = getPxJoint()) {
-    return j->getFrictionCoefficient();
+    // The scalar API sets the same Coulomb effort on all axes, including locked axes.
+    return j->getFrictionParams(PxArticulationAxis::eX).staticFrictionEffort;
   }
   return 0.f;
 }
 void PhysxArticulationJoint::setFriction(float friction) {
+  if (!std::isfinite(friction) || friction < 0.f) {
+    throw std::runtime_error("joint friction effort must be finite and non-negative");
+  }
   if (auto j = getPxJoint()) {
-    j->setFrictionCoefficient(friction);
+    for (uint32_t i = 0; i < PxArticulationAxis::eCOUNT; ++i) {
+      j->setFrictionParams(static_cast<PxArticulationAxis::Enum>(i),
+                           PxJointFrictionParams(friction, friction, 0.f));
+    }
   }
 }
 
@@ -363,6 +370,7 @@ PhysxArticulationLinkComponent::Create(std::shared_ptr<PhysxArticulationLinkComp
   link->mParent = parent;
   if (parent) {
     link->getJoint()->setType(PxArticulationJointType::eFIX);
+    link->getJoint()->setFriction(PhysxArticulationJoint::kDefaultFriction);
   }
   return link;
 }
@@ -441,7 +449,7 @@ void PhysxArticulationLinkComponent::setParent(
     PxVec3 angularVelocity{};
 
     PxArticulationJointType::Enum jointType{};
-    float jointFriction{};
+    float jointFriction{PhysxArticulationJoint::kDefaultFriction};
     PxTransform jointParentPose{};
     PxTransform jointChildPose{};
 
@@ -478,7 +486,7 @@ void PhysxArticulationLinkComponent::setParent(
     };
 
     if (pxjoint) {
-      property.jointFriction = pxjoint->getFrictionCoefficient();
+      property.jointFriction = l->getJoint()->getFriction();
       property.jointParentPose = pxjoint->getParentPose();
       property.jointChildPose = pxjoint->getChildPose();
       std::vector<PxArticulationAxis::Enum> axes = {
@@ -550,7 +558,7 @@ void PhysxArticulationLinkComponent::setParent(
       joint->setType(info.jointType == PxArticulationJointType::eUNDEFINED
                          ? PxArticulationJointType::eFIX
                          : info.jointType);
-      pxjoint->setFrictionCoefficient(info.jointFriction);
+      joint->setFriction(info.jointFriction);
       pxjoint->setParentPose(info.jointParentPose);
       pxjoint->setChildPose(info.jointChildPose);
       std::vector<PxArticulationAxis::Enum> axes = {
