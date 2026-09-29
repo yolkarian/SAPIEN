@@ -56,6 +56,11 @@ void PhysxArticulation::addLink(PhysxArticulationLinkComponent &link,
   mLinks.push_back(&link);
   auto pxlink = mPxArticulation->createLink(parent ? parent->getPxActor() : nullptr,
                                             PxTransform{PxIdentity});
+  if (auto joint = pxlink->getInboundJoint()) {
+    // SAPIEN friction is a Coulomb effort. Zero PhysX's legacy coefficient, which applies
+    // whenever all efforts are zero, so zero effort really disables friction.
+    joint->setFrictionCoefficient(0.f);
+  }
   link.internalSetPxLink(pxlink);
 }
 

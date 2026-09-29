@@ -25,7 +25,16 @@ TEST(PhysxArticulationLinkComponent, Create) {
   l1->getJoint()->setType(::physx::PxArticulationJointType::eREVOLUTE);
   l1->getJoint()->setAnchorPoseInParent(Pose({1, 2, 3}, {0, 1, 0, 0}));
   l1->getJoint()->setAnchorPoseInChild(Pose({-1, -2, -3}, {0, 0, 1, 0}));
+  EXPECT_FLOAT_EQ(l1->getJoint()->getFriction(), PhysxArticulationJoint::kDefaultFriction);
   l1->getJoint()->setFriction(0.3);
+  auto pxjoint = l1->getPxActor()->getInboundJoint();
+  auto friction = pxjoint->getFrictionParams(::physx::PxArticulationAxis::eTWIST);
+  EXPECT_FLOAT_EQ(friction.staticFrictionEffort, 0.3f);
+  EXPECT_FLOAT_EQ(friction.dynamicFrictionEffort, 0.3f);
+  EXPECT_FLOAT_EQ(friction.viscousFrictionCoefficient, 0.f);
+  EXPECT_FLOAT_EQ(pxjoint->getFrictionCoefficient(), 0.f);
+  EXPECT_THROW(l1->getJoint()->setFriction(-1.f), std::runtime_error);
+  EXPECT_FLOAT_EQ(l1->getJoint()->getFriction(), 0.3f);
   {
     Eigen::MatrixX2f limit(1, 2);
     limit << -0.5, 1.5;

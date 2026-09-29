@@ -1525,9 +1525,12 @@ Example:
       .def("set_pose_in_child", &PhysxArticulationJoint::setAnchorPoseInChild, py::arg("pose"))
 
       .def_property("friction", &PhysxArticulationJoint::getFriction,
-                    &PhysxArticulationJoint::setFriction)
+                    &PhysxArticulationJoint::setFriction,
+                    "Coulomb friction effort: N for prismatic joints, N*m for rotational joints. "
+                    "Static and dynamic efforts are equal; zero disables friction.")
       .def("get_friction", &PhysxArticulationJoint::getFriction)
-      .def("set_friction", &PhysxArticulationJoint::setFriction, py::arg("friction"))
+      .def("set_friction", &PhysxArticulationJoint::setFriction, py::arg("friction"),
+           "Set a finite non-negative Coulomb friction effort (N or N*m), not a coefficient.")
 
       .def_property("limit", &PhysxArticulationJoint::getLimit, &PhysxArticulationJoint::setLimit)
       .def_property("limits", &PhysxArticulationJoint::getLimit, &PhysxArticulationJoint::setLimit)
@@ -1966,7 +1969,7 @@ Args:
       .def("set_joint_frictions", &batchSetJointFrictions, py::arg("joints"),
            py::arg("frictions"),
            R"doc(
-Batch-set the friction coefficient of articulation joints, primarily for reset-time
+Batch-set the Coulomb friction effort of articulation joints, primarily for reset-time
 domain randomization. Every joint must have at least 1 DOF.
 
 This is valid on both CPU and GPU PhysX systems. On PhysxGpuSystem it may be called
@@ -1976,7 +1979,8 @@ step without disturbing GPU-side poses, velocities, or joint states.
 
 Args:
     joints: list of PhysxArticulationJoint with at least 1 DOF
-    frictions: array of non-negative friction coefficients, same length as joints)doc")
+    frictions: finite non-negative efforts (N for prismatic, N*m for rotational joints),
+        same length as joints. Static and dynamic efforts are equal; zero disables friction.)doc")
 
       .def("set_joint_drive_properties", &batchSetJointDriveProperties, py::arg("joints"),
            py::arg("stiffness") = py::none(), py::arg("damping") = py::none(),
