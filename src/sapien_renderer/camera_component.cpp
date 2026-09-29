@@ -30,6 +30,7 @@ struct SapienRenderCameraInternal {
   // the scene currently assigned to mRenderer; may be a resolved render scene
   // group different from mScene
   std::shared_ptr<svulkan2::scene::Scene> mRendererScene;
+  uint64_t mRendererSceneVersion{};
   vk::UniqueSemaphore mSemaphore;
   uint64_t mFrameCounter{0};
   std::unique_ptr<svulkan2::renderer::RendererBase> mRenderer;
@@ -82,6 +83,7 @@ struct SapienRenderCameraInternal {
     mCamera = &scene->addCamera();
     mRenderer->setScene(scene);
     mRendererScene = scene;
+    mRendererSceneVersion = scene->getVersion();
 
     if (auto rtRenderer = dynamic_cast<svulkan2::renderer::RTRenderer *>(mRenderer.get())) {
       rtRenderer->setCustomProperty("spp", renderConfig.rayTracingSamplesPerPixel);
@@ -229,14 +231,15 @@ void SapienRenderCameraComponent::internalSetRenderScene(
   if (!scene) {
     throw std::runtime_error("failed to set camera render scene: scene is null");
   }
-  // Re-assigning the same scene must be a no-op: Renderer::setScene()
-  // unconditionally schedules a full pipeline rebuild, which recreates render
-  // targets and re-runs the record-time resource upload. BatchedRenderSystem
-  // re-resolves camera render scenes on every update, so without this guard
-  // every frame pays a pipeline rebuild.
-  if (mCamera->mRendererScene != scene) {
+  // svulkan2 only re-records commands on a version change, which leaves resized shadow maps and
+  // replaced light textures stale; rebuild instead. Sealed group cameras never rebuild: the
+  // group rejects topology edits and owns the exported buffers.
+  bool resourcesChanged =
+      !mGpuOwnershipSealed && mCamera->mRendererSceneVersion != scene->getVersion();
+  if (mCamera->mRendererScene != scene || resourcesChanged) {
     mCamera->mRenderer->setScene(scene);
     mCamera->mRendererScene = scene;
+    mCamera->mRendererSceneVersion = scene->getVersion();
   }
   if (!resolvedSystems.empty()) {
     mResolvedRenderSystems = resolvedSystems;
@@ -492,7 +495,7 @@ void SapienRenderCameraComponent::setPerspectiveParameters(float near, float far
 }
 
 void SapienRenderCameraComponent::setOrthographicParameters(float near, float far, float top) {
-  float aspect = mWidth / mHeight;
+  float aspect = static_cast<float>(mWidth) / static_cast<float>(mHeight);
   setOrthographicParameters(near, far, -top * aspect, top * aspect, -top, top);
 }
 

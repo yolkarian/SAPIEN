@@ -79,6 +79,41 @@ class TestGpuContactQueries(unittest.TestCase):
         if sapien.physx.can_shutdown():
             sapien.physx.shutdown()
 
+    def test_gpu_init_refreshes_contact_snapshot(self) -> None:
+        from .test_gpu_articulation_buffers import _write_float_values
+
+        sapien.physx.enable_gpu()
+        sapien.physx.set_scene_config(sapien.physx.PhysxSceneConfig())
+        system = sapien.physx.PhysxGpuSystem()
+        with sapien.Scene([system]) as scene:
+            scene.add_ground(0, render=False)
+            builder = scene.create_actor_builder()
+            builder.add_box_collision(half_size=[0.1] * 3)
+            builder.set_initial_pose(sapien.Pose([0, 0, 0.1]))
+            actor = builder.build()
+            body = actor.find_component_by_type(sapien.physx.PhysxRigidDynamicComponent)
+            system.gpu_init()
+            for _ in range(20):
+                system.step()
+            query = system.gpu_create_contact_body_impulse_query([body])
+            system.gpu_query_contact_body_impulses(query)
+            self.assertGreater(np.linalg.norm(_copy_cuda_array(query.cuda_impulses)), 0)
+            system.gpu_fetch_rigid_dynamic_data()
+            data = system.cuda_rigid_dynamic_data
+            _write_float_values(data, (body.gpu_index, 2), [5.0])
+            _write_float_values(data, (body.gpu_index, 7), [0.0] * 6)
+            del data
+            system.gpu_apply_rigid_dynamic_data()
+            system.gpu_query_contact_body_impulses(query, synchronize=False)
+            # Registering another body clears the initialized flag. The internal
+            # query wait must work even though the public wait now rejects calls.
+            builder.set_initial_pose(sapien.Pose([10, 0, 5]))
+            builder.build()
+            system.gpu_init()
+            system.gpu_query_contact_body_impulses(query)
+            np.testing.assert_allclose(_copy_cuda_array(query.cuda_impulses), 0, atol=1e-6)
+        system.close()
+
     def test_optional_synchronization_and_explicit_wait(self) -> None:
         sapien.physx.enable_gpu()
         config = sapien.physx.PhysxSceneConfig()

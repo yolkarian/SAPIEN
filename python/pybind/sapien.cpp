@@ -267,32 +267,7 @@ mark the scene closed. Unlike clear(), a closed scene cannot be reused. Idempote
       .def_property_readonly("uuid", &Device::getUuidString);
 
   PyCudaArray
-      .def(py::init<>([](py::object obj) {
-             auto interface = obj.attr("__cuda_array_interface__").cast<py::dict>();
-
-             auto shape = interface["shape"].cast<py::tuple>().cast<std::vector<int>>();
-             auto type = interface["typestr"].cast<std::string>();
-             py::dtype dtype(type);
-
-             std::vector<int> strides;
-             if (interface.contains("strides") && !interface["strides"].is_none()) {
-               // has stride
-               strides = interface["strides"].cast<py::tuple>().cast<std::vector<int>>();
-             } else {
-               strides = ShapeToStrides(shape, dtype.itemsize());
-             }
-
-             auto data = interface["data"].cast<py::tuple>();
-             void *ptr = reinterpret_cast<void *>(data[0].cast<uintptr_t>());
-
-             return CudaArrayHandle{.shape = shape,
-                                    .strides = strides,
-                                    .type = type,
-#ifdef SAPIEN_CUDA
-                                    .cudaId = getCudaPtrDevice(ptr),
-#endif
-                                    .ptr = ptr};
-           }),
+      .def(py::init<>([](py::object obj) { return CudaArrayHandleFromCudaArrayInterface(obj); }),
            py::arg("data"))
       .def_readonly("shape", &CudaArrayHandle::shape)
       .def_readonly("strides", &CudaArrayHandle::strides)

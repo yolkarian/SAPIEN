@@ -58,6 +58,7 @@ void CudaEvent::wait(cudaStream_t stream) const {
 void CudaEvent::synchronize() const {
   if (!event) {
     // no need to wait if no one records to this event
+    return;
   }
   checkCudaDriverErrors(CudaLib::Get().cuEventSynchronize(event));
 }
@@ -67,6 +68,12 @@ CudaEvent::~CudaEvent() {
     cudaSetDevice(cudaId);
     CudaLib::Get().cuEventDestroy(event);
   }
+}
+
+int getCudaCurrentDevice() {
+  int device;
+  checkCudaErrors(cudaGetDevice(&device));
+  return device;
 }
 
 int getCudaPtrDevice(void *ptr) {

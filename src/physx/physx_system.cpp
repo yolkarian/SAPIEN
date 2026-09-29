@@ -608,6 +608,13 @@ void PhysxSystemGpu::gpuInit() {
         "only costs about 1.2% of them; drop with_shared_scene if nothing is shared.");
   }
 
+  // Reinitialization also invalidates the contact pointers consumed by query kernels.
+  // Components may have cleared mGpuInitialized, so use the unchecked internal wait.
+  if (mContactQueryInFlight) {
+    waitContactQueries();
+  }
+  mContactUpToDate = false;
+
   ++mTotalSteps;
   ensureCudaDevice();
   mPxScene->simulate(mTimestep);
@@ -900,6 +907,10 @@ void PhysxSystemGpu::gpuQueryContactBodyImpulses(
 
 void PhysxSystemGpu::gpuWaitContactQueries() {
   checkGpuInitialized();
+  waitContactQueries();
+}
+
+void PhysxSystemGpu::waitContactQueries() {
   ensureCudaDevice();
   checkCudaErrors(cudaStreamSynchronize(mCudaStream));
   mContactQueryInFlight = false;

@@ -100,6 +100,11 @@ public:
   PhysxTriangleMesh(Vertices const &vertices, Triangles const &triangles,
                     std::string const &filename, bool generateSDF = false,
                     std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt);
+  // Prevent string literals from selecting the bool generateSDF overload.
+  PhysxTriangleMesh(Vertices const &vertices, Triangles const &triangles, char const *filename,
+                    bool generateSDF = false,
+                    std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt)
+      : PhysxTriangleMesh(vertices, triangles, std::string(filename), generateSDF, sdfConfig) {}
   PhysxTriangleMesh(std::string const &filename, bool generateSDF = false,
                     std::optional<PhysxSDFShapeConfig> sdfConfig = std::nullopt);
 

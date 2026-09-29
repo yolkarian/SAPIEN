@@ -166,6 +166,7 @@ class TestArticulation(unittest.TestCase):
             limits=[[-np.inf, np.inf]],
             pose_in_parent=sapien.Pose(),
             pose_in_child=sapien.Pose(),
+            friction=0.0,  # isolate the velocity clamp from the default Coulomb friction
             velocity_limit=0.25,
         )
 

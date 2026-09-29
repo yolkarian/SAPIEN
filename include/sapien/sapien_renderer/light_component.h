@@ -23,10 +23,7 @@ public:
   virtual void setColor(Vec3 color);
 
   bool getShadowEnabled() const { return mShadowEnabled; }
-  void setShadowEnabled(bool enabled) {
-    checkSetupMutable("set light shadow state");
-    mShadowEnabled = enabled;
-  }
+  void setShadowEnabled(bool enabled);
   void enableShadow() { setShadowEnabled(true); }
   void disableShadow() { setShadowEnabled(false); }
 
@@ -45,10 +42,7 @@ public:
   }
 
   uint32_t getShadowMapSize() const { return mShadowMapSize; }
-  void setShadowMapSize(uint32_t size) {
-    checkSetupMutable("set light shadow map size");
-    mShadowMapSize = size;
-  }
+  void setShadowMapSize(uint32_t size);
 
   LightPoseMode getPoseMode() const { return mPoseMode; }
   /** configure the grouped pose source; sealed at RenderSystemGroup.gpu_init() */
@@ -71,6 +65,9 @@ protected:
   void internalNotePoseUpdate(Pose const &globalPose);
   /** propagate shadow near/far/half-size to the svulkan2 light object */
   virtual void internalApplyShadowParameters() {}
+  virtual void internalApplyShadowEnabled() {}
+  /** Wait for old resources before replacement and invalidate renderer resource caches. */
+  void prepareLightResourceUpdate();
   /** bump the owning render system's scene light state version */
   void markLightStateDirty();
 
@@ -96,6 +93,7 @@ public:
 
 protected:
   void internalApplyShadowParameters() override;
+  void internalApplyShadowEnabled() override;
 
 private:
   svulkan2::scene::PointLight *mPointLight{};
@@ -118,6 +116,7 @@ public:
 
 protected:
   void internalApplyShadowParameters() override;
+  void internalApplyShadowEnabled() override;
 
 private:
   svulkan2::scene::DirectionalLight *mDirectionalLight{};
@@ -151,6 +150,7 @@ public:
 
 protected:
   void internalApplyShadowParameters() override;
+  void internalApplyShadowEnabled() override;
 
   float mFovInner{0.f};
   float mFovOuter{0.f};
@@ -163,10 +163,7 @@ public:
   void onAddToScene(Scene &scene) override;
   void onRemoveFromScene(Scene &scene) override;
 
-  void setTexture(std::shared_ptr<SapienRenderTexture2D> texture) {
-    checkSetupMutable("set textured-light texture");
-    mTexture = texture;
-  }
+  void setTexture(std::shared_ptr<SapienRenderTexture2D> texture);
   std::shared_ptr<SapienRenderTexture2D> getTexture() const { return mTexture; }
 
   void internalUpdate() override;

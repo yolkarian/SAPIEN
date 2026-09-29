@@ -25,6 +25,7 @@ using CUevent = struct CUevent_st *;
 namespace sapien {
 
 int getCudaPtrDevice(void *ptr);
+int getCudaCurrentDevice();
 
 struct CudaEvent {
   CudaEvent() {}

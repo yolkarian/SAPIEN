@@ -232,6 +232,13 @@ TEST(PhysxTriangleMesh, All) {
 
   {
     auto mesh = std::make_shared<PhysxTriangleMesh>(vs, ts, "cube.obj");
+    EXPECT_FALSE(mesh->getSDFEnabled());
+    PhysxSDFShapeConfig sdfConfig;
+    sdfConfig.spacing = 0.1f;
+    auto sdf = std::make_shared<PhysxTriangleMesh>(vs, ts, "cube.obj", true, sdfConfig);
+    EXPECT_TRUE(sdf->getSDFEnabled());
+    EXPECT_EQ(sdf->getFilename(), "cube.obj");
+    EXPECT_FLOAT_EQ(sdf->getSDFSpacing(), sdfConfig.spacing);
 
     EXPECT_TRUE(mesh->getPxMesh());
     EXPECT_EQ(mesh->getPxMesh()->getReferenceCount(), 1);

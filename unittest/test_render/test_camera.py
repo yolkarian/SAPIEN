@@ -19,6 +19,20 @@ def sapien_pose_to_opencv_extrinsic(sapien_pose_matrix: np.ndarray) -> np.ndarra
 
 
 class TestCamera(unittest.TestCase):
+    def test_orthographic_aspect_ratio(self) -> None:
+        with sapien.Scene() as scene:
+            for width, height in ((1024, 768), (512, 1024), (512, 512)):
+                with self.subTest(width=width, height=height):
+                    camera = scene.add_camera("ortho", width, height, 1.0, 0.1, 20.0)
+                    camera.set_orthographic_parameters(0.1, 20.0, 1.0)
+                    self.assertAlmostEqual(camera.ortho_left, -width / height)
+                    self.assertAlmostEqual(camera.ortho_right, width / height)
+                    projection = camera.get_projection_matrix().copy()
+                    camera.set_orthographic_parameters(
+                        0.1, 20.0, -width / height, width / height, -1.0, 1.0
+                    )
+                    np.testing.assert_allclose(camera.get_projection_matrix(), projection)
+
     def test_free_camera(self):
         scene = sapien.Scene()
 

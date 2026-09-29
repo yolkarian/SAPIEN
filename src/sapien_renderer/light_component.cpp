@@ -201,6 +201,53 @@ void SapienRenderLightComponent::setPoseMode(LightPoseMode mode) {
   mPoseMode = mode;
 }
 
+void SapienRenderLightComponent::prepareLightResourceUpdate() {
+  if (auto scene = getScene()) {
+    // Textures and shadow targets may still be referenced by an earlier capture.
+    SapienRenderEngine::Get()->getContext()->getDevice().waitIdle();
+    scene->getSapienRendererSystem()->getScene()->updateVersion();
+  }
+}
+
+void SapienRenderLightComponent::setShadowEnabled(bool enabled) {
+  checkSetupMutable("set light shadow state");
+  if (mShadowEnabled == enabled) {
+    return;
+  }
+  prepareLightResourceUpdate();
+  mShadowEnabled = enabled;
+  internalApplyShadowEnabled();
+  markLightStateDirty();
+}
+
+void SapienRenderLightComponent::setShadowMapSize(uint32_t size) {
+  checkSetupMutable("set light shadow map size");
+  if (mShadowMapSize == size) {
+    return;
+  }
+  prepareLightResourceUpdate();
+  mShadowMapSize = size;
+  internalApplyShadowParameters();
+  markLightStateDirty();
+}
+
+void SapienRenderTexturedLightComponent::setTexture(
+    std::shared_ptr<SapienRenderTexture2D> texture) {
+  checkSetupMutable("set textured-light texture");
+  if (mSpotLight && !texture) {
+    throw std::runtime_error("a textured light in a scene requires a non-null texture");
+  }
+  if (mTexture == texture) {
+    return;
+  }
+  prepareLightResourceUpdate();
+  if (mSpotLight) {
+    getLight()->setTexture(texture->getTexture());
+  }
+  mTexture = std::move(texture);
+  markLightStateDirty();
+}
+
 void SapienRenderLightComponent::checkSetupMutable(char const *operation) const {
   if (mGroupSealCount > 0) {
     throw std::runtime_error(std::string("failed to ") + operation +
@@ -284,6 +331,22 @@ void SapienRenderParallelogramLightComponent::setColor(Vec3 color) {
     mParallelogramLight->setColor({color.x, color.y, color.z});
   }
   markLightStateDirty();
+}
+
+void SapienRenderPointLightComponent::internalApplyShadowEnabled() {
+  if (mPointLight) {
+    mPointLight->enableShadow(mShadowEnabled);
+  }
+}
+void SapienRenderDirectionalLightComponent::internalApplyShadowEnabled() {
+  if (mDirectionalLight) {
+    mDirectionalLight->enableShadow(mShadowEnabled);
+  }
+}
+void SapienRenderSpotLightComponent::internalApplyShadowEnabled() {
+  if (mSpotLight) {
+    mSpotLight->enableShadow(mShadowEnabled);
+  }
 }
 
 void SapienRenderPointLightComponent::internalApplyShadowParameters() {

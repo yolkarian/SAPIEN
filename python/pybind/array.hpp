@@ -1,5 +1,6 @@
 #pragma once
 #include "sapien/array.h"
+#include <algorithm>
 #ifdef SAPIEN_CUDA
 #include "sapien/utils/cuda.h"
 #include <dlpack/dlpack.h>
@@ -24,6 +25,7 @@ inline py::capsule DLPackToCapsule(DLManagedTensor *tensor) {
     }
   });
 }
+#endif
 
 inline CudaArrayHandle CudaArrayHandleFromCudaArrayInterface(py::handle obj) {
   auto interface = obj.attr("__cuda_array_interface__").cast<py::dict>();
@@ -41,11 +43,18 @@ inline CudaArrayHandle CudaArrayHandleFromCudaArrayInterface(py::handle obj) {
   auto data = interface["data"].cast<py::tuple>();
   void *ptr = reinterpret_cast<void *>(data[0].cast<uintptr_t>());
 
-  int elementCount = 1;
-  for (int s : shape) {
-    elementCount *= s;
+  int cudaId = -1;
+#ifdef SAPIEN_CUDA
+  bool empty = std::find(shape.begin(), shape.end(), 0) != shape.end();
+  if (ptr || !empty) {
+    cudaId = getCudaPtrDevice(ptr);
+  } else if (py::hasattr(obj, "__dlpack_device__")) {
+    cudaId = obj.attr("__dlpack_device__")().cast<std::pair<int, int>>().second;
+  } else {
+    // a null empty view has no address to infer a device from; use the current one
+    cudaId = getCudaCurrentDevice();
   }
-  int cudaId = (ptr || elementCount > 0) ? getCudaPtrDevice(ptr) : -1;
+#endif
 
   return CudaArrayHandle{.shape = shape,
                          .strides = strides,
@@ -54,6 +63,7 @@ inline CudaArrayHandle CudaArrayHandleFromCudaArrayInterface(py::handle obj) {
                          .ptr = ptr};
 }
 
+#ifdef SAPIEN_CUDA
 inline CudaArrayHandle CudaArrayHandleFromPython(py::handle obj) {
   try {
     return obj.cast<CudaArrayHandle>();
