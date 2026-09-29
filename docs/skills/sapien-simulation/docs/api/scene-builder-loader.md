@@ -228,7 +228,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `armature` | `Union[NDArray[np.float32], float]` |  |  |
 | `damping` | `float` |  |  |
 | `effort_limit` | `Optional[float]` |  |  |
-| `friction` | `float` |  |  |
+| `friction` | `Optional[float]` | Coulomb effort (N for prismatic, N*m for rotational joints). | Applied during build; `None` (default) keeps the joint default 0.05; equal static/dynamic efforts. |
 | `velocity_limit` | `Optional[float]` | PhysX per-axis maximum joint velocity. | Positive URDF `<limit velocity>` values populate this field; non-positive placeholders leave it unset. |
 | `joint_type` | `str` |  |  |
 | `limits` | `Sequence[float] \| Sequence[Sequence[float]]` | One flat limit pair or per-DOF lower/upper position limit pairs. |  |
@@ -246,7 +246,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
 | `set_joint_name` | method | `set_joint_name(self, name: str)` |  |  |
-| `set_joint_properties` | method | `set_joint_properties(self, type: str, limits: Sequence[float] \| Sequence[Sequence[float]], pose_in_parent: Pose, pose_in_child: Pose, friction: float=0, damping: float=0, effort_limit: Optional[float]=None, velocity_limit: Optional[float]=None) -> None` | Configure joint position, effort, and velocity limits. | Set before articulation build. |
+| `set_joint_properties` | method | `set_joint_properties(self, type: str, limits: Sequence[float] \| Sequence[Sequence[float]], pose_in_parent: Pose, pose_in_child: Pose, friction: float=0, damping: float=0, effort_limit: Optional[float]=None, velocity_limit: Optional[float]=None) -> None` | Configure joint position, effort, and velocity limits and Coulomb friction effort. | Friction is N or N*m, not a coefficient; set before articulation build. |
 | `__init__` | method | `__init__(self, index: int, parent)` |  |  |
 | `_check` | method | `_check(self)` |  |  |
 

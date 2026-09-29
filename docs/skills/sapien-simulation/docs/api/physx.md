@@ -25,7 +25,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `sapien.physx.set_default_material` | `set_default_material(static_friction: float, dynamic_friction: float, restitution: float) -> None` | Set default material. |  |
 | `sapien.physx.set_joint_armatures` | `set_joint_armatures(joints: list[PhysxArticulationJoint], armatures: np.ndarray[M, np.float32] \| list \| tuple) -> None` | Batch-set one armature value per joint, applied to all of its DOFs. | Joints must have at least 1 DOF, so build the list from `articulation.active_joints`. |
 | `sapien.physx.set_joint_drive_properties` | `set_joint_drive_properties(joints: list[PhysxArticulationJoint], stiffness: np.ndarray[M, np.float32] \| list \| tuple \| None=None, damping: np.ndarray[M, np.float32] \| list \| tuple \| None=None, force_limit: np.ndarray[M, np.float32] \| list \| tuple \| None=None) -> None` | Batch-set articulation joint drive properties. | Only the fields you pass are updated; omitted fields and the drive type keep their current values. |
-| `sapien.physx.set_joint_frictions` | `set_joint_frictions(joints: list[PhysxArticulationJoint], frictions: np.ndarray[M, np.float32] \| list \| tuple) -> None` | Batch-set articulation joint friction. |  |
+| `sapien.physx.set_joint_frictions` | `set_joint_frictions(joints: list[PhysxArticulationJoint], frictions: np.ndarray[M, np.float32] \| list \| tuple) -> None` | Batch-set articulation Coulomb effort (N or N*m). | Finite non-negative; equal static/dynamic values; zero disables friction. |
 | `sapien.physx.set_material_properties` | `set_material_properties(materials: list[PhysxMaterial], static_friction: np.ndarray[M, np.float32] \| list \| tuple \| None=None, dynamic_friction: np.ndarray[M, np.float32] \| list \| tuple \| None=None, restitution: np.ndarray[M, np.float32] \| list \| tuple \| None=None) -> None` | Batch-set `PhysxMaterial` friction and restitution. | Materials are shared objects, so per-environment randomization needs per-environment materials: bind a unique material per shape at build time and only change its values at reset. |
 | `sapien.physx.set_gpu_memory_config` | `set_gpu_memory_config(temp_buffer_capacity: int=16777216, max_rigid_contact_count: int=524288, max_rigid_patch_count: int=81920, heap_capacity: int=67108864, found_lost_pairs_capacity: int=262144, found_lost_aggregate_pairs_capacity: int=1024, total_aggregate_pairs_capacity: int=1024) -> None` | Set gpu memory config. |  |
 | `sapien.physx.set_scene_config` | `set_scene_config(gravity: np.ndarray[Literal[3], np.dtype[np.float32]]=..., bounce_threshold: float=2.0, enable_pcm: bool=True, enable_tgs: bool=True, enable_ccd: bool=False, enable_enhanced_determinism: bool=False, enable_friction_every_iteration: bool=True, friction_offset_threshold: float=0.04, friction_correlation_distance: float=0.025, cpu_workers: int=0) -> None<br>set_scene_config(config: PhysxSceneConfig) -> None` | Set scene config. |  |
@@ -161,7 +161,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `armature` | `np.ndarray[tuple[M, Literal[1]], np.dtype[np.float32]]` |  |  |
 | `drive_target` | `np.ndarray[tuple[M, Literal[1]], np.dtype[np.float32]]` |  |  |
 | `drive_velocity_target` | `np.ndarray[tuple[M, Literal[1]], np.dtype[np.float32]]` |  |  |
-| `friction` | `float` |  |  |
+| `friction` | `float` | Coulomb effort: N (prismatic), N*m (rotational). | Equal static/dynamic effort; finite non-negative, default 0.05. |
 | `limit` | `np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]]` |  |  |
 | `limits` | `np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]]` |  |  |
 | `max_joint_velocity` | `np.ndarray[tuple[M, Literal[1]], np.dtype[np.float32]]` | Per-DOF PhysX velocity limit. | Change only while simulation is not running; set before GPU initialization. |
@@ -187,7 +187,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `get_drive_target` | method | `get_drive_target(self) -> np.ndarray[tuple[M, Literal[1]], np.dtype[np.float32]]` |  |  |
 | `get_drive_velocity_target` | method | `get_drive_velocity_target(self) -> np.ndarray[tuple[M, Literal[1]], np.dtype[np.float32]]` |  |  |
 | `get_force_limit` | method | `get_force_limit(self) -> float` |  |  |
-| `get_friction` | method | `get_friction(self) -> float` |  |  |
+| `get_friction` | method | `get_friction(self) -> float` | Read Coulomb effort. | Not a dimensionless coefficient. |
 | `get_global_pose` | method | `get_global_pose(self) -> sapien.Pose` |  |  |
 | `get_limit` | method | `get_limit(self) -> np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]]` | same as get_limits |  |
 | `get_limits` | method | `get_limits(self) -> np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]]` |  |  |
@@ -205,7 +205,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `set_drive_property` | method | `set_drive_property(self, stiffness: float, damping: float, force_limit: float=3.4028234663852886e+38, mode: Literal['force', 'acceleration']='force') -> None` | same as set_drive_properties |  |
 | `set_drive_target` | method | `set_drive_target(self, target: float) -> None<br>set_drive_target(self, target: np.ndarray[tuple[M, Literal[1]], np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
 | `set_drive_velocity_target` | method | `set_drive_velocity_target(self, velocity: float) -> None<br>set_drive_velocity_target(self, velocity: np.ndarray[tuple[M, Literal[1]], np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
-| `set_friction` | method | `set_friction(self, friction: float) -> None` |  |  |
+| `set_friction` | method | `set_friction(self, friction: float) -> None` | Set Coulomb effort in N or N*m. | Zero disables friction; static/dynamic efforts equal. |
 | `set_limit` | method | `set_limit(self, limit: np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]] \| list \| tuple) -> None` | same as set_limits |  |
 | `set_limits` | method | `set_limits(self, limit: np.ndarray[tuple[M, Literal[2]], np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
 | `set_max_joint_velocity` | method | `set_max_joint_velocity(self, velocity: float) -> None`<br>`set_max_joint_velocity(self, velocity: np.ndarray[tuple[M, Literal[1]], np.dtype[np.float32]] \| list \| tuple) -> None` | Set PhysX's enforced per-axis joint velocity limit. | PhysX 5.6.1 has no corresponding maximum joint-acceleration constraint API. |
@@ -271,6 +271,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `__setstate__` | method | `__setstate__(self, arg0: tuple) -> None` |  |  |
 
 ## `sapien.physx.PhysxCollisionShape`
+
+Attached-shape local-pose writes raise without mutation. Articulation cloning
+preserves convex-mesh shape properties as it does primitives (including local pose,
+filters, density and offsets). Missing mesh paths raise descriptive RuntimeError.
 
 - Use: Collision shape base class; material, pose, offset, collision groups.
 - Bases: `-`

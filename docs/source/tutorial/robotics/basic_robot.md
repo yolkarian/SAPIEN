@@ -72,6 +72,20 @@ to request per-collision SDF cooking parameters:
 When present on a mesh collision, the loader routes that collision through the
 non-convex mesh path and passes the parsed `PhysxSDFConfig` to the builder.
 
+## Joint friction
+
+URDF `<dynamics friction="...">`, builder `friction`, joint `friction` /
+`set_friction()`, and `sapien.physx.set_joint_frictions()` all specify Coulomb
+friction **effort**: N for prismatic joints and N*m for rotational joints.
+Static and dynamic efforts are equal; finite non-negative values are required,
+and zero (the default) disables joint friction. Builder/URDF values are applied
+during construction and preserved by articulation clone/reparent.
+
+This replaces the old dimensionless joint-friction coefficient; old numbers are
+not physically equivalent effort values. Physical-material friction coefficients
+are unchanged. Configure friction before GPU initialization or update between
+completed GPU steps; do not change it during an in-flight step.
+
 ## Set robot state
 
 The articulation stores a root pose and generalized coordinates. Quaternion

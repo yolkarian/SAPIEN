@@ -126,7 +126,7 @@ class RenderCameraComponent(sapien.pysapien.Component):
         ...
     @typing.overload
     def set_orthographic_parameters(self, near: float, far: float, top: float) -> None:
-        ...
+        """Set symmetric bounds with left/right = +/-top * width / height."""
     @typing.overload
     def set_orthographic_parameters(self, near: float, far: float, left: float, right: float, bottom: float, top: float) -> None:
         ...
@@ -346,7 +346,7 @@ class RenderLightComponent(sapien.pysapien.Component):
     def set_shadow_far(self, far: float) -> None:
         ...
     def set_shadow_map_size(self, size: int) -> None:
-        ...
+        """Update shadow resources; rejected after RenderSystemGroup.gpu_init()."""
     def set_shadow_near(self, near: float) -> None:
         ...
     def set_pose_mode(self, mode: typing.Literal['static', 'cpu']) -> None:
@@ -895,13 +895,13 @@ class RenderTexture2D:
     def width(self) -> int:
         ...
 class RenderTexturedLightComponent(RenderSpotLightComponent):
-    texture: RenderTexture2D
+    texture: RenderTexture2D | None
     def __init__(self) -> None:
         ...
-    def get_texture(self) -> RenderTexture2D:
+    def get_texture(self) -> RenderTexture2D | None:
         ...
-    def set_texture(self, texture: RenderTexture2D) -> None:
-        ...
+    def set_texture(self, texture: RenderTexture2D | None) -> None:
+        """Update the light texture before group sealing; None requires a detached light."""
 class RenderVRDisplay:
     root_pose: sapien.pysapien.Pose
     def __init__(self) -> None:

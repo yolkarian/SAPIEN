@@ -559,7 +559,8 @@ private:
 
   /** Reject a selected-index buffer that exceeds `limit` entries or (when
    *  `PhysxSceneConfig.gpuIndexValidation` is on) holds a value outside [0, limit); the value
-   *  check runs on and synchronizes the configured CUDA stream. SAPIEN-owned buffers skip it. */
+   *  check runs on and synchronizes the configured CUDA stream. The all-articulation buffer
+   *  behind the non-indexed overloads skips it. */
   void checkCudaIndexBuffer(CudaArrayHandle const &indices, int limit);
 
   void allocateCudaBuffers();
@@ -629,6 +630,7 @@ private:
   bool mContactQueryInFlight{false};
   int mContactCount{0}; // current contact count, valid only when contactUpdaToDate is true
   void copyContactData();
+  void waitContactQueries();
 };
 #else
 class PhysxSystemGpu : public PhysxSystem {

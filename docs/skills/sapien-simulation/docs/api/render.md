@@ -112,6 +112,9 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 ## `sapien.render.RenderCameraComponent`
 
+The three-argument orthographic setter derives left/right from the floating-point
+image width/height ratio, including portrait images.
+
 - Use: Camera component; read image/CUDA image after take_picture.
 - Bases: `sapien.Component`
 
@@ -264,6 +267,11 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.render.RenderLightComponent`
+
+Before group sealing, attached-light shadow enable/map-size/texture changes reach
+the renderer and invalidate resources after waiting for prior GPU use. These
+setup-only fields still raise after `RenderSystemGroup.gpu_init()`. An attached
+textured light rejects `texture=None` without mutation; detached lights accept it.
 
 - Use: Light component base class.
 - Bases: `sapien.Component`
@@ -740,14 +748,14 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
-| `texture` | `RenderTexture2D` | Light texture. | Required before the light is added to a scene; adding a textured light without a texture raises `RuntimeError` and leaves the entity unadded. |
+| `texture` | `RenderTexture2D \| None` | Light texture. | Required before scene insertion and while attached; None is accepted only while detached. Adding without a texture raises `RuntimeError` and leaves the entity unadded. |
 
 ### Methods/properties
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `get_texture` | method | `get_texture(self) -> RenderTexture2D` |  |  |
-| `set_texture` | method | `set_texture(self, texture: RenderTexture2D) -> None` |  |  |
+| `get_texture` | method | `get_texture(self) -> RenderTexture2D \| None` | Return the texture, or None on a detached untextured light. |  |
+| `set_texture` | method | `set_texture(self, texture: RenderTexture2D \| None) -> None` | Update the texture before group sealing. | None requires a detached light; attached writes invalidate renderer resources. |
 | `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.render.RenderVRDisplay`

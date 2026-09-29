@@ -4,6 +4,32 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+Joint friction is now **Coulomb effort**, not the deprecated PhysX load-dependent
+coefficient: `PhysxArticulationJoint.friction/get_friction/set_friction`,
+`set_joint_frictions`, and builder `friction` use N (prismatic) or N*m
+(rotational). Static and dynamic efforts are equal, finite, non-negative, default
+0.05 (builder/URDF `friction` left unset keeps it); zero disables friction. URDF dynamics friction is applied and clone/reparent
+preserves it. Existing GPU between-step property updates remain supported. Material
+friction coefficients are unchanged. Old coefficient values are not equivalent efforts.
+
+Other corrected behavior:
+
+- PhysX `gpu_init()` waits for asynchronous contact queries and invalidates the
+  contact snapshot, including reinitialization after scene topology changes.
+- Orthographic camera aspect ratios use floating-point division; convex collision
+  clones retain their properties; rejected attached-shape pose writes are atomic.
+  Missing mesh files raise a descriptive RuntimeError rather than invoking UB.
+- Attached light setup edits propagate and invalidate renderer resources before
+  group sealing. They remain rejected after group `gpu_init()`. An attached textured
+  light now rejects `texture=None`; detached components still accept it.
+- External `CudaArray` accepts zero-element null-pointer arrays. It uses source
+  `__dlpack_device__` if present, otherwise the current CUDA device at import.
+  Non-empty pointer checks and borrowed-input ownership are unchanged.
+- C++ triangle-mesh constructors add a `char const *` filename overload; string
+  literals no longer convert to `bool generateSDF`.
+- Native empty CUDA-event synchronization is a no-op. Wheels declare Pillow for
+  dome environment-map generation.
+
 New material/body parameters (properties and explicit `get_*`/`set_*` methods):
 
 | API | Contract |

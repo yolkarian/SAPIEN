@@ -136,6 +136,13 @@ Current SAPIEN ray-traced output for dielectric, metallic, and transmissive
 materials.
 :::
 
+Attached lights propagate changes to shadow enable, shadow-map size (raster), and
+texture before grouped rendering is initialized. These resource-changing setters
+wait for prior GPU work and invalidate renderer resources for the next capture.
+A textured light must have a texture when added to a scene; while attached,
+`texture=None` is rejected without changing the current texture. Detached lights
+can still clear their texture.
+
 ## Batched GPU rendering
 
 The `"rt"` shader pack supports `sapien.render.RenderSystemGroup`, including

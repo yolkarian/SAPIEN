@@ -31,6 +31,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
   - `assets/`: bundled models, robots, and data files
 
 ## Development Rules
+- Ask the user and get approval before writing or modifying any `AGENTS.md`, including documentation-sync edits.
 - Keep public C++ headers, C++ implementation, Python bindings, and Python wrappers in sync when an API crosses those layers.
 - Every API change—including additions, removals, renames, signature/default changes, and behavior, lifecycle, or ownership changes—must update the checked-in SAPIEN skill under `docs/skills/sapien-simulation/` in the same change. Keep its workflow guidance, API tables, and `docs/api/api-changes.md` consistent with the source and stubs.
 - After updating the checked-in SAPIEN skill, sync it to `~/.agents/skills/sapien-simulation/` only if that installed skill directory already exists; do not create it when absent. The checked-in directory remains the source of truth.
@@ -84,7 +85,9 @@ If documentation and checked-in automation disagree, prefer the repository scrip
 - Create a clean mamba environment for Python validation, install the newly built wheel, and run targeted tests/smoke tests there, for example:
   - `mamba create -n sapien-wheel-py311 python=3.11 -y`
   - `mamba run -n sapien-wheel-py311 python -m pip install wheelhouse/sapien-*-cp311-*.whl`
-  - `mamba run -n sapien-wheel-py311 python -m unittest discover unittest`
+  - `mamba run -n sapien-wheel-py311 bash -c 'cd unittest && python -m unittest discover .'`
+- Run Python tests from `unittest/`: existing resource paths are relative to that directory.
+- On drivers with repeated Vulkan-instance initialization failures, run ordinary test modules in separate processes. OOM recovery validation must keep its entire recovery sequence in one process; separate processes do not validate recovery. Run deliberate VRAM-exhaustion tests separately from builds and other workloads. `test_gpu_oom` is opt-in with `SAPIEN_TEST_GPU_OOM=1` and needs an isolated idle GPU plus a process timeout. It makes one device-memory reservation, leaves 128 MiB GPU headroom, and attempts one bounded 256 MiB PhysX heap. Use a memory-limited container and a process timeout; never exhaust memory by creating giant pinned-host heaps.
 - Python tests live under `unittest/` and use the standard library `unittest` runner.
 - C++ tests live under `test/` and require configuring CMake with `-DSAPIEN_BUILD_TEST=ON`, then building the `sapien_test` target.
 - Documented runtime smoke tests:

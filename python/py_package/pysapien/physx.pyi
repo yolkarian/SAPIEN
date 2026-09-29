@@ -174,6 +174,7 @@ class PhysxArticulationJoint:
     drive_target: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]]
     drive_velocity_target: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]]
     friction: float
+    """Coulomb effort in N (prismatic) or N*m (rotational), default 0.05."""
     limit: numpy.ndarray[tuple[M, typing.Literal[2]], numpy.dtype[numpy.float32]]
     limits: numpy.ndarray[tuple[M, typing.Literal[2]], numpy.dtype[numpy.float32]]
     max_joint_velocity: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]]
@@ -198,7 +199,7 @@ class PhysxArticulationJoint:
     def get_force_limit(self) -> float:
         ...
     def get_friction(self) -> float:
-        ...
+        """Return the Coulomb effort, not a load-dependent coefficient."""
     def get_global_pose(self) -> sapien.pysapien.Pose:
         ...
     def get_limit(self) -> numpy.ndarray[tuple[M, typing.Literal[2]], numpy.dtype[numpy.float32]]:
@@ -242,7 +243,7 @@ class PhysxArticulationJoint:
     def set_drive_velocity_target(self, velocity: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]] | list | tuple) -> None:
         ...
     def set_friction(self, friction: float) -> None:
-        ...
+        """Set finite non-negative static/dynamic Coulomb effort (N or N*m)."""
     def set_limit(self, limit: numpy.ndarray[tuple[M, typing.Literal[2]], numpy.dtype[numpy.float32]] | list | tuple) -> None:
         """
         same as set_limits
@@ -848,7 +849,8 @@ class PhysxGpuSystem(PhysxSystem):
         "Warm start" the GPU simulation by stepping the system once. This function
         must be called each time when actors are added or removed from the scene. One
         may call `gpu_apply_*` functions to initialize the system after calling this
-        function.
+        function. Waits for asynchronous contact queries and invalidates the cached
+        contact snapshot before simulating.
         """
     def gpu_query_contact_body_impulses(
         self, query: PhysxGpuContactBodyImpulseQuery, synchronize: bool = True
@@ -1461,8 +1463,9 @@ def set_joint_drive_properties(joints: list[PhysxArticulationJoint], stiffness: 
     """
 def set_joint_frictions(joints: list[PhysxArticulationJoint], frictions: numpy.ndarray[tuple[M, typing.Literal[1]], numpy.dtype[numpy.float32]] | list | tuple) -> None:
     """
-    Batch-set the friction coefficient of articulation joints, primarily for reset-time
-    domain randomization. Every joint must have at least 1 DOF.
+    Batch-set Coulomb friction efforts (N for prismatic, N*m for rotational joints),
+    primarily for reset-time domain randomization. Static/dynamic efforts are equal;
+    zero disables joint friction. Every joint must have at least 1 DOF.
     On PhysxGpuSystem this may be called any time after gpu_init() as long as no step is
     in flight; PhysX uploads the new joint properties to the GPU during the next step
     without disturbing GPU-side poses, velocities, or joint states.

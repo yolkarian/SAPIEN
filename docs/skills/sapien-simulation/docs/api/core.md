@@ -100,6 +100,11 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 ## `sapien.CudaArray`
 
+External zero-element arrays may have a null pointer. In CUDA builds the view uses
+source `__dlpack_device__` when supplied, otherwise the current CUDA device at
+import, so DLPack/Torch/CuPy exports have a valid device. Non-empty pointer checks
+and borrowed ownership are unchanged; retain the external owner during use.
+
 - Use: CUDA memory view; convertible to torch/cupy/jax/DLPack.
 - Bases: `-`
 - Ownership: arrays exported from `PhysxGpuSystem`, `RenderSystem.cuda_object_transforms`, and `RenderCameraGroup` image/pose buffers are owner-tracked. Their `.torch()`, `.jax()`, `.cupy()`, and `.dlpack()` consumers keep the owner alive and block `close()` until released; raw `__cuda_array_interface__` export raises because it cannot carry that guard. Component/shape-owned CUDA buffers without an explicit close owner remain borrowed views whose original owner must stay alive.

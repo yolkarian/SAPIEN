@@ -96,6 +96,11 @@ camera.set_perspective_parameters(
 )
 ```
 
+For an orthographic camera, `camera.set_orthographic_parameters(near, far, top)`
+uses the floating-point image aspect ratio: left/right are `-top * width / height`
+and `top * width / height`. This also supports portrait images. The six-argument
+form sets all four bounds explicitly.
+
 ## Select multiple render scenes
 
 A camera renders its owning scene plus render systems marked

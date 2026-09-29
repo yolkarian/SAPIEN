@@ -5,12 +5,24 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 ## Unreleased
 
+### Changed
+
+- **Breaking:** articulation joint `friction`, `set_friction()`, `set_joint_frictions()`, and builder `friction` now mean Coulomb friction effort (N for prismatic joints, N*m for rotational joints), not the deprecated load-dependent coefficient. Static and dynamic efforts are equal, default to 0.05 (0.05 N or 0.05 N*m; builder and URDF values left unset keep it), and must be finite and non-negative. URDF `<dynamics friction>` and builder values are now applied; clone/reparent preserves them. Material friction remains a dimensionless coefficient. Existing coefficient values are not physically equivalent effort values. A URDF `<dynamics>` element with `friction` but no `damping` previously failed to load; the missing damping now falls back to the default 0.
+- An attached textured light now rejects `texture=None` without changing its current texture; detached lights still accept it. Setup properties remain frozen only after `RenderSystemGroup.gpu_init()`.
+
 ### Added
 
+- Added a C++ `PhysxTriangleMesh(vertices, triangles, char const *filename, ...)` overload so string literals select the filename constructor rather than implicitly enabling SDF.
 - Added `PhysxSceneConfig.gpu_index_validation` (default `True`). It controls the device-side `gpu_index` range check of indexed PhysX GPU APIs; set it to `False` before creating a `PhysxGpuSystem` to drop the per-call CUDA stream synchronization when indices are trusted. Host-side checks still run, and out-of-range values are undefined behavior with the check off. The field is read at `PhysxGpuSystem` construction and included in the config pickle state.
 
 ### Fixed
 
+- `PhysxGpuSystem.gpu_init()` waits for outstanding asynchronous contact queries and invalidates the contact snapshot before simulating, including reinitialization after adding components.
+- Correct orthographic camera aspect ratios for non-square images; preserve convex-mesh collision shape properties during articulation cloning; reject attached-shape pose edits before mutating state; report missing collision meshes explicitly instead of constructing a string from null.
+- Propagate attached light shadow state, shadow-map size and texture edits to renderer nodes and invalidate resource caches before the next capture, waiting for prior GPU resource use when needed.
+- Accept zero-element external CUDA arrays with null pointers. Device metadata comes from `__dlpack_device__` when provided, otherwise from the current CUDA device at import; non-empty pointer validation and borrowed ownership remain unchanged.
+- Empty native CUDA events can be synchronized without touching CUDA; declare Pillow as a runtime dependency for dome environment-map generation.
+- Replace the hazardous giant-heap OOM test with an opt-in (`SAPIEN_TEST_GPU_OOM=1`), bounded device-memory reservation test. It verifies existing/new systems, same-process shutdown/recreation, and preservation of an independent Torch allocation. This does not fix upstream kernel/driver pinned-memory leaks caused by oversized host allocations.
 - Order rigid-body and articulation-link pose fetch scratch reuse after prior configured-stream consumers. Repeated fetches across simulation steps no longer overwrite a queued earlier snapshot; the fix uses CUDA events rather than host/device-wide synchronization. Add delayed-consumer tests for default/non-default streams, joint-first state fetches, and contact-query ordering.
 - Match DLPack shape/stride metadata allocated with `new[]` with `delete[]` in both borrowed-view and owning-array deleters. This removes allocation/deallocation undefined behavior when releasing `.dlpack()` capsules or `.torch()`/`.jax()`/`.cupy()` consumers, without changing CUDA storage ownership or synchronization. Regression coverage exercises capsule, Torch-consumer, lifecycle-guard, and owning-array release; run the release tests under AddressSanitizer to detect allocation mismatches.
 - Fixed a segfault when `sapien.Scene(...)` raised during construction (for example when no Vulkan device is available or `systems` is invalid). The Python wrapper's `__del__` called `clear()` on the never-constructed C++ scene; it is removed because the C++ destructor already closes the scene.

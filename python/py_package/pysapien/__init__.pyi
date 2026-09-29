@@ -48,7 +48,12 @@ class Component:
         ...
 class CudaArray:
     def __init__(self, data: typing.Any) -> None:
-        ...
+        """Borrow a CUDA-array-interface view, including empty arrays.
+
+        CUDA builds resolve null empty views using __dlpack_device__ when provided,
+        otherwise the current CUDA device at import. Keep the external allocation
+        owner alive during use.
+        """
     def cupy(self) -> cupy.ndarray:
         ...
     def dlpack(self) -> typing.Any:
