@@ -19,6 +19,66 @@ Paths below are relative to the repository root:
 
 Run shell commands from the repository root unless a command says otherwise.
 
+## Release note style
+
+Release notes follow the [pi coding agent](https://github.com/earendil-works/pi/releases) style: scannable, one line per entry, no internal mechanism detail.
+
+### Template
+
+```markdown
+## Highlights
+
+- **One-line user-facing summary of the biggest change.** One more sentence of context if needed. See [docs link](url).
+- **Second highlight if applicable.** Keep to 2-4 entries at most.
+
+## Breaking
+
+- Removed `old_api()` — use `new_api()` instead. Migration: ...
+- Changed `foo` default from `X` to `Y` (reason in one clause). Update by ...
+
+## Added
+
+- Added `NewClass` / `new_method()` for <purpose> ([#123](link))
+- Added `config.new_field` (`type`, default `value`) — controls <what> ([#123](link))
+
+## Changed
+
+- Changed <what> to <new behavior> (one clause of why) ([#123](link))
+- Deprecated `old` in favor of `new`; `old` still works until next breaking release
+
+## Fixed
+
+- Fixed <symptom> when <condition> ([#123](link))
+- Fixed <crash/hang/data-loss> in <component> ([#123](link))
+
+## Build and packaging
+
+- Wheels now ... / Requires ...
+
+See `CHANGELOG.md` for reasoning, measurements, and migration detail behind each entry.
+```
+
+### Rules
+
+- **One entry = one line** (two at most). Lead with the observable effect, then the action the reader must take. Name the replacement for anything removed or renamed on the same line.
+- **Highlights first.** Pick 1-4 entries a returning user would care about most. Each highlight is a bold summary plus one sentence and an optional docs link. Highlights may overlap with entries below — that is intentional.
+- **Categories in order:** `Highlights` (optional, for notable releases), `Breaking`, `Added`, `Changed`, `Fixed`, `Build and packaging` (when packaging/toolchain changed), `Documentation`. Omit empty sections.
+- **No mechanism, measurements, or file-level detail.** Move symbol names beyond the API surface, internal file paths, benchmark numbers, and design rationale to `CHANGELOG.md`; point there once in the footer rather than repeating it inline.
+- **Drop entries with no user-visible or integrator-visible effect.** Refactors, comment cleanups, and internal renames do not appear unless they change behavior.
+- **Link where possible.** Append `([#123](url))` / `([#123](url) by @user)` for traceability when an issue or PR exists.
+- **Aim for well under 80 lines total.** If it reads like documentation, it is too long.
+- `CHANGELOG.md` carries the same concise entries plus an extra paragraph of reasoning/evidence where it matters. It uses the same category headings so the two stay aligned.
+
+### Before / after
+
+Bad (old style — a paragraph per entry):
+
+> Fixed indexed PhysX GPU APIs reading and writing outside SAPIEN and PhysX buffers for out-of-range `gpu_index` values, which silently corrupted state or caused `cudaErrorIllegalAddress` and poisoned the CUDA context. Caller-supplied index buffers are now range-checked on the configured SAPIEN CUDA stream, and rejected calls raise `RuntimeError` before anything is applied; the check synchronizes that stream once per indexed call (disable it with `PhysxSceneConfig.gpu_index_validation`), while non-indexed overloads are unchanged.
+
+Good (pi style — one line, action on the same line):
+
+> - Fixed out-of-range `gpu_index` values in indexed PhysX GPU APIs silently corrupting GPU state — now raises `RuntimeError` on the SAPIEN CUDA stream ([#123](link))
+
 ## Optimized release workflow
 
 Use one preflight snippet to authenticate, fetch tags, choose defaults, inspect
@@ -108,23 +168,7 @@ you later create a changelog/release-prep commit, rerun this snippet so
    git diff "${PREVIOUS_TAG}..${TARGET_COMMIT}" -- <important-path>
    ```
 
-   Summarize in human-facing Markdown. Prefer grouped bullets such as
-   `Highlights`, `Breaking`, `Fixes`, `Build and packaging`, and
-   `Documentation` when applicable. Do not publish a raw commit log, private
-   paths, temporary files, or unrelated local validation details.
-
-   Release notes are a summary, not a copy of the changelog section. The
-   changelog carries the reasoning and the evidence; the release note says what
-   changed and what the reader has to do about it. Keep it scannable:
-
-   - One or two lines per entry. Lead with the observable effect, then the
-     action the reader must take.
-   - Name the replacement for anything removed or renamed, on the same line.
-   - Move mechanism, measurements, symbol names, and file-level detail to
-     `CHANGELOG.md`; point there once rather than repeating it.
-   - Drop entries with no user-visible or integrator-visible effect.
-   - Aim for well under 100 lines total. If it reads like documentation, it is
-     too long.
+   Write release notes using the template and rules in [Release note style](#release-note-style). Keep them scannable — one line per entry, observable effect first, replacement named on the same line. Save mechanism and measurements for `CHANGELOG.md`.
 
 3. Write release notes and update the changelog if needed:
 
@@ -135,11 +179,9 @@ you later create a changelog/release-prep commit, rerun this snippet so
    ```
 
    Update `CHANGELOG.md` before dispatch when the release includes changes not
-   yet recorded there. Rename the standing `## Unreleased` heading to a dated
-   `RELEASE_TAG` section, then add a fresh empty `## Unreleased` above it so the
-   next change has somewhere to land. Keep the changelog curated and concise.
-   Commit and push that release-preparation change, then rerun step 1 so
-   `GIT_REF`, `TARGET_COMMIT`, and `RANGE` reflect the final pushed commit.
+   yet recorded there. Use the same concise category headings as the release
+   notes (`Highlights` / `Breaking` / `Added` / `Changed` / `Fixed` / `Build and packaging`). Rename the standing `## Unreleased` heading to a dated `RELEASE_TAG` section, then add a fresh empty `## Unreleased` above it so the
+   next change has somewhere to land. Commit and push that release-preparation change, then rerun step 1 so `GIT_REF`, `TARGET_COMMIT`, and `RANGE` reflect the final pushed commit.
 
 4. Dispatch the workflow with the reviewed notes:
 
@@ -170,7 +212,7 @@ you later create a changelog/release-prep commit, rerun this snippet so
 - The workflow only consumes `release_notes`; it must not generate final release notes itself.
 - Always read/analyze commits since the previous release tag before composing release notes.
 - Do not publish raw commit logs as release descriptions unless the user explicitly asks.
-- Do not paste changelog sections into release notes verbatim; summarize to one or two lines per entry and leave the reasoning in `CHANGELOG.md`.
+- Do not paste changelog sections into release notes verbatim — rewrite to one line per entry per the template above.
 - Do not overwrite or delete an existing GitHub release or stable release tag without explicit user approval.
 - Ignore `nightly` when computing the previous release tag; it is a moving test release.
 - If the user does not clearly specify the release commit/ref (`GIT_REF`), use the current `HEAD` commit, not `dev`, `main`, or another moving branch.
@@ -180,5 +222,5 @@ you later create a changelog/release-prep commit, rerun this snippet so
 - Prefer version tags that start with a digit, such as `3.0.0+fork.8`.
 - Pass boolean workflow inputs to `gh workflow run --json` as strings.
 - Do not watch long release builds by default; report the run URL/status and wait only when asked.
-- Keep `CHANGELOG.md` curated and human-readable.
+- Keep `CHANGELOG.md` curated and human-readable. Use the same category headings as release notes.
 - Leave a standing empty `## Unreleased` section at the top of `CHANGELOG.md` after every release.
