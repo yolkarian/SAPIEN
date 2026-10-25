@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <utility>
 
 namespace sapien {
@@ -31,33 +32,7 @@ private:
   std::shared_ptr<PhysxEngine> mEngine;
 };
 
-/** RAII ownership of one PxCudaContextManager. A GPU system acquires a lease when it
- *  is constructed; the manager is released when the last lease on it is destroyed,
- *  after the PxScene of that system has been released. The lease map lives per CUDA
- *  device so future multi-GPU usage manages one context per device independently. */
-class PhysxCudaContextLease {
-public:
-  PhysxCudaContextLease(std::shared_ptr<PhysxEngine> engine,
-                        ::physx::PxCudaContextManager *manager, int cudaId)
-      : mEngine(std::move(engine)), mManager(manager), mCudaId(cudaId) {}
-  ~PhysxCudaContextLease() {
-    if (mManager) {
-      mManager->release();
-    }
-  }
-  PhysxCudaContextLease(PhysxCudaContextLease const &) = delete;
-  PhysxCudaContextLease &operator=(PhysxCudaContextLease const &) = delete;
-
-  ::physx::PxCudaContextManager *get() const { return mManager; }
-  int cudaId() const { return mCudaId; }
-
-private:
-  std::shared_ptr<PhysxEngine> mEngine;
-  ::physx::PxCudaContextManager *mManager;
-  int mCudaId;
-};
-
-class PhysxEngine : public std::enable_shared_from_this<PhysxEngine> {
+class PhysxEngine {
 public:
   static std::shared_ptr<PhysxEngine> Get(float toleranceLength = 0.1f,
                                           float toleranceSpeed = 0.2f);
@@ -69,18 +44,22 @@ public:
   /** PxPhysics of this engine; throws after shutdown(). */
   ::physx::PxPhysics *getPxPhysics() const;
 
-  /** Acquire the RAII lease for this device's PhysX CUDA context manager, creating it
-   *  on first use. Callers release the PxScene using the manager before releasing the
-   *  lease; the manager is released when the last lease holder gives it up. */
-  std::shared_ptr<PhysxCudaContextLease> acquireCudaContextLease(int cudaId);
+  /** This device's PhysX CUDA context manager, created on first use around the device's
+   *  primary CUDA context; each device has its own. The engine keeps every manager until
+   *  shutdown()/destruction: PhysX caches a kernel table per manager pointer for the
+   *  PxPhysics lifetime, so a released manager replaced by one at the same address would
+   *  launch stale kernels. PxScenes using a manager are released before it because
+   *  shutdown() requires every system to be closed. */
+  ::physx::PxCudaContextManager *getCudaContextManager(int cudaId);
 
   /** True after shutdown(): every PhysX resource of this engine has been released. A
    *  shutdown engine is a zombie; Get()/GetIfExists() replace it. */
   bool isShutdown() const { return mShutdown; }
 
-  /** Terminal shutdown of the whole engine: extensions, PxPhysics, PxFoundation.
-   *  Only legal with no live systems and no live PhysX objects; enforceable with
-   *  liveSystemCount()/liveObjectCount(). Idempotent (shutdown zombie is a no-op). */
+  /** Terminal shutdown of the whole engine: CUDA context managers, extensions,
+   *  PxPhysics, PxFoundation. Only legal with no live systems and no live PhysX
+   *  objects; enforceable with liveSystemCount()/liveObjectCount(). Idempotent
+   *  (shutdown zombie is a no-op). */
   void shutdown();
 
   // ---- lifecycle accounting used by module-level can_shutdown()/shutdown() ----
@@ -101,13 +80,14 @@ private:
   void unregisterGpuSystem();
   void noteObjectCreated();
   void noteObjectDestroyed();
+  void releaseCudaContextManagers();
 
   ::physx::PxPhysics *mPxPhysics{};
   ::physx::PxFoundation *mPxFoundation{};
 
-  // Per-device weak cache of the PhysX CUDA context manager lease. An alive lease
-  // means a GPU system still owns the manager; expired entries own nothing.
-  std::map<int, std::weak_ptr<PhysxCudaContextLease>> mCudaContextLeases;
+  // One manager per CUDA device, owned until shutdown()/destruction.
+  std::map<int, ::physx::PxCudaContextManager *> mCudaContextManagers;
+  std::mutex mCudaContextManagerMutex;
 
   std::atomic<uint64_t> mLiveSystems{0};
   std::atomic<uint64_t> mLiveGpuSystems{0};

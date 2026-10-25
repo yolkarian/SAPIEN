@@ -149,6 +149,30 @@ class TestPhysxLifecycle(unittest.TestCase):
 
         np.testing.assert_allclose(final_heights, final_heights[0], rtol=0, atol=1e-4)
 
+    def test_recreate_gpu_system_while_engine_stays_alive(self) -> None:
+        """Close every GPU system, then create another while a PhysX object keeps the engine alive.
+
+        PhysX caches kernel handles per CUDA context manager address for the lifetime of the
+        engine, so the device's manager must stay valid between the systems; a released and
+        recreated manager launched unloaded kernels (CUDA error 400, then a segfault)."""
+        self._enable_gpu()
+        keep_engine_alive = sapien.physx.PhysxMaterial(0.5, 0.5, 0.0)
+        final_heights = []
+        for _ in range(5):
+            objects = self._make_gpu_box_drop()
+            system, box = objects[0], objects[-1]
+            for _ in range(90):
+                system.step()
+            system.sync_poses_gpu_to_cpu()
+            final_heights.append(float(box.pose.p[2]))
+            self._close_gpu_box_drop(objects)
+            del system, box, objects
+            gc.collect()
+            self.assertTrue(sapien.physx.get_live_resources()["engine_exists"])
+        del keep_engine_alive
+
+        np.testing.assert_allclose(final_heights, final_heights[0], rtol=0, atol=1e-4)
+
 
 if __name__ == "__main__":
     unittest.main()

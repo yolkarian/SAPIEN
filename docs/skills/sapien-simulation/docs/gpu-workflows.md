@@ -194,7 +194,7 @@ PY
    - `config.set_gpu_broadphase_env_id_bits(x, y, z)` is the only way to write the bit counts, and is ignored once `num_scenes` is set. Default `(0, 0, 4)`: four matches PhysX's own "snap to grid" shift, so the banding costs no coordinate precision. The axes are not independent — PhysX shifts the same env ID on each, so distinct bands are `2**max(x, y, z)`, never the product — hence one axis is as good as three and cheaper.
    - With `with_shared_scene`, every non-zero count must be equal: a narrower axis keeps fewer of the shifted ID's low bits, so an env inside the widest axis's usable band wraps out of it there and silently loses the shared object. SAPIEN rejects mixed counts like `(12, 8, 0)` at construction and widens `(0, 0, 4)` to `(4, 4, 4)`.
    - PhysX bands each env into `[e << (32 - b), (e + 1) << (32 - b))` but gives shared objects a fixed encoded interval the outermost bands fall outside of, so with a shared scene a bit count that exactly fits is one bit too small: 4096 envs need 13 bits. Read `physx_system.get_broadphase_environment_id(scene)` for the ID PhysX actually receives. Declaring more envs than get private bands is fine — the surplus wraps into the high bits, which PhysX drops when placing the box but compares exactly when filtering. With a shared scene the hard ceiling is 65535 ordinary envs, since SAPIEN keeps the scene ID in a 16-bit collision-group field and reserves `0xffff` for the shared scene.
-   - Use `physx_system.set_scene_offset(scene, offset)` when spatial separation is needed for visualization, or as the only isolation when `num_scenes` is not declared.
+   - Use `physx_system.set_scene_offset(scene, offset)` when spatial separation is needed for visualization, or as the only isolation when scenes have no environment IDs (manual mode without `set_environment_id()`, where every scene is environment 0). Offsets separate only bounded geometry: an infinite plane (`scene.add_ground()`, plane collision shapes) or terrain wider than the spacing reaches every environment. Without environment IDs, add the ground once for all scenes, not once per scene: each plane then touches every environment's bodies, PhysX overflows its contact buffer every step and drops contacts (1024 environments of five boxes: 2760 of 5120 boxes fell through the ground, and a step took 8.4 ms instead of 0.8–1.6 ms). With environment IDs (`num_scenes`, or distinct `set_environment_id()` values), a ground per scene stays inside its environment; one ground in a shared scene (`with_shared_scene`) works as well.
 7. Build all actors, articulations, and static terrain:
    - For identical URDF robots, parse the URDF once. Before each build, call `builder.set_scene(scene)`, restore the cached initial pose, apply any per-env pose/offset, then call `builder.build()`.
    - For kinematics-only or IK-only URDF workflows, set `loader.load_visuals = False` and `loader.load_collisions = False` before parsing/loading when geometry is unnecessary.
@@ -413,13 +413,37 @@ sapien.shutdown()
 8. Update viewer/render/sensors only if they exist. Normal Viewer rendering should use direct/staged transport, and direct sensors/offscreen capture should use `RenderSystemGroup` with CUDA pose buffers. Use `sync_poses_gpu_to_cpu()` only for explicit CPU debugging or Viewer `cpu-debug`.
 9. Read observations, rewards, termination, or diagnostics after fetch/render update.
 
+## Multi-GPU PhysX workflow
+
+One `PhysxGpuSystem` is one PhysX scene on one GPU; PhysX never splits it across devices. A single GPU needs nothing from this section: `PhysxGpuSystem()` without a device uses the only visible GPU, as before. Scale out with one system per GPU, in either layout Isaac Sim / Isaac Lab use:
+
+1. **One process per GPU** (torchrun / Isaac Lab `--distributed` style). A rank that sees only its own GPU (`CUDA_VISIBLE_DEVICES` set per rank by the launcher, or a container started with `docker run --gpus device=3`) is an ordinary single-GPU process: keep `PhysxGpuSystem()` without a device and use `"cuda"` tensors. The visible GPU is `cuda:0` there, so a host index such as `"cuda:3"` raises `failed to find device "cuda:3"`. When every rank sees all GPUs, rank `r` passes its device, `PhysxGpuSystem(f"cuda:{local_rank}")`, and calls `torch.cuda.set_device(local_rank)` for its own tensors: the default `"cuda"` is the first CUDA device SAPIEN enumerates (`cuda:0` on identical GPUs) and does not follow `torch.cuda.set_device()`. SAPIEN creates no CUDA context on the other GPUs. A missing PhysX GPU library is downloaded once under a file lock while the other ranks wait; pre-baking it (above) still avoids the download.
+2. **Several systems in one process** (omni.physx `sceneMultiGPUMode` style): create one `PhysxGpuSystem("cuda:k")` per GPU, each with its own scenes, then `gpu_init()` each. Each device gets its own PhysX CUDA context manager on its primary CUDA context (the one Torch uses); closing one system leaves the others running. A device's manager stays alive until `sapien.physx.shutdown()`, so systems created later on that device reuse it. Meshes and materials may be shared: PhysX uploads geometry per scene.
+   - Buffers of system `k` live on `cuda:k` (`system.cuda_rigid_body_data.torch().device`); consume them there, there are no implicit peer copies. Index buffers and `gpu_set_cuda_stream()` streams must belong to that device; other devices raise `RuntimeError`.
+   - Overlap the GPUs: set `PhysxSceneConfig.cpu_workers >= 1` before creating the systems, then `step_start()` every system before any `step_finish()`. With the default `cpu_workers = 0`, `step_start()` runs the whole step on the calling thread, so that loop serializes the GPUs.
+   - Alternatively step each system from its own Python thread: `step()`, `step_start()`, `step_finish()` and `wait_idle()` release the GIL. Never call one system from two threads at once.
+
+SAPIEN makes a system's device current only for the duration of each call and then restores the caller's current device, so `torch.cuda.current_device()` is unchanged by SAPIEN calls. With several GPUs in one process, create tensors on each system's device rather than relying on the current device. This page does not cover multi-GPU rendering: a `RenderSystemGroup` still needs its CUDA pose source on the renderer's device.
+
+```python
+config = sapien.physx.get_scene_config()
+config.cpu_workers = 1  # step_start() returns before the GPU work finishes
+sapien.physx.set_scene_config(config)
+systems = [sapien.physx.PhysxGpuSystem(f"cuda:{k}") for k in range(torch.cuda.device_count())]
+# Build scenes per system, then system.gpu_init() and cache views per system.
+for system in systems:
+    system.step_start()
+for system in systems:
+    system.step_finish()
+```
+
 ## Collision and scene isolation
 
 - Prefer PhysX GPU environment IDs when available:
   - Managed mode: declare `PhysxSceneConfig.num_scenes` before creating the system; SAPIEN then assigns each scene a unique env ID, at the latest when its first body is added. `set_environment_id()` raises; duplicates cannot occur. Manual mode (`num_scenes` unset): number scenes yourself with `scene.set_environment_id(env_id)` before the scene gets any body; an unnumbered scene is env 0, and duplicates are legal — several Scenes sharing one ID collide as one environment.
   - Bodies with the same non-negative env ID collide with each other; `environment_id` is the raw ID, `get_broadphase_environment_id(scene)` the shifted value PhysX receives.
   - Declare `with_shared_scene` and call `scene.set_shared_environment()` on the one scene holding bodies every env must collide with, such as a single ground plane. It works in both modes, reports `environment_id == -1`, and costs no `num_scenes` slot.
-- `PhysxGpuSystem.set_scene_offset(scene, offset)` offsets bodies in the shared PhysX scene; call it before adding bodies when you need spatial separation or when env IDs are unavailable.
+- `PhysxGpuSystem.set_scene_offset(scene, offset)` offsets bodies in the shared PhysX scene; call it before adding bodies when you need spatial separation or when env IDs are unavailable. It cannot separate infinite planes: without env IDs, add `scene.add_ground()` once for all scenes, not once per scene.
 - Use `sapien.physx.PhysxCollisionShape.set_collision_groups([word0, word1, word2, word3])` for shape-level type/affinity or ignore filtering, not as the primary env-isolation mechanism when env IDs exist.
 - In SAPIEN GPU collision-group filtering:
   - `word0` and `word1` are contact type and affinity.
@@ -450,3 +474,6 @@ sapien.shutdown()
 - Moving a CPU-owned static body (no CUDA pose source), point cloud, or `'static'`-mode light after `gpu_init()`; those transforms are sealed one-time snapshots and tampering raises at `RenderSystemGroup.update_render()` (or the next `scene.update_render()` for entity-pose changes).
 - Recreating `RenderCameraGroup` every frame to move a free camera. `BatchedRenderSystem::mCameraBatches` retains every created batch, so this accumulates GPU/Vulkan resources; create once and use direct `RenderCameraComponent` capture after the ordered camera/body updates.
 - Shipping a SAPIEN GPU container without pre-baking `$HOME/.sapien/physx/<version>/`, so every fresh `docker run` re-downloads `physxgpu-linux-clang.zip`; bake the extracted library into the image (see "Pre-bake the PhysX GPU library into Docker images" above).
+- Expecting `step_start()` loops over several GPU systems to overlap their GPUs with the default `cpu_workers = 0`; set `PhysxSceneConfig.cpu_workers >= 1` before creating the systems, or step each system from its own thread.
+- Relying on a SAPIEN call to leave its system's device current (for example creating `torch.zeros(..., device="cuda")` afterwards); SAPIEN restores the caller's current device, so with several visible GPUs create tensors on the system's device. With one visible GPU, `"cuda"` is that GPU.
+- Calling `scene.add_ground()` in every scene of a `PhysxGpuSystem` without environment IDs (no `num_scenes`, no `set_environment_id()`). `set_scene_offset()` cannot separate infinite planes, so every plane touches every environment's bodies: PhysX overflows its contact buffer each step, drops contacts, and bodies fall through the ground. Declare `num_scenes`, or add the ground once for all scenes.

@@ -27,6 +27,24 @@ namespace sapien {
 int getCudaPtrDevice(void *ptr);
 int getCudaCurrentDevice();
 
+/** Makes the primary CUDA context of runtime device `cudaId` current on this thread for the
+ *  lifetime of the scope by pushing it onto the driver context stack, and pops it on exit.
+ *
+ *  CUDA runtime calls and kernel launches inside the scope target `cudaId`. Unlike a bare
+ *  cudaSetDevice, leaving the scope restores the caller's current device exactly, so frameworks
+ *  such as PyTorch keep their current device, and it never creates a context on the caller's
+ *  previous device. Entering a scope for the already-current device costs no push. */
+class CudaDeviceScope {
+public:
+  explicit CudaDeviceScope(int cudaId);
+  ~CudaDeviceScope();
+  CudaDeviceScope(CudaDeviceScope const &) = delete;
+  CudaDeviceScope &operator=(CudaDeviceScope const &) = delete;
+
+private:
+  bool mPushed{false};
+};
+
 struct CudaEvent {
   CudaEvent() {}
   void init();

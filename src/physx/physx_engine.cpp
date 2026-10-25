@@ -84,49 +84,28 @@ PhysxEngine::PhysxEngine(float toleranceLength, float toleranceSpeed) {
   }
 }
 
-std::shared_ptr<PhysxCudaContextLease> PhysxEngine::acquireCudaContextLease(int cudaId) {
+::physx::PxCudaContextManager *PhysxEngine::getCudaContextManager(int cudaId) {
   if (!PhysxDefault::GetGPUEnabled()) {
     throw std::runtime_error("Using CUDA is not allowed when PhysX GPU is not enabled.");
   }
   if (mShutdown) {
     throw std::runtime_error(
-        "failed to acquire PhysX CUDA context: the PhysX engine was shut down");
+        "failed to get PhysX CUDA context manager: the PhysX engine was shut down");
   }
 #ifdef SAPIEN_CUDA
-  {
-    auto it = mCudaContextLeases.find(cudaId);
-    if (it != mCudaContextLeases.end()) {
-      if (auto lease = it->second.lock()) {
-        return lease;
-      }
-      mCudaContextLeases.erase(it);
-    }
-    std::erase_if(mCudaContextLeases, [](auto const &entry) { return entry.second.expired(); });
+  std::lock_guard lock(mCudaContextManagerMutex);
+  if (auto it = mCudaContextManagers.find(cudaId); it != mCudaContextManagers.end()) {
+    return it->second;
   }
 
+  // One PxCudaContextManager per device, each wrapping that device's primary context (the one
+  // the CUDA runtime, PyTorch, CuPy and JAX share), like omni.physx's scene multi-GPU mode, so
+  // GPU systems on different devices coexist in one process. PhysX reads the device from the
+  // provided context, which must therefore be current while the manager is created; the scope
+  // restores the caller's device afterwards. PhysX never destroys a provided context.
+  CudaDeviceScope deviceScope(cudaId);
+  CUcontext context = cudaPrimaryContext(cudaId);
   PxCudaContextManagerDesc cudaContextManagerDesc;
-  CUcontext context{};
-
-  checkCudaErrors(cudaSetDevice(cudaId));
-
-  // NOTE: context initialization seems inconsistent across cuda versions
-  // cudaFree(0) is guaranteed to establish context
-  checkCudaErrors(cudaFree(0));
-
-  checkCudaDriverErrors(CudaLib::Get().cuCtxGetCurrent(&context));
-  if (!context) {
-    throw std::runtime_error("failed to get CUDA context.");
-  }
-
-  // NOTE: PhysX API really suggests it supports multiple GPUs, but no it doesn't.
-  if (!mCudaContextLeases.empty() && mCudaContextLeases.begin()->first != cudaId) {
-    int existingCudaId = mCudaContextLeases.begin()->first;
-    throw std::runtime_error(
-        "failed to create PhysX on cuda:" + std::to_string(cudaId) +
-        ". PhysX only supports a single GPU and a scene has previously been created on cuda:" +
-        std::to_string(existingCudaId) + ".");
-  }
-
   cudaContextManagerDesc.ctx = &context;
   auto manager =
       PxCreateCudaContextManager(*mPxFoundation, cudaContextManagerDesc, PxGetProfilerCallback());
@@ -137,12 +116,19 @@ std::shared_ptr<PhysxCudaContextLease> PhysxEngine::acquireCudaContextLease(int 
     throw std::runtime_error("failed to create PhysX CUDA context manager on cuda:" +
                              std::to_string(cudaId));
   }
-  auto lease = std::make_shared<PhysxCudaContextLease>(shared_from_this(), manager, cudaId);
-  mCudaContextLeases[cudaId] = lease;
-  return lease;
+  mCudaContextManagers[cudaId] = manager;
+  return manager;
 #else
   return nullptr;
 #endif
+}
+
+void PhysxEngine::releaseCudaContextManagers() {
+  std::lock_guard lock(mCudaContextManagerMutex);
+  for (auto const &[cudaId, manager] : mCudaContextManagers) {
+    manager->release();
+  }
+  mCudaContextManagers.clear();
 }
 
 void PhysxEngine::shutdown() {
@@ -158,14 +144,8 @@ void PhysxEngine::shutdown() {
         "failed to shut down PhysX engine: " + std::to_string(liveObjectCount()) +
         " PhysX-backed objects are still alive");
   }
-  for (auto const &[cudaId, weakLease] : mCudaContextLeases) {
-    if (auto lease = weakLease.lock()) {
-      throw std::runtime_error("failed to shut down PhysX engine: a CUDA context lease on cuda:" +
-                               std::to_string(cudaId) +
-                               " is still held; close the owning GPU system first");
-    }
-  }
-  mCudaContextLeases.clear();
+  // No system is left, so no PxScene uses a manager any more.
+  releaseCudaContextManagers();
   PxCloseExtensions();
   if (mPxPhysics) {
     mPxPhysics->release();
@@ -214,6 +194,8 @@ PhysxEngine::~PhysxEngine() {
   if (mShutdown) {
     return;
   }
+  // Every system holds the engine, so none is left and no PxScene uses a manager.
+  releaseCudaContextManagers();
   PxCloseExtensions();
   if (mPxPhysics) {
     mPxPhysics->release();

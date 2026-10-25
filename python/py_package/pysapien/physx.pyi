@@ -649,6 +649,13 @@ class PhysxGpuSystem(PhysxSystem):
         """
         Create a PhysX GPU system.
 
+        `device` selects the CUDA device, e.g. ``"cuda:1"``; the default ``"cuda"`` is
+        the first CUDA device. Systems on different devices coexist in one process, each
+        with its own PhysX CUDA context manager on that device's primary CUDA context
+        (the one PyTorch uses), so their CUDA buffers live on and must be consumed on that
+        device. SAPIEN calls on a system run on its device and restore the caller's current
+        CUDA device afterwards.
+
         The environment-ID declaration is read from `PhysxSceneConfig` and frozen here: PhysX
         bakes the broadphase bit count into the scene at createScene and refuses
         PxActor::setEnvironmentID once an actor is in a scene.
@@ -871,6 +878,10 @@ class PhysxGpuSystem(PhysxSystem):
         PhysX GPU APIs will be synchronized with the provided stream and SAPIEN's CUDA
         kernels will be launched to the provided stream.
 
+        The stream must belong to this system's device (its primary CUDA context), for
+        example ``torch.cuda.Stream(device=system.device.cuda_id)``; streams of another
+        device raise ``RuntimeError``. ``0`` selects the device's default stream.
+
         Args:
             stream: integer representation of a cuda stream pointer
         """
@@ -890,10 +901,24 @@ class PhysxGpuSystem(PhysxSystem):
         position `[1, 1, 1]` will be at position `[1, 1, 1] + [2, 1, 0] = [3, 2, 1]` in
         PhysX scene.
         """
+    def step(self) -> None:
+        """
+        Simulate one timestep and wait for it. Releases the GIL, so systems on different
+        GPUs can be stepped concurrently from separate Python threads. Do not call other
+        APIs of the same system from another thread while it steps.
+        """
     def step_finish(self) -> None:
-        ...
+        """
+        Wait for the timestep launched by step_start(). Releases the GIL while waiting.
+        """
     def step_start(self) -> None:
-        ...
+        """
+        Launch one timestep without waiting for it; finish with step_finish(). Returns
+        immediately only when PhysxSceneConfig.cpu_workers >= 1: with the default 0 workers
+        PhysX runs the whole step on the calling thread here. Calling step_start() on
+        systems on different GPUs before their step_finish() overlaps their simulation.
+        Releases the GIL.
+        """
     def sync_poses_gpu_to_cpu(self) -> None:
         """
         Warning: this function is super slow and for debug only. Download all poses from the GPU and copy to SAPIEN entities.
@@ -1362,7 +1387,8 @@ class PhysxSystem(sapien.pysapien.System):
         ...
     def wait_idle(self) -> None:
         """
-        Wait until all simulation and fetch work of this system completed.
+        Wait until all simulation and fetch work of this system completed. Releases the GIL
+        while waiting.
         """
         ...
     @property

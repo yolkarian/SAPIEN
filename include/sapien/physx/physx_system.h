@@ -447,7 +447,6 @@ private:
                                   PhysxRigidBaseComponent &component);
 
   std::shared_ptr<Device> mDevice;
-  void ensureCudaDevice();
   uint32_t getGpuArticulationDof(int index) const;
   void gpuFetchArticulationData(void *data,
                                 ::physx::PxArticulationGPUAPIReadType::Enum type,
@@ -502,9 +501,6 @@ private:
   std::set<std::shared_ptr<PhysxRigidStaticComponent>, comp_cmp> mRigidStaticComponents;
   std::set<std::shared_ptr<PhysxArticulationLinkComponent>, comp_cmp> mArticulationLinkComponents;
 
-  /** RAII ownership of this device's PhysX CUDA context manager; released in close()
-   *  right after the PxScene of this system is released. */
-  std::shared_ptr<PhysxCudaContextLease> mCudaContextLease;
   // GPU-specific engine registration flag for close()/destructor accounting.
   bool mRegisteredGpuSystem{false};
 
@@ -554,7 +550,8 @@ private:
   CudaArray mCudaLinkVelScratch;
   CudaArray mCudaRigidDynamicIndexScratch;
   CudaArray mCudaArticulationIndexScratch;
-  // position of the first out-of-range entry found by checkCudaIndexBuffer
+  // position of the first out-of-range entry found by checkCudaIndexBuffer; allocated by the
+  // first gpu_init() like the contact buffers, so the check itself never allocates
   CudaArray mCudaIndexCheckScratch;
 
   /** Reject a selected-index buffer that exceeds `limit` entries or (when
@@ -623,6 +620,8 @@ private:
   CudaArray mCudaArticulationJacobianScratch;
   CudaArray mCudaArticulationJacobianShapeBuffer;
 
+  // PhysX contact pair copy target and its pair count, allocated by the first gpu_init();
+  // copyContactData() grows the buffer on demand
   CudaArray mCudaContactBuffer;
   CudaArray mCudaContactCount;
 
