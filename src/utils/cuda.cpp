@@ -37,6 +37,7 @@ CudaEvent::CudaEvent(CudaEvent &&other) {
   event = other.event;
 
   // destory other
+  other.cudaId = -1;
   other.event = nullptr;
 }
 

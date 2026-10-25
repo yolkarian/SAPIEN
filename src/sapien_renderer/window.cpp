@@ -68,7 +68,7 @@ public:
     if (poseIndex < 0 || poseIndex >= poses.shape[0]) {
       return std::nullopt;
     }
-    checkCudaErrors(cudaSetDevice(poses.cudaId));
+    CudaDeviceScope deviceScope(poses.cudaId);
     auto stream = reinterpret_cast<cudaStream_t>(mSystem->gpuGetCudaStream());
     auto const *source = static_cast<char const *>(poses.ptr) + poseIndex * poses.strides[0];
     checkCudaErrors(cudaMemcpyAsync(mSelectedPose.ptr, source, 7 * sizeof(float),

@@ -211,7 +211,7 @@ void BatchedCamera::internalGpuInit() {
   // a compact group-owned CUDA row [px, py, pz, qw, qx, qy, qz], seeded once from the
   // current CPU global pose; update_render() derives their view matrices from that row.
   // Static cameras keep their snapshot and cpu cameras upload their CPU pose when dirty.
-  checkCudaErrors(cudaSetDevice(SapienRenderEngine::Get()->getDevice()->cudaId));
+  CudaDeviceScope deviceScope(mEngine->getDevice()->cudaId);
   std::vector<float> seedPoses;
   std::vector<CameraData> rowCameraData;
   for (auto &cam : mCameras) {
@@ -405,7 +405,7 @@ void BatchedCamera::setCudaPose(std::shared_ptr<SapienRenderCameraComponent> con
                                 Pose const &pose) {
 #ifdef SAPIEN_CUDA
   int row = getCudaPoseIndex(camera);
-  checkCudaErrors(cudaSetDevice(SapienRenderEngine::Get()->getDevice()->cudaId));
+  CudaDeviceScope deviceScope(mEngine->getDevice()->cudaId);
   float data[7] = {pose.p.x, pose.p.y, pose.p.z, pose.q.w, pose.q.x, pose.q.y, pose.q.z};
   // Keep this synchronous convenience API ordered with prior and subsequent
   // transform kernels on the configured stream. The synchronization also keeps
@@ -457,14 +457,14 @@ void BatchedCamera::closeImpl() {
   }
   mEngine->getContext()->getDevice().waitIdle();
 #ifdef SAPIEN_CUDA
-  checkCudaErrors(cudaSetDevice(mEngine->getDevice()->cudaId));
-  checkCudaErrors(cudaStreamSynchronize(mCudaStream));
-  checkCudaErrors(cudaDeviceSynchronize());
-#endif
-#ifdef SAPIEN_CUDA
-  if (mCudaSem) {
-    cudaDestroyExternalSemaphore(mCudaSem);
-    mCudaSem = nullptr;
+  {
+    CudaDeviceScope deviceScope(mEngine->getDevice()->cudaId);
+    checkCudaErrors(cudaStreamSynchronize(mCudaStream));
+    checkCudaErrors(cudaDeviceSynchronize());
+    if (mCudaSem) {
+      cudaDestroyExternalSemaphore(mCudaSem);
+      mCudaSem = nullptr;
+    }
   }
 #endif
   for (auto &camera : mCameras) {
@@ -692,8 +692,6 @@ void BatchedRenderSystem::init() {
   mShapeCount = allShapeData.size();
 
 #ifdef SAPIEN_CUDA
-  checkCudaErrors(cudaSetDevice(SapienRenderEngine::Get()->getDevice()->cudaId));
-#endif
   mCudaShapeDataBuffer = CudaArray::FromData(allShapeData);
   mCudaSceneTransformRefBuffer = CudaArray::FromData(sceneTransformRefs);
   mCudaRTInstanceRefBuffer =
@@ -702,6 +700,7 @@ void BatchedRenderSystem::init() {
   for (auto const &scene : mRenderScenes) {
     mRenderSceneVersions.push_back(scene->getVersion());
   }
+#endif
 
   // create semaphore
   auto context = SapienRenderEngine::Get()->getContext();
@@ -808,6 +807,9 @@ void BatchedRenderSystem::gpuInit() {
   }
 
 #ifdef SAPIEN_CUDA
+  // Covers every upload and camera-batch CUDA op of this initialization.
+  CudaDeviceScope deviceScope(mEngine->getDevice()->cudaId);
+
   // PhysX GPU owns the authoritative body/link pose indices. Every referenced
   // system must be initialized before mounted cameras and render shapes are bound.
   std::unordered_set<physx::PhysxSystemGpu *> validatedSystems;
@@ -978,10 +980,7 @@ void BatchedRenderSystem::gpuInit() {
       mCameraCount++;
     }
   }
-#ifdef SAPIEN_CUDA
-  checkCudaErrors(cudaSetDevice(SapienRenderEngine::Get()->getDevice()->cudaId));
   mCudaCameraDataBuffer = CudaArray::FromData(allCamData);
-#endif
 
   // RT instance buffers exist now if camera resource preparation built a TLAS.
   static_assert(sizeof(vk::AccelerationStructureInstanceKHR) == sizeof(float) * 16);
@@ -1002,9 +1001,11 @@ void BatchedRenderSystem::gpuInit() {
   // Seed CPU-owned RT instance transforms once. Sealed groups never repeat this per
   // frame; the Viewer's fixed-scene group stays CPU-managed and re-uploads per update.
   for (uint32_t i = 0; i < mRenderScenes.size(); ++i) {
+#ifdef SAPIEN_CUDA
     if (mRTSceneEnabled[i]) {
       mRenderScenes[i]->updateRTResources(false);
     }
+#endif
   }
 
   // Seal every shape's pose-source binding. The update descriptors now own the

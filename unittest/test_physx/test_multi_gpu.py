@@ -185,6 +185,36 @@ class TestMultiGpuPhysx(unittest.TestCase):
         for sim, start in zip(sims, starts):
             self._assert_free_fall(sim, start, 4.0, STEPS)
 
+    def test_gpu_set_cuda_stream_zero_roundtrip(self) -> None:
+        """Stream 0 selects the system's own default stream and later own-device streams work."""
+        torch.cuda.set_device(0)
+        sim = self._sim("cuda:1")
+        start = sim.launch(1.0)
+        sim.system.gpu_set_cuda_stream(0)
+        sim.system.step()
+        self.assertEqual(torch.cuda.current_device(), 0)
+        own_stream = torch.cuda.Stream(device=1)
+        sim.system.gpu_set_cuda_stream(own_stream.cuda_stream)
+        sim.system.step()
+        sim.system.gpu_set_cuda_stream(0)
+        for _ in range(STEPS - 2):
+            sim.system.step()
+        self._assert_free_fall(sim, start, 1.0, STEPS)
+        self.assertEqual(torch.cuda.current_device(), 0)
+
+    def test_two_systems_on_the_same_device_interleave(self) -> None:
+        """Stepping two systems of one device alternately must not disturb the other device."""
+        first = self._sim("cuda:0")
+        second = self._sim("cuda:0")
+        other = self._sim("cuda:1")
+        starts = [s.launch(v) for s, v in zip((first, second, other), (1.0, 3.0, 5.0))]
+        for _ in range(STEPS):
+            first.system.step()
+            second.system.step()
+            other.system.step()
+        for sim, start, v in zip((first, second, other), starts, (1.0, 3.0, 5.0)):
+            self._assert_free_fall(sim, start, v, STEPS)
+
     def test_inputs_from_another_device_are_rejected(self) -> None:
         """Streams and index buffers must live on the system's device."""
         sim = self._sim("cuda:1")
@@ -265,6 +295,20 @@ class TestMultiGpuPhysx(unittest.TestCase):
             # Without the mesh on this device's scene the cone would have fallen ~20 m.
             self.assertGreater(float(state[2]), 0.0, f"the cone fell through the ground on {device}")
             self.assertLess(abs(float(state[9])), 0.05, f"the cone is still falling on {device}")
+
+    def test_sync_poses_gpu_to_cpu_on_both_devices(self) -> None:
+        """sync_poses_gpu_to_cpu() downloads the poses of each system from its own device."""
+        sims = [self._sim("cuda:0"), self._sim("cuda:1")]
+        velocities = [2.0, 4.0]
+        starts = [sim.launch(v) for sim, v in zip(sims, velocities)]
+        for _ in range(STEPS):
+            for sim in sims:
+                sim.system.step()
+        for sim, start, v in zip(sims, starts, velocities):
+            sim.system.sync_poses_gpu_to_cpu()
+            expected = _free_fall(start, v, STEPS)
+            for body, height in zip(sim.system.rigid_dynamic_components, expected.tolist()):
+                self.assertAlmostEqual(float(body.entity.pose.p[2]), height, places=3)
 
     def test_simulating_on_one_device_creates_no_context_on_another(self) -> None:
         """A process that simulates on cuda:1 never claims memory on cuda:0, so per-GPU ranks

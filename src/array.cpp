@@ -171,6 +171,7 @@ CudaArray::CudaArray(CudaArray &&other) {
   ptr = other.ptr;
 
   other.shape.clear();
+  other.cudaId = -1;
   other.ptr = nullptr;
 #endif
 }
@@ -229,6 +230,7 @@ CudaHostArray::CudaHostArray(CudaHostArray &&other) {
   ptr = other.ptr;
 
   other.shape.clear();
+  other.cudaId = -1;
   other.ptr = nullptr;
 #endif
 }

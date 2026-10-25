@@ -97,7 +97,7 @@ StagedRenderSystem::StagedRenderSystem(
   mShapeCount = shapeData.size();
   mCompactIndexByPose = std::move(compactIndexByPose);
 
-  checkCudaErrors(cudaSetDevice(mPoseSource.cudaId));
+  CudaDeviceScope deviceScope(mPoseSource.cudaId);
   mSourcePoseIndices = CudaArray({static_cast<int>(mPoseCount)}, "i4");
   mCompactPoses = CudaArray({static_cast<int>(mPoseCount), 7}, "f4");
   if (mPoseCount) {
@@ -168,7 +168,7 @@ void StagedRenderSystem::update() {
   mNextSlot = (mNextSlot + 1) % mSlots.size();
 
   SAPIEN_PROFILE_BLOCK_BEGIN("compact staged poses");
-  checkCudaErrors(cudaSetDevice(mPoseSource.cudaId));
+  CudaDeviceScope deviceScope(mPoseSource.cudaId);
   pack_staged_poses(static_cast<float *>(mCompactPoses.ptr),
                     static_cast<float const *>(mPoseSource.ptr), mPoseSource.shape[1],
                     static_cast<int const *>(mSourcePoseIndices.ptr), mPoseCount, mCudaStream);
@@ -253,7 +253,9 @@ StagedRenderSystem::~StagedRenderSystem() {
   for (auto const &body : mGpuSourcedBodies) {
     body->internalReleaseGpuPoseSource();
   }
-  cudaSetDevice(mPoseSource.cudaId);
+  // CudaArray/CudaEvent members free in this device's scope; the next one may use
+  // another device before the destructors run.
+  CudaDeviceScope deviceScope(mPoseSource.cudaId);
 }
 
 } // namespace sapien::sapien_renderer

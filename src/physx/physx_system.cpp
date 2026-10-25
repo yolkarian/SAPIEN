@@ -417,6 +417,9 @@ void PhysxSystemGpu::step() {
   mContactUpToDate = false;
 
   ++mTotalSteps;
+  // With no CPU workers PhysX runs this whole step on the calling thread; the scope keeps the
+  // caller's device untouched, so threads stepping different systems do not disturb each other.
+  CudaDeviceScope deviceScope(mDevice->cudaId);
   mPxScene->simulate(mTimestep);
   mPxScene->fetchResults(true);
 
@@ -440,6 +443,7 @@ void PhysxSystemGpu::stepStart() {
   mContactUpToDate = false;
 
   ++mTotalSteps;
+  CudaDeviceScope deviceScope(mDevice->cudaId);
   mPxScene->simulate(mTimestep);
   mSimulateInFlight = true;
 }
@@ -451,6 +455,7 @@ void PhysxSystemGpu::stepFinish() {
   if (!mSimulateInFlight) {
     throw std::runtime_error("failed to finish step: no GPU simulation is in flight");
   }
+  CudaDeviceScope deviceScope(mDevice->cudaId);
   mPxScene->fetchResults(true);
   mSimulateInFlight = false;
 }
@@ -694,7 +699,6 @@ std::shared_ptr<PhysxGpuContactPairImpulseQuery> PhysxSystemGpu::gpuCreateContac
   checkCudaErrors(cudaMemcpy(query.ptr, pairs.data(), pairs.size() * sizeof(ActorPairQuery),
                              cudaMemcpyHostToDevice));
   CudaArray buffer({static_cast<int>(pairs.size()), 3}, "f4");
-  finishDefaultStreamWork();
 
   auto res = std::make_shared<PhysxGpuContactPairImpulseQuery>();
   res->query = std::move(query);
@@ -724,7 +728,6 @@ std::shared_ptr<PhysxGpuContactBodyImpulseQuery> PhysxSystemGpu::gpuCreateContac
   checkCudaErrors(cudaMemcpy(query.ptr, actors.data(), actors.size() * sizeof(ActorQuery),
                              cudaMemcpyHostToDevice));
   CudaArray buffer({static_cast<int>(actors.size()), 3}, "f4");
-  finishDefaultStreamWork();
 
   // TODO: use dedicated type, do not reuse contact query
   auto res = std::make_shared<PhysxGpuContactBodyImpulseQuery>();
