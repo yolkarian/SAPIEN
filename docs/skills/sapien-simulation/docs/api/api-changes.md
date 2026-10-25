@@ -4,6 +4,48 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+Multi-GPU PhysX:
+
+- Single-GPU code needs no change: the Python API is the same, and `PhysxGpuSystem()`
+  without a device still uses the default `"cuda"` device, the only one when one GPU is
+  visible. Pass `"cuda:k"` only to choose among several visible GPUs.
+- `PhysxGpuSystem(device)` systems on **different CUDA devices now coexist in one
+  process** (previously the second device raised "PhysX only supports a single GPU").
+  Each device gets its own PhysX CUDA context manager on its primary CUDA context. It now
+  stays alive until `sapien.physx.shutdown()` or engine destruction instead of being
+  released with the device's last system (fork.15.post1 leases): PhysX keeps per-manager
+  kernel handles for the `PxPhysics` lifetime, so recycled managers ran stale kernels. With
+  the leases (reproduced on fork.15.post2 and fork.16), closing every GPU system while any
+  PhysX object kept the engine alive and then creating another failed with CUDA error 400
+  or segfaulted, also on one GPU. Workarounds verified on fork.16: keep one GPU system
+  alive for the whole process, or drop every PhysX object and call
+  `sapien.physx.shutdown()` (then `enable_gpu()` again) between jobs.
+- **Behavior change:** SAPIEN PhysX calls no longer leave the system's device current;
+  they restore the caller's current CUDA device (`torch.cuda.current_device()` is
+  unchanged) and never create a context on another device. With several visible GPUs,
+  code that relied on a SAPIEN call selecting the device for later `device="cuda"` tensors
+  must create them on the system's device; one visible GPU is unaffected.
+- `gpu_set_cuda_stream(stream)` raises `RuntimeError` for a stream of another device.
+- `PhysxGpuSystem.step()`, `step_start()`, `step_finish()` and `PhysxSystem.wait_idle()`
+  release the GIL. `step_start()` is asynchronous only with `cpu_workers >= 1`.
+- `enable_gpu()` downloads a missing PhysX GPU library under a file lock and renames it
+  into place complete, so concurrent ranks no longer race on the first download.
+
+Stream-order fixes for a non-blocking configured stream, e.g.
+`gpu_set_cuda_stream(torch.cuda.Stream().cuda_stream)` (Torch's pool streams are non-blocking):
+
+- Fixed: the first indexed `gpu_*` call could raise a false `index buffer entry 0 is outside
+  the gpu_index range`; the first contact query could report zero contacts;
+  `sync_poses_gpu_to_cpu()` could copy poses from before its own fetch; GPU `articulation.qpos`
+  assignment could apply a value whose upload had not landed. `gpu_init()` now allocates and
+  fully initializes the index-check and contact buffers. The default stream and blocking
+  streams were unaffected, except that contact-buffer growth was unordered.
+- Workarounds for released versions with such a stream (checked on fork.15.post2 and fork.16):
+  make one indexed call and one contact query on the default stream before
+  `gpu_set_cuda_stream()`; before `sync_poses_gpu_to_cpu()`, call
+  `gpu_fetch_rigid_dynamic_data()`, `gpu_fetch_articulation_link_pose()` and
+  `stream.synchronize()` yourself. Contact-buffer growth and qpos/target uploads have none.
+
 Joint friction is now **Coulomb effort**, not the deprecated PhysX load-dependent
 coefficient: `PhysxArticulationJoint.friction/get_friction/set_friction`,
 `set_joint_frictions`, and builder `friction` use N (prismatic) or N*m

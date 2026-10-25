@@ -1,12 +1,30 @@
 #ifdef SAPIEN_CUDA
 #include "sapien/utils/cuda.h"
-#include <cuda.h>
 
 #include "./cuda_lib.h"
 #include <cuda.h>
 #include <cuda_runtime.h>
 
 namespace sapien {
+
+CudaDeviceScope::CudaDeviceScope(int cudaId) {
+  auto &lib = CudaLib::Get();
+  CUcontext target = cudaPrimaryContext(cudaId);
+  CUcontext current{};
+  checkCudaDriverErrors(lib.cuCtxGetCurrent(&current));
+  if (current == target) {
+    return;
+  }
+  checkCudaDriverErrors(lib.cuCtxPushCurrent(target));
+  mPushed = true;
+}
+
+CudaDeviceScope::~CudaDeviceScope() {
+  if (mPushed) {
+    CUcontext popped{};
+    CudaLib::Get().cuCtxPopCurrent(&popped);
+  }
+}
 
 void CudaEvent::init() {
   checkCudaErrors(cudaGetDevice(&cudaId));
@@ -25,6 +43,7 @@ CudaEvent::CudaEvent(CudaEvent &&other) {
 CudaEvent &CudaEvent::operator=(CudaEvent &&other) {
   // destroy self
   if (event) {
+    CudaDeviceScope scope(cudaId);
     checkCudaDriverErrors(CudaLib::Get().cuEventDestroy(event));
   }
 
@@ -65,8 +84,11 @@ void CudaEvent::synchronize() const {
 
 CudaEvent::~CudaEvent() {
   if (event) {
-    cudaSetDevice(cudaId);
-    CudaLib::Get().cuEventDestroy(event);
+    try {
+      CudaDeviceScope scope(cudaId);
+      CudaLib::Get().cuEventDestroy(event);
+    } catch (...) {
+    }
   }
 }
 

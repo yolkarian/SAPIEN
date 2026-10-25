@@ -178,10 +178,10 @@ CudaArray::CudaArray(CudaArray &&other) {
 CudaArray &CudaArray::operator=(CudaArray &&other) {
 #ifdef SAPIEN_CUDA
   if (this != &other) {
-    if (cudaId >= 0) {
-      checkCudaErrors(cudaSetDevice(cudaId));
+    if (ptr) {
+      CudaDeviceScope scope(cudaId);
+      checkCudaErrors(cudaFree(ptr));
     }
-    checkCudaErrors(cudaFree(ptr));
     shape = other.shape;
     type = other.type;
     cudaId = other.cudaId;
@@ -196,7 +196,13 @@ CudaArray &CudaArray::operator=(CudaArray &&other) {
 
 CudaArray::~CudaArray() {
 #ifdef SAPIEN_CUDA
-  cudaFree(ptr);
+  if (ptr) {
+    try {
+      CudaDeviceScope scope(cudaId);
+      cudaFree(ptr);
+    } catch (...) {
+    }
+  }
 #endif
 }
 
@@ -209,8 +215,8 @@ CudaHostArray::CudaHostArray(std::vector<int> shape_, std::string type_)
   }
   size *= typestrBytes(type);
   if (size > 0) {
+    checkCudaErrors(cudaGetDevice(&cudaId));
     checkCudaErrors(cudaHostAlloc(&ptr, size, cudaHostAllocPortable));
-    // checkCudaErrors(cudaMallocHost(&ptr, size));
   }
 #endif
 }
@@ -219,6 +225,7 @@ CudaHostArray::CudaHostArray(CudaHostArray &&other) {
 #ifdef SAPIEN_CUDA
   shape = other.shape;
   type = other.type;
+  cudaId = other.cudaId;
   ptr = other.ptr;
 
   other.shape.clear();
@@ -228,16 +235,26 @@ CudaHostArray::CudaHostArray(CudaHostArray &&other) {
 
 CudaHostArray::~CudaHostArray() {
 #ifdef SAPIEN_CUDA
-  cudaFreeHost(ptr);
+  if (ptr) {
+    try {
+      CudaDeviceScope scope(cudaId);
+      cudaFreeHost(ptr);
+    } catch (...) {
+    }
+  }
 #endif
 }
 
 CudaHostArray &CudaHostArray::operator=(CudaHostArray &&other) {
 #ifdef SAPIEN_CUDA
   if (this != &other) {
-    checkCudaErrors(cudaFreeHost(ptr));
+    if (ptr) {
+      CudaDeviceScope scope(cudaId);
+      checkCudaErrors(cudaFreeHost(ptr));
+    }
     shape = other.shape;
     type = other.type;
+    cudaId = other.cudaId;
     ptr = other.ptr;
 
     other.shape.clear();
@@ -258,6 +275,7 @@ void CudaHostArray::copyFrom(const CudaArray &array) {
   if (!array.ptr) {
     return;
   }
+  CudaDeviceScope scope(array.cudaId);
   checkCudaErrors(cudaMemcpy(ptr, array.ptr, array.bytes(), cudaMemcpyDeviceToHost));
 #endif
 }

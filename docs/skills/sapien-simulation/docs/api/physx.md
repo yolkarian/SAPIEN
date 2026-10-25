@@ -900,5 +900,5 @@ filters, density and offsets). Missing mesh paths raise descriptive RuntimeError
 | `rigid_static_components` | property | `rigid_static_components(self) -> list[PhysxRigidStaticComponent]` |  |  |
 | `set_scene_collision_id` | method | `set_scene_collision_id(self, id: int) -> None` |  |  |
 | `set_timestep` | method | `set_timestep(self, timestep: float) -> None` | Set the simulation timestep. |  |
-| `wait_idle` | method | `wait_idle(self) -> None` | Wait until all simulation and fetch work of this system completed. | Defined on the base class, so CPU and GPU systems both expose it; `PhysxGpuSystem.close()` calls it to drain in-flight simulation and SAPIEN CUDA work before releasing. |
+| `wait_idle` | method | `wait_idle(self) -> None` | Wait until all simulation and fetch work of this system completed. | Defined on the base class, so CPU and GPU systems both expose it; `PhysxGpuSystem.close()` calls it to drain in-flight simulation and SAPIEN CUDA work before releasing. Releases the GIL while waiting. |
 | `__init__` | method | `__init__(self) -> None` |  |  |

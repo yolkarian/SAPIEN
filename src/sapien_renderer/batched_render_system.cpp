@@ -329,6 +329,10 @@ void BatchedCamera::internalUploadDirtyCameraState() {
 
 void BatchedCamera::takePicture() {
   checkGpuInitialized();
+#ifdef SAPIEN_CUDA
+  // The semaphore wait below targets the renderer's device, not the caller's current one.
+  CudaDeviceScope deviceScope(mEngine->getDevice()->cudaId);
+#endif
   auto context = SapienRenderEngine::Get()->getContext();
 
   // make sure previous takePicture has finished
@@ -1075,6 +1079,11 @@ void BatchedRenderSystem::gpuInit() {
 void BatchedRenderSystem::update() {
   checkNotClosed();
   SAPIEN_PROFILE_FUNCTION;
+#ifdef SAPIEN_CUDA
+  // Allocations, kernels and semaphore operations below (including notifyUpdate) target the
+  // renderer's device, not the caller's current one.
+  CudaDeviceScope deviceScope(mEngine->getDevice()->cudaId);
+#endif
   if (!mGpuInitialized) {
     throw std::runtime_error(
         "failed to update render system group: call gpu_init() after configuring pose sources "
@@ -1333,8 +1342,13 @@ void BatchedRenderSystem::closeImpl() {
   }
   mEngine->getContext()->getDevice().waitIdle();
 #ifdef SAPIEN_CUDA
-  checkCudaErrors(cudaStreamSynchronize(mCudaStream));
-  checkCudaErrors(cudaDeviceSynchronize());
+  // A renderer CUDA cannot see (e.g. hidden by CUDA_VISIBLE_DEVICES) never ran CUDA work for
+  // this group, since gpu_init() needs a CUDA render device, so there is nothing to wait for.
+  if (int cudaId = mEngine->getDevice()->cudaId; cudaId >= 0) {
+    CudaDeviceScope deviceScope(cudaId);
+    checkCudaErrors(cudaStreamSynchronize(mCudaStream));
+    checkCudaErrors(cudaDeviceSynchronize());
+  }
 #endif
   for (auto const &body : mGpuSourcedBodies) {
     body->internalReleaseGpuPoseSource();

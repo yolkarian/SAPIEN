@@ -145,6 +145,8 @@ struct CudaHostArray {
 
   std::vector<int> shape;
   std::string type;
+  /** Device whose context allocated the pinned buffer; frees run in its scope. */
+  int cudaId{-1};
   void *ptr{nullptr};
 };
 

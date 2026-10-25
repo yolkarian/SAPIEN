@@ -34,7 +34,7 @@ Conventions:
 | Need | Preferred API |
 |---|---|
 | Scene with default CPU physics + render | `sapien.Scene()` |
-| Physics-only GPU scene | `sapien.Scene([sapien.physx.PhysxGpuSystem(device)])` |
+| Physics-only GPU scene | `sapien.Scene([sapien.physx.PhysxGpuSystem()])`; pass `"cuda:k"` only to choose among several GPUs |
 | Render-enabled scene | `sapien.Scene([physx_system, sapien.render.RenderSystem(device)])` |
 | Actors | `scene.create_actor_builder()` / `sapien.ActorBuilder()` |
 | Robots/articulations | `scene.create_articulation_builder()` / `scene.create_urdf_loader()` |

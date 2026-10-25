@@ -235,6 +235,37 @@ class TestGpuStreamOrder(unittest.TestCase):
                 with self.subTest(iteration=iteration):
                     torch.testing.assert_close(result, torch.zeros_like(result), rtol=0.0, atol=0.0)
 
+    def test_first_contact_query_while_default_stream_is_busy(self) -> None:
+        """The first query on a non-blocking stream must see contacts.
+
+        SAPIEN zero-fills new CUDA buffers on the default stream, which PhysX's non-blocking
+        contact copy and a non-blocking configured stream do not wait for. Contact buffers
+        created by the first query were zeroed after PhysX had written the count, so the query
+        reported no contacts. Keeping the default stream busy makes that ordering certain."""
+        self._build_boxes(contact=True)
+        self.system.step()
+        # Outside ``torch.cuda.stream`` Torch queues the delay on the default stream.
+        torch.cuda._sleep(200_000_000)
+        self.system.gpu_query_contact_body_impulses(self.queries[0])
+        self.assertGreater(float(self.views["impulses"].norm()), 0.0)
+
+    def test_pose_sync_waits_for_the_configured_stream(self) -> None:
+        """sync_poses_gpu_to_cpu() converts poses on the configured stream and copies them on the
+        default stream; the copy must wait for the conversion while the configured stream lags."""
+        self._build_boxes()
+        self.system.sync_poses_gpu_to_cpu()  # allocate the pinned host buffer before measuring
+        for _ in range(8):
+            self.system.step()
+        with torch.cuda.stream(self.stream):
+            torch.cuda._sleep(200_000_000)
+        self.system.sync_poses_gpu_to_cpu()
+        self.stream.synchronize()
+        synced = sorted(
+            tuple(map(float, body.entity.pose.p)) for body in self.system.rigid_dynamic_components
+        )
+        fetched = sorted(map(tuple, self.views["bodies"][:, :3].tolist()))
+        torch.testing.assert_close(torch.tensor(synced), torch.tensor(fetched), rtol=0.0, atol=1e-6)
+
 
 if __name__ == "__main__":
     unittest.main()

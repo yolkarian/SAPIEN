@@ -545,8 +545,9 @@ APIs raise afterwards. Destructors fall back to the same release as a noisy safe
       .def("__exit__",
            [](PhysxSystem &s, py::object const &, py::object const &,
               py::object const &) { s.close(); })
-      .def("wait_idle", &PhysxSystem::waitIdle,
-           "Wait until all simulation and fetch work of this system completed.")
+      .def("wait_idle", &PhysxSystem::waitIdle, py::call_guard<py::gil_scoped_release>(),
+           "Wait until all simulation and fetch work of this system completed. Releases the GIL "
+           "while waiting.")
       .def_property("timestep", &PhysxSystem::getTimestep, &PhysxSystem::setTimestep)
       .def("get_timestep", &PhysxSystem::getTimestep)
       .def("set_timestep", &PhysxSystem::setTimestep, py::arg("timestep"))
@@ -683,6 +684,10 @@ is bound to the same value.
       .def("gpu_set_cuda_stream", &PhysxSystemGpu::gpuSetCudaStream, py::arg("stream"), R"doc(
 PhysX GPU APIs will be synchronized with the provided stream and SAPIEN's CUDA
 kernels will be launched to the provided stream.
+
+The stream must belong to this system's device (its primary CUDA context), for
+example ``torch.cuda.Stream(device=system.device.cuda_id)``; streams of another
+device raise ``RuntimeError``. ``0`` selects the device's default stream.
 
 Args:
     stream: integer representation of a cuda stream pointer
@@ -1125,8 +1130,17 @@ SAPIEN articulation `gpu_index` values.
            "Warning: this function is super slow and for debug only. Download all poses from the "
            "GPU and copy to SAPIEN entities.")
 
-      .def("step_start", &PhysxSystemGpu::stepStart)
-      .def("step_finish", &PhysxSystemGpu::stepFinish);
+      .def("step", &PhysxSystemGpu::step, py::call_guard<py::gil_scoped_release>(),
+           R"doc(Simulate one timestep and wait for it. Releases the GIL, so systems on
+different GPUs can be stepped concurrently from separate Python threads. Do not call other
+APIs of the same system from another thread while it steps.)doc")
+      .def("step_start", &PhysxSystemGpu::stepStart, py::call_guard<py::gil_scoped_release>(),
+           R"doc(Launch one timestep without waiting for it; finish with step_finish(). Returns
+immediately only when PhysxSceneConfig.cpu_workers >= 1: with the default 0 workers PhysX runs
+the whole step on the calling thread here. Calling step_start() on systems on different GPUs
+before their step_finish() overlaps their simulation. Releases the GIL.)doc")
+      .def("step_finish", &PhysxSystemGpu::stepFinish, py::call_guard<py::gil_scoped_release>(),
+           "Wait for the timestep launched by step_start(). Releases the GIL while waiting.");
 
   PyPhysxGpuContactPairImpulseQuery.def_property_readonly(
       "cuda_impulses", [](PhysxGpuContactPairImpulseQuery const &q) { return q.buffer.handle(); });

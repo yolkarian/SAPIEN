@@ -62,7 +62,11 @@ and meaningful: giving several scenes the same ID puts them in one
 environment so they collide with each other, which auto-assignment cannot
 express. Without environment IDs, call
 `physx_system.set_scene_offset(scene, offset)` before adding bodies and keep
-scene contents spatially disjoint.
+scene contents spatially disjoint. An infinite ground plane never is: add one
+ground for all scenes rather than one per scene, or every plane touches the
+bodies of every environment, PhysX overflows its contact buffer and bodies fall
+through the ground. With environment IDs, a ground per scene stays inside its
+environment.
 
 The one scene holding objects common to every environment is marked with no ID
 at all, and must be marked before it gets any body:
@@ -241,6 +245,65 @@ sapien.render.set_light_colors(lights, colors)
   mode. For partial resets, pass only the lights belonging to the environments
   being reset.
 
+## Multiple GPUs
+
+Single-GPU code needs no device argument and is unchanged:
+`sapien.physx.PhysxGpuSystem()` uses the only visible GPU.
+
+One `PhysxGpuSystem` is one PhysX scene on one GPU; PhysX never splits it across
+devices. Scale out with one system per GPU, in either of the layouts Isaac Sim and
+Isaac Lab use.
+
+**One process per GPU.** Launch one process per GPU (for example with
+`torchrun --nproc_per_node=<gpus>`). A rank that sees only its own GPU, for
+example because the launcher sets `CUDA_VISIBLE_DEVICES` per rank, is an
+ordinary single-GPU process and keeps `PhysxGpuSystem()`. When every rank sees
+all GPUs, pass the rank's device, because the default `"cuda"` does not follow
+`torch.cuda.set_device()`:
+
+```python
+local_rank = int(os.environ["LOCAL_RANK"])
+torch.cuda.set_device(local_rank)  # for the rank's own tensors
+physx_system = sapien.physx.PhysxGpuSystem(f"cuda:{local_rank}")
+```
+
+All GPUs may stay visible to every rank; SAPIEN creates no CUDA context on the
+devices a rank does not use. When the PhysX GPU library still has to be
+downloaded, one rank downloads it under a file lock while the others wait.
+
+**Several GPUs in one process.** Create one system per device, each with its own
+scenes. Every device gets its own PhysX CUDA context manager on its primary CUDA
+context, the one Torch uses, so `system.cuda_*` buffers of the system on `cuda:k`
+are Torch tensors on `cuda:k`:
+
+```python
+config = sapien.physx.get_scene_config()
+config.cpu_workers = 1  # lets step_start() return before the GPU work finishes
+sapien.physx.set_scene_config(config)
+
+systems = [sapien.physx.PhysxGpuSystem(f"cuda:{k}") for k in range(torch.cuda.device_count())]
+# build the scenes of every system, then call gpu_init() on each
+
+for system in systems:
+    system.step_start()
+for system in systems:
+    system.step_finish()
+```
+
+Launching every system before waiting for any lets the GPUs simulate at the same
+time. With the default `cpu_workers = 0`, `step_start()` runs the whole step on
+the calling thread and the loop above serializes the GPUs. Alternatively, step
+each system from its own Python thread: `step()`, `step_start()`,
+`step_finish()` and `wait_idle()` release the GIL. Never call one system from
+two threads at once.
+
+Keep every input of a system on its device: index buffers passed to indexed
+`gpu_*` APIs and streams passed to `gpu_set_cuda_stream()` must belong to that
+device, and other devices raise `RuntimeError`. SAPIEN makes a system's device
+current only while it works on that system and then restores the caller's current
+CUDA device, so `torch.cuda.current_device()` is unchanged by SAPIEN calls;
+create tensors on explicit devices.
+
 ## Job-scoped teardown
 
 Long-lived experiment launchers may run several jobs in one Python process. Close
@@ -269,7 +332,7 @@ from its `cuda_*` buffers remain alive. Use `.torch()`, `.jax()`, `.cupy()` or
 
 `sapien.shutdown()` first waits for and releases SAPIEN-owned render groups/engine
 (the caller must close viewers/groups/systems), then clears PhysX caches, releases the
-PhysX CUDA context manager and destroys `PhysxEngine`, `PxPhysics` and
+per-device PhysX CUDA context managers and destroys `PhysxEngine`, `PxPhysics` and
 `PxFoundation`. Physics-only callers may use `sapien.physx.shutdown()` directly. No
 shutdown API calls `cudaDeviceReset()`: the CUDA primary context is shared with
 Torch/JAX, and resetting
