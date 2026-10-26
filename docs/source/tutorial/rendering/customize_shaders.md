@@ -46,8 +46,9 @@ path. A custom directory path can also be supplied.
 The shader packs under SAPIEN's `vulkan_shader/` directory are the canonical
 runtime assets shipped in the `sapien` wheel. They define SAPIEN-specific render
 targets, material behavior, segmentation outputs, and visual defaults. The
-`svulkan2` library owns the generic shader-pack loader, renderer implementation,
-and its private `shader_internal/` compute shaders. Its top-level `shader/`
+`svulkan2` library, vendored in this repository at `3rd_party/sapien-vulkan-2`,
+owns the generic shader-pack loader, renderer implementation, and its private
+`shader_internal/` compute shaders. Its top-level `shader/`
 directory is for standalone examples and is not a second source for SAPIEN's
 built-in packs.
 

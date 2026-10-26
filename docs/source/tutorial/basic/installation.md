@@ -69,7 +69,8 @@ You can learn more about this scene in {ref}`hello_world`.
 
 ## Build from source
 
-Initialize submodules before any source build:
+Initialize submodules before any source build. Only `simsense` is a submodule; the
+`svulkan2` renderer is vendored in `3rd_party/sapien-vulkan-2`.
 
 ```shell
 git submodule update --init --recursive

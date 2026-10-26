@@ -1,6 +1,3 @@
-[submodule "3rd_party/sapien-vulkan-2"]
-	path = 3rd_party/sapien-vulkan-2
-	url = https://github.com/yolkarian/sapien-vulkan-2.git
 [submodule "3rd_party/simsense"]
 	path = 3rd_party/simsense
 	url = https://codeberg.org/yuke/simsense.git

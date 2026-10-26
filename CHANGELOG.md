@@ -13,6 +13,7 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 
 - **Behavior change:** PhysX GPU calls make the system's device current only for the duration of the call and then restore the caller's current CUDA device; previously they left it switched with `cudaSetDevice`. `torch.cuda.current_device()` is no longer changed by SAPIEN calls, so with several visible GPUs, code that relied on a SAPIEN call selecting the device for later `device="cuda"` tensors must create them on the system's device; with one visible GPU, `"cuda"` is that GPU either way. SAPIEN still creates no CUDA context on devices it does not simulate on, which keeps one-process-per-GPU jobs from claiming memory on the first GPU. CUDA array, pinned-buffer and event frees now run on the device that allocated them. The grouped render calls (`RenderSystemGroup.gpu_init()`/`update_render()`, `RenderCameraGroup.take_picture()`/`set_cuda_pose()` and their `close()`) likewise select the renderer's device themselves and restore the caller's device, instead of relying on a previous PhysX call having left it current.
 - `PhysxGpuSystem.gpu_set_cuda_stream()` raises `RuntimeError` for a stream that does not belong to the system's device.
+- `svulkan2` now lives in the repository at `3rd_party/sapien-vulkan-2` instead of a git submodule, so renderer and SAPIEN changes land in one commit; its demo `app/` no longer ships the 94 MB environment-map EXR and renders without an environment map. Only `simsense` remains a submodule.
 
 ### Fixed
 
