@@ -1,12 +1,15 @@
 #pragma once
 #include "svulkan2/core/image.h"
+#include "svulkan2/core/per_context.h"
 #include <future>
+
+struct ktxTexture;
 
 namespace svulkan2 {
 namespace resource {
 
 struct SVImageDescription {
-  enum class SourceType { eFILE, eCUSTOM, eDEVICE } source{SourceType::eCUSTOM};
+  enum class SourceType { eFILE, eCUSTOM, eKTX, eDEVICE } source{SourceType::eCUSTOM};
   vk::Format format{vk::Format::eUndefined};
   std::vector<std::string> filenames{};
   uint32_t desiredChannels{0};
@@ -18,10 +21,16 @@ struct SVImageDescription {
   }
 };
 
+/** A device-independent image: host pixels (or a host KTX texture) uploaded lazily to every
+ *  device (Context) that samples it. eDEVICE images have no host data and live on exactly
+ *  the device that created them. */
 class SVImage {
-
   SVImageDescription mDescription{};
-  std::unique_ptr<core::Image> mImage{};
+
+  struct DeviceState {
+    std::unique_ptr<core::Image> image;
+  };
+  core::PerContext<DeviceState> mDeviceStates;
 
   vk::ImageType mType{vk::ImageType::e2D};
   vk::Format mFormat{vk::Format::eUndefined};
@@ -33,11 +42,13 @@ class SVImage {
                              vk::ImageUsageFlagBits::eTransferDst |
                              vk::ImageUsageFlagBits::eTransferSrc};
 
+  /** host pixels per array layer */
   std::vector<std::vector<char>> mRawData;
+  /** host KTX texture of an eKTX image, uploaded to each device through libktx */
+  std::shared_ptr<ktxTexture> mKtxTexture;
 
   /** the image is on the host */
   bool mLoaded{};
-  bool mOnDevice{};
 
   /** mipmap levels are provided on host */
   bool mMipLoaded{false};
@@ -54,20 +65,31 @@ public:
   static std::shared_ptr<SVImage> FromFile(std::vector<std::string> const &filenames,
                                            uint32_t mipLevels, uint32_t desiredChannels);
 
+  /** take ownership of a loaded (and, if needed, transcoded) host KTX texture */
+  static std::shared_ptr<SVImage> FromKTX(ktxTexture *texture);
+
+  /** device-only image owned by image->getContext(); it cannot be uploaded elsewhere */
   static std::shared_ptr<SVImage> FromDeviceImage(std::unique_ptr<core::Image> image);
 
+  /** must be called before the image is uploaded to any device */
   void setUsage(vk::ImageUsageFlags usage);
   void setCreateFlags(vk::ImageCreateFlags flags);
 
-  void uploadToDevice(bool generateMipmaps = true);
+  /** create this device's image from the host data; no-op when already on the device */
+  void uploadToDevice(core::Context &context, bool generateMipmaps = true);
+  /** release the images of every device (host data is kept) */
   void removeFromDevice();
   inline bool isLoaded() const { return mLoaded; }
-  inline bool isOnDevice() const { return mOnDevice; }
+  bool isOnDevice(core::Context const &context) const;
 
   /** load the image to host memory */
   std::future<void> loadAsync();
 
-  inline core::Image *getDeviceImage() const { return mImage.get(); }
+  /** replace mip level 0 of array layer 0 on the host and on every device holding the image */
+  void updateBaseLevel(void const *data, size_t size);
+
+  /** this device's image, or nullptr when it is not uploaded there */
+  core::Image *getDeviceImage(core::Context const &context) const;
 
   inline SVImageDescription const &getDescription() const { return mDescription; }
 
@@ -78,6 +100,7 @@ public:
   inline uint32_t getDepth() const { return mDepth; }
   inline uint32_t getChannels() const { return getFormatChannels(mFormat); }
   inline vk::Format getFormat() const { return mFormat; }
+  inline uint32_t getMipLevels() const { return mDescription.mipLevels; }
 
   /** Indicate that the image loads mipmap into the data and does not require
    * generation */

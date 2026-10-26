@@ -1,5 +1,7 @@
 #include "sapien/sapien_renderer/texture.h"
 #include "sapien/sapien_renderer/sapien_renderer_system.h"
+#include <cstring>
+#include <svulkan2/resource/manager.h>
 
 namespace sapien {
 namespace sapien_renderer {
@@ -154,7 +156,7 @@ SapienRenderTexture2D::SapienRenderTexture2D(uint32_t width, uint32_t height, vk
     break;
   }
 
-  mTexture = mEngine->getContext()->getResourceManager()->CreateTextureFromRawData(
+  mTexture = mEngine->getResourceManager()->CreateTextureFromRawData(
       width, height, 1, format, rawData, 2, mipLevels, vkf, vkf, vka, vka, vka, srgb);
 }
 
@@ -188,7 +190,7 @@ SapienRenderTexture2D::SapienRenderTexture2D(std::string_view filename, uint32_t
     break;
   }
 
-  mTexture = mEngine->getContext()->getResourceManager()->CreateTextureFromFile(
+  mTexture = mEngine->getResourceManager()->CreateTextureFromFile(
       {filename.begin(), filename.end()}, mipLevels, vkf, vkf, vka, vka, srgb);
   mTexture->loadAsync().get();
 }
@@ -210,66 +212,28 @@ void SapienRenderTexture::download(void *data) {
   if (!mTexture->isLoaded()) {
     mTexture->loadAsync().get();
   }
-  mTexture->uploadToDevice();
-
-  auto image = getTexture()->getImage()->getDeviceImage();
-  auto extent = image->getExtent();
-  size_t size =
-      extent.width * extent.height * extent.depth * svulkan2::getFormatSize(image->getFormat());
-
-  image->download(data, size, vk::Offset3D{0, 0, 0}, image->getExtent(), 0, 0);
-
-  // transfer image layout back immediately
-  auto context = mEngine->getContext();
-  auto pool = context->createCommandPool();
-  auto cb = pool->allocateCommandBuffer();
-  cb->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-  image->transitionLayout(cb.get(), vk::ImageLayout::eTransferSrcOptimal,
-                          vk::ImageLayout::eShaderReadOnlyOptimal,
-                          vk::AccessFlagBits::eTransferRead, vk::AccessFlagBits::eShaderRead,
-                          vk::PipelineStageFlagBits::eTransfer,
-                          vk::PipelineStageFlagBits::eFragmentShader |
-                              vk::PipelineStageFlagBits::eRayTracingShaderKHR);
-  cb->end();
-  context->getQueue().submitAndWait(cb.get());
+  // Host pixels are the authoritative copy; every device holding the image mirrors them.
+  auto image = mTexture->getImage();
+  auto const &rawData = image->getRawData();
+  if (rawData.empty()) {
+    throw std::runtime_error("failed to download texture: it has no host pixel data");
+  }
+  size_t size = static_cast<size_t>(image->getWidth()) * image->getHeight() * image->getDepth() *
+                svulkan2::getFormatSize(image->getFormat());
+  if (rawData.front().size() < size) {
+    throw std::runtime_error("failed to download texture: host pixel data is incomplete");
+  }
+  std::memcpy(data, rawData.front().data(), size);
 }
 
 void SapienRenderTexture::upload(void *data) {
   if (!mTexture->isLoaded()) {
     mTexture->loadAsync().get();
   }
-  mTexture->uploadToDevice();
-
-  auto image = getTexture()->getImage()->getDeviceImage();
-  auto extent = image->getExtent();
-  size_t size =
-      extent.width * extent.height * extent.depth * svulkan2::getFormatSize(image->getFormat());
-
-  auto context = mEngine->getContext();
-  auto pool = context->createCommandPool();
-
-  auto cb = pool->allocateCommandBuffer();
-  cb->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-  image->transitionLayout(
-      cb.get(), vk::ImageLayout::eShaderReadOnlyOptimal, vk::ImageLayout::eTransferDstOptimal,
-      vk::AccessFlagBits::eShaderRead, vk::AccessFlagBits::eTransferWrite,
-      vk::PipelineStageFlagBits::eFragmentShader | vk::PipelineStageFlagBits::eRayTracingShaderKHR,
-      vk::PipelineStageFlagBits::eTransfer);
-  cb->end();
-  context->getQueue().submitAndWait(cb.get());
-
-  image->uploadLevel(data, size, 0, 0);
-
-  cb = pool->allocateCommandBuffer();
-  cb->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-  image->transitionLayout(cb.get(), vk::ImageLayout::eTransferDstOptimal,
-                          vk::ImageLayout::eShaderReadOnlyOptimal,
-                          vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead,
-                          vk::PipelineStageFlagBits::eTransfer,
-                          vk::PipelineStageFlagBits::eFragmentShader |
-                              vk::PipelineStageFlagBits::eRayTracingShaderKHR);
-  cb->end();
-  context->getQueue().submitAndWait(cb.get());
+  auto image = mTexture->getImage();
+  size_t size = static_cast<size_t>(image->getWidth()) * image->getHeight() * image->getDepth() *
+                svulkan2::getFormatSize(image->getFormat());
+  image->updateBaseLevel(data, size);
 }
 
 } // namespace sapien_renderer

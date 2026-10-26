@@ -4,6 +4,26 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+Multi-GPU rendering:
+
+- `sapien.render.RenderSystem(device)` systems on **different devices now coexist in one
+  process** (previously the second device raised "current SAPIEN version only supports
+  single-GPU rendering"). `RenderSystem()` without a device still uses the default render
+  device, so single-GPU code is unchanged.
+- Materials, textures, cubemaps, meshes and loaded models are device-independent and may be
+  shared across devices; each device uploads lazily and edits reach every device.
+- `RenderSystemGroup` and `RenderWindow`/VR raise `RuntimeError` for render systems of
+  another device; windows and VR use the default render device. Camera-group CUDA outputs
+  are on the group's device.
+- New optional `device` arguments: `RenderCudaMeshComponent(max_vertex_count,
+  max_triangle_count, device=None)` (raises when added to a scene of another device) and
+  `RenderShapeTriangleMeshPart.get_cuda_vertices/get_cuda_triangles(device=None)` (the
+  `cuda_vertices`/`cuda_triangles` properties keep returning the default device's copy).
+- Renderer CUDA interop restores the caller's current CUDA context; `torch.cuda.current_device()`
+  is unchanged by render calls.
+- Fixed: with `SAPIEN_DISABLE_RAY_TRACING=1`, render devices had no CUDA id, so
+  `RenderSystem("cuda:N")` failed to find its device.
+
 Multi-GPU PhysX:
 
 - Single-GPU code needs no change: the Python API is the same, and `PhysxGpuSystem()`

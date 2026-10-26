@@ -28,7 +28,8 @@ using optable_t = std::unordered_map<std::string, std::vector<RenderTargetOperat
 
 class ShaderPackInstance {
 public:
-  ShaderPackInstance(ShaderPackInstanceDesc const &desc);
+  /** pipelines of `desc` on `context` */
+  ShaderPackInstance(std::shared_ptr<core::Context> context, ShaderPackInstanceDesc const &desc);
 
   std::future<void> loadAsync();
 

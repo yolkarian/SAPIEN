@@ -21,20 +21,33 @@ struct SVCubemapDescription {
   }
 };
 
+/** A device-independent cubemap. Each device (Context) that samples it gets its own cube
+ *  image (converted from lat-long and prefiltered on that device when needed), view and
+ *  sampler. */
 class SVCubemap {
-  std::shared_ptr<core::Context> mContext; // keep alive for sampler and image view
-  SVCubemapDescription mDescription;
-  std::shared_ptr<SVImage> mImage;
-  std::shared_ptr<SVImage> mLatLongImage;
+  struct DeviceState {
+    std::shared_ptr<core::Context> context;   // keeps the device alive for the view
+    std::unique_ptr<core::Image> latLongCube; // this device's cube converted from lat-long
+    vk::UniqueImageView imageView;
+    vk::Sampler sampler;
+  };
 
-  bool mOnDevice{};
-  vk::UniqueImageView mImageView;
-  vk::Sampler mSampler;
+  SVCubemapDescription mDescription;
+  /** host cube faces (eFACES, eKTX, eCUSTOM) */
+  std::shared_ptr<SVImage> mImage;
+  /** host lat-long image (eLATLONG) */
+  std::shared_ptr<SVImage> mLatLongImage;
+  core::PerContext<DeviceState> mDeviceStates;
 
   bool mLoaded{};
 
+  /** the cube usage (including storage, needed by the prefilter pass) is set on mImage */
+  bool mImageUsageSet{false};
+
   std::mutex mUploadingMutex;
   std::mutex mLoadingMutex;
+
+  DeviceState const &getDeviceState(core::Context const &context) const;
 
 public:
   static std::shared_ptr<SVCubemap> FromFile(std::string const &filename, uint32_t mipLevels,
@@ -53,24 +66,25 @@ public:
            uint32_t mipLevels = 1, vk::Filter magFilter = vk::Filter::eLinear,
            vk::Filter minFilter = vk::Filter::eLinear, bool srgb = false);
 
-  static std::shared_ptr<SVCubemap> FromImage(std::shared_ptr<SVImage> image,
-                                              vk::UniqueImageView imageView, vk::Sampler sampler);
-
-  void uploadToDevice();
+  /** upload (convert, prefilter) and create this device's view and sampler; no-op when
+   *  present */
+  void uploadToDevice(core::Context &context);
+  /** release the device state of every device */
   void removeFromDevice();
 
-  inline bool isOnDevice() const { return mOnDevice && mImage->isOnDevice(); }
+  bool isOnDevice(core::Context const &context) const;
   inline bool isLoaded() const { return mLoaded; }
   std::future<void> loadAsync();
   void load();
 
   inline SVCubemapDescription const &getDescription() const { return mDescription; }
 
-  inline std::shared_ptr<SVImage> getImage() const { return mImage; }
-  inline vk::ImageView getImageView() const { return mImageView.get(); }
-  inline vk::Sampler getSampler() const { return mSampler; }
+  /** this device's view and sampler; throw when the cubemap is not uploaded there */
+  vk::ImageView getImageView(core::Context const &context) const;
+  vk::Sampler getSampler(core::Context const &context) const;
 
-  void exportKTX(std::string const &filename);
+  /** write this device's (prefiltered) cube image to a KTX file */
+  void exportKTX(core::Context &context, std::string const &filename);
 
 private:
   SVCubemap() = default;

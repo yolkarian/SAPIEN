@@ -4,6 +4,7 @@
 #include "sapien/scene.h"
 
 #ifdef SAPIEN_CUDA
+#include "sapien/utils/cuda.h"
 #include <cuda_runtime.h>
 #endif
 
@@ -11,8 +12,11 @@ namespace sapien {
 namespace sapien_renderer {
 
 CudaDeformableMeshComponent::CudaDeformableMeshComponent(uint32_t maxVertexCount,
-                                                         uint32_t maxTriangleCount) {
+                                                         uint32_t maxTriangleCount,
+                                                         std::shared_ptr<Device> device) {
   mEngine = SapienRenderEngine::Get();
+  mDevice = device ? device : mEngine->getDefaultDevice();
+  mContext = mEngine->getContext(mDevice);
   mMesh = std::make_shared<svulkan2::resource::SVMeshDeformable>(maxVertexCount, maxTriangleCount);
 
 #ifdef SAPIEN_CUDA
@@ -22,15 +26,17 @@ CudaDeformableMeshComponent::CudaDeformableMeshComponent(uint32_t maxVertexCount
       vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd);
   createInfo.setPNext(&exportCreateInfo);
   exportCreateInfo.setPNext(&timelineCreateInfo);
-  auto device = mEngine->getContext()->getDevice();
-  mSem = device.createSemaphoreUnique(createInfo);
+  auto vulkanDevice = mContext->getDevice();
+  mSem = vulkanDevice.createSemaphoreUnique(createInfo);
 
-  int fd =
-      device.getSemaphoreFdKHR({mSem.get(), vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd});
+  int fd = vulkanDevice.getSemaphoreFdKHR(
+      {mSem.get(), vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd});
   cudaExternalSemaphoreHandleDesc desc = {};
   desc.flags = 0;
   desc.handle.fd = fd;
   desc.type = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
+  // import into the mesh device's context, not the caller's current one
+  CudaDeviceScope scope(mDevice->cudaId);
   auto err = cudaImportExternalSemaphore(&mCudaSem, &desc);
   if (err != cudaSuccess) {
     throw std::runtime_error("Failed to export semaphore to CUDA: " +
@@ -61,7 +67,7 @@ void CudaDeformableMeshComponent::setTriangleCount(uint32_t count) {
 void CudaDeformableMeshComponent::setTriangles(
     Eigen::Matrix<uint32_t, Eigen::Dynamic, 3, Eigen::RowMajor> const &triangles) {
   setTriangleCount(triangles.rows());
-  mMesh->getIndexBuffer().upload(triangles.data(), triangles.size() * sizeof(uint32_t));
+  mMesh->getIndexBuffer(*mContext).upload(triangles.data(), triangles.size() * sizeof(uint32_t));
 }
 
 uint32_t CudaDeformableMeshComponent::getMaxVertexCount() const {
@@ -78,13 +84,14 @@ CudaArrayHandle CudaDeformableMeshComponent::getVertexBufferCudaArray() const {
   int channels = mMesh->getVertexSize() / 4;
   int itemsize = 4;
 
-  assert(static_cast<int>(mMesh->getVertexBuffer().getSize()) == count * channels * itemsize);
+  auto &buffer = mMesh->getVertexBuffer(*mContext);
+  assert(static_cast<int>(buffer.getSize()) == count * channels * itemsize);
 
   return CudaArrayHandle{.shape = {count, channels},
                          .strides = {channels * itemsize, itemsize},
                          .type = "f4",
-                         .cudaId = mMesh->getVertexBuffer().getCudaDeviceId(),
-                         .ptr = mMesh->getVertexBuffer().getCudaPtr()};
+                         .cudaId = buffer.getCudaDeviceId(),
+                         .ptr = buffer.getCudaPtr()};
 #else
   throw std::runtime_error("sapien is not copmiled with CUDA support");
 #endif
@@ -96,13 +103,14 @@ CudaArrayHandle CudaDeformableMeshComponent::getIndexBufferCudaArray() const {
   int channels = 3;
   int itemsize = 4;
 
-  assert(static_cast<int>(mMesh->getIndexBuffer().getSize()) == count * channels * itemsize);
+  auto &buffer = mMesh->getIndexBuffer(*mContext);
+  assert(static_cast<int>(buffer.getSize()) == count * channels * itemsize);
 
   return CudaArrayHandle{.shape = {count, channels},
                          .strides = {channels * itemsize, itemsize},
                          .type = "u4",
-                         .cudaId = mMesh->getIndexBuffer().getCudaDeviceId(),
-                         .ptr = mMesh->getIndexBuffer().getCudaPtr()};
+                         .cudaId = buffer.getCudaDeviceId(),
+                         .ptr = buffer.getCudaPtr()};
 #else
   throw std::runtime_error("sapien is not copmiled with CUDA support");
 #endif
@@ -111,6 +119,15 @@ CudaArrayHandle CudaDeformableMeshComponent::getIndexBufferCudaArray() const {
 void CudaDeformableMeshComponent::onAddToScene(Scene &scene) {
   auto system = scene.getSapienRendererSystem();
   auto s = system->getScene();
+
+  // The mesh buffers and the semaphore are bound to mDevice; the scene renders on another
+  // device would sample buffers it cannot see.
+  if (system->getContext() != mContext) {
+    throw std::runtime_error(
+        "failed to add CudaDeformableMeshComponent to scene: the component is bound to device \"" +
+        mDevice->getAlias() + "\" but the scene renders on device \"" +
+        system->getDevice()->getAlias() + "\"");
+  }
 
   mObject = &s->addDeformableObject(svulkan2::resource::SVModel::FromData(
       {svulkan2::resource::SVShape::Create(mMesh, mMaterial->getMaterial())}));
@@ -135,10 +152,13 @@ void CudaDeformableMeshComponent::notifyVertexUpdated(uintptr_t stream) {
   cudaExternalSemaphoreSignalParams sigParams{};
   sigParams.flags = 0;
   sigParams.params.fence.value = ++mSemValue;
-  cudaSignalExternalSemaphoresAsync(&mCudaSem, &sigParams, 1,
-                                    reinterpret_cast<cudaStream_t>(stream));
+  {
+    CudaDeviceScope scope(mDevice->cudaId);
+    cudaSignalExternalSemaphoresAsync(&mCudaSem, &sigParams, 1,
+                                      reinterpret_cast<cudaStream_t>(stream));
+  }
   vk::PipelineStageFlags flags = vk::PipelineStageFlagBits::eVertexInput;
-  mEngine->getContext()->getQueue().submit({}, mSem.get(), flags, mSemValue, {}, {}, {});
+  mContext->getQueue().submit({}, mSem.get(), flags, mSemValue, {}, {}, {});
 #endif
 }
 

@@ -25,7 +25,7 @@ class RTRenderer : public RendererBase {
 public:
   enum class DenoiserType { eNONE, eOPTIX, eOIDN };
 
-  RTRenderer(std::string const &shaderDir);
+  RTRenderer(std::shared_ptr<core::Context> context, std::string const &shaderDir);
 
   void resize(int width, int height) override;
   void setScene(std::shared_ptr<scene::Scene> scene) override;

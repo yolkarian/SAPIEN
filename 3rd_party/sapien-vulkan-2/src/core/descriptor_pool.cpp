@@ -1,12 +1,8 @@
 #include "svulkan2/core/descriptor_pool.h"
-#include "svulkan2/core/context.h"
 #include "svulkan2/core/device.h"
 
 namespace svulkan2 {
 namespace core {
-
-DynamicDescriptorPool::DynamicDescriptorPool(std::vector<vk::DescriptorPoolSize> const &sizes)
-    : DynamicDescriptorPool(core::Context::Get()->getDevice2(), sizes) {}
 
 DynamicDescriptorPool::DynamicDescriptorPool(std::shared_ptr<Device> device,
                                              std::vector<vk::DescriptorPoolSize> const &sizes)
@@ -30,8 +26,7 @@ vk::UniqueDescriptorSet DynamicDescriptorPool::allocateSet(vk::DescriptorSetLayo
   for (auto &pool : mPools) {
     try {
       return std::move(
-          Context::Get()
-              ->getDevice()
+          mDevice->getInternal()
               .allocateDescriptorSetsUnique(vk::DescriptorSetAllocateInfo(pool.get(), 1, &layout))
               .front());
     } catch (vk::OutOfPoolMemoryError const &) {

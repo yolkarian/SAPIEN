@@ -9,6 +9,8 @@
 #include "svulkan2/core/physical_device.h"
 #include "svulkan2/shader/glsl_compiler.h"
 #include <GLFW/glfw3.h>
+#include <algorithm>
+#include <atomic>
 #include <iomanip>
 
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
@@ -16,84 +18,57 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 namespace svulkan2 {
 namespace core {
 
-static std::weak_ptr<Context> gContext{};
-std::shared_ptr<Context> Context::Get() {
-  auto context = gContext.lock();
-  if (!context) {
-    throw std::runtime_error("Renderer is not created. Renderer creation is "
-                             "required before any other operation.");
-  }
-  return context;
-}
+// live contexts, at most one per physical device. Recursive: a strong reference taken
+// while scanning may be the last one, so ~Context can run with the lock already held.
+static std::recursive_mutex gContextLock;
+static std::vector<std::weak_ptr<Context>> gContexts;
+static std::atomic<uint64_t> gNextContextId{1};
 
 std::shared_ptr<Context> Context::Create(uint32_t maxNumMaterials, uint32_t maxNumTextures,
-                                         uint32_t defaultMipLevels, bool doNotLoadTexture,
                                          std::string device, bool enableVR) {
-  if (auto context = gContext.lock()) {
-    if (context->mDefaultMipLevels != defaultMipLevels &&
-        context->mDoNotLoadTexture != doNotLoadTexture) {
-      logger::warn("Creating multiple renderers with different parameters is not allowed!");
+  auto instance = Instance::Get(enableVR);
+  auto physicalDevice = instance->createPhysicalDevice(device);
+
+  std::scoped_lock lock(gContextLock);
+  std::erase_if(gContexts, [](auto const &context) { return context.expired(); });
+  for (auto const &weak : gContexts) {
+    auto context = weak.lock();
+    if (context && context->getPhysicalDevice() == physicalDevice->getInternal()) {
+      return context;
     }
-    context->mDefaultMipLevels = defaultMipLevels;
-    context->mDoNotLoadTexture = doNotLoadTexture;
-    return context;
   }
   auto context = std::shared_ptr<Context>(new Context(
-      maxNumMaterials, maxNumTextures, defaultMipLevels, doNotLoadTexture, device, enableVR));
-  gContext = context;
+      std::move(instance), std::move(physicalDevice), maxNumMaterials, maxNumTextures));
+  gContexts.push_back(context);
   return context;
 }
 
-Context::Context(uint32_t maxNumMaterials, uint32_t maxNumTextures, uint32_t defaultMipLevels,
-                 bool doNotLoadTexture, std::string device, bool enableVR)
-    : mMaxNumMaterials(maxNumMaterials), mMaxNumTextures(maxNumTextures),
-      mDefaultMipLevels(defaultMipLevels), mDoNotLoadTexture(doNotLoadTexture) {
-
-  mInstance = std::make_shared<Instance>(VK_MAKE_VERSION(0, 0, 1), VK_MAKE_VERSION(0, 0, 1),
-                                         VK_API_VERSION_1_2, enableVR);
-  // mInstance =
-  //     Instance::Get(VK_MAKE_VERSION(0, 0, 1), VK_MAKE_VERSION(0, 0, 1), VK_API_VERSION_1_2);
-  if (!mInstance) {
-    return;
-  }
-
-  mPhysicalDevice = mInstance->createPhysicalDevice(device);
-  if (!mPhysicalDevice) {
-    return;
-  }
-
+// called with gContextLock held
+Context::Context(std::shared_ptr<Instance> instance,
+                 std::shared_ptr<PhysicalDevice> physicalDevice, uint32_t maxNumMaterials,
+                 uint32_t maxNumTextures)
+    : mId(gNextContextId++), mInstance(std::move(instance)),
+      mPhysicalDevice(std::move(physicalDevice)), mMaxNumMaterials(maxNumMaterials),
+      mMaxNumTextures(maxNumTextures) {
   mDevice = mPhysicalDevice->createDevice();
-
   createDescriptorPool();
-
   GLSLCompiler::InitializeProcess();
 }
 
 Context::~Context() {
+  getDevice().waitIdle();
+
+  std::scoped_lock lock(gContextLock);
   GLSLCompiler::FinalizeProcess();
-
-  mInstance->shutdownVR();
-  if (mDevice) {
-    getDevice().waitIdle();
+  // VR must shut down before the last device using it is destroyed
+  if (std::none_of(gContexts.begin(), gContexts.end(),
+                   [](auto const &context) { return !context.expired(); })) {
+    mInstance->shutdownVR();
   }
-
-  logger::info("Vulkan finished");
+  logger::info("Vulkan device finished");
 }
 
-std::shared_ptr<resource::SVResourceManager> Context::getResourceManager() const {
-  if (mResourceManager.expired()) {
-    throw std::runtime_error(
-        "failed to get resource manager: it is not created or already destroyed.");
-  }
-  return mResourceManager.lock();
-}
-
-std::shared_ptr<resource::SVResourceManager> Context::createResourceManager() {
-  auto manager = std::make_shared<resource::SVResourceManager>();
-  manager->setDefaultMipLevels(mDefaultMipLevels);
-  mResourceManager = manager;
-  return manager;
-}
+int Context::getCudaDeviceId() const { return mPhysicalDevice->getPickedDeviceInfo().cudaId; }
 
 void Context::createDescriptorPool() {
   if (!isVulkanAvailable()) {
@@ -140,7 +115,7 @@ vk::Sampler Context::createSampler(vk::SamplerCreateInfo const &info) {
   if (it != mSamplerRegistry.end()) {
     return it->second.get();
   }
-  auto samplerUnique = core::Context::Get()->getDevice().createSamplerUnique(info);
+  auto samplerUnique = getDevice().createSamplerUnique(info);
   auto sampler = samplerUnique.get();
   mSamplerRegistry[info] = std::move(samplerUnique);
   return sampler;
@@ -158,50 +133,12 @@ std::unique_ptr<renderer::GuiWindow> Context::createWindow(uint32_t width, uint3
     throw std::runtime_error("Create window failed: width and height must be positive.");
   }
   return std::make_unique<renderer::GuiWindow>(
+      shared_from_this(),
       std::vector<vk::Format>{vk::Format::eB8G8R8A8Unorm, vk::Format::eR8G8B8A8Unorm,
                               vk::Format::eB8G8R8Unorm, vk::Format::eR8G8B8Unorm},
       vk::ColorSpaceKHR::eSrgbNonlinear, width, height,
       std::vector<vk::PresentModeKHR>{vk::PresentModeKHR::eMailbox}, 2);
 };
-
-std::shared_ptr<resource::SVMesh> Context::createTriangleMesh(
-    std::vector<glm::vec3> const &vertices, std::vector<uint32_t> const &indices,
-    std::vector<glm::vec3> const &normals, std::vector<glm::vec2> const &uvs) {
-  auto mesh = std::make_shared<resource::SVMeshRigid>();
-
-  std::vector<float> vertices_;
-  for (auto &v : vertices) {
-    vertices_.push_back(v.x);
-    vertices_.push_back(v.y);
-    vertices_.push_back(v.z);
-  }
-  mesh->setVertexAttribute("position", vertices_);
-
-  if (normals.size()) {
-    std::vector<float> normals_;
-    for (auto &v : normals) {
-      normals_.push_back(v.x);
-      normals_.push_back(v.y);
-      normals_.push_back(v.z);
-    }
-    mesh->setVertexAttribute("normal", normals_);
-  }
-
-  if (uvs.size()) {
-    std::vector<float> uvs_;
-    for (auto &v : uvs) {
-      uvs_.push_back(v.x);
-      uvs_.push_back(v.y);
-    }
-    mesh->setVertexAttribute("uv", uvs_);
-  }
-
-  if (indices.size()) {
-    mesh->setIndices(indices);
-  }
-
-  return mesh;
-}
 
 vk::Instance Context::getInstance() const {
   if (!mInstance) {

@@ -163,6 +163,8 @@ void FPSCameraControllerDebug::update() {
 SapienRendererWindow::SapienRendererWindow(int width, int height, std::string const &shaderDir)
     : mShaderDir(shaderDir) {
   mEngine = SapienRenderEngine::Get();
+  mDevice = mEngine->getDefaultDevice();
+  mContext = mEngine->getContext(mDevice);
   auto &renderConfig = SapienRendererDefault::Get();
 
   auto config = std::make_shared<svulkan2::RendererConfig>();
@@ -186,11 +188,11 @@ SapienRendererWindow::SapienRendererWindow(int width, int height, std::string co
 
   config->shaderDir = mShaderDir.length() ? mShaderDir : renderConfig.viewerShaderDirectory;
 
-  mSVulkanRenderer = svulkan2::renderer::RendererBase::Create(config);
+  mSVulkanRenderer = svulkan2::renderer::RendererBase::Create(mContext, config);
 
-  mWindow = mEngine->getContext()->createWindow(width, height);
+  mWindow = mContext->createWindow(width, height);
   mWindow->initImgui();
-  mEngine->getContext()->getDevice().waitIdle();
+  mContext->getDevice().waitIdle();
 
   mViewportWidth = width;
   mViewportHeight = height;
@@ -214,11 +216,11 @@ SapienRendererWindow::SapienRendererWindow(int width, int height, std::string co
 
 void SapienRendererWindow::setShader(std::string const &shaderDir) {
   mRequiresRebuild = true;
-  mEngine->getContext()->getDevice().waitIdle();
+  mContext->getDevice().waitIdle();
 
   auto config = std::make_shared<svulkan2::RendererConfig>();
   config->shaderDir = shaderDir;
-  mSVulkanRenderer = svulkan2::renderer::RendererBase::Create(config);
+  mSVulkanRenderer = svulkan2::renderer::RendererBase::Create(mContext, config);
   if (mRenderScene) {
     mSVulkanRenderer->setScene(mRenderScene);
   }
@@ -247,9 +249,9 @@ SapienRendererWindow::~SapienRendererWindow() {
 
 void SapienRendererWindow::close() {
   mClosed = true;
-  mEngine->getContext()->getDevice().waitIdle();
+  mContext->getDevice().waitIdle();
   mWindow->close();
-  mEngine->getContext()->getDevice().waitIdle();
+  mContext->getDevice().waitIdle();
 }
 
 void SapienRendererWindow::hide() { mWindow->hide(); }
@@ -262,13 +264,22 @@ void SapienRendererWindow::setScene(std::shared_ptr<Scene> scene) {
 }
 
 void SapienRendererWindow::setScenes(std::vector<std::shared_ptr<Scene>> const &scenes) {
-  mBaseRenderSystems.clear();
+  // validate every scene before replacing the current ones
+  std::vector<std::shared_ptr<SapienRendererSystem>> systems;
   for (auto const &scene : scenes) {
     if (!scene) {
       throw std::runtime_error("failed to set scenes: a scene is null");
     }
-    mBaseRenderSystems.push_back(scene->getSapienRendererSystem());
+    auto system = scene->getSapienRendererSystem();
+    if (system->getContext() != mContext) {
+      throw std::runtime_error("failed to set window scenes: the scene renders on device \"" +
+                               system->getDevice()->getAlias() +
+                               "\" but the window renders on device \"" + mDevice->getAlias() +
+                               "\"");
+    }
+    systems.push_back(system);
   }
+  mBaseRenderSystems = std::move(systems);
   rebuildRenderScene();
 }
 
@@ -308,7 +319,8 @@ void SapienRendererWindow::rebuildRenderScene() {
     mPhysxGpuSystem.reset();
     mAutoDetectedPhysxGpuSystem = false;
   }
-  mRenderSystems = RenderSceneResolver::resolve(mBaseRenderSystems, mEngine->getRenderSystems());
+  mRenderSystems = RenderSceneResolver::resolve(mContext, mBaseRenderSystems,
+                                                mEngine->getRenderSystems(mContext));
   mRenderScene = RenderSceneResolver::build(mRenderSystems);
   mRenderSceneVersions.clear();
   for (auto const &system : mRenderSystems) {
@@ -384,7 +396,7 @@ void SapienRendererWindow::rebuildPoseTransport() {
   }
 
   auto computeDevice = mPhysxGpuSystem->getDevice();
-  auto renderDevice = mEngine->getDevice();
+  auto renderDevice = mDevice;
   bool directCompatible = computeDevice->cudaId == renderDevice->cudaId &&
                           renderDevice->canDirectCudaVulkanInterop();
   bool useDirect = mRequestedPoseTransport == "direct" ||
@@ -450,8 +462,8 @@ void SapienRendererWindow::rebuildPoseTransport() {
 
 void SapienRendererWindow::updateRender() {
   SAPIEN_PROFILE_FUNCTION;
-  auto currentSystems =
-      RenderSceneResolver::resolve(mBaseRenderSystems, mEngine->getRenderSystems());
+  auto currentSystems = RenderSceneResolver::resolve(mContext, mBaseRenderSystems,
+                                                     mEngine->getRenderSystems(mContext));
   bool rebuildScene = currentSystems != mRenderSystems;
   if (!rebuildScene && currentSystems.size() == mRenderSceneVersions.size()) {
     for (uint32_t i = 0; i < currentSystems.size(); ++i) {
@@ -620,17 +632,17 @@ std::vector<std::string> SapienRendererWindow::getDisplayTargetNames() const {
 }
 
 void SapienRendererWindow::rebuild() {
-  mEngine->getContext()->getDevice().waitIdle();
+  mContext->getDevice().waitIdle();
   do {
     auto [vw, vh] = mWindow->getWindowFramebufferSize();
     mViewportWidth = vw;
     mViewportHeight = vh;
   } while (!mWindow->updateSize(mViewportWidth, mViewportHeight));
-  mSceneRenderSemaphore = mEngine->getContext()->getDevice().createSemaphoreUnique({});
+  mSceneRenderSemaphore = mContext->getDevice().createSemaphoreUnique({});
   mSceneRenderFence =
-      mEngine->getContext()->getDevice().createFenceUnique({vk::FenceCreateFlagBits::eSignaled});
+      mContext->getDevice().createFenceUnique({vk::FenceCreateFlagBits::eSignaled});
   mSVulkanRenderer->resize(mViewportWidth, mViewportHeight);
-  mEngine->getContext()->getDevice().waitIdle();
+  mContext->getDevice().waitIdle();
   mRequiresRebuild = false;
 
   if (mRenderScene) {
@@ -678,11 +690,11 @@ void SapienRendererWindow::render(std::string const &targetName,
   mWindow->imguiRender();
   mWindow->imguiEndFrame();
 
-  if (mEngine->getContext()->getDevice().waitForFences(mSceneRenderFence.get(), VK_TRUE,
-                                                       UINT64_MAX) != vk::Result::eSuccess) {
+  if (mContext->getDevice().waitForFences(mSceneRenderFence.get(), VK_TRUE, UINT64_MAX) !=
+      vk::Result::eSuccess) {
     throw std::runtime_error("failed on wait for fence.");
   }
-  mEngine->getContext()->getDevice().resetFences(mSceneRenderFence.get());
+  mContext->getDevice().resetFences(mSceneRenderFence.get());
 
   {
     // draw

@@ -4,6 +4,7 @@
 #include "svulkan2/core/context.h"
 #include <GLFW/glfw3.h>
 #include <filesystem>
+#include <utility>
 
 // clang-format off
 #include <imgui.h>
@@ -59,11 +60,14 @@ static void windowFocusCallback(GLFWwindow *window, int focused) {
   static_cast<GuiWindow *>(glfwGetWindowUserPointer(window))->focusCallback(focused);
 }
 
-GuiWindow::GuiWindow(std::vector<vk::Format> const &requestFormats,
+GuiWindow::GuiWindow(std::shared_ptr<core::Context> context,
+                     std::vector<vk::Format> const &requestFormats,
                      vk::ColorSpaceKHR requestColorSpace, uint32_t width, uint32_t height,
                      std::vector<vk::PresentModeKHR> const &requestModes, uint32_t minImageCount)
-    : mMinImageCount(minImageCount) {
-  mContext = core::Context::Get();
+    : mContext(std::move(context)), mMinImageCount(minImageCount) {
+  if (!mContext) {
+    throw std::runtime_error("failed to create window: context must not be null");
+  }
   createGlfwWindow(width, height);
   selectSurfaceFormat(requestFormats, requestColorSpace);
   selectPresentMode(requestModes);

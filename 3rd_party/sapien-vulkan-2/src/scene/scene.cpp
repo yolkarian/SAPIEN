@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <mutex>
 #include <unordered_map>
+#include <utility>
 
 namespace svulkan2 {
 namespace scene {
@@ -93,7 +94,10 @@ struct ScopedBufferMapping {
   core::Buffer &buffer;
 };
 
-Scene::Scene() {
+Scene::Scene(std::shared_ptr<core::Context> context) : mContext(std::move(context)) {
+  if (!mContext) {
+    throw std::runtime_error("failed to create scene: context must not be null");
+  }
   mNodes.push_back(std::make_unique<Node>());
   mRootNode = mNodes.back().get();
   mRootNode->setScene(this);
@@ -713,7 +717,7 @@ void Scene::prepareObjectTransformBuffer() {
   }
 
   // handle back-to-back render, update, render
-  core::Context::Get()->getDevice().waitIdle();
+  mContext->getDevice().waitIdle();
 
   uint32_t count = 0;
 
@@ -741,10 +745,10 @@ void Scene::prepareObjectTransformBuffer() {
   count = std::max(count, 1u);
 
   mTransformBufferCpu =
-      core::Buffer::Create(gpuTransformBufferSize * count, vk::BufferUsageFlagBits::eTransferSrc,
-                           VMA_MEMORY_USAGE_CPU_ONLY);
+      core::Buffer::Create(*mContext, gpuTransformBufferSize * count,
+                           vk::BufferUsageFlagBits::eTransferSrc, VMA_MEMORY_USAGE_CPU_ONLY);
   mTransformBuffer = core::Buffer::Create(
-      gpuTransformBufferSize * count,
+      *mContext, gpuTransformBufferSize * count,
       vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eTransferDst |
           vk::BufferUsageFlagBits::eStorageBuffer,
       VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
@@ -755,7 +759,7 @@ size_t Scene::getGpuTransformBufferSize() {
   if (!mGpuTransformBufferSize) {
     mGpuTransformBufferSize =
         std::max((uint64_t)sizeof(glm::mat4),
-                 (uint64_t)core::Context::Get()->getPhysicalDeviceLimits().minUniformBufferOffsetAlignment);
+                 (uint64_t)mContext->getPhysicalDeviceLimits().minUniformBufferOffsetAlignment);
   }
   return mGpuTransformBufferSize;
 }
@@ -810,16 +814,7 @@ void Scene::uploadObjectTransforms() {
 
   if (!mTransformUpdateCommandBuffer) {
     mTransformUpdateCommandBuffer = getCommandPool().allocateCommandBuffer();
-    // mTransformUpdateFence =
-    //     core::Context::Get()->getDevice().createFenceUnique({vk::FenceCreateFlagBits::eSignaled});
   }
-
-  // previous frame may still be rendering
-  // if (core::Context::Get()->getDevice().waitForFences(mTransformUpdateFence.get(), true,
-  //                                                     UINT64_MAX) != vk::Result::eSuccess) {
-  //   throw std::runtime_error("failed to wait for fence");
-  // }
-  // core::Context::Get()->getDevice().resetFences(mTransformUpdateFence.get());
 
   mTransformUpdateCommandBuffer->reset();
   mTransformUpdateCommandBuffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
@@ -846,16 +841,14 @@ void Scene::uploadObjectTransforms() {
 
   mTransformUpdateCommandBuffer->end();
 
-  core::Context::Get()->getQueue().submit(mTransformUpdateCommandBuffer.get(), {}
-                                          // , mTransformUpdateFence.get()
-  );
+  mContext->getQueue().submit(mTransformUpdateCommandBuffer.get(), {});
 
   mTransformBufferRenderVersion = mRenderVersion;
 }
 
 core::CommandPool &Scene::getCommandPool() {
   if (!mCommandPool) {
-    mCommandPool = core::Context::Get()->createCommandPool();
+    mCommandPool = mContext->createCommandPool();
   }
   return *mCommandPool;
 }
@@ -870,24 +863,23 @@ void Scene::ensureBLAS() {
   // its child scenes. Child objects are built update-capable because their
   // rigid/deformable storage is private to the source scene.
   for (auto obj : getObjects()) {
-    if (!obj->getModel()->getBLAS()) {
+    if (!obj->getModel()->getBLAS(*mContext)) {
       bool isLocalRigid = std::any_of(mObjects.begin(), mObjects.end(),
                                       [obj](auto const &localObject) {
                                         return localObject.get() == obj;
                                       });
-      obj->getModel()->buildBLAS(!isLocalRigid);
+      obj->getModel()->buildBLAS(*mContext, !isLocalRigid);
     }
   }
   for (auto obj : getPointObjects()) {
-    if (!obj->getPointSet()->getBLAS()) {
-      obj->getPointSet()->buildBLAS(true);
+    if (!obj->getPointSet()->getBLAS(*mContext)) {
+      obj->getPointSet()->buildBLAS(*mContext, true);
     }
   }
 }
 
 void Scene::buildTLAS(bool externalInstanceBuffer) {
   logger::info("building TLAS");
-  auto context = core::Context::Get();
   std::vector<vk::AccelerationStructureInstanceKHR> instances;
   uint32_t instanceIndex{0};
 
@@ -900,7 +892,7 @@ void Scene::buildTLAS(bool externalInstanceBuffer) {
 
     vk::AccelerationStructureInstanceKHR inst(
         mat, instanceIndex, 0xff, 0, vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable,
-        obj->getModel()->getBLAS()->getAddress());
+        obj->getModel()->getBLAS(*mContext)->getAddress());
 
     instanceIndex += obj->getModel()->getShapes().size();
 
@@ -913,13 +905,13 @@ void Scene::buildTLAS(bool externalInstanceBuffer) {
     vk::TransformMatrixKHR mat;
     std::memcpy(&mat.matrix[0][0], &modelTranspose, sizeof(mat));
 
-    vk::AccelerationStructureInstanceKHR inst(mat, instanceIndex, 0xff, 1, {},
-                                              obj->getPointSet()->getBLAS()->getAddress());
+    vk::AccelerationStructureInstanceKHR inst(
+        mat, instanceIndex, 0xff, 1, {}, obj->getPointSet()->getBLAS(*mContext)->getAddress());
     instanceIndex++;
     instances.push_back(inst);
   }
 
-  mTLAS = std::make_unique<core::TLAS>(instances);
+  mTLAS = std::make_unique<core::TLAS>(*mContext, instances);
   mTLAS->build(externalInstanceBuffer);
 }
 
@@ -932,12 +924,12 @@ void Scene::updateTLAS(bool useDeviceTransforms) {
 
   // update BLAS
   for (auto &obj : mDeformableObjects) {
-    obj->getModel()->recordUpdateBLAS(mASUpdateCommandBuffer.get());
+    obj->getModel()->recordUpdateBLAS(*mContext, mASUpdateCommandBuffer.get());
   }
 
   // FIXME: update per pointset, not per point cloud
   for (auto &obj : getPointObjects()) {
-    obj->getPointSet()->recordUpdateBLAS(mASUpdateCommandBuffer.get());
+    obj->getPointSet()->recordUpdateBLAS(*mContext, mASUpdateCommandBuffer.get());
   }
 
   if (useDeviceTransforms) {
@@ -966,7 +958,7 @@ void Scene::updateTLAS(bool useDeviceTransforms) {
     mTLAS->recordUpdate(mASUpdateCommandBuffer.get(), transforms);
   }
   mASUpdateCommandBuffer->end();
-  core::Context::Get()->getQueue().submit(mASUpdateCommandBuffer.get(), {});
+  mContext->getQueue().submit(mASUpdateCommandBuffer.get(), {});
 }
 
 void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
@@ -1002,8 +994,8 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
 
   for (auto &obj : objects) {
     for (auto &shape : obj->getModel()->getShapes()) {
-      shape->mesh->uploadToDevice();
-      shape->material->uploadToDevice();
+      shape->mesh->uploadToDevice(*mContext);
+      shape->material->uploadToDevice(*mContext);
       ++instanceCount;
 
       if (!mesh2Id.contains(shape->mesh)) {
@@ -1080,25 +1072,25 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
   mVertexBuffers.clear();
   mIndexBuffers.clear();
   for (auto mesh : meshes) {
-    mVertexBuffers.push_back(mesh->getVertexBuffer().getVulkanBuffer());
-    mIndexBuffers.push_back(mesh->getIndexBuffer().getVulkanBuffer());
+    mVertexBuffers.push_back(mesh->getVertexBuffer(*mContext).getVulkanBuffer());
+    mIndexBuffers.push_back(mesh->getIndexBuffer(*mContext).getVulkanBuffer());
   }
 
   // build materials
   mMaterialBuffers.clear();
   for (auto mat : materials) {
-    mMaterialBuffers.push_back(mat->getDeviceBuffer().getVulkanBuffer());
+    mMaterialBuffers.push_back(mat->getDeviceBuffer(*mContext).getVulkanBuffer());
   }
 
   // build texture index
-  mTextureIndexBuffer = core::Buffer::Create(std::max(size_t(1), textureIndexBuffer.size()),
-                                             vk::BufferUsageFlagBits::eStorageBuffer |
-                                                 vk::BufferUsageFlagBits::eTransferDst,
-                                             VMA_MEMORY_USAGE_GPU_ONLY);
+  mTextureIndexBuffer = core::Buffer::Create(
+      *mContext, std::max(size_t(1), textureIndexBuffer.size()),
+      vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
+      VMA_MEMORY_USAGE_GPU_ONLY);
   mTextureIndexBuffer->upload(textureIndexBuffer);
 
   mGeometryInstanceBuffer = core::Buffer::Create(
-      std::max(size_t(1), geometryInstanceBuffer.size()),
+      *mContext, std::max(size_t(1), geometryInstanceBuffer.size()),
       vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
       VMA_MEMORY_USAGE_GPU_ONLY);
   mGeometryInstanceBuffer->upload(geometryInstanceBuffer);
@@ -1117,7 +1109,7 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
     pointInstanceBuffer.push_back(pointset2Id[obj->getPointSet()]);
   }
   mPointInstanceBuffer = core::Buffer::Create(
-      std::max(size_t(1), pointInstanceBuffer.size() * sizeof(int)),
+      *mContext, std::max(size_t(1), pointInstanceBuffer.size() * sizeof(int)),
       vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
       VMA_MEMORY_USAGE_GPU_ONLY);
   mPointInstanceBuffer->upload(pointInstanceBuffer);
@@ -1125,7 +1117,7 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
   // point sets
   mPointSetBuffers.clear();
   for (auto s : pointsets) {
-    mPointSetBuffers.push_back(s->getVertexBuffer().getVulkanBuffer());
+    mPointSetBuffers.push_back(s->getVertexBuffer(*mContext).getVulkanBuffer());
   }
 
   // begin lights
@@ -1141,7 +1133,7 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
         RTPointLight{.position = l->getPosition(), .radius = 0, .rgb = l->getColor()});
   }
   mRTPointLightBuffer = core::Buffer::Create(
-      std::max(pointLights.size(), size_t(1)) * sizeof(RTPointLight),
+      *mContext, std::max(pointLights.size(), size_t(1)) * sizeof(RTPointLight),
       vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
       VMA_MEMORY_USAGE_CPU_TO_GPU);
   mRTPointLightBuffer->upload(mRTPointLightBufferHost);
@@ -1152,7 +1144,7 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
         .direction = l->getDirection(), .softness = l->getSoftness(), .rgb = l->getColor()});
   }
   mRTDirectionalLightBuffer = core::Buffer::Create(
-      std::max(directionalLights.size(), size_t(1)) * sizeof(RTDirectionalLight),
+      *mContext, std::max(directionalLights.size(), size_t(1)) * sizeof(RTDirectionalLight),
       vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
       VMA_MEMORY_USAGE_CPU_TO_GPU);
   mRTDirectionalLightBuffer->upload(mRTDirectionalLightBufferHost);
@@ -1171,7 +1163,7 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
   for (auto l : texturedLights) {
     auto tex = l->getTexture();
     tex->loadAsync().get(); // TODO: move to top
-    tex->uploadToDevice();
+    tex->uploadToDevice(*mContext);
     if (tex && !texture2Id.contains(tex)) {
       textures.push_back(tex);
       texture2Id[tex] = textures.size() - 1;
@@ -1188,6 +1180,7 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
                     .textureId = textureId});
   }
   mRTSpotLightBuffer = core::Buffer::Create(
+      *mContext,
       std::max(texturedLights.size() + spotLights.size(), size_t(1)) * sizeof(RTSpotLight),
       vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
       VMA_MEMORY_USAGE_CPU_TO_GPU);
@@ -1203,7 +1196,7 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
     });
   }
   mRTParallelogramLightBuffer = core::Buffer::Create(
-      std::max(parallelogramLights.size(), size_t(1)) * sizeof(RTParallelogramLight),
+      *mContext, std::max(parallelogramLights.size(), size_t(1)) * sizeof(RTParallelogramLight),
       vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
       VMA_MEMORY_USAGE_CPU_TO_GPU);
   mRTParallelogramLightBuffer->upload(mRTParallelogramLightBufferHost);
@@ -1212,7 +1205,7 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
   // build textures
   mTextures.clear();
   for (auto texture : textures) {
-    mTextures.push_back({texture->getImageView(), texture->getSampler()});
+    mTextures.push_back({texture->getImageView(*mContext), texture->getSampler(*mContext)});
   }
 }
 
@@ -1281,7 +1274,7 @@ void Scene::buildRTResources(StructDataLayout const &materialBufferLayout,
 
   // make sure scene is not in use
   if (mAccessFences.size()) {
-    if (core::Context::Get()->getDevice().waitForFences(mAccessFences, VK_TRUE, UINT64_MAX) !=
+    if (mContext->getDevice().waitForFences(mAccessFences, VK_TRUE, UINT64_MAX) !=
         vk::Result::eSuccess) {
       throw std::runtime_error("failed to wait for scene access fence");
     }
@@ -1314,7 +1307,7 @@ void Scene::updateRTTransforms(bool useDeviceTransforms) {
 
   // make sure scene is not in use
   if (mAccessFences.size()) {
-    if (core::Context::Get()->getDevice().waitForFences(mAccessFences, VK_TRUE, UINT64_MAX) !=
+    if (mContext->getDevice().waitForFences(mAccessFences, VK_TRUE, UINT64_MAX) !=
         vk::Result::eSuccess) {
       throw std::runtime_error("failed to wait for scene access fence");
     }
@@ -1333,7 +1326,7 @@ void Scene::uploadRTLights() {
 
   // make sure scene is not in use
   if (mAccessFences.size()) {
-    if (core::Context::Get()->getDevice().waitForFences(mAccessFences, VK_TRUE, UINT64_MAX) !=
+    if (mContext->getDevice().waitForFences(mAccessFences, VK_TRUE, UINT64_MAX) !=
         vk::Result::eSuccess) {
       throw std::runtime_error("failed to wait for scene access fence");
     }

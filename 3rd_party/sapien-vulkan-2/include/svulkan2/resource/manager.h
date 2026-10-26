@@ -16,14 +16,22 @@ class DescriptorSetDescription;
 
 namespace resource {
 
+/** Process-wide cache of device-independent resources (models, images, textures,
+ *  cubemaps, shader packs, vertex layouts) shared by every device (Context). Device objects
+ *  it hands out (shader pack instances, BRDF lookup tables) are cached per context. */
 class SVResourceManager {
 public:
-  SVResourceManager();
+  /** the live manager, or a new one when none is alive */
+  static std::shared_ptr<SVResourceManager> Create();
+  /** the live manager; throws when none is alive */
+  static std::shared_ptr<SVResourceManager> Get();
 
   std::shared_ptr<shader::ShaderPack> CreateShaderPack(std::string const &dirname);
 
+  /** pipelines of `desc` on `context`, cached per context */
   std::shared_ptr<shader::ShaderPackInstance>
-  CreateShaderPackInstance(shader::ShaderPackInstanceDesc const &desc);
+  CreateShaderPackInstance(std::shared_ptr<core::Context> context,
+                           shader::ShaderPackInstanceDesc const &desc);
 
   std::shared_ptr<shader::RayTracingShaderPack> CreateRTShaderPack(std::string const &dirname);
 
@@ -58,9 +66,11 @@ public:
                                                     vk::Filter minFilter = vk::Filter::eLinear,
                                                     bool srgb = true);
 
-  std::shared_ptr<SVTexture> generateBRDFLUT(uint32_t size);
+  /** a BRDF lookup table computed on `context` */
+  std::shared_ptr<SVTexture> generateBRDFLUT(core::Context &context, uint32_t size);
 
-  std::shared_ptr<SVTexture> getDefaultBRDFLUT();
+  /** the default BRDF lookup table of `context`, computed once per context */
+  std::shared_ptr<SVTexture> getDefaultBRDFLUT(core::Context &context);
 
   std::shared_ptr<SVTexture> CreateRandomTexture(std::string const &name);
 
@@ -86,10 +96,13 @@ public:
   /** release all cached resources */
   void clearCachedResources(bool models = true, bool images = true, bool shaders = true);
 
-  /** release gpu resources.
+  /** release gpu resources of every device.
    * NOTE: This MUST be called when no rendering is running!
    * NOTE: All renders become invalid after calling this function!*/
   void releaseGPUResourcesUnsafe();
+
+  /** drop the device objects cached for `context` (shader pack instances, BRDF LUT) */
+  void releaseContext(core::Context const &context);
 
   void setVertexLayout(std::shared_ptr<InputDataLayout> layout);
   inline std::shared_ptr<InputDataLayout> getVertexLayout() const {
@@ -133,9 +146,15 @@ public:
   void setDefaultMipLevels(uint32_t level) { mDefaultMipLevels = level; }
   uint32_t getDefaultMipLevels() const { return mDefaultMipLevels; }
 
+  /** when set, models load without their textures */
+  void setDoNotLoadTexture(bool doNotLoad) { mDoNotLoadTexture = doNotLoad; }
+  bool shouldNotLoadTexture() const { return mDoNotLoadTexture; }
+
   ~SVResourceManager() = default;
 
 private:
+  SVResourceManager();
+
   std::unordered_map<std::string, std::vector<std::shared_ptr<SVModel>>> mModelRegistry;
   std::unordered_map<std::string, std::vector<std::shared_ptr<SVTexture>>> mTextureRegistry;
   std::unordered_map<std::string, std::vector<std::shared_ptr<SVCubemap>>> mCubemapRegistry;
@@ -146,7 +165,10 @@ private:
   std::unordered_map<std::string, std::shared_ptr<shader::ShaderPack>> mShaderPackRegistry;
 
   std::mutex mShaderPackInstanceLock{};
-  std::unordered_map<std::string, std::vector<std::shared_ptr<shader::ShaderPackInstance>>>
+  // Context::getId() -> shader directory -> instances
+  std::unordered_map<
+      uint64_t,
+      std::unordered_map<std::string, std::vector<std::shared_ptr<shader::ShaderPackInstance>>>>
       mShaderPackInstanceRegistry;
 
   std::mutex mRTShaderPackLock{};
@@ -161,9 +183,13 @@ private:
   std::shared_ptr<SVTexture> mDefaultTexture3D;
 
   std::shared_ptr<SVCubemap> mDefaultCubemap;
-  std::shared_ptr<SVTexture> mDefaultBRDFLUT;
+
+  std::mutex mBRDFLUTLock{};
+  // Context::getId() -> default BRDF lookup table
+  std::unordered_map<uint64_t, std::shared_ptr<SVTexture>> mDefaultBRDFLUTs;
 
   uint32_t mDefaultMipLevels{1};
+  bool mDoNotLoadTexture{false};
 
   std::mutex mCreateLock{};
 };

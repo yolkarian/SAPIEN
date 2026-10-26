@@ -4,6 +4,7 @@
 #include "sapien/math/mat.h"
 #include "sapien/math/pose.h"
 #include <map>
+#include <svulkan2/core/context.h>
 #include <svulkan2/renderer/renderer_base.h>
 #include <svulkan2/scene/camera.h>
 #include <variant>
@@ -79,8 +80,12 @@ public:
 
   void takePicture();
   void setScenes(std::vector<std::shared_ptr<Scene>> const &scenes);
+  /** render systems of this camera's device: its own scenes plus shared scenes of the same
+   *  device from `contextSystems` */
   std::vector<std::shared_ptr<SapienRendererSystem>> internalResolveRenderSystems(
       std::vector<std::shared_ptr<SapienRendererSystem>> const &contextSystems);
+  /** the context of the render system of the scene this camera belongs to */
+  std::shared_ptr<svulkan2::core::Context> getContext() const;
   std::vector<std::string> getImageNames() const;
   SapienRenderImageCpu getImage(std::string const &name);
   SapienRenderImageCuda getImageCuda(std::string const &name);

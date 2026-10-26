@@ -28,67 +28,54 @@ static std::vector<std::shared_ptr<Device>> vulkanFindDevices() {
   constexpr auto externalSemaphoreExtensionName = VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
 #endif
   try {
-    std::shared_ptr<svulkan2::core::Instance> instance;
-    try {
-      auto context = svulkan2::core::Context::Get();
-      instance = context->getInstance2();
-    } catch (std::runtime_error &) {
-      instance = std::make_shared<svulkan2::core::Instance>(
-          VK_MAKE_VERSION(0, 0, 1), VK_MAKE_VERSION(0, 0, 1), VK_API_VERSION_1_2, false);
-    }
+    // The shared instance enumerated and probed every physical device when it was created.
+    auto instance = svulkan2::core::Instance::Get();
+    for (auto const &d : instance->getPhysicalDeviceInfo()) {
+      int priority = 0;
 
-    if (instance) {
-      auto devices = instance->summarizePhysicalDevices();
-      for (auto &d : devices) {
-        int priority = 0;
-
-        bool externalMemory = false;
-        bool externalSemaphore = false;
-        for (auto const &extension : d.device.enumerateDeviceExtensionProperties()) {
-          externalMemory |=
-              std::strcmp(extension.extensionName, externalMemoryExtensionName) == 0;
-          externalSemaphore |=
-              std::strcmp(extension.extensionName, externalSemaphoreExtensionName) == 0;
-        }
-
-        auto properties =
-            d.device
-                .getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceIDProperties>();
-        std::array<uint8_t, 16> uuid{};
-        std::memcpy(uuid.data(),
-                    properties.get<vk::PhysicalDeviceIDProperties>().deviceUUID.data(),
-                    uuid.size());
-
-        if (d.supported) {
-          priority = 1;
-          if (d.cudaId >= 0) {
-            priority += 1000;
-          }
-          if (d.present) {
-            priority += 100;
-          }
-          if (d.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
-            priority += 10;
-          }
-          if (d.rayTracing) {
-            priority += 1;
-          }
-        }
-
-        Device::Type type = Device::Type::GPU;
-        res.push_back(std::make_shared<Device>(Device{.type = type,
-                                                      .name = d.name,
-                                                      .render = d.supported,
-                                                      .present = d.present,
-                                                      .cudaId = d.cudaId,
-                                                      .pci = d.pci,
-                                                      .uuid = uuid,
-                                                      .vulkanExternalMemory = externalMemory,
-                                                      .vulkanExternalSemaphore = externalSemaphore,
-                                                      .renderPriority = priority}));
+      bool externalMemory = false;
+      bool externalSemaphore = false;
+      for (auto const &extension : d.device.enumerateDeviceExtensionProperties()) {
+        externalMemory |= std::strcmp(extension.extensionName, externalMemoryExtensionName) == 0;
+        externalSemaphore |=
+            std::strcmp(extension.extensionName, externalSemaphoreExtensionName) == 0;
       }
+
+      auto properties =
+          d.device.getProperties2<vk::PhysicalDeviceProperties2, vk::PhysicalDeviceIDProperties>();
+      std::array<uint8_t, 16> uuid{};
+      std::memcpy(uuid.data(), properties.get<vk::PhysicalDeviceIDProperties>().deviceUUID.data(),
+                  uuid.size());
+
+      if (d.supported) {
+        priority = 1;
+        if (d.cudaId >= 0) {
+          priority += 1000;
+        }
+        if (d.present) {
+          priority += 100;
+        }
+        if (d.deviceType == vk::PhysicalDeviceType::eDiscreteGpu) {
+          priority += 10;
+        }
+        if (d.rayTracing) {
+          priority += 1;
+        }
+      }
+
+      Device::Type type = Device::Type::GPU;
+      res.push_back(std::make_shared<Device>(Device{.type = type,
+                                                    .name = d.name,
+                                                    .render = d.supported,
+                                                    .present = d.present,
+                                                    .cudaId = d.cudaId,
+                                                    .pci = d.pci,
+                                                    .uuid = uuid,
+                                                    .vulkanExternalMemory = externalMemory,
+                                                    .vulkanExternalSemaphore = externalSemaphore,
+                                                    .renderPriority = priority}));
     }
-  } catch (std::runtime_error &e) {
+  } catch (std::runtime_error &) {
   }
   svulkan2::logger::setLogLevel(level);
   return res;

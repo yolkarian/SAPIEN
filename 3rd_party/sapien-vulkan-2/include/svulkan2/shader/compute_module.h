@@ -14,10 +14,12 @@ namespace shader {
 class ComputeModule {
 
 public:
-  ComputeModule(std::vector<uint32_t> code, int blockSizeX, int blockSizeY = 1,
-                int blockSizeZ = 1);
-  ComputeModule(std::string const &filename, int blockSizeX, int blockSizeY = 1,
-                int blockSizeZ = 1);
+  ComputeModule(std::shared_ptr<core::Context> context, std::vector<uint32_t> code, int blockSizeX,
+                int blockSizeY = 1, int blockSizeZ = 1);
+  ComputeModule(std::shared_ptr<core::Context> context, std::string const &filename,
+                int blockSizeX, int blockSizeY = 1, int blockSizeZ = 1);
+
+  std::shared_ptr<core::Context> getContext() const { return mContext; }
 
   std::shared_ptr<StructDataLayout> getPushConstantLayout() const { return mPushConstantLayout; }
   std::vector<vk::UniqueDescriptorSetLayout> const &getSetLayouts() const { return mSetLayouts; }

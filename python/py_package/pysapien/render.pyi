@@ -277,7 +277,12 @@ class RenderCudaMeshComponent(sapien.pysapien.Component):
     material: RenderMaterial
     triangle_count: int
     vertex_count: int
-    def __init__(self, max_vertex_count: int, max_triangle_count: int) -> None:
+    def __init__(self, max_vertex_count: int, max_triangle_count: int, device: sapien.pysapien.Device | None = None) -> None:
+        """
+        The CUDA-writable vertex/index buffers and the render semaphore live on ``device``
+        (``None``: the engine's default render device). The component can only be added to a
+        scene whose render system uses that device.
+        """
         ...
     def get_cuda_triangles(self) -> sapien.pysapien.CudaArray:
         ...
@@ -626,9 +631,9 @@ class RenderShapeTriangleMeshPart:
     __hash__: typing.ClassVar[None] = None  # type: ignore[assignment]
     def __eq__(self, arg0: RenderShapeTriangleMeshPart) -> bool:  # type: ignore[override]
         ...
-    def get_cuda_triangles(self) -> sapien.pysapien.CudaArray:
+    def get_cuda_triangles(self, device: sapien.pysapien.Device | None = None) -> sapien.pysapien.CudaArray:
         ...
-    def get_cuda_vertices(self) -> sapien.pysapien.CudaArray:
+    def get_cuda_vertices(self, device: sapien.pysapien.Device | None = None) -> sapien.pysapien.CudaArray:
         ...
     def get_material(self) -> RenderMaterial:
         ...

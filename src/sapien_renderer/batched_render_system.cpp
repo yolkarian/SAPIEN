@@ -126,7 +126,10 @@ void BatchedCamera::internalGpuInit() {
     }
   }
 
-  auto context = SapienRenderEngine::Get()->getContext();
+  if (!mContext) {
+    throw std::runtime_error("failed to initialize camera group: no render device was assigned");
+  }
+  auto context = mContext;
   mCommandPool = context->createCommandPool();
   mCommandBuffer = mCommandPool->allocateCommandBuffer();
 
@@ -179,7 +182,7 @@ void BatchedCamera::internalGpuInit() {
           extent.width * extent.height * extent.depth * svulkan2::getFormatSize(format);
       if (!mCudaImageBuffers.contains(name)) {
         mCudaImageBuffers[name] = svulkan2::core::Buffer::Create(
-            imageSize * mCameras.size(),
+            *context, imageSize * mCameras.size(),
             vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst,
             VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
         {
@@ -211,7 +214,7 @@ void BatchedCamera::internalGpuInit() {
   // a compact group-owned CUDA row [px, py, pz, qw, qx, qy, qz], seeded once from the
   // current CPU global pose; update_render() derives their view matrices from that row.
   // Static cameras keep their snapshot and cpu cameras upload their CPU pose when dirty.
-  CudaDeviceScope deviceScope(mEngine->getDevice()->cudaId);
+  CudaDeviceScope deviceScope(mDevice->cudaId);
   std::vector<float> seedPoses;
   std::vector<CameraData> rowCameraData;
   for (auto &cam : mCameras) {
@@ -296,7 +299,7 @@ void BatchedCamera::internalWaitForRendersIdle() {
   if (!mSemaphore) {
     return;
   }
-  auto result = SapienRenderEngine::Get()->getContext()->getDevice().waitSemaphores(
+  auto result = mContext->getDevice().waitSemaphores(
       vk::SemaphoreWaitInfo({}, mSemaphore.get(), mFrameCounter), UINT64_MAX);
   if (result != vk::Result::eSuccess) {
     throw std::runtime_error("failed to wait for camera group renders");
@@ -331,9 +334,9 @@ void BatchedCamera::takePicture() {
   checkGpuInitialized();
 #ifdef SAPIEN_CUDA
   // The semaphore wait below targets the renderer's device, not the caller's current one.
-  CudaDeviceScope deviceScope(mEngine->getDevice()->cudaId);
+  CudaDeviceScope deviceScope(mDevice->cudaId);
 #endif
-  auto context = SapienRenderEngine::Get()->getContext();
+  auto context = mContext;
 
   // make sure previous takePicture has finished
   internalWaitForRendersIdle();
@@ -405,7 +408,7 @@ void BatchedCamera::setCudaPose(std::shared_ptr<SapienRenderCameraComponent> con
                                 Pose const &pose) {
 #ifdef SAPIEN_CUDA
   int row = getCudaPoseIndex(camera);
-  CudaDeviceScope deviceScope(mEngine->getDevice()->cudaId);
+  CudaDeviceScope deviceScope(mDevice->cudaId);
   float data[7] = {pose.p.x, pose.p.y, pose.p.z, pose.q.w, pose.q.x, pose.q.y, pose.q.z};
   // Keep this synchronous convenience API ordered with prior and subsequent
   // transform kernels on the configured stream. The synchronization also keeps
@@ -455,10 +458,12 @@ void BatchedCamera::closeImpl() {
   if (mGpuInitialized) {
     internalWaitForRendersIdle();
   }
-  mEngine->getContext()->getDevice().waitIdle();
+  if (mContext) {
+    mContext->getDevice().waitIdle();
+  }
 #ifdef SAPIEN_CUDA
-  {
-    CudaDeviceScope deviceScope(mEngine->getDevice()->cudaId);
+  if (mDevice) {
+    CudaDeviceScope deviceScope(mDevice->cudaId);
     checkCudaErrors(cudaStreamSynchronize(mCudaStream));
     checkCudaErrors(cudaDeviceSynchronize());
     if (mCudaSem) {
@@ -489,6 +494,8 @@ void BatchedCamera::closeImpl() {
   mCudaImageBuffers.clear();
   mGpuInitialized = false;
   mClosed = true;
+  mContext.reset();
+  mDevice.reset();
   mEngine.reset();
 }
 
@@ -510,27 +517,58 @@ void BatchedCamera::closeNoThrow() {
 
 BatchedCamera::~BatchedCamera() { closeNoThrow(); }
 
-BatchedRenderSystem::BatchedRenderSystem(
-    std::vector<std::shared_ptr<SapienRendererSystem>> systems)
-    : mEngine(SapienRenderEngine::Get()), mSystems(RenderSceneResolver::resolve(systems, {})) {
-  if (mSystems.empty()) {
+void BatchedRenderSystem::resolveDevice(
+    std::vector<std::shared_ptr<SapienRendererSystem>> const &systems) {
+  mDevice.reset();
+  mContext.reset();
+  for (auto const &system : systems) {
+    if (!system) {
+      continue;
+    }
+    if (system->isClosed()) {
+      throw std::runtime_error(
+          "failed to create render system group: a render system is already closed");
+    }
+    if (!mContext) {
+      mContext = system->getContext();
+      mDevice = system->getDevice();
+      continue;
+    }
+    if (system->getContext() != mContext) {
+      throw std::runtime_error(
+          "failed to create render system group: every render system must share one device, got "
+          "\"" +
+          mDevice->getAlias() + "\" and \"" + system->getDevice()->getAlias() + "\"");
+    }
+  }
+  if (!mContext) {
     throw std::runtime_error("systems must not be empty");
   }
+}
+
+BatchedRenderSystem::BatchedRenderSystem(
+    std::vector<std::shared_ptr<SapienRendererSystem>> systems)
+    : mEngine(SapienRenderEngine::Get()) {
+  resolveDevice(systems);
+  mSystems = RenderSceneResolver::resolve(mContext, systems, {});
 }
 
 BatchedRenderSystem::BatchedRenderSystem(
     std::vector<std::shared_ptr<SapienRendererSystem>> systems,
     std::shared_ptr<svulkan2::scene::Scene> renderScene,
     std::vector<std::shared_ptr<SapienRenderBodyComponent>> gpuSourcedBodies)
-    : mEngine(SapienRenderEngine::Get()),
-      mSystems(RenderSceneResolver::resolve(systems, {})), mFixedRenderScene(renderScene),
+    : mEngine(SapienRenderEngine::Get()), mFixedRenderScene(renderScene),
       mAutoBindPhysxGpuPoses(false), mFixedGpuSourcedBodies(gpuSourcedBodies) {
-  if (mSystems.empty()) {
-    throw std::runtime_error("systems must not be empty");
-  }
   if (!mFixedRenderScene) {
     throw std::runtime_error("render scene must not be null");
   }
+  resolveDevice(systems);
+  if (mFixedRenderScene->getContext() != mContext) {
+    throw std::runtime_error(
+        "failed to create render system group: the output render scene belongs to another device "
+        "than its render systems");
+  }
+  mSystems = RenderSceneResolver::resolve(mContext, systems, {});
 }
 
 void BatchedRenderSystem::init() {
@@ -576,7 +614,7 @@ void BatchedRenderSystem::init() {
     mRenderSceneSystems.push_back(mSystems);
   } else {
     for (auto const &system : mSystems) {
-      auto resolvedSystems = RenderSceneResolver::resolve({system}, mSystems);
+      auto resolvedSystems = RenderSceneResolver::resolve(mContext, {system}, mSystems);
       auto renderScene = RenderSceneResolver::build(resolvedSystems);
       mRenderScenes.push_back(renderScene);
       mRenderSceneSystems.push_back(resolvedSystems);
@@ -703,7 +741,7 @@ void BatchedRenderSystem::init() {
 #endif
 
   // create semaphore
-  auto context = SapienRenderEngine::Get()->getContext();
+  auto context = mContext;
   if (!mSem) {
     vk::SemaphoreTypeCreateInfo timelineCreateInfo(vk::SemaphoreType::eTimeline, 0);
     vk::SemaphoreCreateInfo createInfo{};
@@ -753,8 +791,8 @@ bool BatchedRenderSystem::collectCameraRenderSelections() {
     for (auto const &camera : batch->getCameras()) {
       // Resolve against every live render system so batched-render-shared scenes
       // (for example shared ground/terrain) join the camera's output render scene.
-      auto resolvedSystems =
-          camera->internalResolveRenderSystems(SapienRenderEngine::Get()->getRenderSystems());
+      auto resolvedSystems = camera->internalResolveRenderSystems(
+          SapienRenderEngine::Get()->getRenderSystems(mContext));
       bool exists = std::find(mRenderSceneSystems.begin(), mRenderSceneSystems.end(),
                               resolvedSystems) != mRenderSceneSystems.end();
       exists |= std::find(mAdditionalRenderSelections.begin(), mAdditionalRenderSelections.end(),
@@ -771,8 +809,8 @@ bool BatchedRenderSystem::collectCameraRenderSelections() {
 void BatchedRenderSystem::assignCameraRenderScenes() {
   for (auto const &batch : mCameraBatches) {
     for (auto const &camera : batch->getCameras()) {
-      auto resolvedSystems =
-          camera->internalResolveRenderSystems(SapienRenderEngine::Get()->getRenderSystems());
+      auto resolvedSystems = camera->internalResolveRenderSystems(
+          SapienRenderEngine::Get()->getRenderSystems(mContext));
       auto it = std::find(mRenderSceneSystems.begin(), mRenderSceneSystems.end(), resolvedSystems);
       if (it == mRenderSceneSystems.end()) {
         throw std::runtime_error("failed to resolve camera output render scene");
@@ -794,7 +832,23 @@ std::shared_ptr<BatchedCamera> BatchedRenderSystem::createCameraBatch(
   }
   // Camera ownership is reserved here, but mounted PhysX bindings are resolved at
   // gpu_init() after all referenced PhysX GPU systems have final pose indices.
+  // The camera group copies images and writes pose buffers on the group's device.
+  for (auto const &camera : cameras) {
+    if (!camera || !camera->getScene()) {
+      throw std::runtime_error(
+          "failed to create BatchedCamera: some camera is not added to scene");
+    }
+    auto cameraSystem = camera->getScene()->getSapienRendererSystem();
+    if (cameraSystem->getContext() != mContext) {
+      throw std::runtime_error("failed to create camera group: a camera renders on device \"" +
+                               cameraSystem->getDevice()->getAlias() +
+                               "\" but the group renders on device \"" + mDevice->getAlias() +
+                               "\"");
+    }
+  }
   auto cameraBatch = std::make_shared<BatchedCamera>(cameras, renderTargets);
+  cameraBatch->mDevice = mDevice;
+  cameraBatch->mContext = mContext;
   cameraBatch->setCudaStream(mCudaStream);
   mCameraBatches.push_back(cameraBatch);
   return cameraBatch;
@@ -808,7 +862,7 @@ void BatchedRenderSystem::gpuInit() {
 
 #ifdef SAPIEN_CUDA
   // Covers every upload and camera-batch CUDA op of this initialization.
-  CudaDeviceScope deviceScope(mEngine->getDevice()->cudaId);
+  CudaDeviceScope deviceScope(mDevice->cudaId);
 
   // PhysX GPU owns the authoritative body/link pose indices. Every referenced
   // system must be initialized before mounted cameras and render shapes are bound.
@@ -889,7 +943,7 @@ void BatchedRenderSystem::gpuInit() {
   }
 #endif
   if (rebuildRenderScenes) {
-    SapienRenderEngine::Get()->getContext()->getDevice().waitIdle();
+    mContext->getDevice().waitIdle();
     init();
   }
   assignCameraRenderScenes();
@@ -1083,7 +1137,7 @@ void BatchedRenderSystem::update() {
 #ifdef SAPIEN_CUDA
   // Allocations, kernels and semaphore operations below (including notifyUpdate) target the
   // renderer's device, not the caller's current one.
-  CudaDeviceScope deviceScope(mEngine->getDevice()->cudaId);
+  CudaDeviceScope deviceScope(mDevice->cudaId);
 #endif
   if (!mGpuInitialized) {
     throw std::runtime_error(
@@ -1181,8 +1235,7 @@ void BatchedRenderSystem::update() {
   // Restricting the first direction to RT scenes let raster renders race the CUDA transform
   // writes and observe torn or stale link poses.
   ++mSemValue;
-  SapienRenderEngine::Get()->getContext()->getQueue().submit(
-      {}, {}, {}, {}, mSem.get(), mSemValue, {});
+  mContext->getQueue().submit({}, {}, {}, {}, mSem.get(), mSemValue, {});
   cudaExternalSemaphoreWaitParams waitParams{};
   waitParams.flags = 0;
   waitParams.params.fence.value = mSemValue;
@@ -1307,8 +1360,7 @@ void BatchedRenderSystem::notifyUpdate() {
   cudaSignalExternalSemaphoresAsync(&mCudaSem, &sigParams, 1, (cudaStream_t)mCudaStream);
 #endif
   vk::PipelineStageFlags stage = vk::PipelineStageFlagBits::eAllCommands;
-  SapienRenderEngine::Get()->getContext()->getQueue().submit({}, mSem.get(), stage, mSemValue, {},
-                                                             {}, {});
+  mContext->getQueue().submit({}, mSem.get(), stage, mSemValue, {}, {}, {});
 }
 
 void BatchedRenderSystem::setCudaStream(uintptr_t stream) {
@@ -1341,11 +1393,13 @@ void BatchedRenderSystem::closeImpl() {
   if (mClosed) {
     return;
   }
-  mEngine->getContext()->getDevice().waitIdle();
+  if (mContext) {
+    mContext->getDevice().waitIdle();
+  }
 #ifdef SAPIEN_CUDA
   // A renderer CUDA cannot see (e.g. hidden by CUDA_VISIBLE_DEVICES) never ran CUDA work for
   // this group, since gpu_init() needs a CUDA render device, so there is nothing to wait for.
-  if (int cudaId = mEngine->getDevice()->cudaId; cudaId >= 0) {
+  if (int cudaId = mDevice->cudaId; cudaId >= 0) {
     CudaDeviceScope deviceScope(cudaId);
     checkCudaErrors(cudaStreamSynchronize(mCudaStream));
     checkCudaErrors(cudaDeviceSynchronize());
@@ -1393,6 +1447,8 @@ void BatchedRenderSystem::closeImpl() {
   mSem.reset();
   mGpuInitialized = false;
   mClosed = true;
+  mContext.reset();
+  mDevice.reset();
   mEngine.reset();
 }
 

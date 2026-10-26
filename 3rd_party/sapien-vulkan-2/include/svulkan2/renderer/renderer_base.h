@@ -16,8 +16,9 @@ enum class RenderExecutionMode { eCpuManaged, eGroupedGpu };
 
 class RendererBase {
 public:
-  static std::unique_ptr<RendererBase>
-  Create(std::shared_ptr<RendererConfig> config);
+  /** create the renderer of `config`'s shader directory on `context` */
+  static std::unique_ptr<RendererBase> Create(std::shared_ptr<core::Context> context,
+                                              std::shared_ptr<RendererConfig> config);
 
   virtual void resize(int width, int height) = 0;
   virtual void setScene(std::shared_ptr<scene::Scene> scene) = 0;

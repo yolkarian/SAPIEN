@@ -304,6 +304,32 @@ current only while it works on that system and then restores the caller's curren
 CUDA device, so `torch.cuda.current_device()` is unchanged by SAPIEN calls;
 create tensors on explicit devices.
 
+**Rendering on several GPUs.** A `RenderSystem` renders on the device it is created
+for; without a device it uses the default render device. Give each device's scenes a
+render system on the same device, and build one `RenderSystemGroup` per device:
+
+```python
+devices = [f"cuda:{k}" for k in range(torch.cuda.device_count())]
+groups = []
+for device in devices:
+    physx_system = sapien.physx.PhysxGpuSystem(device)
+    scenes = [
+        sapien.Scene([physx_system, sapien.render.RenderSystem(device)]) for _ in range(n)
+    ]
+    # build scenes and cameras, then physx_system.gpu_init()
+    group = sapien.render.RenderSystemGroup([scene.render_system for scene in scenes])
+    group.set_cuda_poses(physx_system.cuda_rigid_body_data)
+    camera_group = group.create_camera_group(cameras, ["Color"])
+    group.gpu_init()
+    groups.append((group, camera_group))
+```
+
+Materials, textures, meshes and loaded models are shared: create them once and use
+them in scenes of every device; each device uploads its own copy on first use, and
+later edits reach every copy. A group's camera outputs (`get_picture_cuda()`) are
+tensors on the group's device. A `RenderSystemGroup` cannot mix render systems of
+different devices, and the viewer always renders through the default render device.
+
 ## Job-scoped teardown
 
 Long-lived experiment launchers may run several jobs in one Python process. Close

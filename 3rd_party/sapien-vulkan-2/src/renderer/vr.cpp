@@ -1,7 +1,9 @@
 #include "svulkan2/renderer/vr.h"
 #include "../common/logger.h"
 #include "svulkan2/core/context.h"
+#include "svulkan2/core/image.h"
 #include <openvr.h>
+#include <utility>
 
 namespace svulkan2 {
 namespace renderer {
@@ -16,12 +18,14 @@ void VRDisplay::setActionManifestPath(std::string const &path) { gActionManifest
 
 std::string VRDisplay::getActionManifestPath() { return gActionManifestPath; }
 
-VRDisplay::VRDisplay() {
+VRDisplay::VRDisplay(std::shared_ptr<core::Context> context) : mContext(std::move(context)) {
+  if (!mContext) {
+    throw std::runtime_error("failed to create VR display: context must not be null");
+  }
   if (!gSystem) {
     gSystem = vr::VRSystem();
   }
 
-  mContext = core::Context::Get();
   if (!gSystem) {
     throw std::runtime_error("VR is not supported");
   }

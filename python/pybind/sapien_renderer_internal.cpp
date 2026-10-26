@@ -6,6 +6,7 @@
 #include <pybind11/stl.h>
 #include <svulkan2/core/context.h>
 #include <svulkan2/renderer/renderer.h>
+#include <svulkan2/resource/manager.h>
 #include <svulkan2/scene/scene.h>
 #include <svulkan2/ui/ui.h>
 
@@ -595,9 +596,9 @@ void init_sapien_renderer_internal(py::module &parent) {
   PyContext
       .def(
           "create_material",
-          [](core::Context &context, py::array_t<float> emission, py::array_t<float> baseColor,
+          [](core::Context &, py::array_t<float> emission, py::array_t<float> baseColor,
              float fresnel, float roughness, float metallic, float transmission, float ior) {
-            return context.getResourceManager()->createMetallicMaterial(
+            return resource::SVResourceManager::Get()->createMetallicMaterial(
                 {emission.at(0), emission.at(1), emission.at(2), emission.at(3)},
                 {baseColor.at(0), baseColor.at(1), baseColor.at(2), baseColor.at(3)}, fresnel,
                 roughness, metallic, transmission, ior);
@@ -606,13 +607,13 @@ void init_sapien_renderer_internal(py::module &parent) {
           py::arg("metallic"), py::arg("transmission") = 0.f, py::arg("ior") = 1.01f)
       .def(
           "create_model_from_file",
-          [](core::Context &context, std::string const &filename) {
-            return context.getResourceManager()->CreateModelFromFile(filename);
+          [](core::Context &, std::string const &filename) {
+            return resource::SVResourceManager::Get()->CreateModelFromFile(filename);
           },
           py::arg("filename"))
       .def(
           "create_texture_from_file",
-          [](core::Context &context, std::string const &filename, uint32_t mipmapLevels,
+          [](core::Context &, std::string const &filename, uint32_t mipmapLevels,
              std::string const &filter, std::string const &addressMode) {
             vk::Filter vkFilter;
             if (filter == "linear") {
@@ -634,24 +635,24 @@ void init_sapien_renderer_internal(py::module &parent) {
               throw std::runtime_error("unknown address mode: " + filter +
                                        ". should be one of repeat, border, or edge.");
             }
-            return context.getResourceManager()->CreateTextureFromFile(
+            return resource::SVResourceManager::Get()->CreateTextureFromFile(
                 filename, mipmapLevels, vkFilter, vkFilter, vkAddressMode, vkAddressMode);
           },
           py::arg("filename"), py::arg("mipmap_levels"), py::arg("filter") = "linear",
           py::arg("address_mode") = "repeat")
       .def(
           "create_cubemap_from_files",
-          [](core::Context &context, std::array<std::string, 6> const &filenames,
-             uint32_t mipmapLevels) {
-            return context.getResourceManager()->CreateCubemapFromFiles(filenames, mipmapLevels);
+          [](core::Context &, std::array<std::string, 6> const &filenames, uint32_t mipmapLevels) {
+            return resource::SVResourceManager::Get()->CreateCubemapFromFiles(filenames,
+                                                                              mipmapLevels);
           },
           "Load cube map, its mipmaps are generated based on roughness, details see "
           "https://learnopengl.com/PBR/IBL/Specular-IBL",
           py::arg("filenames"), py::arg("mipmap_levels"))
       .def(
           "create_brdf_lut",
-          [](std::shared_ptr<core::Context> context, uint32_t size) {
-            return context->getResourceManager()->generateBRDFLUT(size);
+          [](core::Context &context, uint32_t size) {
+            return resource::SVResourceManager::Get()->generateBRDFLUT(context, size);
           },
           "Generate BRDF LUT texture, see https://learnopengl.com/PBR/IBL/Specular-IBL",
           py::arg("size") = 128)
@@ -707,11 +708,11 @@ void init_sapien_renderer_internal(py::module &parent) {
           py::arg("uvs") = py::array_t<float>())
       .def(
           "create_model",
-          [](core::Context &context, std::vector<std::shared_ptr<resource::SVMesh>> const &meshes,
+          [](core::Context &, std::vector<std::shared_ptr<resource::SVMesh>> const &meshes,
              std::vector<std::shared_ptr<resource::SVMetallicMaterial>> const &materials) {
             std::vector<std::shared_ptr<resource::SVMaterial>> mats;
             mats.insert(mats.end(), materials.begin(), materials.end());
-            return context.getResourceManager()->createModel(meshes, mats);
+            return resource::SVResourceManager::Get()->createModel(meshes, mats);
           },
           py::arg("meshes"), py::arg("materials"))
       .def(

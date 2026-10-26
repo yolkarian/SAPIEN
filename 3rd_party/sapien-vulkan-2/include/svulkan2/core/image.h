@@ -17,9 +17,11 @@ class ktxVulkanTexture;
 namespace svulkan2 {
 namespace core {
 
+class Context;
+
 class Image {
 private:
-  std::shared_ptr<class Context> mContext;
+  std::shared_ptr<Context> mContext; // first member: outlives the image it owns
   vk::ImageType mType;
   vk::Extent3D mExtent;
   vk::Format mFormat;
@@ -40,12 +42,12 @@ private:
   void generateMipmaps(vk::CommandBuffer cb, uint32_t arrayLayer = 0);
 
 public:
-  Image(vk::ImageType type, vk::Extent3D extent, vk::Format format, vk::ImageUsageFlags usageFlags,
-        VmaMemoryUsage memoryUsage,
+  Image(Context &context, vk::ImageType type, vk::Extent3D extent, vk::Format format,
+        vk::ImageUsageFlags usageFlags, VmaMemoryUsage memoryUsage,
         vk::SampleCountFlagBits sampleCount = vk::SampleCountFlagBits::e1, uint32_t mipLevels = 1,
         uint32_t arrayLayers = 1, vk::ImageTiling tiling = vk::ImageTiling::eOptimal,
         vk::ImageCreateFlags flags = {});
-  Image(std::unique_ptr<ktxVulkanTexture> ktxImage);
+  Image(Context &context, std::unique_ptr<ktxVulkanTexture> ktxImage);
 
   Image(const Image &) = delete;
   Image(const Image &&) = delete;
@@ -55,6 +57,8 @@ public:
   ~Image();
 
   vk::Image getVulkanImage() const { return mImage; }
+  /** the context (device) that owns this image */
+  std::shared_ptr<Context> getContext() const { return mContext; }
 
   void uploadLevel(void const *data, size_t size, uint32_t arrayLayer, uint32_t mipLevel);
 

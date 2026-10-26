@@ -4,6 +4,7 @@
 #include "sapien/math/pose.h"
 #include "sapien_renderer_system.h"
 #include <Eigen/Dense>
+#include <svulkan2/core/context.h>
 #include <svulkan2/resource/model.h>
 
 namespace sapien {
@@ -43,11 +44,16 @@ public:
   PointCloudComponent &operator=(PointCloudComponent const &&) = delete;
 
 private:
+  /** the context of the render scene this point cloud is added to; throws when it is not in
+   *  a scene */
+  svulkan2::core::Context &internalGetContext() const;
+
   svulkan2::scene::Transform getTransform() const;
   void checkSnapshotMutable(char const *operation) const;
   void checkStaticPose() const;
 
   std::shared_ptr<SapienRenderEngine> mEngine;
+  std::shared_ptr<svulkan2::core::Context> mContext;
   Pose mLocalPose{};
   std::shared_ptr<svulkan2::resource::SVPointSet> mPointSet;
   svulkan2::scene::PointObject *mObject{};

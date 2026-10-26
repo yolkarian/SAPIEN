@@ -2,12 +2,14 @@
 #include "../common/logger.h"
 #include "svulkan2/common/profiler.h"
 #include "svulkan2/core/command_pool.h"
+#include "svulkan2/resource/manager.h"
 #include "svulkan2/shader/deferred.h"
 #include "svulkan2/shader/gbuffer.h"
 #include "svulkan2/shader/primitive.h"
 #include "svulkan2/shader/primitive_shadow.h"
 #include "svulkan2/shader/shadow.h"
 #include <array>
+#include <utility>
 
 namespace svulkan2 {
 namespace renderer {
@@ -61,16 +63,19 @@ static void updateDescriptorSets(vk::Device device,
   device.updateDescriptorSets(writeDescriptorSets, nullptr);
 }
 
-Renderer::Renderer(std::shared_ptr<RendererConfig> config) {
+Renderer::Renderer(std::shared_ptr<core::Context> context, std::shared_ptr<RendererConfig> config)
+    : mContext(std::move(context)) {
+  if (!mContext) {
+    throw std::runtime_error("failed to create renderer: context must not be null");
+  }
   mConfig = std::make_shared<RendererConfig>(*config);
 
-  mContext = core::Context::Get();
   if (!mContext->isVulkanAvailable()) {
     return;
   }
 
   // preload the shader pack to get vertex layouts
-  mShaderPack = mContext->getResourceManager()->CreateShaderPack(config->shaderDir);
+  mShaderPack = resource::SVResourceManager::Get()->CreateShaderPack(config->shaderDir);
 
   // Make reflected shader defaults visible through the custom-property API.
   for (auto const &pass : mShaderPack->getNonShadowPasses()) {
@@ -115,7 +120,18 @@ Renderer::Renderer(std::shared_ptr<RendererConfig> config) {
   mDescriptorPool = mContext->getDevice().createDescriptorPoolUnique(info);
 
   mObjectPool = std::make_unique<core::DynamicDescriptorPool>(
+      mContext->getDevice2(),
       std::vector<vk::DescriptorPoolSize>{{vk::DescriptorType::eUniformBuffer, 1024}});
+}
+
+void Renderer::setScene(std::shared_ptr<scene::Scene> scene) {
+  if (scene && scene->getContext() != mContext) {
+    throw std::runtime_error(
+        "failed to set scene: the scene renders on a different device than the renderer");
+  }
+  mScene = std::move(scene);
+  mRequiresRebuild = true;
+  mRequiresRecord = true;
 }
 
 void Renderer::prepareRenderTargets(uint32_t width, uint32_t height) {
@@ -128,7 +144,8 @@ void Renderer::prepareRenderTargets(uint32_t width, uint32_t height) {
   for (auto &[name, format] : renderTargetFormats) {
     float scale = 1.f; // renderTargetScales[name];
     mRenderTargets[name] = std::make_shared<resource::SVRenderTarget>(
-        name, static_cast<uint32_t>(width * scale), static_cast<uint32_t>(height * scale), format);
+        mContext, name, static_cast<uint32_t>(width * scale),
+        static_cast<uint32_t>(height * scale), format);
     mRenderTargets[name]->createDeviceResources();
   }
 
@@ -138,8 +155,8 @@ void Renderer::prepareRenderTargets(uint32_t width, uint32_t height) {
       float scale = 1.f;
       mMultisampledTargets[name];
       mMultisampledTargets[name] = std::make_shared<resource::SVRenderTarget>(
-          name, static_cast<uint32_t>(width * scale), static_cast<uint32_t>(height * scale),
-          format, mConfig->msaa);
+          mContext, name, static_cast<uint32_t>(width * scale),
+          static_cast<uint32_t>(height * scale), format, mConfig->msaa);
       mMultisampledTargets[name]->createDeviceResources();
     }
   }
@@ -177,7 +194,7 @@ void Renderer::prepareShadowRenderTargets() {
   {
     for (uint32_t size : mPointLightShadowSizes) {
       auto pointShadowImage = std::make_shared<core::Image>(
-          vk::ImageType::e2D, vk::Extent3D{size, size, 1}, format,
+          *mContext, vk::ImageType::e2D, vk::Extent3D{size, size, 1}, format,
           vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
           VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1, 6,
           vk::ImageTiling::eOptimal, vk::ImageCreateFlagBits::eCubeCompatible);
@@ -201,7 +218,7 @@ void Renderer::prepareShadowRenderTargets() {
           vk::SamplerAddressMode::eClampToBorder, 0.f, false, 0.f, false, vk::CompareOp::eNever,
           0.f, 0.f, vk::BorderColor::eFloatOpaqueWhite));
       mPointShadowReadTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-          "PointShadow", size, size, pointShadowImage, std::move(imageView), sampler));
+          mContext, "PointShadow", size, size, pointShadowImage, std::move(imageView), sampler));
 
       // write targets
       for (uint32_t faceIndex = 0; faceIndex < 6; ++faceIndex) {
@@ -211,7 +228,8 @@ void Renderer::prepareShadowRenderTargets() {
             vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, faceIndex, 1));
         auto imageView = mContext->getDevice().createImageViewUnique(viewInfo);
         mPointShadowWriteTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            "PointShadow", size, size, pointShadowImage, std::move(imageView), vk::Sampler{}));
+            mContext, "PointShadow", size, size, pointShadowImage, std::move(imageView),
+            vk::Sampler{}));
       }
     }
   }
@@ -220,7 +238,7 @@ void Renderer::prepareShadowRenderTargets() {
   {
     for (uint32_t size : mDirectionalLightShadowSizes) {
       auto directionalShadowImage = std::make_shared<core::Image>(
-          vk::ImageType::e2D, vk::Extent3D{size, size, 1}, format,
+          *mContext, vk::ImageType::e2D, vk::Extent3D{size, size, 1}, format,
           vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
           VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1, 1);
 
@@ -241,8 +259,8 @@ void Renderer::prepareShadowRenderTargets() {
             vk::SamplerAddressMode::eClampToBorder, 0.f, false, 0.f, false, vk::CompareOp::eNever,
             0.f, 0.f, vk::BorderColor::eFloatOpaqueWhite));
         mDirectionalShadowReadTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            "DirectionalShadow", size, size, directionalShadowImage, std::move(imageView),
-            sampler));
+            mContext, "DirectionalShadow", size, size, directionalShadowImage,
+            std::move(imageView), sampler));
       }
 
       {
@@ -252,8 +270,8 @@ void Renderer::prepareShadowRenderTargets() {
             vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
         auto imageView = mContext->getDevice().createImageViewUnique(viewInfo);
         mDirectionalShadowWriteTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            "DirectionalShadow", size, size, directionalShadowImage, std::move(imageView),
-            vk::Sampler{}));
+            mContext, "DirectionalShadow", size, size, directionalShadowImage,
+            std::move(imageView), vk::Sampler{}));
       }
     }
   }
@@ -262,7 +280,7 @@ void Renderer::prepareShadowRenderTargets() {
   {
     for (uint32_t size : mSpotLightShadowSizes) {
       auto shadowImage = std::make_shared<core::Image>(
-          vk::ImageType::e2D, vk::Extent3D{size, size, 1}, format,
+          *mContext, vk::ImageType::e2D, vk::Extent3D{size, size, 1}, format,
           vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
           VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1, 1);
 
@@ -282,7 +300,7 @@ void Renderer::prepareShadowRenderTargets() {
             vk::SamplerAddressMode::eClampToBorder, 0.f, false, 0.f, false, vk::CompareOp::eNever,
             0.f, 0.f, vk::BorderColor::eFloatOpaqueWhite));
         mSpotShadowReadTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            "SpotShadow", size, size, shadowImage, std::move(imageView), sampler));
+            mContext, "SpotShadow", size, size, shadowImage, std::move(imageView), sampler));
       }
       {
         vk::ImageViewCreateInfo viewInfo(
@@ -290,7 +308,7 @@ void Renderer::prepareShadowRenderTargets() {
             vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
         auto imageView = mContext->getDevice().createImageViewUnique(viewInfo);
         mSpotShadowWriteTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            "SpotShadow", size, size, shadowImage, std::move(imageView), vk::Sampler{}));
+            mContext, "SpotShadow", size, size, shadowImage, std::move(imageView), vk::Sampler{}));
       }
     }
   }
@@ -299,7 +317,7 @@ void Renderer::prepareShadowRenderTargets() {
   {
     for (uint32_t size : mTexturedLightShadowSizes) {
       auto shadowImage = std::make_shared<core::Image>(
-          vk::ImageType::e2D, vk::Extent3D{size, size, 1}, format,
+          *mContext, vk::ImageType::e2D, vk::Extent3D{size, size, 1}, format,
           vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
           VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1, 1);
 
@@ -319,7 +337,8 @@ void Renderer::prepareShadowRenderTargets() {
             vk::SamplerAddressMode::eClampToBorder, 0.f, false, 0.f, false, vk::CompareOp::eNever,
             0.f, 0.f, vk::BorderColor::eFloatOpaqueWhite));
         mTexturedLightShadowReadTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            "TexturedLightShadow", size, size, shadowImage, std::move(imageView), sampler));
+            mContext, "TexturedLightShadow", size, size, shadowImage, std::move(imageView),
+            sampler));
       }
       {
         vk::ImageViewCreateInfo viewInfo(
@@ -327,7 +346,8 @@ void Renderer::prepareShadowRenderTargets() {
             vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
         auto imageView = mContext->getDevice().createImageViewUnique(viewInfo);
         mTexturedLightShadowWriteTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            "TexturedLightShadow", size, size, shadowImage, std::move(imageView), vk::Sampler{}));
+            mContext, "TexturedLightShadow", size, size, shadowImage, std::move(imageView),
+            vk::Sampler{}));
       }
     }
   }
@@ -344,7 +364,8 @@ void Renderer::preparePipelines() {
   shader::ShaderPackInstanceDesc desc;
   desc.config = mConfig;
   desc.specializationConstants = mSpecializationConstants;
-  mShaderPackInstance = mContext->getResourceManager()->CreateShaderPackInstance(desc);
+  mShaderPackInstance =
+      resource::SVResourceManager::Get()->CreateShaderPackInstance(mContext, desc);
   mShaderPackInstance->loadAsync().wait();
   if (mShaderPackInstance->getShaderPack() != mShaderPack) {
     throw std::runtime_error("renderer corrupted! impossible error in shader pack.");
@@ -540,11 +561,10 @@ void Renderer::recordShadows() {
                 mShaderPackInstance->getShadowPassResources().layout.get(), objectSetIdx,
                 mObjectSet[objIdx].get(), nullptr);
           }
-          mShadowCommandBuffer->bindVertexBuffers(0,
-                                                  shape->mesh->getVertexBuffer().getVulkanBuffer(),
-                                                  vk::DeviceSize(0));
-          mShadowCommandBuffer->bindIndexBuffer(shape->mesh->getIndexBuffer().getVulkanBuffer(), 0,
-                                                vk::IndexType::eUint32);
+          mShadowCommandBuffer->bindVertexBuffers(
+              0, shape->mesh->getVertexBuffer(*mContext).getVulkanBuffer(), vk::DeviceSize(0));
+          mShadowCommandBuffer->bindIndexBuffer(
+              shape->mesh->getIndexBuffer(*mContext).getVulkanBuffer(), 0, vk::IndexType::eUint32);
           mShadowCommandBuffer->drawIndexed(shape->mesh->getTriangleCount() * 3, 1, 0, 0, 0);
         }
       }
@@ -611,7 +631,7 @@ void Renderer::recordShadows() {
               mObjectSet[mPointObjectIndex + objIdx].get(), nullptr);
         }
         mShadowCommandBuffer->bindVertexBuffers(
-            0, objects[objIdx]->getPointSet()->getVertexBuffer().getVulkanBuffer(),
+            0, objects[objIdx]->getPointSet()->getVertexBuffer(*mContext).getVulkanBuffer(),
             vk::DeviceSize(0));
         mShadowCommandBuffer->draw(objects[objIdx]->getVertexCount(), 1, 0, 0);
       }
@@ -659,18 +679,18 @@ void Renderer::prepareObjects() {
     // upload objects to GPU, if not up-to-date
     for (auto obj : objects) {
       for (auto shape : obj->getModel()->getShapes()) {
-        shape->material->uploadToDevice();
-        shape->mesh->uploadToDevice();
+        shape->material->uploadToDevice(*mContext);
+        shape->mesh->uploadToDevice(*mContext);
       }
     }
     if (mShaderPack->hasLinePass()) {
       for (auto obj : lineObjects) {
-        obj->getLineSet()->uploadToDevice();
+        obj->getLineSet()->uploadToDevice(*mContext);
       }
     }
     if (mShaderPack->hasPointPass()) {
       for (auto obj : pointObjects) {
-        obj->getPointSet()->uploadToDevice();
+        obj->getPointSet()->uploadToDevice(*mContext);
       }
     }
   }
@@ -690,19 +710,19 @@ void Renderer::prepareObjects() {
             auto t = objects[objId]->getCustomTexture(name);
             if (!t) {
               if (binding.imageDim == 1) {
-                t = mContext->getResourceManager()->getDefaultTexture1D();
+                t = resource::SVResourceManager::Get()->getDefaultTexture1D();
               } else if (binding.imageDim == 2) {
-                t = mContext->getResourceManager()->getDefaultTexture();
+                t = resource::SVResourceManager::Get()->getDefaultTexture();
               } else {
-                t = mContext->getResourceManager()->getDefaultTexture3D();
+                t = resource::SVResourceManager::Get()->getDefaultTexture3D();
               }
             }
 
             t->loadAsync().get();
-            t->uploadToDevice();
+            t->uploadToDevice(*mContext);
 
-            imageInfo.push_back(
-                {t->getSampler(), t->getImageView(), vk::ImageLayout::eShaderReadOnlyOptimal});
+            imageInfo.push_back({t->getSampler(*mContext), t->getImageView(*mContext),
+                                 vk::ImageLayout::eShaderReadOnlyOptimal});
           }
 
           std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
@@ -722,24 +742,24 @@ void Renderer::prepareObjects() {
             } else {
               std::shared_ptr<resource::SVTexture> t;
               if (binding.imageDim == 1) {
-                t = mContext->getResourceManager()->getDefaultTexture1D();
+                t = resource::SVResourceManager::Get()->getDefaultTexture1D();
               } else if (binding.imageDim == 2) {
-                t = mContext->getResourceManager()->getDefaultTexture();
+                t = resource::SVResourceManager::Get()->getDefaultTexture();
               } else {
-                t = mContext->getResourceManager()->getDefaultTexture3D();
+                t = resource::SVResourceManager::Get()->getDefaultTexture3D();
               }
 
               ta.resize(binding.arraySize, t);
             }
             for (auto t : ta) {
               t->loadAsync().get();
-              t->uploadToDevice();
+              t->uploadToDevice(*mContext);
             }
 
             imageInfo.emplace_back();
             for (auto t : ta) {
-              imageInfo.back().push_back(
-                  {t->getSampler(), t->getImageView(), vk::ImageLayout::eShaderReadOnlyOptimal});
+              imageInfo.back().push_back({t->getSampler(*mContext), t->getImageView(*mContext),
+                                          vk::ImageLayout::eShaderReadOnlyOptimal});
             }
           }
 
@@ -898,15 +918,14 @@ void Renderer::recordRenderPasses() {
                                                    nullptr);
         }
         if (materialBinding >= 0) {
-          mRenderCommandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout,
-                                                   materialBinding,
-                                                   shape->material->getDescriptorSet(), nullptr);
+          mRenderCommandBuffer->bindDescriptorSets(
+              vk::PipelineBindPoint::eGraphics, layout, materialBinding,
+              shape->material->getDescriptorSet(*mContext), nullptr);
         }
-        mRenderCommandBuffer->bindVertexBuffers(0,
-                                                shape->mesh->getVertexBuffer().getVulkanBuffer(),
-                                                vk::DeviceSize(0));
-        mRenderCommandBuffer->bindIndexBuffer(shape->mesh->getIndexBuffer().getVulkanBuffer(), 0,
-                                              vk::IndexType::eUint32);
+        mRenderCommandBuffer->bindVertexBuffers(
+            0, shape->mesh->getVertexBuffer(*mContext).getVulkanBuffer(), vk::DeviceSize(0));
+        mRenderCommandBuffer->bindIndexBuffer(
+            shape->mesh->getIndexBuffer(*mContext).getVulkanBuffer(), 0, vk::IndexType::eUint32);
         mRenderCommandBuffer->setCullMode(shape->material->getCullMode());
         mRenderCommandBuffer->drawIndexed(shape->mesh->getTriangleCount() * 3, 1, 0, 0, 0);
       }
@@ -923,7 +942,8 @@ void Renderer::recordRenderPasses() {
           mLineSetCache.insert(lineObj->getLineSet());
           mRenderCommandBuffer->setLineWidth(lineObj->getLineWidth());
           mRenderCommandBuffer->bindVertexBuffers(
-              0, lineObj->getLineSet()->getVertexBuffer().getVulkanBuffer(), vk::DeviceSize(0));
+              0, lineObj->getLineSet()->getVertexBuffer(*mContext).getVulkanBuffer(),
+              vk::DeviceSize(0));
           mRenderCommandBuffer->draw(lineObj->getLineSet()->getVertexCount(), 1, 0, 0);
         }
       }
@@ -939,7 +959,8 @@ void Renderer::recordRenderPasses() {
         if (pointObj->getTransparency() < 1) {
           mPointSetCache.insert(pointObj->getPointSet());
           mRenderCommandBuffer->bindVertexBuffers(
-              0, pointObj->getPointSet()->getVertexBuffer().getVulkanBuffer(), vk::DeviceSize(0));
+              0, pointObj->getPointSet()->getVertexBuffer(*mContext).getVulkanBuffer(),
+              vk::DeviceSize(0));
           mRenderCommandBuffer->draw(pointObj->getVertexCount(), 1, 0, 0);
         }
       }
@@ -1028,7 +1049,7 @@ void Renderer::prepareRender(scene::Camera &camera) {
       }
       for (auto l : mScene->getTexturedLights()) {
         if (l->getTexture()) {
-          l->getTexture()->uploadToDevice();
+          l->getTexture()->uploadToDevice(*mContext);
         }
       }
     }
@@ -1426,10 +1447,10 @@ void Renderer::display(std::string const &renderTargetName, vk::Image backBuffer
 void Renderer::prepareSceneBuffer() {
   if (mShaderPack->getShadowPass()) {
     mShadowBuffer = core::Buffer::CreateUniform(
-        mShaderPack->getShaderInputLayouts()->shadowBufferLayout->size);
+        *mContext, mShaderPack->getShaderInputLayouts()->shadowBufferLayout->size);
   }
-  mSceneBuffer =
-      core::Buffer::CreateUniform(mShaderPack->getShaderInputLayouts()->sceneBufferLayout->size);
+  mSceneBuffer = core::Buffer::CreateUniform(
+      *mContext, mShaderPack->getShaderInputLayouts()->sceneBufferLayout->size);
   auto layout = mShaderPackInstance->getSceneDescriptorSetLayout();
 
   mSceneSet = std::move(mContext->getDevice()
@@ -1482,54 +1503,59 @@ void Renderer::prepareSceneBuffer() {
         auto t = l->getTexture();
         if (!t) {
           logger::error("A textured light does not have a texture attached");
-          t = mContext->getResourceManager()->getDefaultTexture();
+          t = resource::SVResourceManager::Get()->getDefaultTexture();
           t->loadAsync().get();
-          t->uploadToDevice();
+          t->uploadToDevice(*mContext);
         }
-        textures.push_back({t->getImageView(), t->getSampler()});
+        textures.push_back({t->getImageView(*mContext), t->getSampler(*mContext)});
       }
       updateArrayDescriptorSets(mContext->getDevice(), mSceneSet.get(), textures, bindingIndex);
     } else if (binding.type == vk::DescriptorType::eCombinedImageSampler &&
                binding.name.substr(0, 7) == "sampler") {
       std::string customTextureName = binding.name.substr(7);
       if (customTextureName.substr(0, 6) == "Random") {
-        auto randomTex = mContext->getResourceManager()->CreateRandomTexture(customTextureName);
-        randomTex->uploadToDevice();
-        updateDescriptorSets(mContext->getDevice(), mSceneSet.get(), {},
-                             {{randomTex->getImageView(), randomTex->getSampler()}}, bindingIndex);
+        auto randomTex =
+            resource::SVResourceManager::Get()->CreateRandomTexture(customTextureName);
+        randomTex->uploadToDevice(*mContext);
+        updateDescriptorSets(
+            mContext->getDevice(), mSceneSet.get(), {},
+            {{randomTex->getImageView(*mContext), randomTex->getSampler(*mContext)}},
+            bindingIndex);
       } else if (mCustomTextures.find(customTextureName) != mCustomTextures.end()) {
-        mCustomTextures[customTextureName]->uploadToDevice();
+        mCustomTextures[customTextureName]->uploadToDevice(*mContext);
         updateDescriptorSets(mContext->getDevice(), mSceneSet.get(), {},
-                             {{mCustomTextures[customTextureName]->getImageView(),
-                               mCustomTextures[customTextureName]->getSampler()}},
+                             {{mCustomTextures[customTextureName]->getImageView(*mContext),
+                               mCustomTextures[customTextureName]->getSampler(*mContext)}},
                              bindingIndex);
       } else if (mCustomTextureArray.contains(customTextureName)) {
         auto textures = mCustomTextureArray.at(customTextureName);
         std::vector<std::tuple<vk::ImageView, vk::Sampler>> ts;
         for (auto t : textures) {
-          t->uploadToDevice();
-          ts.push_back({t->getImageView(), t->getSampler()});
+          t->uploadToDevice(*mContext);
+          ts.push_back({t->getImageView(*mContext), t->getSampler(*mContext)});
         }
         updateDescriptorSets(mContext->getDevice(), mSceneSet.get(), {}, ts, bindingIndex);
       } else if (customTextureName == "BRDFLUT") {
         // generate if BRDFLUT is not supplied
-        auto tex = mContext->getResourceManager()->getDefaultBRDFLUT();
+        auto tex = resource::SVResourceManager::Get()->getDefaultBRDFLUT(*mContext);
         updateDescriptorSets(mContext->getDevice(), mSceneSet.get(), {},
-                             {{tex->getImageView(), tex->getSampler()}}, bindingIndex);
+                             {{tex->getImageView(*mContext), tex->getSampler(*mContext)}},
+                             bindingIndex);
       } else if (mCustomCubemaps.find(customTextureName) != mCustomCubemaps.end()) {
-        mCustomCubemaps[customTextureName]->uploadToDevice();
+        mCustomCubemaps[customTextureName]->uploadToDevice(*mContext);
         updateDescriptorSets(mContext->getDevice(), mSceneSet.get(), {},
-                             {{mCustomCubemaps[customTextureName]->getImageView(),
-                               mCustomCubemaps[customTextureName]->getSampler()}},
+                             {{mCustomCubemaps[customTextureName]->getImageView(*mContext),
+                               mCustomCubemaps[customTextureName]->getSampler(*mContext)}},
                              bindingIndex);
       } else if (customTextureName == "Environment") {
         auto cube = mEnvironmentMap;
         if (!cube) {
-          cube = mContext->getResourceManager()->getDefaultCubemap();
+          cube = resource::SVResourceManager::Get()->getDefaultCubemap();
         }
-        cube->uploadToDevice();
+        cube->uploadToDevice(*mContext);
         updateDescriptorSets(mContext->getDevice(), mSceneSet.get(), {},
-                             {{cube->getImageView(), cube->getSampler()}}, bindingIndex);
+                             {{cube->getImageView(*mContext), cube->getSampler(*mContext)}},
+                             bindingIndex);
       } else {
         throw std::runtime_error("custom sampler \"" + customTextureName +
                                  "\" is not set in the renderer");
@@ -1561,7 +1587,7 @@ void Renderer::prepareObjectBuffers(uint32_t numObjects) {
   assert(newSize >= numObjects);
 
   // reallocate data buffer
-  mObjectDataBuffer = core::Buffer::CreateUniform(bufferSize * newSize, false);
+  mObjectDataBuffer = core::Buffer::CreateUniform(*mContext, bufferSize * newSize, false);
 
   // expand or shrink sets
   if (mObjectSet.size() < newSize) {
@@ -1654,7 +1680,7 @@ void Renderer::prepareLightBuffers() {
   // too few shadow sets
   for (uint32_t i = mLightSets.size(); i < numShadows; ++i) {
     auto layout = mShaderPackInstance->getLightDescriptorSetLayout();
-    mLightBuffers.push_back(core::Buffer::CreateUniform(lightBufferLayout->size));
+    mLightBuffers.push_back(core::Buffer::CreateUniform(*mContext, lightBufferLayout->size));
     auto shadowSet = std::move(mContext->getDevice()
                                    .allocateDescriptorSetsUnique(vk::DescriptorSetAllocateInfo(
                                        mDescriptorPool.get(), 1, &layout))
@@ -1688,28 +1714,29 @@ void Renderer::prepareInputTextureDescriptorSets() {
           textureData.push_back(
               {mRenderTargets[name]->getImageView(), mRenderTargets[name]->getSampler()});
         } else if (name.substr(0, 6) == "Random") {
-          auto randomTex = mContext->getResourceManager()->CreateRandomTexture(name);
-          randomTex->uploadToDevice();
-          textureData.push_back({randomTex->getImageView(), randomTex->getSampler()});
-        } else if (mCustomTextures.find(name) != mCustomTextures.end()) {
-          mCustomTextures[name]->uploadToDevice();
+          auto randomTex = resource::SVResourceManager::Get()->CreateRandomTexture(name);
+          randomTex->uploadToDevice(*mContext);
           textureData.push_back(
-              {mCustomTextures[name]->getImageView(), mCustomTextures[name]->getSampler()});
+              {randomTex->getImageView(*mContext), randomTex->getSampler(*mContext)});
+        } else if (mCustomTextures.find(name) != mCustomTextures.end()) {
+          mCustomTextures[name]->uploadToDevice(*mContext);
+          textureData.push_back({mCustomTextures[name]->getImageView(*mContext),
+                                 mCustomTextures[name]->getSampler(*mContext)});
         } else if (name == "BRDFLUT") {
           // generate if BRDFLUT is not supplied
-          auto tex = mContext->getResourceManager()->getDefaultBRDFLUT();
-          textureData.push_back({tex->getImageView(), tex->getSampler()});
+          auto tex = resource::SVResourceManager::Get()->getDefaultBRDFLUT(*mContext);
+          textureData.push_back({tex->getImageView(*mContext), tex->getSampler(*mContext)});
         } else if (mCustomCubemaps.find(name) != mCustomCubemaps.end()) {
-          mCustomCubemaps[name]->uploadToDevice();
-          textureData.push_back(
-              {mCustomCubemaps[name]->getImageView(), mCustomCubemaps[name]->getSampler()});
+          mCustomCubemaps[name]->uploadToDevice(*mContext);
+          textureData.push_back({mCustomCubemaps[name]->getImageView(*mContext),
+                                 mCustomCubemaps[name]->getSampler(*mContext)});
         } else if (name == "Environment") {
           auto cube = mEnvironmentMap;
           if (!cube) {
-            cube = mContext->getResourceManager()->getDefaultCubemap();
+            cube = resource::SVResourceManager::Get()->getDefaultCubemap();
           }
-          cube->uploadToDevice();
-          textureData.push_back({cube->getImageView(), cube->getSampler()});
+          cube->uploadToDevice(*mContext);
+          textureData.push_back({cube->getImageView(*mContext), cube->getSampler(*mContext)});
         } else {
           throw std::runtime_error("custom sampler \"" + name + "\" is not set in the renderer");
         }
@@ -1728,11 +1755,11 @@ void Renderer::prepareCameraBuffer() {
     return;
   }
 
-  mCameraBufferCpu =
-      core::Buffer::Create(mShaderPack->getShaderInputLayouts()->cameraBufferLayout->size,
-                           vk::BufferUsageFlagBits::eTransferSrc, VMA_MEMORY_USAGE_CPU_ONLY);
+  mCameraBufferCpu = core::Buffer::Create(
+      *mContext, mShaderPack->getShaderInputLayouts()->cameraBufferLayout->size,
+      vk::BufferUsageFlagBits::eTransferSrc, VMA_MEMORY_USAGE_CPU_ONLY);
   mCameraBuffer = core::Buffer::CreateUniform(
-      mShaderPack->getShaderInputLayouts()->cameraBufferLayout->size, true, true);
+      *mContext, mShaderPack->getShaderInputLayouts()->cameraBufferLayout->size, true, true);
 
   auto layout = mShaderPackInstance->getCameraDescriptorSetLayout();
   mCameraSet = std::move(mContext->getDevice()

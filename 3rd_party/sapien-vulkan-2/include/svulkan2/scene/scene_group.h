@@ -3,6 +3,8 @@
 namespace svulkan2 {
 namespace scene {
 
+/** a scene that renders `scenes` with their own transforms; every member scene must render on
+ *  the group's context (the context of the first scene) */
 class SceneGroup : public Scene {
 public:
   SceneGroup(std::vector<std::shared_ptr<Scene>> const &scenes,

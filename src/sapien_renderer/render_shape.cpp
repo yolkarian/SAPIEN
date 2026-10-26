@@ -1,5 +1,6 @@
 #include "sapien/sapien_renderer/render_shape.h"
 #include "sapien/sapien_renderer/render_body_component.h"
+#include <svulkan2/resource/manager.h>
 
 namespace sapien {
 namespace sapien_renderer {
@@ -156,39 +157,43 @@ RenderShapeTriangleMeshPart::getVertices() const {
       position.data(), position.size() / 3, 3);
 }
 
-CudaArrayHandle RenderShapeTriangleMeshPart::getVertexBufferCudaArray() const {
+CudaArrayHandle
+RenderShapeTriangleMeshPart::getVertexBufferCudaArray(std::shared_ptr<Device> device) const {
 #ifdef SAPIEN_CUDA
+  auto context = SapienRenderEngine::Get()->getContext(device);
   int count = mShape->mesh->getVertexCount();
   int channels = mShape->mesh->getVertexSize() / 4;
   int itemsize = 4;
 
-  assert(static_cast<int>(mShape->mesh->getVertexBuffer().getSize()) ==
-         count * channels * itemsize);
+  auto &buffer = mShape->mesh->getVertexBuffer(*context);
+  assert(static_cast<int>(buffer.getSize()) == count * channels * itemsize);
 
   return CudaArrayHandle{.shape = {count, channels},
                          .strides = {channels * itemsize, itemsize},
                          .type = "f4",
-                         .cudaId = mShape->mesh->getVertexBuffer().getCudaDeviceId(),
-                         .ptr = mShape->mesh->getVertexBuffer().getCudaPtr()};
+                         .cudaId = buffer.getCudaDeviceId(),
+                         .ptr = buffer.getCudaPtr()};
 #else
   throw std::runtime_error("sapien is not copmiled with CUDA support");
 #endif
 }
 
-CudaArrayHandle RenderShapeTriangleMeshPart::getIndexBufferCudaArray() const {
+CudaArrayHandle
+RenderShapeTriangleMeshPart::getIndexBufferCudaArray(std::shared_ptr<Device> device) const {
 #ifdef SAPIEN_CUDA
+  auto context = SapienRenderEngine::Get()->getContext(device);
   int count = mShape->mesh->getTriangleCount();
   int channels = 3;
   int itemsize = 4;
 
-  assert(static_cast<int>(mShape->mesh->getIndexBuffer().getSize()) ==
-         count * channels * itemsize);
+  auto &buffer = mShape->mesh->getIndexBuffer(*context);
+  assert(static_cast<int>(buffer.getSize()) == count * channels * itemsize);
 
   return CudaArrayHandle{.shape = {count, channels},
                          .strides = {channels * itemsize, itemsize},
                          .type = "u4",
-                         .cudaId = mShape->mesh->getIndexBuffer().getCudaDeviceId(),
-                         .ptr = mShape->mesh->getIndexBuffer().getCudaPtr()};
+                         .cudaId = buffer.getCudaDeviceId(),
+                         .ptr = buffer.getCudaPtr()};
 #else
   throw std::runtime_error("sapien is not copmiled with CUDA support");
 #endif
@@ -233,7 +238,7 @@ std::shared_ptr<SapienRenderMaterial> RenderShapeTriangleMeshPart::getMaterial()
 RenderShapeTriangleMesh::RenderShapeTriangleMesh(std::string const &filename, Vec3 scale,
                                                  std::shared_ptr<SapienRenderMaterial> material)
     : mFilename(filename) {
-  mModel = mEngine->getContext()->getResourceManager()->CreateModelFromFile(filename);
+  mModel = mEngine->getResourceManager()->CreateModelFromFile(filename);
   mMaterial = material;
   mScale = scale;
   if (material) {

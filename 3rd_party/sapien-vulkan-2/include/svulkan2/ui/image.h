@@ -5,6 +5,7 @@
 namespace svulkan2 {
 namespace core {
 class CommandPool;
+class Context;
 }
 
 namespace ui {
@@ -22,6 +23,7 @@ UI_CLASS(DisplayImage) {
   ~DisplayImage();
 
 protected:
+  std::shared_ptr<core::Context> mContext;
   std::unique_ptr<core::CommandPool> mCommandPool;
   vk::UniqueCommandBuffer mCommandBuffer;
 

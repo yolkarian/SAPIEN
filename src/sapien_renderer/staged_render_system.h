@@ -16,6 +16,7 @@ struct CUstream_st;
 namespace svulkan2::core {
 class Buffer;
 class CommandPool;
+class Context;
 } // namespace svulkan2::core
 
 namespace svulkan2::scene {
@@ -55,6 +56,7 @@ private:
   };
 
   std::vector<std::shared_ptr<SapienRendererSystem>> mSystems;
+  std::shared_ptr<svulkan2::core::Context> mContext;
   std::shared_ptr<svulkan2::scene::Scene> mRenderScene;
   std::vector<uint64_t> mSceneVersions;
   uint64_t mRenderSceneVersion{};

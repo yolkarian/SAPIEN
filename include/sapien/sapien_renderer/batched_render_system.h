@@ -13,6 +13,7 @@ class RenderShape;
 
 class BatchedCamera {
 public:
+  /** every camera must render on the same device; the group's GPU work runs there */
   BatchedCamera(std::vector<std::shared_ptr<SapienRenderCameraComponent>> cameras,
                 std::vector<std::string> renderTargets);
   std::vector<std::shared_ptr<SapienRenderCameraComponent>> const &getCameras() const {
@@ -69,6 +70,8 @@ private:
   void closeNoThrow();
 
   std::shared_ptr<SapienRenderEngine> mEngine;
+  std::shared_ptr<Device> mDevice;
+  std::shared_ptr<svulkan2::core::Context> mContext;
   std::vector<std::shared_ptr<SapienRenderCameraComponent>> mCameras;
   bool mGpuInitialized{false};
   bool mClosed{false};
@@ -107,6 +110,7 @@ private:
 
 class BatchedRenderSystem {
 public:
+  /** every system must render on the same device, otherwise std::runtime_error names them */
   BatchedRenderSystem(std::vector<std::shared_ptr<SapienRendererSystem>> systems);
   BatchedRenderSystem(
       std::vector<std::shared_ptr<SapienRendererSystem>> systems,
@@ -143,7 +147,12 @@ private:
   void checkNotClosed() const;
   void closeImpl();
   void closeNoThrow();
+  /** resolve the single device/context of `systems`; throws when they differ */
+  void resolveDevice(std::vector<std::shared_ptr<SapienRendererSystem>> const &systems);
+
   std::shared_ptr<SapienRenderEngine> mEngine;
+  std::shared_ptr<Device> mDevice;
+  std::shared_ptr<svulkan2::core::Context> mContext;
   std::vector<std::shared_ptr<SapienRendererSystem>> mSystems;
   bool mClosed{false};
   std::shared_ptr<svulkan2::scene::Scene> mFixedRenderScene;

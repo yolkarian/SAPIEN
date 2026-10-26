@@ -8,10 +8,14 @@
 #include "sapien/sapien_renderer/render_body_component.h"
 #include "sapien/sapien_renderer/sapien_renderer_default.h"
 #include <algorithm>
+#include <sstream>
 #include <svulkan2/core/context.h>
+#include <svulkan2/core/instance.h>
 #include <svulkan2/core/physical_device.h>
 #include <svulkan2/renderer/renderer.h>
 #include <svulkan2/renderer/rt_renderer.h>
+#include <svulkan2/resource/manager.h>
+#include <svulkan2/resource/mesh.h>
 #include <svulkan2/scene/scene.h>
 
 #ifdef SAPIEN_CUDA
@@ -24,20 +28,15 @@ namespace sapien_renderer {
 
 static std::weak_ptr<SapienRenderEngine> gRenderEngine;
 
-std::shared_ptr<SapienRenderEngine> SapienRenderEngine::Get(std::shared_ptr<Device> device) {
+std::shared_ptr<SapienRenderEngine> SapienRenderEngine::Get() {
   auto engine = gRenderEngine.lock();
   if (engine && engine->isShutdown()) {
     engine.reset();
     gRenderEngine.reset();
   }
-  if (engine) {
-    if (device && engine->mDevice != device) {
-      throw std::runtime_error("failed to create renderer on device \"" + device->getAlias() +
-                               "\": current SAPIEN version only supports single-GPU rendering.");
-    }
-    return engine;
+  if (!engine) {
+    gRenderEngine = engine = std::shared_ptr<SapienRenderEngine>(new SapienRenderEngine());
   }
-  gRenderEngine = engine = std::make_shared<SapienRenderEngine>(device);
   return engine;
 }
 
@@ -45,11 +44,43 @@ std::shared_ptr<SapienRenderEngine> SapienRenderEngine::GetIfExists() {
   return gRenderEngine.lock();
 }
 
-std::shared_ptr<svulkan2::core::Context> SapienRenderEngine::getContext() const {
+std::shared_ptr<Device> SapienRenderEngine::getDefaultDevice() {
   if (mShutdown) {
     throw std::runtime_error("failed to use render engine: the engine was shut down");
   }
-  return mContext;
+  if (!mDefaultDevice) {
+    mDefaultDevice = findBestRenderDevice();
+    if (!mDefaultDevice) {
+      throw std::runtime_error("failed to find a rendering device");
+    }
+  }
+  return mDefaultDevice;
+}
+
+std::shared_ptr<svulkan2::core::Context>
+SapienRenderEngine::getContext(std::shared_ptr<Device> device) {
+  if (mShutdown) {
+    throw std::runtime_error("failed to use render engine: the engine was shut down");
+  }
+  if (!device) {
+    device = getDefaultDevice();
+  }
+  if (!device->canRender()) {
+    throw std::runtime_error("failed to create a render context on device \"" +
+                             device->getAlias() + "\": the device does not support rendering");
+  }
+
+  std::scoped_lock lock(mContextLock);
+  auto context = svulkan2::core::Context::Create(
+      SapienRendererDefault::getMaxNumMaterials(), SapienRendererDefault::getMaxNumTextures(),
+      device->getAlias(), SapienRendererDefault::getVREnabled());
+  for (auto const &candidate : mContexts) {
+    if (candidate == context) {
+      return context;
+    }
+  }
+  mContexts.push_back(context);
+  return context;
 }
 
 std::shared_ptr<svulkan2::resource::SVResourceManager>
@@ -62,17 +93,11 @@ SapienRenderEngine::getResourceManager() const {
 
 std::string SapienRenderEngine::getSummary() {
   try {
-    std::shared_ptr<svulkan2::core::Context> context;
-    try {
-      context = svulkan2::core::Context::Get();
-    } catch (std::runtime_error &) {
-      context = svulkan2::core::Context::Create();
-    }
-
-    auto info = context->getInstance2()->summarizePhysicalDevices();
+    // keep the instance alive while reading the device list it owns
+    auto instance = svulkan2::core::Instance::Get();
     std::stringstream ss;
 
-    for (auto const &entry : info) {
+    for (auto const &entry : instance->getPhysicalDeviceInfo()) {
       ss << "GPU: " << entry.name << "\n";
       ss << "  Supported: " << entry.supported << "\n";
       ss << "  Present:   " << entry.present << "\n";
@@ -86,20 +111,11 @@ std::string SapienRenderEngine::getSummary() {
   }
 }
 
-SapienRenderEngine::SapienRenderEngine(std::shared_ptr<Device> device) {
-  if (!device) {
-    device = findBestRenderDevice();
-  }
-  if (!device) {
-    throw std::runtime_error("failed to find a rendering device");
-  }
-
-  mDevice = device;
+SapienRenderEngine::SapienRenderEngine() {
   auto &d = SapienRendererDefault::Get();
-  mContext = svulkan2::core::Context::Create(d.getMaxNumMaterials(), d.getMaxNumTextures(),
-                                             d.getDefaultMipMaps(), d.getDoNotLoadTexture(),
-                                             device->getAlias(), d.getVREnabled());
-  mResourceManager = mContext->createResourceManager();
+  mResourceManager = svulkan2::resource::SVResourceManager::Create();
+  mResourceManager->setDefaultMipLevels(d.getDefaultMipMaps());
+  mResourceManager->setDoNotLoadTexture(d.getDoNotLoadTexture());
 }
 
 std::shared_ptr<svulkan2::resource::SVMesh> SapienRenderEngine::getSphereMesh() {
@@ -131,16 +147,22 @@ void SapienRenderEngine::shutdown() {
     throw std::runtime_error(
         "failed to shut down render engine: renderer systems are still alive");
   }
-  if (mContext) {
-    mContext->getDevice().waitIdle();
+  {
+    std::scoped_lock lock(mContextLock);
+    for (auto const &context : mContexts) {
+      context->getDevice().waitIdle();
+    }
+    for (auto const &context : mContexts) {
+      mResourceManager->releaseContext(*context);
+    }
+    mContexts.clear();
   }
   mSphereMesh.reset();
   mPlaneMesh.reset();
   mBoxMesh.reset();
   mRenderSystems.clear();
   mResourceManager.reset();
-  mContext.reset();
-  mDevice.reset();
+  mDefaultDevice.reset();
   mShutdown = true;
 }
 
@@ -157,8 +179,10 @@ SapienRenderEngine::~SapienRenderEngine() {
 }
 
 SapienRendererSystem::SapienRendererSystem(std::shared_ptr<Device> device) {
-  mEngine = SapienRenderEngine::Get(device);
-  mScene = std::make_shared<svulkan2::scene::Scene>();
+  mEngine = SapienRenderEngine::Get();
+  mDevice = device ? device : mEngine->getDefaultDevice();
+  mContext = mEngine->getContext(mDevice);
+  mScene = std::make_shared<svulkan2::scene::Scene>(mContext);
   mScene->setAmbientLight({0.12f, 0.12f, 0.12f, 1.f});
 }
 
@@ -190,6 +214,13 @@ void SapienRenderEngine::unregisterRenderSystem(SapienRendererSystem const *syst
   });
 }
 
+std::vector<std::shared_ptr<SapienRendererSystem>>
+SapienRenderEngine::getRenderSystems(std::shared_ptr<svulkan2::core::Context> const &context) {
+  auto systems = getRenderSystems();
+  std::erase_if(systems, [&](auto const &system) { return system->getContext() != context; });
+  return systems;
+}
+
 std::vector<std::shared_ptr<SapienRendererSystem>> SapienRenderEngine::getRenderSystems() {
   std::vector<std::shared_ptr<SapienRendererSystem>> systems;
   std::erase_if(mRenderSystems, [](auto const &candidate) {
@@ -212,7 +243,12 @@ std::shared_ptr<svulkan2::scene::Scene> SapienRendererSystem::getScene() {
 
 std::shared_ptr<Device> SapienRendererSystem::getDevice() const {
   checkNotClosed();
-  return mEngine->getDevice();
+  return mDevice;
+}
+
+std::shared_ptr<svulkan2::core::Context> SapienRendererSystem::getContext() const {
+  checkNotClosed();
+  return mContext;
 }
 
 Vec3 SapienRendererSystem::getAmbientLight() const {
@@ -365,10 +401,12 @@ void SapienRendererSystem::close() {
     throw std::runtime_error("failed to close RenderSystem: " + std::to_string(views) +
                              " exported cuda_object_transforms views are still alive");
   }
-  mEngine->getContext()->getDevice().waitIdle();
+  mContext->getDevice().waitIdle();
   mEngine->unregisterRenderSystem(this);
   mCubemap.reset();
   mScene.reset();
+  mContext.reset();
+  mDevice.reset();
   mEngine.reset();
   mClosed = true;
 }
@@ -383,6 +421,8 @@ void SapienRendererSystem::closeNoThrow() {
     }
     mCubemap.reset();
     mScene.reset();
+    mContext.reset();
+    mDevice.reset();
     mEngine.reset();
     mClosed = true;
   }

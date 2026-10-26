@@ -28,11 +28,10 @@ struct PhysicalDeviceInfo {
 
 class Instance : public std::enable_shared_from_this<Instance> {
 public:
-  // static std::shared_ptr<Instance> Get(uint32_t appVersion, uint32_t engineVersion,
-  //                                      uint32_t apiVersion = VK_API_VERSION_1_2);
-
-  Instance(uint32_t appVersion, uint32_t engineVersion, uint32_t apiVersion,
-           bool enableVR = false);
+  /** The process-wide instance shared by every Context, created on first call.
+   *  `enableVR` only takes effect when this call creates the instance. Only one instance
+   *  may exist at a time because it initializes the global Vulkan dispatcher. */
+  static std::shared_ptr<Instance> Get(bool enableVR = false);
   ~Instance();
 
   inline bool isGLFWEnabled() const { return mGLFWSupported; }
@@ -41,7 +40,12 @@ public:
 
   auto getProcAddr(char const *name) const { return mInstance->getProcAddr(name); }
 
+  /** enumerate physical devices again (creates a hidden test window for present support) */
   std::vector<PhysicalDeviceInfo> summarizePhysicalDevices() const;
+  /** physical devices enumerated when the instance was created */
+  inline std::vector<PhysicalDeviceInfo> const &getPhysicalDeviceInfo() const {
+    return mPhysicalDeviceInfo;
+  }
   std::shared_ptr<PhysicalDevice> createPhysicalDevice(std::string const &hint);
 
   // HACK: shutdown VR should be called before device shutdown
@@ -53,10 +57,13 @@ public:
   Instance &operator=(Instance const &&other) = delete;
 
 private:
+  Instance(uint32_t appVersion, uint32_t engineVersion, uint32_t apiVersion, bool enableVR);
+
   uint32_t mApiVersion;
   std::unique_ptr<vk::DynamicLoader> mDynamicLoader;
   vk::UniqueInstance mInstance{};
   bool mGLFWSupported{};
+  bool mVRRequested{};
   bool mVRSupported{};
   std::vector<PhysicalDeviceInfo> mPhysicalDeviceInfo;
 

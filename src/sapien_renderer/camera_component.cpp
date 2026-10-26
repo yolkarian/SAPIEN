@@ -25,7 +25,7 @@ namespace sapien_renderer {
 struct SapienRenderCameraInternal {
   uint32_t mWidth;
   uint32_t mHeight;
-  std::shared_ptr<SapienRenderEngine> mEngine;
+  std::shared_ptr<svulkan2::core::Context> mContext;
   std::shared_ptr<svulkan2::scene::Scene> mScene;
   // the scene currently assigned to mRenderer; may be a resolved render scene
   // group different from mScene
@@ -47,11 +47,12 @@ struct SapienRenderCameraInternal {
   vk::UniqueCommandBuffer mCommandBuffer;
 
   SapienRenderCameraInternal(uint32_t width, uint32_t height, std::string const &shaderDir,
+                             std::shared_ptr<SapienRendererSystem> renderSystem,
                              std::shared_ptr<svulkan2::scene::Scene> scene) {
     mWidth = width;
     mHeight = height;
 
-    mEngine = SapienRenderEngine::Get();
+    mContext = renderSystem->getContext();
     mScene = scene;
 
     auto &renderConfig = SapienRendererDefault::Get();
@@ -78,7 +79,7 @@ struct SapienRenderCameraInternal {
     }
 
     config->shaderDir = shaderDir.length() ? shaderDir : renderConfig.cameraShaderDirectory;
-    mRenderer = svulkan2::renderer::RendererBase::Create(config);
+    mRenderer = svulkan2::renderer::RendererBase::Create(mContext, config);
     mRenderer->resize(width, height);
     mCamera = &scene->addCamera();
     mRenderer->setScene(scene);
@@ -106,7 +107,7 @@ struct SapienRenderCameraInternal {
     if (!mSemaphore) {
       return;
     }
-    auto result = mEngine->getContext()->getDevice().waitSemaphores(
+    auto result = mContext->getDevice().waitSemaphores(
         vk::SemaphoreWaitInfo({}, mSemaphore.get(), mFrameCounter), UINT64_MAX);
     if (result != vk::Result::eSuccess) {
       throw std::runtime_error("take picture failed: wait for fence failed");
@@ -115,7 +116,7 @@ struct SapienRenderCameraInternal {
 
   void takePicture() {
     if (!mSemaphore) {
-      mSemaphore = mEngine->getContext()->createTimelineSemaphore(mFrameCounter);
+      mSemaphore = mContext->createTimelineSemaphore(mFrameCounter);
     }
     waitForRender();
     mFrameCounter++;
@@ -139,7 +140,7 @@ struct SapienRenderCameraInternal {
 #ifdef SAPIEN_CUDA
     waitForRender();
 
-    auto context = mEngine->getContext();
+    auto context = mContext;
     if (!mCommandPool) {
       mCommandPool = context->createCommandPool();
       mCommandBuffer = mCommandPool->allocateCommandBuffer();
@@ -156,7 +157,8 @@ struct SapienRenderCameraInternal {
 
     if (!mCudaImageBuffers.contains(name)) {
       mCudaImageBuffers[name] = svulkan2::core::Buffer::Create(
-          size, vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst,
+          *context, size,
+          vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst,
           VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
     }
     auto buffer = mCudaImageBuffers.at(name);
@@ -290,7 +292,7 @@ void SapienRenderCameraComponent::onAddToScene(Scene &scene) {
   }
   auto system = scene.getSapienRendererSystem();
   mCamera = std::make_unique<SapienRenderCameraInternal>(getWidth(), getHeight(), mShaderDir,
-                                                         system->getScene());
+                                                         system, system->getScene());
   mCamera->mCamera->setPerspectiveParameters(mNear, mFar, mFx, mFy, mCx, mCy, mWidth, mHeight,
                                              mSkew);
 
@@ -315,16 +317,24 @@ void SapienRenderCameraComponent::onRemoveFromScene(Scene &scene) {
   // and render targets. Destroying them under that work leaves the group's timeline
   // semaphore unsignaled, and the group's close() then waits forever; drain the device first.
   if (mGpuOwnershipOwner && mCamera) {
-    mCamera->mEngine->getContext()->getDevice().waitIdle();
+    mCamera->mContext->getDevice().waitIdle();
   }
   mCamera = nullptr;
   system->unregisterComponent(
       std::static_pointer_cast<SapienRenderCameraComponent>(shared_from_this()));
 }
 
+std::shared_ptr<svulkan2::core::Context> SapienRenderCameraComponent::getContext() const {
+  if (!mCamera) {
+    throw std::runtime_error("failed to get camera context: camera is not added to scene");
+  }
+  return mCamera->mContext;
+}
+
 std::vector<std::shared_ptr<SapienRendererSystem>>
 SapienRenderCameraComponent::internalResolveRenderSystems(
     std::vector<std::shared_ptr<SapienRendererSystem>> const &contextSystems) {
+  auto context = getContext();
   std::vector<std::shared_ptr<SapienRendererSystem>> baseSystems;
   if (mHasSceneSelectionOverride) {
     for (auto const &weakScene : mSelectedScenes) {
@@ -341,7 +351,7 @@ SapienRenderCameraComponent::internalResolveRenderSystems(
     }
     baseSystems.push_back(scene->getSapienRendererSystem());
   }
-  return RenderSceneResolver::resolve(baseSystems, contextSystems);
+  return RenderSceneResolver::resolve(context, baseSystems, contextSystems);
 }
 
 void SapienRenderCameraComponent::refreshRenderScene() {
@@ -354,7 +364,8 @@ void SapienRenderCameraComponent::refreshRenderScene() {
   if (mGpuOwnershipSealed) {
     return;
   }
-  auto systems = internalResolveRenderSystems(SapienRenderEngine::Get()->getRenderSystems());
+  auto systems =
+      internalResolveRenderSystems(SapienRenderEngine::Get()->getRenderSystems(mCamera->mContext));
   bool rebuild = systems != mResolvedRenderSystems;
   if (!rebuild && systems.size() == mResolvedRenderSceneVersions.size()) {
     for (uint32_t i = 0; i < systems.size(); ++i) {

@@ -1,6 +1,7 @@
 #include "svulkan2/common/fs.h"
 #include "svulkan2/core/context.h"
 #include "svulkan2/renderer/renderer.h"
+#include "svulkan2/resource/manager.h"
 #include "svulkan2/scene/scene.h"
 #include "svulkan2/shader/compute.h"
 #include "svulkan2/shader/shader.h"
@@ -15,13 +16,13 @@ int main(int argc, char *argv[]) {
     return 1;
   }
 
-  auto context = svulkan2::core::Context::Create(true, 5000, 5000, 4);
-  auto manager = context->createResourceManager();
-  auto cubemap = context->getResourceManager()->CreateCubemapFromFiles(
-      {argv[1], argv[2], argv[3], argv[4], argv[5], argv[6]}, 5);
+  auto context = svulkan2::core::Context::Create(5000, 5000);
+  auto manager = resource::SVResourceManager::Create();
+  auto cubemap =
+      manager->CreateCubemapFromFiles({argv[1], argv[2], argv[3], argv[4], argv[5], argv[6]}, 5);
   cubemap->load();
-  cubemap->uploadToDevice();
-  cubemap->exportKTX("out.ktx");
+  cubemap->uploadToDevice(*context);
+  cubemap->exportKTX(*context, "out.ktx");
 
   return 0;
 }

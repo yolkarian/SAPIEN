@@ -1,14 +1,23 @@
 #include "svulkan2/resource/storage_image.h"
 #include "svulkan2/core/context.h"
+#include <stdexcept>
 
 namespace svulkan2 {
 namespace resource {
 
-SVStorageImage::SVStorageImage(std::string const &name, uint32_t width, uint32_t height,
-                               vk::Format format)
-    : mName(name), mFormat(format), mWidth(width), mHeight(height) {}
+SVStorageImage::SVStorageImage(std::shared_ptr<core::Context> context, std::string const &name,
+                               uint32_t width, uint32_t height, vk::Format format)
+    : mContext(std::move(context)), mName(name), mFormat(format), mWidth(width), mHeight(height) {
+  if (!mContext) {
+    throw std::runtime_error("failed to create storage image: invalid context");
+  }
+}
 
 void SVStorageImage::createDeviceResources() {
+  if (mImage) {
+    return;
+  }
+
   bool isDepth = false;
   vk::ImageUsageFlags usage;
   if (mFormat == vk::Format::eR8G8B8A8Unorm || mFormat == vk::Format::eR32G32B32A32Sfloat ||
@@ -26,10 +35,9 @@ void SVStorageImage::createDeviceResources() {
         "R32G32B32A32Uint, D32Sfloat, D24UnormS8Uint");
   }
 
-  mContext = core::Context::Get();
-  mImage = std::make_shared<core::Image>(vk::ImageType::e2D, vk::Extent3D{mWidth, mHeight, 1},
-                                         mFormat, usage, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY,
-                                         vk::SampleCountFlagBits::e1, 1);
+  mImage = std::make_shared<core::Image>(
+      *mContext, vk::ImageType::e2D, vk::Extent3D{mWidth, mHeight, 1}, mFormat, usage,
+      VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1);
   vk::ComponentMapping componentMapping(vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG,
                                         vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA);
 

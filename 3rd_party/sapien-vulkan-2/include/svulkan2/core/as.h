@@ -5,9 +5,11 @@
 namespace svulkan2 {
 namespace core {
 
+class Context;
+
 class BLAS {
 public:
-  BLAS(std::vector<vk::AccelerationStructureGeometryKHR> const &geometries,
+  BLAS(Context &context, std::vector<vk::AccelerationStructureGeometryKHR> const &geometries,
        std::vector<vk::AccelerationStructureBuildRangeInfoKHR> const &buildRanges,
        std::vector<uint32_t> const &maxPrimitiveCounts = {}, bool compaction = true,
        bool update = false);
@@ -19,6 +21,7 @@ public:
   vk::DeviceAddress getAddress();
 
 private:
+  std::shared_ptr<Context> mContext; // first member: outlives the device objects below
   std::vector<vk::AccelerationStructureGeometryKHR> mGeometries;
   std::vector<vk::AccelerationStructureBuildRangeInfoKHR> mBuildRanges;
   std::vector<uint32_t> mMaxPrimitiveCounts;
@@ -35,7 +38,7 @@ private:
 class TLAS {
 
 public:
-  TLAS(std::vector<vk::AccelerationStructureInstanceKHR> const &instances);
+  TLAS(Context &context, std::vector<vk::AccelerationStructureInstanceKHR> const &instances);
   void build(bool externalInstanceBuffer = false);
   void recordUpdate(vk::CommandBuffer commandBuffer,
                     std::vector<vk::TransformMatrixKHR> const &transforms);
@@ -52,6 +55,7 @@ public:
 private:
   void createInstanceBuffer(bool external);
 
+  std::shared_ptr<Context> mContext; // first member: outlives the device objects below
   std::vector<vk::AccelerationStructureInstanceKHR> mInstances;
 
   std::unique_ptr<Buffer> mInstanceBuffer;

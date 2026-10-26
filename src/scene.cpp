@@ -29,8 +29,7 @@ void Scene::addSystem(std::shared_ptr<System> system) {
   mSystems[name] = system;
   if (auto renderSystem =
           std::dynamic_pointer_cast<sapien_renderer::SapienRendererSystem>(system)) {
-    sapien_renderer::SapienRenderEngine::Get(renderSystem->getDevice())
-        ->registerRenderSystem(renderSystem);
+    sapien_renderer::SapienRenderEngine::Get()->registerRenderSystem(renderSystem);
   }
 }
 

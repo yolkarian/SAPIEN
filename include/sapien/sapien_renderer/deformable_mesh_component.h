@@ -4,6 +4,7 @@
 #include "sapien/math/pose.h"
 #include "sapien_renderer_system.h"
 #include <Eigen/Dense>
+#include <svulkan2/core/context.h>
 #include <svulkan2/resource/model.h>
 
 namespace sapien {
@@ -14,7 +15,10 @@ class SapienRenderMaterial;
 
 class CudaDeformableMeshComponent : public Component {
 public:
-  CudaDeformableMeshComponent(uint32_t maxVertexCount, uint32_t maxTriangleCount);
+  /** the CUDA-writable buffers and semaphore live on `device`; null selects the engine's
+   *  default device. The component can only join a scene rendered on that device. */
+  CudaDeformableMeshComponent(uint32_t maxVertexCount, uint32_t maxTriangleCount,
+                              std::shared_ptr<Device> device = nullptr);
 
   void setTriangles(Eigen::Matrix<uint32_t, Eigen::Dynamic, 3, Eigen::RowMajor> const &triangles);
 
@@ -42,6 +46,8 @@ public:
 
 private:
   std::shared_ptr<SapienRenderEngine> mEngine;
+  std::shared_ptr<Device> mDevice;
+  std::shared_ptr<svulkan2::core::Context> mContext;
   std::shared_ptr<svulkan2::resource::SVMeshDeformable> mMesh;
   std::shared_ptr<SapienRenderMaterial> mMaterial;
 

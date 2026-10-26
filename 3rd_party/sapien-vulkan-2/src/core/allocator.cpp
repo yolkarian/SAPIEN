@@ -28,40 +28,12 @@ Allocator::Allocator(Device &device) {
   allocatorInfo.physicalDevice = physicalDevice->getInternal();
   allocatorInfo.device = device.getInternal();
 
+  // VMA fetches every other function through vkGetDeviceProcAddr for this device. The global
+  // dispatcher holds instance-level loader trampolines, whose promoted KHR aliases (e.g.
+  // vkGetImageMemoryRequirements2KHR) are null on devices that did not enable the extension.
   VmaVulkanFunctions vulkanFunctions{};
   vulkanFunctions.vkGetInstanceProcAddr = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr;
   vulkanFunctions.vkGetDeviceProcAddr = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr;
-  vulkanFunctions.vkGetPhysicalDeviceProperties =
-      VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceProperties;
-  vulkanFunctions.vkGetPhysicalDeviceMemoryProperties =
-      VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceMemoryProperties;
-  vulkanFunctions.vkGetPhysicalDeviceMemoryProperties2KHR =
-      VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceMemoryProperties2KHR;
-  vulkanFunctions.vkAllocateMemory = VULKAN_HPP_DEFAULT_DISPATCHER.vkAllocateMemory;
-  vulkanFunctions.vkFreeMemory = VULKAN_HPP_DEFAULT_DISPATCHER.vkFreeMemory;
-  vulkanFunctions.vkMapMemory = VULKAN_HPP_DEFAULT_DISPATCHER.vkMapMemory;
-  vulkanFunctions.vkUnmapMemory = VULKAN_HPP_DEFAULT_DISPATCHER.vkUnmapMemory;
-  vulkanFunctions.vkFlushMappedMemoryRanges =
-      VULKAN_HPP_DEFAULT_DISPATCHER.vkFlushMappedMemoryRanges;
-  vulkanFunctions.vkInvalidateMappedMemoryRanges =
-      VULKAN_HPP_DEFAULT_DISPATCHER.vkInvalidateMappedMemoryRanges;
-  vulkanFunctions.vkBindBufferMemory = VULKAN_HPP_DEFAULT_DISPATCHER.vkBindBufferMemory;
-  vulkanFunctions.vkBindImageMemory = VULKAN_HPP_DEFAULT_DISPATCHER.vkBindImageMemory;
-  vulkanFunctions.vkGetBufferMemoryRequirements =
-      VULKAN_HPP_DEFAULT_DISPATCHER.vkGetBufferMemoryRequirements;
-  vulkanFunctions.vkGetImageMemoryRequirements =
-      VULKAN_HPP_DEFAULT_DISPATCHER.vkGetImageMemoryRequirements;
-  vulkanFunctions.vkCreateBuffer = VULKAN_HPP_DEFAULT_DISPATCHER.vkCreateBuffer;
-  vulkanFunctions.vkDestroyBuffer = VULKAN_HPP_DEFAULT_DISPATCHER.vkDestroyBuffer;
-  vulkanFunctions.vkCreateImage = VULKAN_HPP_DEFAULT_DISPATCHER.vkCreateImage;
-  vulkanFunctions.vkDestroyImage = VULKAN_HPP_DEFAULT_DISPATCHER.vkDestroyImage;
-  vulkanFunctions.vkCmdCopyBuffer = VULKAN_HPP_DEFAULT_DISPATCHER.vkCmdCopyBuffer;
-  vulkanFunctions.vkGetBufferMemoryRequirements2KHR =
-      VULKAN_HPP_DEFAULT_DISPATCHER.vkGetBufferMemoryRequirements2KHR;
-  vulkanFunctions.vkGetImageMemoryRequirements2KHR =
-      VULKAN_HPP_DEFAULT_DISPATCHER.vkGetImageMemoryRequirements2KHR;
-  vulkanFunctions.vkBindBufferMemory2KHR = VULKAN_HPP_DEFAULT_DISPATCHER.vkBindBufferMemory2KHR;
-  vulkanFunctions.vkBindImageMemory2KHR = VULKAN_HPP_DEFAULT_DISPATCHER.vkBindImageMemory2KHR;
   allocatorInfo.pVulkanFunctions = &vulkanFunctions;
 
   if (physicalDevice->getPickedDeviceInfo().rayTracing) {

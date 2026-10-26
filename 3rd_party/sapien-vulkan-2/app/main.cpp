@@ -3,6 +3,7 @@
 #include "svulkan2/core/context.h"
 #include "svulkan2/renderer/renderer.h"
 #include "svulkan2/renderer/rt_renderer.h"
+#include "svulkan2/resource/manager.h"
 #include "svulkan2/scene/scene.h"
 #include "svulkan2/shader/compute.h"
 #include "svulkan2/shader/shader.h"
@@ -100,21 +101,21 @@ int main() {
 
   svulkan2::logger::setLogLevel("info");
 
-  auto context = svulkan2::core::Context::Create(5000, 5000, 4);
-  auto manager = context->createResourceManager();
+  auto context = svulkan2::core::Context::Create(5000, 5000);
+  auto manager = resource::SVResourceManager::Create();
   auto config = std::make_shared<RendererConfig>();
 
   config->shaderDir = "../shader/default";
   config->msaa = vk::SampleCountFlagBits::e1;
   config->colorFormat4 = vk::Format::eR32G32B32A32Sfloat;
 
-  // auto renderer = std::make_shared<renderer::Renderer>(config);
-  auto renderer = std::make_shared<renderer::RTRenderer>("../shader/rt");
+  // auto renderer = std::make_shared<renderer::Renderer>(context, config);
+  auto renderer = std::make_shared<renderer::RTRenderer>(context, "../shader/rt");
 
   // renderer->enableDenoiser(renderer::RTRenderer::DenoiserType::eOIDN, "HdrColor", "Albedo",
   //                          "Normal");
 
-  auto scene = std::make_shared<svulkan2::scene::Scene>();
+  auto scene = std::make_shared<svulkan2::scene::Scene>(context);
 
   // camera
   auto &cameraNode = scene->addCamera();
@@ -150,7 +151,7 @@ int main() {
   tl.setColor({1, 0, 0});
   tl.enableShadow(true);
   tl.setShadowParameters(0.05, 10, 2048);
-  tl.setTexture(context->getResourceManager()->CreateTextureFromFile(
+  tl.setTexture(manager->CreateTextureFromFile(
       assetDir / "flashlight.jpg", 1, vk::Filter::eLinear, vk::Filter::eLinear,
       vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder, true));
 

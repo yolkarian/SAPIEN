@@ -2,6 +2,7 @@
 #pragma once
 
 #include "svulkan2/common/vk.h"
+#include <cuda.h>
 #include <cuda_runtime.h>
 #include <map>
 #include <string>
@@ -67,5 +68,49 @@ inline int getCudaDeviceIdFromPhysicalDevice(const vk::PhysicalDevice &device) {
 
   return -1;
 }
+
+namespace svulkan2 {
+
+/** Make `device` the current CUDA device for this scope, then restore exactly the context
+ *  the caller had current (including none). Restoring through cudaSetDevice would create a
+ *  context on device 0 for callers that never used CUDA. */
+class CudaDeviceScope {
+public:
+  explicit CudaDeviceScope(int device) {
+    checkCudaDriverErrors(api().getCurrent(&mPrevious));
+    checkCudaErrors(cudaSetDevice(device));
+  }
+  ~CudaDeviceScope() { api().setCurrent(mPrevious); }
+  CudaDeviceScope(CudaDeviceScope const &) = delete;
+  CudaDeviceScope &operator=(CudaDeviceScope const &) = delete;
+
+private:
+  // driver functions resolved through the runtime, so svulkan2 does not link libcuda
+  struct Api {
+    CUresult (*getCurrent)(CUcontext *){};
+    CUresult (*setCurrent)(CUcontext){};
+  };
+  static Api const &api() {
+    static Api const api = [] {
+      Api api;
+      checkCudaErrors(cudaGetDriverEntryPoint(
+          "cuCtxGetCurrent", reinterpret_cast<void **>(&api.getCurrent), cudaEnableDefault));
+      checkCudaErrors(cudaGetDriverEntryPoint(
+          "cuCtxSetCurrent", reinterpret_cast<void **>(&api.setCurrent), cudaEnableDefault));
+      return api;
+    }();
+    return api;
+  }
+  static void checkCudaDriverErrors(CUresult result) {
+    if (result != CUDA_SUCCESS) {
+      fprintf(stderr, "CUDA driver error %d\n", static_cast<int>(result));
+      exit(EXIT_FAILURE);
+    }
+  }
+
+  CUcontext mPrevious{};
+};
+
+} // namespace svulkan2
 
 #endif

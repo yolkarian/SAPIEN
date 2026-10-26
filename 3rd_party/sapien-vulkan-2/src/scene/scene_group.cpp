@@ -15,6 +15,21 @@ void unregisterSceneDependency(Scene *source, Scene *dependent);
 } // namespace detail
 
 namespace {
+/** the context shared by `scenes`; every scene of a group renders on the same device */
+std::shared_ptr<core::Context> commonContext(std::vector<std::shared_ptr<Scene>> const &scenes) {
+  if (scenes.empty()) {
+    throw std::runtime_error("failed to create scene group: scenes must not be empty");
+  }
+  auto context = scenes.front()->getContext();
+  for (auto const &scene : scenes) {
+    if (scene->getContext() != context) {
+      throw std::runtime_error(
+          "failed to create scene group: all scenes must render on the same device");
+    }
+  }
+  return context;
+}
+
 std::shared_ptr<Scene> makeDependencyScene(std::shared_ptr<Scene> scene, Scene *dependent) {
   auto source = scene.get();
   auto registered = std::shared_ptr<Scene>(
@@ -28,7 +43,7 @@ std::shared_ptr<Scene> makeDependencyScene(std::shared_ptr<Scene> scene, Scene *
 
 SceneGroup::SceneGroup(std::vector<std::shared_ptr<Scene>> const &scenes,
                        std::vector<Transform> const &transforms)
-    : mTransforms(transforms) {
+    : Scene(commonContext(scenes)), mTransforms(transforms) {
   if (scenes.size() != transforms.size()) {
     throw std::runtime_error(
         "failed to create scene group: scenes and transforms should have the same length");
@@ -238,7 +253,7 @@ void SceneGroup::uploadObjectTransforms() {
 
   mTransformUpdateCommandBuffer->end();
 
-  core::Context::Get()->getQueue().submit(mTransformUpdateCommandBuffer.get(), {});
+  mContext->getQueue().submit(mTransformUpdateCommandBuffer.get(), {});
 
   mTransformBufferRenderVersion = mRenderVersion;
 }

@@ -6,7 +6,8 @@ namespace sapien {
 namespace sapien_renderer {
 
 std::unique_ptr<RenderSceneLoaderNode> LoadScene(std::string const &filename, bool applyScale) {
-  auto scene = svulkan2::scene::LoadScene(filename);
+  // the loaded scene is only read for its device-independent meshes, materials and lights
+  auto scene = svulkan2::scene::LoadScene(SapienRenderEngine::Get()->getContext(), filename);
 
   std::unique_ptr<RenderSceneLoaderNode> rootNode;
 

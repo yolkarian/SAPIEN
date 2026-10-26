@@ -5,6 +5,7 @@
 namespace svulkan2 {
 namespace core {
 class Buffer;
+class Context;
 }
 
 namespace shader {
@@ -114,7 +115,9 @@ struct RayTracingShaderPackInstanceDesc {
 class RayTracingShaderPackInstance {
 
 public:
-  RayTracingShaderPackInstance(RayTracingShaderPackInstanceDesc desc);
+  /** pipelines of `desc` on `context`; the binding table is allocated there */
+  RayTracingShaderPackInstance(std::shared_ptr<core::Context> context,
+                               RayTracingShaderPackInstanceDesc desc);
   vk::PipelineLayout getPipelineLayout();
   vk::Pipeline getPipeline();
   core::Buffer &getShaderBindingTable();
@@ -148,6 +151,7 @@ private:
 
   void initSBT();
 
+  std::shared_ptr<core::Context> mContext;
   RayTracingShaderPackInstanceDesc mDesc;
 
   // vk::UniqueShaderModule mRgenModule;

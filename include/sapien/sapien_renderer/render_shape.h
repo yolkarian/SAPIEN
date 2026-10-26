@@ -24,8 +24,9 @@ public:
   Eigen::Matrix<float, Eigen::Dynamic, 2, Eigen::RowMajor> getUV() const;
   Eigen::Matrix<float, Eigen::Dynamic, 3, Eigen::RowMajor> getNormal() const;
 
-  CudaArrayHandle getVertexBufferCudaArray() const;
-  CudaArrayHandle getIndexBufferCudaArray() const;
+  /** device buffers of the mesh; `device` null selects the engine's default device */
+  CudaArrayHandle getVertexBufferCudaArray(std::shared_ptr<Device> device = nullptr) const;
+  CudaArrayHandle getIndexBufferCudaArray(std::shared_ptr<Device> device = nullptr) const;
 
   std::shared_ptr<svulkan2::resource::SVShape> getShape() const { return mShape; };
 

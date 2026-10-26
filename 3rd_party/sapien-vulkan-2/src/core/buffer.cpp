@@ -13,39 +13,33 @@
 namespace svulkan2 {
 namespace core {
 
-std::unique_ptr<Buffer> Buffer::CreateStaging(vk::DeviceSize size, bool readback) {
-  if (readback) {
-    return std::make_unique<Buffer>(Context::Get()->getDevice2(), size,
-                                    vk::BufferUsageFlagBits::eTransferSrc |
-                                        vk::BufferUsageFlagBits::eTransferDst,
-                                    VMA_MEMORY_USAGE_GPU_TO_CPU);
-  }
-  return std::make_unique<Buffer>(Context::Get()->getDevice2(), size,
-                                  vk::BufferUsageFlagBits::eTransferSrc |
-                                      vk::BufferUsageFlagBits::eTransferDst,
-                                  VMA_MEMORY_USAGE_CPU_ONLY);
+static std::unique_ptr<Buffer> createStaging(std::shared_ptr<Device> device, vk::DeviceSize size,
+                                             bool readback) {
+  return std::make_unique<Buffer>(
+      std::move(device), size,
+      vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst,
+      readback ? VMA_MEMORY_USAGE_GPU_TO_CPU : VMA_MEMORY_USAGE_CPU_ONLY);
 }
 
-std::unique_ptr<Buffer> Buffer::CreateUniform(vk::DeviceSize size, bool deviceOnly,
-                                              bool external) {
-  if (deviceOnly) {
-    return std::make_unique<Buffer>(
-        Context::Get()->getDevice2(), size,
-        vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eTransferDst,
-        VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, external);
-  } else {
-    return std::make_unique<Buffer>(
-        Context::Get()->getDevice2(), size,
-        vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eTransferDst,
-        VMA_MEMORY_USAGE_CPU_TO_GPU, VmaAllocationCreateFlags{}, external);
-  }
+std::unique_ptr<Buffer> Buffer::CreateStaging(Context &context, vk::DeviceSize size,
+                                              bool readback) {
+  return createStaging(context.getDevice2(), size, readback);
 }
 
-std::unique_ptr<Buffer> Buffer::Create(vk::DeviceSize size, vk::BufferUsageFlags usageFlags,
-                                       VmaMemoryUsage memoryUsage,
+std::unique_ptr<Buffer> Buffer::CreateUniform(Context &context, vk::DeviceSize size,
+                                              bool deviceOnly, bool external) {
+  return std::make_unique<Buffer>(
+      context.getDevice2(), size,
+      vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eTransferDst,
+      deviceOnly ? VMA_MEMORY_USAGE_GPU_ONLY : VMA_MEMORY_USAGE_CPU_TO_GPU,
+      VmaAllocationCreateFlags{}, external);
+}
+
+std::unique_ptr<Buffer> Buffer::Create(Context &context, vk::DeviceSize size,
+                                       vk::BufferUsageFlags usageFlags, VmaMemoryUsage memoryUsage,
                                        VmaAllocationCreateFlags allocationFlags, bool external,
                                        VmaPool pool) {
-  return std::make_unique<Buffer>(Context::Get()->getDevice2(), size, usageFlags, memoryUsage,
+  return std::make_unique<Buffer>(context.getDevice2(), size, usageFlags, memoryUsage,
                                   allocationFlags, external, pool);
 }
 
@@ -103,6 +97,7 @@ Buffer::Buffer(std::shared_ptr<Device> device, vk::DeviceSize size,
 Buffer::~Buffer() {
 #ifdef SVULKAN2_CUDA_INTEROP
   if (mCudaPtr) {
+    CudaDeviceScope scope(mCudaDeviceId);
     checkCudaErrors(cudaFree(mCudaPtr));
     checkCudaErrors(cudaDestroyExternalMemory(mCudaMem));
   }
@@ -154,7 +149,7 @@ void Buffer::upload(void const *data, size_t size, size_t offset) {
       vmaFlushAllocation(mDevice->getAllocator().getVmaAllocator(), mAllocation, offset, size);
     }
   } else {
-    auto stagingBuffer = Buffer::CreateStaging(size);
+    auto stagingBuffer = createStaging(mDevice, size, false);
     stagingBuffer->upload(data, size);
 
     // TODO: find a better way
@@ -181,7 +176,7 @@ void Buffer::download(void *data, size_t size, size_t offset) {
     std::memcpy(data, reinterpret_cast<uint8_t *>(mMappedData) + offset, size);
     unmap();
   } else {
-    auto stagingBuffer = Buffer::CreateStaging(size);
+    auto stagingBuffer = createStaging(mDevice, size, false);
 
     auto pool = mDevice->createCommandPool();
     auto cb = pool->allocateCommandBuffer();
@@ -216,7 +211,7 @@ void *Buffer::getCudaPtr() {
         "CUDA_VISIBLE_DEVICES variable. Or you can try other "
         "CUDA_VISIBLE_DEVICES until you find a working one.");
   }
-  checkCudaErrors(cudaSetDevice(mCudaDeviceId));
+  CudaDeviceScope scope(mCudaDeviceId);
   cudaExternalMemoryHandleDesc externalMemoryHandleDesc = {};
   externalMemoryHandleDesc.type = cudaExternalMemoryHandleTypeOpaqueFd;
   externalMemoryHandleDesc.size = mAllocationInfo.offset + mAllocationInfo.size; // TODO check

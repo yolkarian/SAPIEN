@@ -107,9 +107,9 @@ public:
 
   inline vk::Image getBackbuffer() const { return mFrames[mFrameIndex].mBackbuffer; }
 
-  GuiWindow(std::vector<vk::Format> const &requestFormats, vk::ColorSpaceKHR requestColorSpace,
-            uint32_t width, uint32_t height, std::vector<vk::PresentModeKHR> const &requestModes,
-            uint32_t minImageCount);
+  GuiWindow(std::shared_ptr<core::Context> context, std::vector<vk::Format> const &requestFormats,
+            vk::ColorSpaceKHR requestColorSpace, uint32_t width, uint32_t height,
+            std::vector<vk::PresentModeKHR> const &requestModes, uint32_t minImageCount);
 
   GuiWindow(GuiWindow const &other) = delete;
   GuiWindow &operator=(GuiWindow const &other) = delete;

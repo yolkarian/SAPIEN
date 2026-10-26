@@ -1,20 +1,43 @@
 #include "svulkan2/resource/render_target.h"
 #include "svulkan2/core/context.h"
+#include <stdexcept>
 
 namespace svulkan2 {
 namespace resource {
 
-SVRenderTarget::SVRenderTarget(std::string const &name, uint32_t width, uint32_t height,
-                               vk::Format format, vk::SampleCountFlagBits sampleCount)
-    : mName(name), mFormat(format), mWidth(width), mHeight(height), mSampleCount(sampleCount) {}
+SVRenderTarget::SVRenderTarget(std::shared_ptr<core::Context> context, std::string const &name,
+                               uint32_t width, uint32_t height, vk::Format format,
+                               vk::SampleCountFlagBits sampleCount)
+    : mContext(std::move(context)), mName(name), mFormat(format), mWidth(width), mHeight(height),
+      mSampleCount(sampleCount) {
+  if (!mContext) {
+    throw std::runtime_error("failed to create render target: invalid context");
+  }
+}
 
-SVRenderTarget::SVRenderTarget(std::string const &name, uint32_t width, uint32_t height,
-                               std::shared_ptr<core::Image> image, vk::UniqueImageView imageView,
-                               vk::Sampler sampler)
-    : mName(name), mFormat(image->getFormat()), mWidth(width), mHeight(height), mImage(image),
-      mImageView(std::move(imageView)), mSampler(sampler) {}
+SVRenderTarget::SVRenderTarget(std::shared_ptr<core::Context> context, std::string const &name,
+                               uint32_t width, uint32_t height, std::shared_ptr<core::Image> image,
+                               vk::UniqueImageView imageView, vk::Sampler sampler)
+    : mContext(std::move(context)), mName(name),
+      mFormat(image ? image->getFormat() : vk::Format::eUndefined), mWidth(width), mHeight(height),
+      mImage(std::move(image)), mImageView(std::move(imageView)), mSampler(sampler) {
+  if (!mContext) {
+    throw std::runtime_error("failed to create render target: invalid context");
+  }
+  if (!mImage) {
+    throw std::runtime_error("failed to create render target: invalid image");
+  }
+  if (mImage->getContext() != mContext) {
+    throw std::runtime_error(
+        "failed to create render target: the image belongs to another device");
+  }
+}
 
 void SVRenderTarget::createDeviceResources() {
+  if (mImage) {
+    return;
+  }
+
   bool isDepth = false;
   vk::ImageUsageFlags usage;
   if (mFormat == vk::Format::eR8G8B8A8Unorm ||
@@ -36,10 +59,9 @@ void SVRenderTarget::createDeviceResources() {
     throw std::runtime_error("failed to create image resources: unsupported image format.");
   }
 
-  mContext = core::Context::Get();
-  mImage = std::make_shared<core::Image>(vk::ImageType::e2D, vk::Extent3D{mWidth, mHeight, 1},
-                                         mFormat, usage, VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY,
-                                         mSampleCount, 1);
+  mImage = std::make_shared<core::Image>(
+      *mContext, vk::ImageType::e2D, vk::Extent3D{mWidth, mHeight, 1}, mFormat, usage,
+      VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, mSampleCount, 1);
   vk::ComponentMapping componentMapping(vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG,
                                         vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA);
 

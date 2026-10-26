@@ -97,7 +97,7 @@ class Renderer : public RendererBase {
   std::map<std::string, std::shared_ptr<core::Buffer>> mTransferBuffers;
 #endif
 public:
-  Renderer(std::shared_ptr<RendererConfig> config);
+  Renderer(std::shared_ptr<core::Context> context, std::shared_ptr<RendererConfig> config);
 
   template <typename T> void setSpecializationConstant(std::string const &name, T value) {
     if (!mContext->isVulkanAvailable()) {
@@ -137,11 +137,7 @@ public:
                std::vector<vk::PipelineStageFlags> const &waitStages,
                std::vector<vk::Semaphore> const &signalSemaphores, vk::Fence fence) override;
 
-  void setScene(std::shared_ptr<scene::Scene> scene) override {
-    mScene = scene;
-    mRequiresRebuild = true;
-    mRequiresRecord = true;
-  }
+  void setScene(std::shared_ptr<scene::Scene> scene) override;
 
   std::vector<std::string> getDisplayTargetNames() const override;
   std::vector<std::string> getRenderTargetNames() const override;

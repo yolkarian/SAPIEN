@@ -16,10 +16,14 @@ inline void setBit(int &number, int bit) { number |= 1 << bit; }
 inline void unsetBit(int &number, int bit) { number &= ~(1 << bit); }
 inline int getBit(int number, int bit) { return (number >> bit) & 1; }
 
+/** Device-independent material; its uniform buffer and descriptor set live per device
+ *  (Context) and are refreshed on upload when the material changed. */
 class SVMaterial {
 public:
-  inline vk::DescriptorSet getDescriptorSet() const { return mDescriptorSet.get(); }
-  virtual void uploadToDevice() = 0;
+  /** this device's descriptor set; throws when the material is not uploaded there */
+  virtual vk::DescriptorSet getDescriptorSet(core::Context const &context) const = 0;
+  virtual void uploadToDevice(core::Context &context) = 0;
+  /** release the device state of every device */
   virtual void removeFromDevice() = 0;
   virtual float getOpacity() const = 0;
 
@@ -29,13 +33,7 @@ public:
   vk::CullModeFlagBits getCullMode() const { return mCullMode; }
 
 protected:
-  std::shared_ptr<core::Context> mContext; // keep alive for descriptor set
-  bool mRequiresBufferUpload{true};
-  bool mRequiresTextureUpload{true};
-
   vk::CullModeFlagBits mCullMode{vk::CullModeFlagBits::eBack};
-
-  vk::UniqueDescriptorSet mDescriptorSet;
 };
 
 class SVMetallicMaterial : public SVMaterial {
@@ -71,7 +69,23 @@ class SVMetallicMaterial : public SVMaterial {
   std::shared_ptr<SVTexture> mEmissionTexture;
   std::shared_ptr<SVTexture> mTransmissionTexture;
 
-  std::unique_ptr<core::Buffer> mDeviceBuffer;
+  struct DeviceState {
+    std::shared_ptr<core::Context> context; // keeps the descriptor pool alive
+    std::unique_ptr<core::Buffer> buffer;
+    vk::UniqueDescriptorSet descriptorSet;
+    uint64_t bufferVersion{};  // mBufferVersion last written to `buffer`
+    uint64_t textureVersion{}; // mTextureVersion last bound to `descriptorSet`
+  };
+  core::PerContext<DeviceState> mDeviceStates;
+  /** bumped by every setter of the matching kind; devices upload when behind */
+  uint64_t mBufferVersion{1};
+  uint64_t mTextureVersion{1};
+
+  DeviceState const &getDeviceState(core::Context const &context) const;
+  std::vector<std::shared_ptr<core::Context>> deviceContexts();
+  /** bump the version and re-upload to every device holding the material */
+  void bufferChanged();
+  void texturesChanged();
 
 public:
   SVMetallicMaterial(glm::vec4 emission = {0, 0, 0, 1}, glm::vec4 baseColor = {0, 0, 0, 1},
@@ -138,11 +152,13 @@ public:
                    std::shared_ptr<SVTexture> emissionTexture,
                    std::shared_ptr<SVTexture> transmissionTexture);
 
-  void uploadToDevice() override;
+  void uploadToDevice(core::Context &context) override;
   void removeFromDevice() override;
+  vk::DescriptorSet getDescriptorSet(core::Context const &context) const override;
   inline float getOpacity() const override { return mBuffer.baseColor.a; }
 
-  core::Buffer &getDeviceBuffer() const;
+  /** this device's uniform buffer; throws when the material is not uploaded there */
+  core::Buffer &getDeviceBuffer(core::Context const &context) const;
 
   SVMetallicMaterial(SVMetallicMaterial const &) = delete;
   SVMetallicMaterial &operator=(SVMetallicMaterial const &) = delete;

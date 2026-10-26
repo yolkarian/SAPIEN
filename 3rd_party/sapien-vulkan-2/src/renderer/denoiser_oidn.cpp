@@ -1,9 +1,11 @@
 #ifdef SVULKAN2_CUDA_INTEROP
+#include "../common/cuda_helper.h"
 #include "../common/logger.h"
 #include "denoiser.h"
 #include "svulkan2/core/context.h"
 #include <OpenImageDenoise/oidn.hpp>
 #include <cuda_runtime.h>
+#include <utility>
 
 namespace svulkan2 {
 namespace renderer {
@@ -16,18 +18,26 @@ static inline bool checkCudaRuntime(cudaError_t error, std::string const &messag
   return true;
 }
 
-bool DenoiserOidn::init(bool albedo, bool normal, bool hdr) {
-  int device;
-  if (!checkCudaRuntime(cudaGetDevice(&device))) {
+bool DenoiserOidn::init(std::shared_ptr<core::Context> context, bool albedo, bool normal,
+                        bool hdr) {
+  if (!context) {
+    throw std::runtime_error("failed to initialize denoiser: context must not be null");
+  }
+  int device = context->getCudaDeviceId();
+  if (device < 0) {
+    logger::error("Failed to initialize denoiser: the renderer does not run on a CUDA device.");
     return false;
   }
+  mContext = std::move(context);
+
+  CudaDeviceScope scope(device);
   if (!checkCudaRuntime(cudaStreamCreate(&mCudaStream))) {
     return false;
   }
   mDevice = oidn::newCUDADevice(device, mCudaStream);
   mDevice.commit();
 
-  mCommandPool = core::Context::Get()->createCommandPool();
+  mCommandPool = mContext->createCommandPool();
   mCommandBufferIn = mCommandPool->allocateCommandBuffer();
   mCommandBufferOut = mCommandPool->allocateCommandBuffer();
 
@@ -45,9 +55,10 @@ void DenoiserOidn::allocate(uint32_t width, uint32_t height) {
   mHeight = height;
   free();
 
+  CudaDeviceScope scope(mContext->getCudaDeviceId());
   mFilter = mDevice.newFilter("RT");
 
-  mInputBuffer = core::Buffer::Create(width * height * mPixelSize,
+  mInputBuffer = core::Buffer::Create(*mContext, width * height * mPixelSize,
                                       vk::BufferUsageFlagBits::eTransferDst |
                                           vk::BufferUsageFlagBits::eTransferSrc,
                                       VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
@@ -58,7 +69,7 @@ void DenoiserOidn::allocate(uint32_t width, uint32_t height) {
 
   if (useAlbedo()) {
     mAlbedoBuffer = core::Buffer::Create(
-        width * height * mPixelSize,
+        *mContext, width * height * mPixelSize,
         vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc,
         VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
     mAlbedoBufferOidn = mDevice.newBuffer(mAlbedoBuffer->getCudaPtr(), mAlbedoBuffer->getSize());
@@ -66,7 +77,7 @@ void DenoiserOidn::allocate(uint32_t width, uint32_t height) {
   }
   if (useNormal()) {
     mNormalBuffer = core::Buffer::Create(
-        width * height * mPixelSize,
+        *mContext, width * height * mPixelSize,
         vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc,
         VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
     mNormalBufferOidn = mDevice.newBuffer(mNormalBuffer->getCudaPtr(), mNormalBuffer->getSize());
@@ -75,7 +86,7 @@ void DenoiserOidn::allocate(uint32_t width, uint32_t height) {
   mFilter.set("hdr", mHdr);
   mFilter.commit();
 
-  vk::Device device = core::Context::Get()->getDevice();
+  vk::Device device = mContext->getDevice();
   // create timeline semaphore with value 0
   vk::SemaphoreTypeCreateInfo timelineCreateInfo(vk::SemaphoreType::eTimeline, 0);
   vk::SemaphoreCreateInfo createInfo{};
@@ -96,8 +107,12 @@ void DenoiserOidn::allocate(uint32_t width, uint32_t height) {
 }
 
 void DenoiserOidn::free() {
-  core::Context::Get()->getDevice().waitIdle();
+  if (!mContext) {
+    return;
+  }
+  mContext->getDevice().waitIdle();
   if (mCudaSem) {
+    CudaDeviceScope scope(mContext->getCudaDeviceId());
     cudaDestroyExternalSemaphore(mCudaSem);
     mCudaSem = {};
   }
@@ -112,6 +127,7 @@ void DenoiserOidn::free() {
 }
 
 void DenoiserOidn::denoise(core::Image &color, core::Image *albedo, core::Image *normal) {
+  CudaDeviceScope scope(mContext->getCudaDeviceId());
 
   if (color.getFormat() != vk::Format::eR32G32B32A32Sfloat ||
       (albedo && albedo->getFormat() != vk::Format::eR32G32B32A32Sfloat) ||
@@ -137,8 +153,7 @@ void DenoiserOidn::denoise(core::Image &color, core::Image *albedo, core::Image 
 
   mCommandBufferIn->end();
 
-  core::Context::Get()->getQueue().submit(mCommandBufferIn.get(), {}, {}, {}, mSem.get(),
-                                          ++mSemValue, {});
+  mContext->getQueue().submit(mCommandBufferIn.get(), {}, {}, {}, mSem.get(), ++mSemValue, {});
 
   cudaExternalSemaphoreWaitParams waitParams{};
   waitParams.params.fence.value = mSemValue;
@@ -166,8 +181,8 @@ void DenoiserOidn::denoise(core::Image &color, core::Image *albedo, core::Image 
   mCommandBufferOut->end();
 
   vk::PipelineStageFlags waitStage = vk::PipelineStageFlagBits::eTransfer;
-  core::Context::Get()->getQueue().submit(mCommandBufferOut.get(), mSem.get(), waitStage,
-                                          mSemValue, {}, {}, {});
+  mContext->getQueue().submit(mCommandBufferOut.get(), mSem.get(), waitStage, mSemValue, {}, {},
+                              {});
 }
 
 DenoiserOidn::~DenoiserOidn() {
@@ -175,7 +190,8 @@ DenoiserOidn::~DenoiserOidn() {
   free();
 
   mDevice = {};
-  if (mCudaStream) {
+  if (mCudaStream && mContext) {
+    CudaDeviceScope scope(mContext->getCudaDeviceId());
     checkCudaRuntime(cudaStreamDestroy(mCudaStream));
   }
 }

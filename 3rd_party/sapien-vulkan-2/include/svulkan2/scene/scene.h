@@ -5,6 +5,7 @@
 #include "object.h"
 #include "svulkan2/core/as.h"
 #include "svulkan2/core/command_pool.h"
+#include "svulkan2/core/context.h"
 #include <memory>
 #include <unordered_set>
 #include <vector>
@@ -81,7 +82,8 @@ public:
   void setBatchedRenderShared(bool shared) { mBatchedRenderShared = shared; }
   bool isBatchedRenderShared() const { return mBatchedRenderShared; }
 
-  Scene();
+  explicit Scene(std::shared_ptr<core::Context> context);
+  std::shared_ptr<core::Context> getContext() const { return mContext; }
   Scene(Scene const &other) = delete;
   Scene &operator=(Scene const &other) = delete;
   Scene(Scene &&other) = delete;
@@ -164,6 +166,8 @@ public:
   bool hasExternalTransformOwnership() const { return !mExternalTransformOwners.empty(); }
 
 protected:
+  std::shared_ptr<core::Context> mContext;
+
   std::vector<std::unique_ptr<Node>> mNodes{};
   std::vector<std::unique_ptr<Object>> mObjects{};
   std::vector<std::unique_ptr<Object>> mDeformableObjects{};

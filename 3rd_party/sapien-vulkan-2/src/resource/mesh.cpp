@@ -1,42 +1,50 @@
 #include "svulkan2/resource/mesh.h"
-#include "../common/logger.h"
-#include "svulkan2/common/assimp.h"
 #include "svulkan2/core/context.h"
+#include "svulkan2/resource/manager.h"
 #include <memory>
+#include <stdexcept>
 
 namespace svulkan2 {
 namespace resource {
 
 uint32_t SVMesh::getVertexSize() const {
-  return core::Context::Get()->getResourceManager()->getVertexLayout()->getSize();
+  return SVResourceManager::Get()->getVertexLayout()->getSize();
 }
 
-core::Buffer &SVMesh::getVertexBuffer() {
-  if (!mVertexBuffer) {
-    uploadToDevice();
+bool SVMesh::isOnDevice(core::Context const &context) const {
+  auto state = mDeviceStates.find(context);
+  return state && state->vertexBuffer;
+}
+
+core::Buffer &SVMesh::getVertexBuffer(core::Context &context) {
+  uploadToDevice(context);
+  auto state = mDeviceStates.find(context);
+  if (!state || !state->vertexBuffer) {
+    throw std::runtime_error("failed to get vertex buffer: the mesh is not on this device");
   }
-  return *mVertexBuffer;
+  return *state->vertexBuffer;
 }
 
-core::Buffer &SVMesh::getIndexBuffer() {
-  if (!mIndexBuffer) {
-    uploadToDevice();
+core::Buffer &SVMesh::getIndexBuffer(core::Context &context) {
+  uploadToDevice(context);
+  auto state = mDeviceStates.find(context);
+  if (!state || !state->indexBuffer) {
+    throw std::runtime_error("failed to get index buffer: the mesh is not on this device");
   }
-  return *mIndexBuffer;
+  return *state->indexBuffer;
 }
 
-vk::AccelerationStructureGeometryKHR SVMesh::getASGeometry() {
-  auto context = core::Context::Get();
-  uploadToDevice();
+vk::AccelerationStructureGeometryKHR SVMesh::getASGeometry(core::Context &context) {
+  auto &vertexBuffer = getVertexBuffer(context);
+  auto &indexBuffer = getIndexBuffer(context);
 
   vk::DeviceAddress vertexAddress =
-      context->getDevice().getBufferAddress({mVertexBuffer->getVulkanBuffer()});
+      context.getDevice().getBufferAddress({vertexBuffer.getVulkanBuffer()});
   vk::DeviceAddress indexAddress =
-      context->getDevice().getBufferAddress({mIndexBuffer->getVulkanBuffer()});
+      context.getDevice().getBufferAddress({indexBuffer.getVulkanBuffer()});
 
   vk::AccelerationStructureGeometryTrianglesDataKHR trianglesData(
-      vk::Format::eR32G32B32Sfloat, vertexAddress,
-      context->getResourceManager()->getVertexLayout()->getSize(), mVertexCount,
+      vk::Format::eR32G32B32Sfloat, vertexAddress, getVertexSize(), mVertexCount,
       vk::IndexType::eUint32, indexAddress, {});
 
   vk::AccelerationStructureGeometryKHR geom(vk::GeometryTypeKHR::eTriangles, trianglesData,
@@ -47,7 +55,13 @@ vk::AccelerationStructureGeometryKHR SVMesh::getASGeometry() {
 SVMeshRigid::SVMeshRigid() {}
 
 void SVMeshRigid::setIndices(std::vector<uint32_t> const &indices) {
-  if (mIndexBuffer) {
+  bool onDevice = false;
+  mDeviceStates.forEach([&](DeviceState const &state) {
+    if (state.vertexBuffer) {
+      onDevice = true;
+    }
+  });
+  if (onDevice) {
     throw std::runtime_error("set indices failed: mesh already on device");
   }
 
@@ -61,9 +75,16 @@ void SVMeshRigid::setIndices(std::vector<uint32_t> const &indices) {
 std::vector<uint32_t> const &SVMeshRigid::getIndices() const { return mIndices; }
 
 void SVMeshRigid::setVertexAttribute(std::string const &name, std::vector<float> const &attrib) {
-  if (mVertexBuffer) {
-    throw std::runtime_error("set indices failed: mesh already on device");
+  bool onDevice = false;
+  mDeviceStates.forEach([&](DeviceState const &state) {
+    if (state.vertexBuffer) {
+      onDevice = true;
+    }
+  });
+  if (onDevice) {
+    throw std::runtime_error("set vertex attribute failed: mesh already on device");
   }
+
   mAttributes[name] = attrib;
 
   if (name == "position") {
@@ -86,14 +107,14 @@ bool SVMeshRigid::hasVertexAttribute(std::string const &name) const {
   return mAttributes.find(name) != mAttributes.end();
 }
 
-void SVMeshRigid::uploadToDevice() {
+void SVMeshRigid::uploadToDevice(core::Context &context) {
   std::scoped_lock lock(mUploadingMutex);
-  if (mVertexBuffer) {
+  auto existing = mDeviceStates.find(context);
+  if (existing && existing->vertexBuffer) {
     return;
   }
-  auto context = core::Context::Get();
 
-  auto layout = context->getResourceManager()->getVertexLayout();
+  auto layout = SVResourceManager::Get()->getVertexLayout();
 
   if (!mAttributes.contains("position") || mAttributes["position"].size() == 0) {
     throw std::runtime_error("mesh upload failed: no vertex positions");
@@ -120,45 +141,33 @@ void SVMeshRigid::uploadToDevice() {
     offset += elem.getSize();
   }
 
-  if (!mVertexBuffer) {
-    vk::BufferUsageFlags deviceAddressFlag =
-        context->isRayTracingAvailable()
-            ? vk::BufferUsageFlagBits::eShaderDeviceAddress |
-                  vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
-                  vk::BufferUsageFlagBits::eStorageBuffer
-            : vk::BufferUsageFlags{};
+  vk::BufferUsageFlags deviceAddressFlag =
+      context.isRayTracingAvailable()
+          ? vk::BufferUsageFlagBits::eShaderDeviceAddress |
+                vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
+                vk::BufferUsageFlagBits::eStorageBuffer
+          : vk::BufferUsageFlags{};
 
-    mVertexBuffer = core::Buffer::Create(
-        bufferSize,
+  auto &state = mDeviceStates.get(context);
+  if (!state.vertexBuffer) {
+    state.vertexBuffer = core::Buffer::Create(
+        context, bufferSize,
         deviceAddressFlag | vk::BufferUsageFlagBits::eVertexBuffer |
             vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc,
         VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
-    mIndexBuffer = core::Buffer::Create(
-        indexBufferSize,
+    state.indexBuffer = core::Buffer::Create(
+        context, indexBufferSize,
         deviceAddressFlag | vk::BufferUsageFlagBits::eIndexBuffer |
             vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc,
         VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
   }
-  mVertexBuffer->upload(buffer.data(), vertexSize * mVertexCount);
-  mIndexBuffer->upload<uint32_t>(mIndices);
+  state.vertexBuffer->upload(buffer.data(), vertexSize * mVertexCount);
+  state.indexBuffer->upload<uint32_t>(mIndices);
 }
 
-void SVMeshRigid::removeFromDevice() {
-  mVertexBuffer.reset();
-  mIndexBuffer.reset();
-}
+void SVMeshRigid::removeFromDevice() { mDeviceStates.clear(); }
 
-// void SVMeshRigid::exportToFile(std::string const &filename) const {
-//   exportTriangleMesh(filename,
-//                      mAttributes.find("position") != mAttributes.end() ?
-//                      mAttributes.at("position")
-//                                                                        : std::vector<float>{},
-//                      mIndices,
-//                      mAttributes.find("normal") != mAttributes.end() ? mAttributes.at("normal")
-//                                                                      : std::vector<float>{},
-//                      mAttributes.find("uv") != mAttributes.end() ? mAttributes.at("uv")
-//                                                                  : std::vector<float>{});
-// }
+uint32_t SVMeshRigid::getTriangleCount() { return static_cast<uint32_t>(mTriangleCount); }
 
 //==================== Deformable ====================//
 
@@ -177,7 +186,7 @@ void SVMeshDeformable::setVertexCount(uint32_t vertexCount) {
 
 void SVMeshDeformable::setTriangleCount(uint32_t triangleCount) {
   if (mMaxTriangleCount == 0) {
-    mMaxVertexCount = triangleCount;
+    mMaxTriangleCount = triangleCount;
   }
   if (triangleCount > mMaxTriangleCount) {
     throw std::runtime_error("failed to set triangle count: it exceeds max triangle count.");
@@ -203,10 +212,20 @@ bool SVMeshDeformable::hasVertexAttribute(std::string const &name) const {
   throw std::runtime_error("not implemented");
 }
 
-void SVMeshDeformable::uploadToDevice() {
+void SVMeshDeformable::uploadToDevice(core::Context &context) {
   std::scoped_lock lock(mUploadingMutex);
-  auto context = core::Context::Get();
-  auto layout = context->getResourceManager()->getVertexLayout();
+
+  if (mContextId != 0 && mContextId != context.getId()) {
+    throw std::runtime_error("deformable mesh is bound to another device");
+  }
+
+  auto existing = mDeviceStates.find(context);
+  if (existing && existing->vertexBuffer) {
+    mContextId = context.getId();
+    return;
+  }
+
+  auto layout = SVResourceManager::Get()->getVertexLayout();
   size_t vertexSize = layout->getSize();
 
   if (mMaxVertexCount == 0 || mMaxTriangleCount == 0) {
@@ -216,28 +235,33 @@ void SVMeshDeformable::uploadToDevice() {
   size_t bufferSize = vertexSize * mMaxVertexCount;
   size_t indexBufferSize = sizeof(uint32_t) * mMaxTriangleCount * 3;
 
-  if (!mVertexBuffer) {
-    vk::BufferUsageFlags deviceAddressFlag =
-        context->isRayTracingAvailable()
-            ? vk::BufferUsageFlagBits::eShaderDeviceAddress |
-                  vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
-                  vk::BufferUsageFlagBits::eStorageBuffer
-            : vk::BufferUsageFlags{};
+  vk::BufferUsageFlags deviceAddressFlag =
+      context.isRayTracingAvailable()
+          ? vk::BufferUsageFlagBits::eShaderDeviceAddress |
+                vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
+                vk::BufferUsageFlagBits::eStorageBuffer
+          : vk::BufferUsageFlags{};
 
-    mVertexBuffer = core::Buffer::Create(
-        bufferSize,
+  auto &state = mDeviceStates.get(context);
+  if (!state.vertexBuffer) {
+    state.vertexBuffer = core::Buffer::Create(
+        context, bufferSize,
         deviceAddressFlag | vk::BufferUsageFlagBits::eVertexBuffer |
             vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc,
         VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
-    mIndexBuffer = core::Buffer::Create(
-        indexBufferSize,
+    state.indexBuffer = core::Buffer::Create(
+        context, indexBufferSize,
         deviceAddressFlag | vk::BufferUsageFlagBits::eIndexBuffer |
             vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eTransferSrc,
         VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
   }
+  mContextId = context.getId();
 }
 
-void SVMeshDeformable::removeFromDevice() { throw std::runtime_error("not implemented"); }
+void SVMeshDeformable::removeFromDevice() {
+  mDeviceStates.clear();
+  mContextId = 0;
+}
 
 } // namespace resource
 } // namespace svulkan2

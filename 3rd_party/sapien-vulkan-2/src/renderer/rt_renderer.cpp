@@ -3,12 +3,17 @@
 #include "denoiser.h"
 #include "svulkan2/common/profiler.h"
 #include "svulkan2/core/context.h"
+#include "svulkan2/resource/manager.h"
 #include "svulkan2/shader/rt.h"
+#include <utility>
 
 namespace svulkan2 {
 namespace renderer {
-RTRenderer::RTRenderer(std::string const &shaderDir) : mShaderDir(shaderDir) {
-  mContext = core::Context::Get();
+RTRenderer::RTRenderer(std::shared_ptr<core::Context> context, std::string const &shaderDir)
+    : mContext(std::move(context)), mShaderDir(shaderDir) {
+  if (!mContext) {
+    throw std::runtime_error("failed to create ray tracing renderer: context must not be null");
+  }
   if (!mContext->isVulkanAvailable()) {
     return;
   }
@@ -16,7 +21,7 @@ RTRenderer::RTRenderer(std::string const &shaderDir) : mShaderDir(shaderDir) {
     logger::error("The selected GPU does not support ray tracing");
     return;
   }
-  mShaderPack = mContext->getResourceManager()->CreateRTShaderPack(shaderDir);
+  mShaderPack = resource::SVResourceManager::Get()->CreateRTShaderPack(shaderDir);
 
   mMaterialBufferLayout = mShaderPack->getMaterialBufferLayout();
   mTextureIndexBufferLayout = mShaderPack->getTextureIndexBufferLayout();
@@ -47,6 +52,10 @@ void RTRenderer::resize(int width, int height) {
 }
 
 void RTRenderer::setScene(std::shared_ptr<scene::Scene> scene) {
+  if (scene && scene->getContext() != mContext) {
+    throw std::runtime_error(
+        "failed to set scene: the scene renders on a different device than the renderer");
+  }
   if (mScene == scene) {
     return;
   }
@@ -67,7 +76,7 @@ void RTRenderer::prepareObjects() {
   auto objects = mScene->getObjects();
   // auto objects = mScene->getVisibleObjects();
   mObjectBuffer = core::Buffer::Create(
-      std::max(size_t(1), objects.size()) * mObjectBufferLayout.size,
+      *mContext, std::max(size_t(1), objects.size()) * mObjectBufferLayout.size,
       vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
       VMA_MEMORY_USAGE_CPU_TO_GPU);
 }
@@ -136,6 +145,7 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
     }
 
     mShaderPackInstance = std::make_shared<shader::RayTracingShaderPackInstance>(
+        mContext,
         shader::RayTracingShaderPackInstanceDesc{
             .shaderDir = mShaderDir,
             .maxMeshes = static_cast<uint32_t>(mScene->getRTVertexBuffers().size()),
@@ -390,8 +400,8 @@ void RTRenderer::prepareOutput() {
   for (auto &[bid, binding] : set.bindings) {
     if (binding.type == vk::DescriptorType::eStorageImage && binding.name.starts_with("out")) {
       std::string texName = binding.name.substr(3);
-      auto image = mRenderImages[texName] =
-          std::make_shared<resource::SVStorageImage>(texName, mWidth, mHeight, binding.format);
+      auto image = mRenderImages[texName] = std::make_shared<resource::SVStorageImage>(
+          mContext, texName, mWidth, mHeight, binding.format);
       mRTImages.push_back(image);
       images.push_back(image);
       image->createDeviceResources();
@@ -413,8 +423,10 @@ void RTRenderer::prepareOutput() {
   mOutputSet.reset();
 
   // make descriptor set
-  mOutputPool = std::make_unique<core::DynamicDescriptorPool>(std::vector<vk::DescriptorPoolSize>{
-      {vk::DescriptorType::eStorageImage, static_cast<uint32_t>(images.size())}});
+  mOutputPool = std::make_unique<core::DynamicDescriptorPool>(
+      mContext->getDevice2(),
+      std::vector<vk::DescriptorPoolSize>{
+          {vk::DescriptorType::eStorageImage, static_cast<uint32_t>(images.size())}});
   mOutputSet = mOutputPool->allocateSet(mShaderPackInstance->getOutputSetLayout());
 
   // write descriptor sets
@@ -490,14 +502,16 @@ void RTRenderer::prepareScene() {
   }
 
   mSceneSet.reset();
-  mScenePool = std::make_unique<core::DynamicDescriptorPool>(std::vector<vk::DescriptorPoolSize>{
-      {vk::DescriptorType::eAccelerationStructureKHR, asCount},
-      {vk::DescriptorType::eStorageBuffer,
-       storageBufferCount +
-           static_cast<uint32_t>(materialBufferInfos.size() + vertexBufferInfos.size() +
-                                 indexBufferInfos.size())},
-      {vk::DescriptorType::eCombinedImageSampler,
-       textureCount + static_cast<uint32_t>(textureInfos.size())}});
+  mScenePool = std::make_unique<core::DynamicDescriptorPool>(
+      mContext->getDevice2(),
+      std::vector<vk::DescriptorPoolSize>{
+          {vk::DescriptorType::eAccelerationStructureKHR, asCount},
+          {vk::DescriptorType::eStorageBuffer,
+           storageBufferCount +
+               static_cast<uint32_t>(materialBufferInfos.size() + vertexBufferInfos.size() +
+                                     indexBufferInfos.size())},
+          {vk::DescriptorType::eCombinedImageSampler,
+           textureCount + static_cast<uint32_t>(textureInfos.size())}});
   mSceneSet = mScenePool->allocateSet(mShaderPackInstance->getSceneSetLayout());
 
   vk::DescriptorBufferInfo pointLightBufferInfo(mScene->getRTPointLightBuffer(), 0, VK_WHOLE_SIZE);
@@ -509,10 +523,10 @@ void RTRenderer::prepareScene() {
 
   auto cube = mEnvironmentMap;
   if (!cube) {
-    cube = mContext->getResourceManager()->getDefaultCubemap();
+    cube = resource::SVResourceManager::Get()->getDefaultCubemap();
   }
-  cube->uploadToDevice();
-  vk::DescriptorImageInfo cubeMapInfo(cube->getSampler(), cube->getImageView(),
+  cube->uploadToDevice(*mContext);
+  vk::DescriptorImageInfo cubeMapInfo(cube->getSampler(*mContext), cube->getImageView(*mContext),
                                       vk::ImageLayout::eShaderReadOnlyOptimal);
 
   for (auto &[bid, binding] : set.bindings) {
@@ -601,9 +615,9 @@ void RTRenderer::prepareCamera() {
   for (auto &[bid, binding] : set.bindings) {
     if (binding.name == "CameraBuffer") {
       if (!mCameraBuffer) {
-        mCameraBuffer = core::Buffer::CreateUniform(set.buffers.at(binding.arrayIndex)->size,
-                                                    mExternalCameraUpdates,
-                                                    mExternalCameraUpdates);
+        mCameraBuffer =
+            core::Buffer::CreateUniform(*mContext, set.buffers.at(binding.arrayIndex)->size,
+                                        mExternalCameraUpdates, mExternalCameraUpdates);
       }
       if (bid != 0) {
         throw std::runtime_error("CameraBuffer must have binding 0");
@@ -613,6 +627,7 @@ void RTRenderer::prepareCamera() {
 
   mCameraSet.reset(); // TODO: manage
   mCameraPool = std::make_unique<core::DynamicDescriptorPool>(
+      mContext->getDevice2(),
       std::vector<vk::DescriptorPoolSize>{{vk::DescriptorType::eUniformBuffer, 1}}); // TODO adapt
   mCameraSet = mCameraPool->allocateSet(mShaderPackInstance->getCameraSetLayout());
 
@@ -651,7 +666,7 @@ void RTRenderer::preparePostprocessing() {
             }
           } else {
             auto image = mRenderImages[texName] = std::make_shared<resource::SVStorageImage>(
-                texName, mWidth, mHeight, binding.format);
+                mContext, texName, mWidth, mHeight, binding.format);
             image->createDeviceResources();
             image->getImage().transitionLayout(
                 commandBuffer.get(), vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral, {},
@@ -676,8 +691,9 @@ void RTRenderer::preparePostprocessing() {
     storageImageCount += parser->getResources().begin()->second.bindings.size();
   }
   mPostprocessingPool = std::make_unique<core::DynamicDescriptorPool>(
-      std::vector<vk::DescriptorPoolSize>{{vk::DescriptorType::eStorageImage,
-                                           std::max(storageImageCount, 1u)}});
+      mContext->getDevice2(),
+      std::vector<vk::DescriptorPoolSize>{
+          {vk::DescriptorType::eStorageImage, std::max(storageImageCount, 1u)}});
 
   for (uint32_t pid = 0; pid < parsers.size(); ++pid) {
     auto &layout = layouts.at(pid);
@@ -884,7 +900,7 @@ void RTRenderer::enableDenoiser(DenoiserType type, std::string const &colorName,
   } else {
     mDenoiser = std::make_unique<DenoiserOidn>();
   }
-  if (!mDenoiser->init(true, true, true)) {
+  if (!mDenoiser->init(mContext, true, true, true)) {
     logger::error("Failed to initialize denoiser");
     mDenoiser.reset();
     return;

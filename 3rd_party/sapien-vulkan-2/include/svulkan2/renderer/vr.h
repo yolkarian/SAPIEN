@@ -17,7 +17,7 @@ public:
   static std::string getActionManifestPath();
 
 public:
-  VRDisplay();
+  explicit VRDisplay(std::shared_ptr<core::Context> context);
   void initDevices();
 
   std::array<uint32_t, 2> getScreenSize() const;
