@@ -3,19 +3,20 @@
 #include "sapien/entity.h"
 #include "sapien/physx/physx_system.h"
 #include "sapien/sapien_renderer/sapien_renderer.h"
+#include <atomic>
 
 namespace sapien {
 
-uint64_t Scene::gNextSceneId = 1;
-
-static uint64_t gSceneCount = 0;
+// Atomic so scenes created or destroyed on different threads keep unique IDs and exact counts.
+static std::atomic<uint64_t> gNextSceneId{1};
+static std::atomic<uint64_t> gSceneCount{0};
 
 Scene::Scene(std::vector<std::shared_ptr<System>> const &systems) : mId(gNextSceneId++) {
   for (auto s : systems) {
     addSystem(s);
   }
-  gSceneCount++;
-  logger::info("Created Scene {}, total {}", mId, gSceneCount);
+  uint64_t count = ++gSceneCount;
+  logger::info("Created Scene {}, total {}", mId, count);
 }
 
 void Scene::addSystem(std::shared_ptr<System> system) {
@@ -149,8 +150,8 @@ void Scene::checkNotClosed() const {
 uint64_t Scene::liveCount() { return gSceneCount; }
 
 Scene::~Scene() {
-  gSceneCount--;
-  logger::info("Deleting Scene {}, total {}", mId, gSceneCount);
+  uint64_t count = --gSceneCount;
+  logger::info("Deleting Scene {}, total {}", mId, count);
   close();
 }
 

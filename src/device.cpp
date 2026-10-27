@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <cstring>
 #include <iomanip>
+#include <mutex>
 #include <sstream>
 #include <svulkan2/core/context.h>
 #include <svulkan2/core/instance.h>
@@ -223,12 +224,20 @@ std::string Device::getAlias() const {
   return "unknown";
 }
 
-static std::vector<std::shared_ptr<Device>> gDevices;
+// Enumerated on first use; the mutex keeps threads that create systems concurrently from
+// enumerating twice. Once non-empty the list is never modified again.
+static std::vector<std::shared_ptr<Device>> const &allDevices() {
+  static std::mutex mutex;
+  static std::vector<std::shared_ptr<Device>> devices;
+  std::lock_guard lock(mutex);
+  if (devices.empty()) {
+    devices = findDevices();
+  }
+  return devices;
+}
 
 std::shared_ptr<Device> findDevice(std::string alias) {
-  if (gDevices.empty()) {
-    gDevices = findDevices();
-  }
+  auto const &gDevices = allDevices();
 
   // CPU
   if (alias == "cpu") {
@@ -295,9 +304,7 @@ std::shared_ptr<Device> findDevice(std::string alias) {
 }
 
 std::shared_ptr<Device> findBestRenderDevice() {
-  if (gDevices.empty()) {
-    gDevices = findDevices();
-  }
+  auto const &gDevices = allDevices();
   std::shared_ptr<Device> bestDevice;
   int priority = 0;
   for (auto d : gDevices) {

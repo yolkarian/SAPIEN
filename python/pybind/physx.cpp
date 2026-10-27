@@ -536,18 +536,48 @@ Args:
 
       .def_property_readonly("config", &PhysxSystem::getSceneConfig)
       .def("get_config", &PhysxSystem::getSceneConfig)
-      .def("close", &PhysxSystem::close,
-           R"doc(Terminally close this system. All scenes owned by the system must be closed
+      .def(
+          "close",
+          [](PhysxSystem &s) {
+            {
+              py::gil_scoped_release release;
+              s.close();
+            }
+#ifdef SAPIEN_CUDA
+            ReleaseCompletedBorrows();
+#endif
+          },
+          R"doc(Terminally close this system. All scenes owned by the system must be closed
 first so actors and components unbind with the system still alive. Idempotent; steady-state
-APIs raise afterwards. Destructors fall back to the same release as a noisy safety net.)doc")
+APIs raise afterwards. Destructors fall back to the same release as a noisy safety net.
+Releases the GIL and waits for calls of other threads into this system to finish.)doc")
       .def_property_readonly("is_closed", &PhysxSystem::isClosed)
       .def("__enter__", [](py::object self) { return self; })
       .def("__exit__",
-           [](PhysxSystem &s, py::object const &, py::object const &,
-              py::object const &) { s.close(); })
-      .def("wait_idle", &PhysxSystem::waitIdle, py::call_guard<py::gil_scoped_release>(),
-           "Wait until all simulation and fetch work of this system completed. Releases the GIL "
-           "while waiting.")
+           [](PhysxSystem &s, py::object const &, py::object const &, py::object const &) {
+             {
+               py::gil_scoped_release release;
+               s.close();
+             }
+#ifdef SAPIEN_CUDA
+             ReleaseCompletedBorrows();
+#endif
+           })
+      .def(
+          "wait_idle",
+          [](PhysxSystem &s) {
+            {
+              py::gil_scoped_release release;
+              s.waitIdle();
+            }
+#ifdef SAPIEN_CUDA
+            // the system's stream is idle: drop the index/source arrays borrowed for it
+            ReleaseCompletedBorrows();
+#endif
+          },
+          R"doc(Wait until the in-flight step (if any) and all work this system submitted to its
+CUDA stream completed. Does not wait for other streams or other systems on the device.
+Releases the GIL while waiting.)doc")
       .def_property("timestep", &PhysxSystem::getTimestep, &PhysxSystem::setTimestep)
       .def("get_timestep", &PhysxSystem::getTimestep)
       .def("set_timestep", &PhysxSystem::setTimestep, py::arg("timestep"))
@@ -576,9 +606,16 @@ APIs raise afterwards. Destructors fall back to the same release as a noisy safe
           py::arg("data"));
 
 #ifdef SAPIEN_CUDA
-  auto asCudaIndexBuffer = [](py::object indexBuffer) {
-    return CudaArrayHandleFromPython(indexBuffer);
+  // Indexed calls borrow the index buffer for the system's CUDA stream (DLPack or
+  // __cuda_array_interface__ handshake), run without the GIL and keep the producer alive until
+  // the stream ran past them.
+  auto withIndices = [](void (PhysxSystemGpu::*method)(CudaArrayHandle const &)) {
+    return [method](PhysxSystemGpu &system, py::object indices) {
+      RunWithBorrowedCudaArray(indices, system.getDevice()->cudaId, system.gpuGetCudaStream(),
+                               [&](CudaArrayHandle const &handle) { (system.*method)(handle); });
+    };
   };
+  auto releaseGil = py::call_guard<py::gil_scoped_release>();
 
   auto syncRenderSharedWithOptionalRenderer = [](std::shared_ptr<Scene> const &scene,
                                                  bool shared) {
@@ -675,7 +712,7 @@ is bound to the same value.
            },
            py::arg("scene"))
 
-      .def("gpu_init", &PhysxSystemGpu::gpuInit, R"doc(
+      .def("gpu_init", &PhysxSystemGpu::gpuInit, releaseGil, R"doc(
    "Warm start" the GPU simulation by stepping the system once. This function
    must be called each time when actors are added or removed from the scene. One
    may call `gpu_apply_*` functions to initialize the system after calling this
@@ -687,11 +724,30 @@ kernels will be launched to the provided stream.
 
 The stream must belong to this system's device (its primary CUDA context), for
 example ``torch.cuda.Stream(device=system.device.cuda_id)``; streams of another
-device raise ``RuntimeError``. ``0`` selects the device's default stream.
+device raise ``RuntimeError``. ``0`` selects the device's legacy default stream,
+which is the default.
 
 Args:
     stream: integer representation of a cuda stream pointer
 )doc")
+      .def("gpu_get_cuda_stream", &PhysxSystemGpu::gpuGetCudaStream,
+           R"doc(The CUDA stream this system submits its work to, as an integer ``cudaStream_t``;
+``0`` is the device's legacy default stream.)doc")
+      .def(
+          "gpu_wait_for",
+          [](PhysxSystemGpu &system, py::object array) {
+            // The handshake enqueues the wait; nothing reads the array, so nothing is kept alive.
+            BorrowCudaArray(array, system.getDevice()->cudaId, system.gpuGetCudaStream());
+          },
+          py::arg("array"),
+          R"doc(Make this system's CUDA stream wait until ``array`` is ready, without blocking
+the host.
+
+``array`` is any ``__dlpack__`` producer on this system's device (JAX array, torch tensor,
+CuPy array), a ``__cuda_array_interface__`` object with a ``stream`` entry, or a
+``sapien.CudaArray``. Use it as a fence before a fetch overwrites buffers that a consumer
+still reads through DLPack views, when no ``copy_from``/indexed call already ordered the stream
+after that consumer.)doc")
 
       .def_property_readonly("cuda_rigid_body_data", trackGpuView(&PhysxSystemGpu::gpuGetRigidBodyCudaHandle))
       .def_property_readonly("cuda_rigid_dynamic_data",
@@ -796,16 +852,20 @@ valid submatrix inside ``cuda_articulation_jacobian``.
       .def_property_readonly("cuda_articulation_link_incoming_joint_forces",
                              trackGpuView(&PhysxSystemGpu::gpuGetArticulationLinkIncomingJointForceHandle))
 
-      .def("gpu_fetch_rigid_dynamic_data", &PhysxSystemGpu::gpuFetchRigidDynamicData)
-      .def("gpu_fetch_articulation_link_pose", &PhysxSystemGpu::gpuFetchArticulationLinkPose)
-      .def("gpu_fetch_articulation_link_velocity", &PhysxSystemGpu::gpuFetchArticulationLinkVel)
-      .def("gpu_fetch_articulation_qpos", &PhysxSystemGpu::gpuFetchArticulationQpos)
-      .def("gpu_fetch_articulation_qvel", &PhysxSystemGpu::gpuFetchArticulationQvel)
-      .def("gpu_fetch_articulation_qacc", &PhysxSystemGpu::gpuFetchArticulationQacc)
-      .def("gpu_fetch_articulation_target_qpos", &PhysxSystemGpu::gpuFetchArticulationQTargetPos)
-      .def("gpu_fetch_articulation_target_qvel", &PhysxSystemGpu::gpuFetchArticulationQTargetVel)
+      .def("gpu_fetch_rigid_dynamic_data", &PhysxSystemGpu::gpuFetchRigidDynamicData, releaseGil)
+      .def("gpu_fetch_articulation_link_pose", &PhysxSystemGpu::gpuFetchArticulationLinkPose,
+           releaseGil)
+      .def("gpu_fetch_articulation_link_velocity", &PhysxSystemGpu::gpuFetchArticulationLinkVel,
+           releaseGil)
+      .def("gpu_fetch_articulation_qpos", &PhysxSystemGpu::gpuFetchArticulationQpos, releaseGil)
+      .def("gpu_fetch_articulation_qvel", &PhysxSystemGpu::gpuFetchArticulationQvel, releaseGil)
+      .def("gpu_fetch_articulation_qacc", &PhysxSystemGpu::gpuFetchArticulationQacc, releaseGil)
+      .def("gpu_fetch_articulation_target_qpos", &PhysxSystemGpu::gpuFetchArticulationQTargetPos,
+           releaseGil)
+      .def("gpu_fetch_articulation_target_qvel", &PhysxSystemGpu::gpuFetchArticulationQTargetVel,
+           releaseGil)
       .def("gpu_compute_articulation_jacobian",
-           py::overload_cast<>(&PhysxSystemGpu::gpuComputeArticulationJacobian),
+           py::overload_cast<>(&PhysxSystemGpu::gpuComputeArticulationJacobian), releaseGil,
            R"doc(Compute dense articulation Jacobians for all articulations on the GPU.
 
 The result is stored in `cuda_articulation_jacobian` as a padded tensor with
@@ -823,63 +883,42 @@ The Jacobian maps generalized velocities to stacked link spatial velocities in
 world coordinates.
 )doc")
       .def("gpu_compute_articulation_jacobian",
-           py::overload_cast<CudaArrayHandle const &>(
-               &PhysxSystemGpu::gpuComputeArticulationJacobian),
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuComputeArticulationJacobian)),
            py::arg("gpu_indices"),
            R"doc(Compute dense articulation Jacobians for selected articulations on the GPU.
 
-`gpu_indices` must be a contiguous CUDA int32 array containing articulation
-`gpu_index` values. Only the corresponding entries inside
-`cuda_articulation_jacobian` are updated; Jacobians for other articulations are
-left unchanged.
-
-The updated entries use the same padded layout as `cuda_articulation_jacobian`.
-)doc")
-      .def("gpu_compute_articulation_jacobian",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object gpuIndices) {
-             system.gpuComputeArticulationJacobian(asCudaIndexBuffer(gpuIndices));
-           },
-           py::arg("gpu_indices"),
-           R"doc(Compute dense articulation Jacobians for selected articulations on the GPU.
-
-`gpu_indices` may be a `sapien.CudaArray` or any object exposing
-`__cuda_array_interface__`. It must be a contiguous CUDA int32 array containing
-SAPIEN articulation `gpu_index` values, not PhysX `PxArticulationGPUIndex`
-values.
+`gpu_indices` must be a contiguous CUDA int32 array containing SAPIEN articulation
+`gpu_index` values, not PhysX `PxArticulationGPUIndex` values: a `sapien.CudaArray`, any
+`__dlpack__` producer (torch, JAX, CuPy) or any object exposing `__cuda_array_interface__`.
+Only the corresponding entries inside `cuda_articulation_jacobian` are updated; Jacobians for
+other articulations are left unchanged. The updated entries use the same padded layout as
+`cuda_articulation_jacobian`.
 )doc")
       .def("gpu_compute_articulation_gravity_compensation",
            py::overload_cast<>(
                &PhysxSystemGpu::gpuComputeArticulationGravityCompensation),
+           releaseGil,
            R"doc(Compute joint gravity compensation for all articulations on the GPU.
 
 The result is stored in `cuda_articulation_gravity_compensation` as a padded
 tensor with shape `(articulation_count, max_dofs)`.
 )doc")
       .def("gpu_compute_articulation_gravity_compensation",
-           py::overload_cast<CudaArrayHandle const &>(
-               &PhysxSystemGpu::gpuComputeArticulationGravityCompensation),
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuComputeArticulationGravityCompensation)),
            py::arg("gpu_indices"),
            R"doc(Compute joint gravity compensation for selected articulations on the GPU.
 
-`gpu_indices` must be a contiguous CUDA int32 array containing articulation
-`gpu_index` values. Only selected rows inside
+`gpu_indices` must be a contiguous CUDA int32 array containing SAPIEN articulation
+`gpu_index` values (`sapien.CudaArray`, `__dlpack__` producer or
+`__cuda_array_interface__` object). Only selected rows inside
 `cuda_articulation_gravity_compensation` are updated.
-)doc")
-      .def("gpu_compute_articulation_gravity_compensation",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object gpuIndices) {
-             system.gpuComputeArticulationGravityCompensation(asCudaIndexBuffer(gpuIndices));
-           },
-           py::arg("gpu_indices"),
-           R"doc(Compute joint gravity compensation for selected articulations on the GPU.
-
-`gpu_indices` may be a `sapien.CudaArray` or any object exposing
-`__cuda_array_interface__`. It must be a contiguous CUDA int32 array containing
-SAPIEN articulation `gpu_index` values, not PhysX `PxArticulationGPUIndex`
-values.
 )doc")
       .def("gpu_compute_articulation_coriolis_and_centrifugal_compensation",
            py::overload_cast<>(
                &PhysxSystemGpu::gpuComputeArticulationCoriolisAndCentrifugalCompensation),
+           releaseGil,
            R"doc(Compute joint Coriolis and centrifugal compensation for all articulations.
 
 The result is stored in
@@ -887,35 +926,23 @@ The result is stored in
 with shape `(articulation_count, max_dofs)`.
 )doc")
       .def("gpu_compute_articulation_coriolis_and_centrifugal_compensation",
-           py::overload_cast<CudaArrayHandle const &>(
-               &PhysxSystemGpu::gpuComputeArticulationCoriolisAndCentrifugalCompensation),
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuComputeArticulationCoriolisAndCentrifugalCompensation)),
            py::arg("gpu_indices"),
            R"doc(Compute joint Coriolis and centrifugal compensation for selected articulations.
 
-`gpu_indices` must be a contiguous CUDA int32 array containing articulation
-`gpu_index` values. Only selected rows inside
+`gpu_indices` must be a contiguous CUDA int32 array containing SAPIEN articulation
+`gpu_index` values (`sapien.CudaArray`, `__dlpack__` producer or
+`__cuda_array_interface__` object). Only selected rows inside
 `cuda_articulation_coriolis_and_centrifugal_compensation` are updated.
 )doc")
-      .def("gpu_compute_articulation_coriolis_and_centrifugal_compensation",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object gpuIndices) {
-             system.gpuComputeArticulationCoriolisAndCentrifugalCompensation(
-                 asCudaIndexBuffer(gpuIndices));
-           },
-           py::arg("gpu_indices"),
-           R"doc(Compute joint Coriolis and centrifugal compensation for selected articulations.
-
-`gpu_indices` may be a `sapien.CudaArray` or any object exposing
-`__cuda_array_interface__`. It must be a contiguous CUDA int32 array containing
-SAPIEN articulation `gpu_index` values, not PhysX `PxArticulationGPUIndex`
-values.
-)doc")
       .def("gpu_fetch_articulation_link_incoming_joint_forces",
-           &PhysxSystemGpu::gpuFetchArticulationLinkIncomingJointForce)
+           &PhysxSystemGpu::gpuFetchArticulationLinkIncomingJointForce, releaseGil)
 
       .def("gpu_create_contact_pair_impulse_query",
            &PhysxSystemGpu::gpuCreateContactPairImpulseQuery, py::arg("body_pairs"))
       .def("gpu_query_contact_pair_impulses", &PhysxSystemGpu::gpuQueryContactPairImpulses,
-           py::arg("query"), py::arg("synchronize") = true,
+           py::arg("query"), py::arg("synchronize") = true, releaseGil,
            R"doc(Query pair impulses into the query CUDA buffer.
 
 When ``synchronize`` is false, this method returns after enqueuing the query on
@@ -926,220 +953,155 @@ stream or call ``gpu_wait_contact_queries`` before host or cross-stream access.
       .def("gpu_create_contact_body_impulse_query",
            &PhysxSystemGpu::gpuCreateContactBodyImpulseQuery, py::arg("bodies"))
       .def("gpu_query_contact_body_impulses", &PhysxSystemGpu::gpuQueryContactBodyImpulses,
-           py::arg("query"), py::arg("synchronize") = true,
+           py::arg("query"), py::arg("synchronize") = true, releaseGil,
            R"doc(Query net body impulses into ``query.cuda_impulses``.
 
 When ``synchronize`` is false, consume the result on the configured CUDA stream
 or call ``gpu_wait_contact_queries`` before host or cross-stream access.
 )doc")
-      .def("gpu_wait_contact_queries", &PhysxSystemGpu::gpuWaitContactQueries,
+      .def("gpu_wait_contact_queries", &PhysxSystemGpu::gpuWaitContactQueries, releaseGil,
            R"doc(Wait for contact copies and query kernels on the configured CUDA stream.)doc")
 
       .def("gpu_update_articulation_kinematics",
-           py::overload_cast<>(&PhysxSystemGpu::gpuUpdateArticulationKinematics),
+           py::overload_cast<>(&PhysxSystemGpu::gpuUpdateArticulationKinematics), releaseGil,
            R"doc(Update link poses and velocities from current root and joint state
 for all articulations.)doc")
       .def("gpu_update_articulation_kinematics",
-           py::overload_cast<CudaArrayHandle const &>(
-               &PhysxSystemGpu::gpuUpdateArticulationKinematics),
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuUpdateArticulationKinematics)),
            py::arg("index_buffer"),
            R"doc(Update link poses and velocities for selected articulations.
 
-`index_buffer` must be a contiguous CUDA int32 array containing SAPIEN
-articulation `gpu_index` values.
-)doc")
-      .def("gpu_update_articulation_kinematics",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuUpdateArticulationKinematics(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"),
-           R"doc(Update link poses and velocities for selected articulations.
-
-`index_buffer` may be a `sapien.CudaArray` or any object exposing
-`__cuda_array_interface__`. It must be a contiguous CUDA int32 array containing
-SAPIEN articulation `gpu_index` values.
+`index_buffer` must be a contiguous CUDA int32 array containing SAPIEN articulation
+`gpu_index` values: a `sapien.CudaArray`, any `__dlpack__` producer (torch, JAX, CuPy) or any
+object exposing `__cuda_array_interface__`.
 )doc")
 
-      // TODO apply force torque
+      // Every apply returns once its work is enqueued on the system's CUDA stream. The indexed
+      // overloads accept the same index buffers as gpu_update_articulation_kinematics.
       .def("gpu_apply_rigid_dynamic_data",
-           py::overload_cast<>(&PhysxSystemGpu::gpuApplyRigidDynamicData))
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyRigidDynamicData), releaseGil)
+      .def("gpu_apply_rigid_dynamic_data",
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyRigidDynamicData)),
+           py::arg("index_buffer"))
       .def("gpu_apply_rigid_dynamic_force",
-           py::overload_cast<>(&PhysxSystemGpu::gpuApplyRigidDynamicForce))
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyRigidDynamicForce), releaseGil)
       .def("gpu_apply_rigid_dynamic_force",
-           py::overload_cast<CudaArrayHandle const &>(
-               &PhysxSystemGpu::gpuApplyRigidDynamicForce),
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyRigidDynamicForce)),
            py::arg("index_buffer"))
       .def("gpu_apply_rigid_dynamic_torque",
-           py::overload_cast<>(&PhysxSystemGpu::gpuApplyRigidDynamicTorque))
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyRigidDynamicTorque), releaseGil)
       .def("gpu_apply_rigid_dynamic_torque",
-           py::overload_cast<CudaArrayHandle const &>(
-               &PhysxSystemGpu::gpuApplyRigidDynamicTorque),
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyRigidDynamicTorque)),
            py::arg("index_buffer"))
       .def("gpu_apply_articulation_link_force",
-           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationLinkForce))
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationLinkForce), releaseGil)
+      .def("gpu_apply_articulation_link_force",
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyArticulationLinkForce)),
+           py::arg("index_buffer"))
       .def("gpu_apply_articulation_link_torque",
-           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationLinkTorque))
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationLinkTorque), releaseGil)
+      .def("gpu_apply_articulation_link_torque",
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyArticulationLinkTorque)),
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_root_pose",
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationRootPose), releaseGil)
+      .def("gpu_apply_articulation_root_pose",
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyArticulationRootPose)),
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_root_velocity",
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationRootVel), releaseGil)
+      .def("gpu_apply_articulation_root_velocity",
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyArticulationRootVel)),
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_qpos",
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationQpos), releaseGil)
+      .def("gpu_apply_articulation_qpos",
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyArticulationQpos)),
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_qvel",
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationQvel), releaseGil)
+      .def("gpu_apply_articulation_qvel",
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyArticulationQvel)),
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_qf",
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationQf), releaseGil)
+      .def("gpu_apply_articulation_qf",
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyArticulationQf)),
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_target_position",
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationQTargetPos), releaseGil)
+      .def("gpu_apply_articulation_target_position",
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyArticulationQTargetPos)),
+           py::arg("index_buffer"))
+      .def("gpu_apply_articulation_target_velocity",
+           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationQTargetVel), releaseGil)
+      .def("gpu_apply_articulation_target_velocity",
+           withIndices(py::overload_cast<CudaArrayHandle const &>(
+               &PhysxSystemGpu::gpuApplyArticulationQTargetVel)),
+           py::arg("index_buffer"))
+
       .def("_gpu_apply_viewer_rigid_dynamic_wrench",
            &PhysxSystemGpu::gpuApplyViewerRigidDynamicWrench, py::arg("gpu_index"),
            py::arg("local_anchor"), py::arg("local_center_of_mass"), py::arg("target"),
            py::arg("effective_mass"), py::arg("stiffness"), py::arg("damping"),
-           py::arg("max_acceleration"))
+           py::arg("max_acceleration"), releaseGil)
       .def("_gpu_apply_viewer_articulation_link_wrench",
            &PhysxSystemGpu::gpuApplyViewerArticulationLinkWrench,
            py::arg("articulation_index"), py::arg("link_index"), py::arg("pose_index"),
            py::arg("local_anchor"), py::arg("local_center_of_mass"), py::arg("target"),
            py::arg("effective_mass"), py::arg("stiffness"), py::arg("damping"),
-           py::arg("max_acceleration"))
+           py::arg("max_acceleration"), releaseGil)
       .def("_gpu_set_viewer_rigid_dynamic_pose",
            &PhysxSystemGpu::gpuSetViewerRigidDynamicPose, py::arg("gpu_index"),
-           py::arg("pose"), py::arg("zero_velocity") = false)
+           py::arg("pose"), py::arg("zero_velocity") = false, releaseGil)
       .def("_gpu_set_viewer_articulation_root_pose",
            &PhysxSystemGpu::gpuSetViewerArticulationRootPose,
-           py::arg("articulation_index"), py::arg("root_pose_index"), py::arg("pose"))
+           py::arg("articulation_index"), py::arg("root_pose_index"), py::arg("pose"), releaseGil)
       .def("_gpu_download_articulation_qpos",
-           &PhysxSystemGpu::gpuDownloadArticulationQpos, py::arg("articulation_index"))
+           &PhysxSystemGpu::gpuDownloadArticulationQpos, py::arg("articulation_index"),
+           releaseGil)
       .def("_gpu_download_articulation_target_qpos",
-           &PhysxSystemGpu::gpuDownloadArticulationQTargetPos,
-           py::arg("articulation_index"))
+           &PhysxSystemGpu::gpuDownloadArticulationQTargetPos, py::arg("articulation_index"),
+           releaseGil)
       .def("_gpu_download_articulation_target_qvel",
-           &PhysxSystemGpu::gpuDownloadArticulationQTargetVel,
-           py::arg("articulation_index"))
+           &PhysxSystemGpu::gpuDownloadArticulationQTargetVel, py::arg("articulation_index"),
+           releaseGil)
       .def("_gpu_upload_articulation_qpos", &PhysxSystemGpu::gpuUploadArticulationQpos,
-           py::arg("articulation_index"), py::arg("qpos"))
+           py::arg("articulation_index"), py::arg("qpos"), releaseGil)
       .def("_gpu_upload_articulation_target_qpos",
-           &PhysxSystemGpu::gpuUploadArticulationQTargetPos,
-           py::arg("articulation_index"), py::arg("target"))
+           &PhysxSystemGpu::gpuUploadArticulationQTargetPos, py::arg("articulation_index"),
+           py::arg("target"), releaseGil)
       .def("_gpu_upload_articulation_target_qvel",
-           &PhysxSystemGpu::gpuUploadArticulationQTargetVel,
-           py::arg("articulation_index"), py::arg("target"))
-
-      .def("gpu_apply_articulation_root_pose",
-           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationRootPose))
-      .def("gpu_apply_articulation_root_velocity",
-           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationRootVel))
-      .def("gpu_apply_articulation_qpos",
-           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationQpos))
-      .def("gpu_apply_articulation_qvel",
-           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationQvel))
-      .def("gpu_apply_articulation_qf",
-           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationQf))
-      .def("gpu_apply_articulation_target_position",
-           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationQTargetPos))
-      .def("gpu_apply_articulation_target_velocity",
-           py::overload_cast<>(&PhysxSystemGpu::gpuApplyArticulationQTargetVel))
-
-      .def("gpu_apply_rigid_dynamic_data",
-           py::overload_cast<CudaArrayHandle const &>(&PhysxSystemGpu::gpuApplyRigidDynamicData),
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_root_pose",
-           py::overload_cast<CudaArrayHandle const &>(
-               &PhysxSystemGpu::gpuApplyArticulationRootPose),
-           py::arg("index_buffer"))
-      .def(
-          "gpu_apply_articulation_root_velocity",
-          py::overload_cast<CudaArrayHandle const &>(&PhysxSystemGpu::gpuApplyArticulationRootVel),
-          py::arg("index_buffer"))
-      .def("gpu_apply_articulation_qpos",
-           py::overload_cast<CudaArrayHandle const &>(&PhysxSystemGpu::gpuApplyArticulationQpos),
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_qvel",
-           py::overload_cast<CudaArrayHandle const &>(&PhysxSystemGpu::gpuApplyArticulationQvel),
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_qf",
-           py::overload_cast<CudaArrayHandle const &>(&PhysxSystemGpu::gpuApplyArticulationQf),
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_link_force",
-           py::overload_cast<CudaArrayHandle const &>(
-               &PhysxSystemGpu::gpuApplyArticulationLinkForce),
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_link_torque",
-           py::overload_cast<CudaArrayHandle const &>(
-               &PhysxSystemGpu::gpuApplyArticulationLinkTorque),
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_target_position",
-           py::overload_cast<CudaArrayHandle const &>(
-               &PhysxSystemGpu::gpuApplyArticulationQTargetPos),
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_target_velocity",
-           py::overload_cast<CudaArrayHandle const &>(
-               &PhysxSystemGpu::gpuApplyArticulationQTargetVel),
-           py::arg("index_buffer"))
-
-      .def("gpu_apply_rigid_dynamic_data",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuApplyRigidDynamicData(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"))
-      .def("gpu_apply_rigid_dynamic_force",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuApplyRigidDynamicForce(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"))
-      .def("gpu_apply_rigid_dynamic_torque",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuApplyRigidDynamicTorque(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_root_pose",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuApplyArticulationRootPose(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_root_velocity",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuApplyArticulationRootVel(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_qpos",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuApplyArticulationQpos(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_qvel",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuApplyArticulationQvel(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_qf",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuApplyArticulationQf(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_link_force",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuApplyArticulationLinkForce(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_link_torque",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuApplyArticulationLinkTorque(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_target_position",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuApplyArticulationQTargetPos(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"))
-      .def("gpu_apply_articulation_target_velocity",
-           [asCudaIndexBuffer](PhysxSystemGpu &system, py::object indexBuffer) {
-             system.gpuApplyArticulationQTargetVel(asCudaIndexBuffer(indexBuffer));
-           },
-           py::arg("index_buffer"))
+           &PhysxSystemGpu::gpuUploadArticulationQTargetVel, py::arg("articulation_index"),
+           py::arg("target"), releaseGil)
 
       .def("sync_poses_gpu_to_cpu", &PhysxSystemGpu::syncPosesGpuToCpu,
            "Warning: this function is super slow and for debug only. Download all poses from the "
            "GPU and copy to SAPIEN entities.")
 
-      .def("step", &PhysxSystemGpu::step, py::call_guard<py::gil_scoped_release>(),
+      .def("step", &PhysxSystemGpu::step, releaseGil,
            R"doc(Simulate one timestep and wait for it. Releases the GIL, so systems on
-different GPUs can be stepped concurrently from separate Python threads. Do not call other
-APIs of the same system from another thread while it steps.)doc")
-      .def("step_start", &PhysxSystemGpu::stepStart, py::call_guard<py::gil_scoped_release>(),
+different GPUs can be stepped concurrently from separate Python threads. Calls into the same
+system from several threads are serialized.)doc")
+      .def("step_start", &PhysxSystemGpu::stepStart, releaseGil,
            R"doc(Launch one timestep without waiting for it; finish with step_finish(). Returns
 immediately only when PhysxSceneConfig.cpu_workers >= 1: with the default 0 workers PhysX runs
 the whole step on the calling thread here. Calling step_start() on systems on different GPUs
-before their step_finish() overlaps their simulation. Releases the GIL.)doc")
-      .def("step_finish", &PhysxSystemGpu::stepFinish, py::call_guard<py::gil_scoped_release>(),
+before their step_finish() overlaps their simulation. Fetches, applies and queries raise until
+step_finish(). Releases the GIL.)doc")
+      .def("step_finish", &PhysxSystemGpu::stepFinish, releaseGil,
            "Wait for the timestep launched by step_start(). Releases the GIL while waiting.");
 
   PyPhysxGpuContactPairImpulseQuery.def_property_readonly(

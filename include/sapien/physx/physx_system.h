@@ -12,6 +12,7 @@
 #include <PxPhysicsAPI.h>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <set>
 #include <utility>
@@ -110,7 +111,8 @@ protected:
 
   int mSceneCollisionId{0};
 
-  bool mClosed{false};
+  // Atomic: read without the system's lock, e.g. when exporting CUDA views.
+  std::atomic<bool> mClosed{false};
   // Generic engine registration for shutdown accounting. Registered once at
   // construction, unregistered once at close() or destruction.
   bool mRegisteredSystem{false};
@@ -193,8 +195,8 @@ public:
   void stepStart();
   void stepFinish();
 
-  /** Wait until the in-flight simulate (if any) is fetched and all SAPIEN CUDA work
-   *  of this system has completed on the device. */
+  /** Wait until the in-flight simulate (if any) is fetched and all work this system submitted to
+   *  its CUDA stream has completed. Work of other streams and systems is not waited for. */
   void waitIdle() override;
 
   bool isGpu() const override { return true; }
@@ -214,11 +216,14 @@ public:
    *  a managed environment-ID slot to the free list immediately. */
   void onSceneClosed(Scene &scene) override;
 
-  /** Set the CUDA stream for all GPU operations.
-   *  gpuQuery* and gpuApply* will be synchronized with the stream
-   *  If not set, gpuQuery* and gpuApply* synchronizes with the default stream */
+  /** Set the CUDA stream for all GPU operations; 0 is the device's legacy default stream, the
+   *  default. Fetches, applies, queries and DLPack exports of this system's buffers are ordered on
+   *  it. */
   void gpuSetCudaStream(uintptr_t stream);
-  uintptr_t gpuGetCudaStream() const { return reinterpret_cast<uintptr_t>(mCudaStream); }
+  /** The configured stream; lock-free so bindings can order other streams against it. */
+  uintptr_t gpuGetCudaStream() const {
+    return mViewLifecycle->stream.load(std::memory_order_acquire);
+  }
 
   /** handle to the pose-vel buffer for rigid dynamic bodies and links */
   CudaArrayHandle gpuGetRigidBodyCudaHandle() const { return mCudaRigidBodyBuffer.handle(); }
@@ -451,6 +456,13 @@ private:
   void gpuFetchArticulationData(void *data,
                                 ::physx::PxArticulationGPUAPIReadType::Enum type,
                                 CudaEvent &completionEvent);
+  /** Hand `count` rows of `data` to a PhysX Direct GPU API write that starts after
+   *  mCudaEventRecord; the configured stream is ordered after PhysX's read, so the call returns
+   *  without blocking the host and the source may be reused on that stream right away. */
+  void submitRigidDynamicWrite(void const *data, void *gpuIndices,
+                               ::physx::PxRigidDynamicGPUAPIWriteType::Enum type, uint32_t count);
+  void submitArticulationWrite(void const *data, void *gpuIndices,
+                               ::physx::PxArticulationGPUAPIWriteType::Enum type, uint32_t count);
 
   std::map<std::weak_ptr<Scene>, Vec3, std::owner_less<>> mSceneOffset;
   // Scene -> environment ID, always stored unshifted. In manual mode this is pure storage:
@@ -504,15 +516,22 @@ private:
   // GPU-specific engine registration flag for close()/destructor accounting.
   bool mRegisteredGpuSystem{false};
 
-  /** Lifecycle token shared with every exported CUDA view of this system. */
+  /** Lifecycle token shared with every exported CUDA view of this system; also publishes the
+   *  configured CUDA stream to DLPack exports. */
   std::shared_ptr<CudaArrayLifecycle> mViewLifecycle{std::make_shared<CudaArrayLifecycle>()};
+
+  /** Serializes the public GPU entry points, so concurrent calls from several threads cannot
+   *  interleave a simulate with fetches/applies on the shared scratch buffers and events.
+   *  Recursive because entry points call each other. Never held while acquiring the GIL. */
+  mutable std::recursive_mutex mApiMutex;
 
   /** step_start() without a matching step_finish(). */
   bool mSimulateInFlight{false};
 
   uint64_t mTotalSteps{};
 
-  bool mGpuInitialized{false};
+  // Atomic: isInitialized() is read without the lock.
+  std::atomic<bool> mGpuInitialized{false};
 
   // cache values updated in gpuInit
   int mGpuArticulationCount{-1};
@@ -535,6 +554,8 @@ private:
   CudaEvent mCudaArticulationIncomingJointForceFetchEvent;
   CudaEvent mCudaContactCountReadyEvent;
   CudaEvent mCudaContactDataReadyEvent;
+  // recorded by PhysX when a Direct GPU API write has read its source
+  CudaEvent mCudaDirectGpuWriteEvent;
   cudaStream_t mCudaStream{0};
 
   std::optional<uint64_t> mRigidDynamicDataFetchedStep;

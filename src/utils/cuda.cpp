@@ -28,7 +28,8 @@ CudaDeviceScope::~CudaDeviceScope() {
 
 void CudaEvent::init() {
   checkCudaErrors(cudaGetDevice(&cudaId));
-  checkCudaDriverErrors(CudaLib::Get().cuEventCreate(&event, 0));
+  // Events only order streams; skipping timestamps makes record/wait/query cheapest.
+  checkCudaDriverErrors(CudaLib::Get().cuEventCreate(&event, CU_EVENT_DISABLE_TIMING));
 }
 
 CudaEvent::CudaEvent(CudaEvent &&other) {
@@ -83,6 +84,18 @@ void CudaEvent::synchronize() const {
   checkCudaDriverErrors(CudaLib::Get().cuEventSynchronize(event));
 }
 
+bool CudaEvent::query() const {
+  if (!event) {
+    return true;
+  }
+  CUresult result = CudaLib::Get().cuEventQuery(event);
+  if (result == CUDA_ERROR_NOT_READY) {
+    return false;
+  }
+  checkCudaDriverErrors(result);
+  return true;
+}
+
 CudaEvent::~CudaEvent() {
   if (event) {
     try {
@@ -106,6 +119,18 @@ int getCudaPtrDevice(void *ptr) {
     throw std::runtime_error("invalid cuda pointer");
   }
   return attr.device;
+}
+
+void cudaStreamWaitStream(int cudaId, uintptr_t consumer, uintptr_t producer) {
+  auto legacyAsOne = [](uintptr_t stream) { return stream == 0 ? uintptr_t(1) : stream; };
+  if (legacyAsOne(consumer) == legacyAsOne(producer)) {
+    return;
+  }
+  CudaDeviceScope scope(cudaId);
+  // A recorded event may be destroyed right away: the driver frees it once it completes.
+  CudaEvent produced;
+  produced.record(reinterpret_cast<cudaStream_t>(producer));
+  produced.wait(reinterpret_cast<cudaStream_t>(consumer));
 }
 
 } // namespace sapien

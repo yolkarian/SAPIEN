@@ -281,8 +281,9 @@ mark the scene closed. Unlike clear(), a closed scene cannot be reused. Idempote
             if (array.viewGuard) {
               throw std::runtime_error(
                   "raw __cuda_array_interface__ export is disabled for SAPIEN-owned CUDA "
-                  "buffers because the consumer can outlive the producing system; use "
-                  ".torch(), .jax(), .cupy() or .dlpack() so ownership is tracked");
+                  "buffers because the consumer can outlive the producing system; use DLPack "
+                  "(torch.from_dlpack / jax.dlpack.from_dlpack, or .torch(), .jax(), .cupy(), "
+                  ".dlpack()) so ownership is tracked and the consumer is stream-ordered");
             }
             py::tuple shape = py::cast(array.shape);
             py::tuple strides = py::cast(array.strides);
@@ -299,6 +300,43 @@ mark the scene closed. Unlike clear(), a closed scene cannot be reused. Idempote
                             "version"_a = 2);
           })
 #ifdef SAPIEN_CUDA
+      .def(
+          "__dlpack__",
+          [](CudaArrayHandle &array, py::object stream, py::object maxVersion,
+             py::object dlDevice, py::object copy) {
+            return ExportCudaArrayDLPack(array, stream, maxVersion, dlDevice, copy);
+          },
+          py::kw_only(), py::arg("stream") = py::none(), py::arg("max_version") = py::none(),
+          py::arg("dl_device") = py::none(), py::arg("copy") = py::none(),
+          R"doc(Array-API DLPack export: a zero-copy view of this array.
+
+``stream`` is the consumer's CUDA stream (``None``: legacy default stream, ``1``: legacy
+default stream, ``2``: per-thread default stream, ``-1``: no synchronization, otherwise a
+``cudaStream_t``). It is made to wait for the work the owner (e.g. a PhysxGpuSystem) has
+submitted to its stream, so the consumer never reads a buffer that is still being written.
+``max_version >= (1, 0)`` returns a versioned capsule. The view keeps the owner's view guard,
+so the owner cannot be closed while it is alive.)doc")
+      .def(
+          "__dlpack_device__",
+          [](CudaArrayHandle &array) {
+            return py::make_tuple(static_cast<int>(kDLCUDA), array.cudaId);
+          })
+      .def(
+          "copy_from",
+          [](CudaArrayHandle &array, py::object src) {
+            uintptr_t stream = array.producerStream();
+            RunWithBorrowedCudaArray(src, array.cudaId, stream, [&](CudaArrayHandle const &from) {
+              array.copyFrom(from, stream);
+            });
+          },
+          py::arg("src"),
+          R"doc(Copy ``src`` into this array on its owner's CUDA stream and return without waiting.
+
+``src`` must be a contiguous CUDA array on the same device with the same shape and element type:
+any ``__dlpack__`` producer (JAX array, torch tensor, CuPy array), a
+``__cuda_array_interface__`` object, or a ``sapien.CudaArray``. The owner's stream first waits
+until ``src`` is ready, and ``src`` is kept alive until the copy has run, so a JAX result can be
+handed to e.g. ``PhysxGpuSystem.cuda_articulation_qf`` and applied right away.)doc")
       .def("torch",
            [](CudaArrayHandle &array) {
              // torch does not support uint except uint8
@@ -306,30 +344,28 @@ mark the scene closed. Unlike clear(), a closed scene cannot be reused. Idempote
              if (array.type != "u1" && array.type[0] == 'u') {
                newArray.type = "i" + array.type.substr(1);
              }
-             // Route through DLPack so the producer's view lifecycle guard is held by
-             // the tensor until it is freed; a raw __cuda_array_interface__ view would
-             // silently outlive the producer.
-             auto from_dlpack = py::module_::import("torch").attr("from_dlpack");
-             auto capsule = DLPackToCapsule(newArray.toDLPack());
-             return from_dlpack(capsule);
+             // DLPack keeps the producer's view guard alive with the tensor and orders torch's
+             // current stream after the producer's stream.
+             return py::module_::import("torch").attr("from_dlpack")(
+                 py::cast(std::move(newArray)));
            })
       .def("jax",
            [](CudaArrayHandle &array) {
-             auto from_dlpack = py::module_::import("jax").attr("dlpack").attr("from_dlpack");
-             auto capsule = DLPackToCapsule(array.toDLPack());
-             return from_dlpack(capsule);
+             return py::module_::import("jax").attr("dlpack").attr("from_dlpack")(
+                 py::cast(CudaArrayHandle(array)));
            })
       .def("cupy",
            [](CudaArrayHandle &array) {
-             auto from_dlpack = py::module_::import("cupy").attr("from_dlpack");
-             auto capsule = DLPackToCapsule(array.toDLPack());
-             return from_dlpack(capsule);
+             return py::module_::import("cupy").attr("from_dlpack")(
+                 py::cast(CudaArrayHandle(array)));
            })
-      .def("dlpack",
-           [](CudaArrayHandle &array) -> py::object {
-             auto capsule = DLPackToCapsule(array.toDLPack());
-             return capsule;
-           })
+      .def(
+          "dlpack",
+          [](CudaArrayHandle &array) {
+            return ExportCudaArrayDLPack(array, py::none(), py::none(), py::none(), py::none());
+          },
+          "Legacy DLPack capsule for a consumer on the legacy default stream; prefer passing the "
+          "array itself to a from_dlpack function.")
 #endif
       ;
 #ifdef _MSC_VER

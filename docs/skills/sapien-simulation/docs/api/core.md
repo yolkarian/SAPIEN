@@ -105,24 +105,28 @@ source `__dlpack_device__` when supplied, otherwise the current CUDA device at
 import, so DLPack/Torch/CuPy exports have a valid device. Non-empty pointer checks
 and borrowed ownership are unchanged; retain the external owner during use.
 
-- Use: CUDA memory view; convertible to torch/cupy/jax/DLPack.
+- Use: CUDA memory view; implements the array-API DLPack protocol (`__dlpack__`/`__dlpack_device__`), so `torch.from_dlpack(x)`, `jax.dlpack.from_dlpack(x)` and `cupy.from_dlpack(x)` take it directly; `copy_from(src)` copies any CUDA array into it.
 - Bases: `-`
-- Ownership: arrays exported from `PhysxGpuSystem`, `RenderSystem.cuda_object_transforms`, and `RenderCameraGroup` image/pose buffers are owner-tracked. Their `.torch()`, `.jax()`, `.cupy()`, and `.dlpack()` consumers keep the owner alive and block `close()` until released; raw `__cuda_array_interface__` export raises because it cannot carry that guard. Component/shape-owned CUDA buffers without an explicit close owner remain borrowed views whose original owner must stay alive.
+- Ownership: arrays exported from `PhysxGpuSystem`, `RenderSystem.cuda_object_transforms`, and `RenderCameraGroup` image/pose buffers are owner-tracked. Their DLPack consumers (`from_dlpack(x)`, `.torch()`, `.jax()`, `.cupy()`, `.dlpack()`) keep the owner alive and block `close()` until released; raw `__cuda_array_interface__` export raises because it cannot carry that guard. Component/shape-owned CUDA buffers without an explicit close owner remain borrowed views whose original owner must stay alive.
+- Stream order: a DLPack export makes the consumer's stream wait for the owner's stream (a `PhysxGpuSystem`'s `gpu_set_cuda_stream` stream, a camera group's CUDA stream, otherwise the legacy default stream), so read exported views on the consumer's stream without extra synchronization. A view aliases the buffer: the owner's next write (e.g. the next fetch) overwrites it, so copy what must survive and fence with `PhysxGpuSystem.gpu_wait_for` or a `copy_from`/apply when the consumer reads later.
 
 ### Methods/properties
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `cuda_id` | property | `cuda_id(self) -> int` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
-| `cupy` | method | `cupy(self) -> cupy.ndarray` | Return a CuPy CUDA array view. |  |
-| `dlpack` | method | `dlpack(self) -> Any` | Return a DLPack capsule. |  |
-| `jax` | method | `jax(self) -> jax.Array` | Return a JAX CUDA array view. |  |
+| `copy_from` | method | `copy_from(self, src: Any) -> None` | Copy a same-shape, same-type contiguous CUDA array (JAX/torch/CuPy via DLPack, CAI object or `sapien.CudaArray`) into this array on its owner's stream. | Waits on the device for `src`, keeps `src` alive until the copy ran, returns without blocking; e.g. `system.cuda_articulation_target_qpos.copy_from(jax_actions)` then apply. |
+| `cuda_id` | property | `cuda_id(self) -> int` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy views in loop; take a fresh JAX view per step. |
+| `cupy` | method | `cupy(self) -> cupy.ndarray` | Return a CuPy CUDA array view. | Same as `cupy.from_dlpack(x)`. |
+| `dlpack` | method | `dlpack(self) -> Any` | Return a legacy DLPack capsule for a consumer on the legacy default stream. | Prefer passing the array itself to a `from_dlpack` function. |
+| `jax` | method | `jax(self) -> jax.Array` | Return a JAX CUDA array view. | Same as `jax.dlpack.from_dlpack(x)`; JAX treats it as immutable, so take a fresh view after each fetch and never donate it. |
 | `ptr` | property | `ptr(self) -> int` |  |  |
 | `shape` | property | `shape(self) -> list[int]` |  |  |
 | `strides` | property | `strides(self) -> list[int]` |  |  |
-| `torch` | method | `torch(self) -> torch.Tensor` | Return a torch CUDA tensor view; cache outside the loop. | Owner-tracked tensors carry the lifecycle guard themselves and must be released before owner teardown; borrowed buffers still require their original owner to remain alive. |
+| `torch` | method | `torch(self) -> torch.Tensor` | Return a torch CUDA tensor view; cache outside the loop. | Same as `torch.from_dlpack(x)` except unsigned types above 8 bits map to signed. Owner-tracked tensors carry the lifecycle guard themselves and must be released before owner teardown; borrowed buffers still require their original owner to remain alive. |
 | `typestr` | property | `typestr(self) -> str` |  |  |
-| `__cuda_array_interface__` | property | `__cuda_array_interface__(self) -> dict` | Export a borrowed raw CUDA view only when the buffer has no tracked close owner. | Raises for owner-tracked system/group buffers; use `.torch()`, `.jax()`, `.cupy()`, or `.dlpack()` instead. |
+| `__cuda_array_interface__` | property | `__cuda_array_interface__(self) -> dict` | Export a borrowed raw CUDA view only when the buffer has no tracked close owner. | Raises for owner-tracked system/group buffers; use DLPack instead. |
+| `__dlpack__` | method | `__dlpack__(self, *, stream: int \| None = None, max_version: tuple[int, int] \| None = None, dl_device: tuple[int, int] \| None = None, copy: bool \| None = None) -> Any` | Array-API DLPack export (zero-copy view). | `stream`: consumer stream (`None`/`1` legacy default, `2` per-thread default, `-1` no sync, else `cudaStream_t`), made to wait for the owner's stream. `max_version >= (1, 0)` returns a versioned capsule. `copy=True` or another `dl_device` raises `BufferError`. |
+| `__dlpack_device__` | method | `__dlpack_device__(self) -> tuple[int, int]` | `(2, cuda_id)` (kDLCUDA). |  |
 | `__init__` | method | `__init__(self, data: Any) -> None` |  |  |
 
 ## `sapien.Device`

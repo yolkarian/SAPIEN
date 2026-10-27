@@ -3,6 +3,7 @@
 #include "sapien/physx/material.h"
 #include "sapien/physx/physx_system.h"
 #include <algorithm>
+#include <mutex>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -27,6 +28,8 @@ static float gStaticFriction{0.3};
 static float gDynamicFriction{0.3};
 static float gRestitution{0.1};
 static std::weak_ptr<PhysxMaterial> gDefaultMaterial;
+// guards gDefaultMaterial and the friction/restitution defaults it is built from
+static std::mutex gDefaultMaterialMutex;
 static bool gGPUEnabled{false};
 static PhysxSceneConfig gSceneConfig{};
 static PhysxBodyConfig gBodyConfig{};
@@ -37,6 +40,7 @@ static ::physx::PxGpuDynamicsMemoryConfig gGpuMemoryConfig{};
 
 void PhysxDefault::SetDefaultMaterial(float staticFriction, float dynamicFriction,
                                       float restitution) {
+  std::lock_guard lock(gDefaultMaterialMutex);
   gDefaultMaterial.reset();
   gStaticFriction = staticFriction;
   gDynamicFriction = dynamicFriction;
@@ -44,6 +48,7 @@ void PhysxDefault::SetDefaultMaterial(float staticFriction, float dynamicFrictio
 }
 
 std::shared_ptr<PhysxMaterial> PhysxDefault::GetDefaultMaterial() {
+  std::lock_guard lock(gDefaultMaterialMutex);
   auto m = gDefaultMaterial.lock();
   if (m) {
     return m;

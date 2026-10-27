@@ -101,8 +101,12 @@ int CudaArrayHandle::bytes() const {
   return size * typestrBytes(type);
 }
 
+uintptr_t CudaArrayHandle::producerStream() const {
+  return viewGuard ? viewGuard->lifecycle->stream.load(std::memory_order_acquire) : 0;
+}
+
 #ifdef SAPIEN_CUDA
-static void DLManagedTensorDeleter(DLManagedTensor *self) {
+template <typename Managed> static void ManagedTensorDeleter(Managed *self) {
   delete[] self->dl_tensor.strides;
   delete[] self->dl_tensor.shape;
   // manager_ctx owns a copy of the view guard so the producing system observes the
@@ -114,28 +118,67 @@ static void DLManagedTensorDeleter(DLManagedTensor *self) {
   delete self;
 }
 
-DLManagedTensor *CudaArrayHandle::toDLPack() const {
-  auto tensor = new DLManagedTensor();
-  tensor->manager_ctx = new std::shared_ptr<CudaArrayViewGuard>(viewGuard); // may hold nullptr
-  tensor->deleter = &DLManagedTensorDeleter;
+template <typename Managed> static Managed *ExportManagedTensor(CudaArrayHandle const &handle) {
+  auto tensor = new Managed();
+  // may hold nullptr
+  tensor->manager_ctx = new std::shared_ptr<CudaArrayViewGuard>(handle.viewGuard);
+  tensor->deleter = &ManagedTensorDeleter<Managed>;
 
-  tensor->dl_tensor.data = ptr;
-  tensor->dl_tensor.device = {kDLCUDA, cudaId};
-  tensor->dl_tensor.ndim = shape.size();
-  tensor->dl_tensor.dtype = TypestrToDLDataType(type);
+  tensor->dl_tensor.data = handle.ptr;
+  tensor->dl_tensor.device = {kDLCUDA, handle.cudaId};
+  tensor->dl_tensor.ndim = handle.shape.size();
+  tensor->dl_tensor.dtype = TypestrToDLDataType(handle.type);
 
-  tensor->dl_tensor.shape = new int64_t[shape.size()];
-  for (uint32_t i = 0; i < shape.size(); ++i) {
-    tensor->dl_tensor.shape[i] = shape[i];
+  tensor->dl_tensor.shape = new int64_t[handle.shape.size()];
+  for (uint32_t i = 0; i < handle.shape.size(); ++i) {
+    tensor->dl_tensor.shape[i] = handle.shape[i];
   }
 
-  tensor->dl_tensor.strides = new int64_t[strides.size()];
-  for (uint32_t i = 0; i < strides.size(); ++i) {
-    tensor->dl_tensor.strides[i] = strides[i] / (tensor->dl_tensor.dtype.bits / 8);
+  tensor->dl_tensor.strides = new int64_t[handle.strides.size()];
+  for (uint32_t i = 0; i < handle.strides.size(); ++i) {
+    tensor->dl_tensor.strides[i] = handle.strides[i] / (tensor->dl_tensor.dtype.bits / 8);
   }
   tensor->dl_tensor.byte_offset = 0;
-
   return tensor;
+}
+
+DLManagedTensor *CudaArrayHandle::toDLPack() const {
+  return ExportManagedTensor<DLManagedTensor>(*this);
+}
+
+DLManagedTensorVersioned *CudaArrayHandle::toDLPackVersioned() const {
+  auto tensor = ExportManagedTensor<DLManagedTensorVersioned>(*this);
+  tensor->version = {DLPACK_MAJOR_VERSION, DLPACK_MINOR_VERSION};
+  tensor->flags = 0;
+  return tensor;
+}
+
+void CudaArrayHandle::copyFrom(CudaArrayHandle const &src, uintptr_t stream) const {
+  if (src.cudaId != cudaId) {
+    throw std::runtime_error("failed to copy CUDA array: the source is on cuda:" +
+                             std::to_string(src.cudaId) + ", the destination on cuda:" +
+                             std::to_string(cudaId));
+  }
+  if (src.shape != shape) {
+    throw std::runtime_error("failed to copy CUDA array: source shape " +
+                             VectorToString(src.shape) + " differs from destination shape " +
+                             VectorToString(shape));
+  }
+  if (typestrCode(src.type) != typestrCode(type) ||
+      typestrBytes(src.type) != typestrBytes(type)) {
+    throw std::runtime_error("failed to copy CUDA array: source type " + src.type +
+                             " differs from destination type " + type);
+  }
+  if (!src.isContiguous() || !isContiguous()) {
+    throw std::runtime_error("failed to copy CUDA array: both arrays must be contiguous");
+  }
+  int size = bytes();
+  if (size == 0) {
+    return;
+  }
+  CudaDeviceScope scope(cudaId);
+  checkCudaErrors(cudaMemcpyAsync(ptr, src.ptr, size, cudaMemcpyDeviceToDevice,
+                                  reinterpret_cast<cudaStream_t>(stream)));
 }
 #endif
 

@@ -252,7 +252,8 @@ Single-GPU code needs no device argument and is unchanged:
 
 One `PhysxGpuSystem` is one PhysX scene on one GPU; PhysX never splits it across
 devices. Scale out with one system per GPU, in either of the layouts Isaac Sim and
-Isaac Lab use.
+Isaac Lab use. One process per GPU is the faster layout: every rank's PhysX and
+Python host work runs in parallel without a shared interpreter lock.
 
 **One process per GPU.** Launch one process per GPU (for example with
 `torchrun --nproc_per_node=<gpus>`). A rank that sees only its own GPU, for
@@ -271,38 +272,70 @@ All GPUs may stay visible to every rank; SAPIEN creates no CUDA context on the
 devices a rank does not use. When the PhysX GPU library still has to be
 downloaded, one rank downloads it under a file lock while the others wait.
 
-**Several GPUs in one process.** Create one system per device, each with its own
-scenes. Every device gets its own PhysX CUDA context manager on its primary CUDA
-context, the one Torch uses, so `system.cuda_*` buffers of the system on `cuda:k`
-are Torch tensors on `cuda:k`:
+PyTorch ranks wrap the policy in `DistributedDataParallel`. JAX ranks form one
+multi-controller job and run the update over global arrays; the SAPIEN calls are
+the same as on one GPU:
 
 ```python
-config = sapien.physx.get_scene_config()
-config.cpu_workers = 1  # lets step_start() return before the GPU work finishes
-sapien.physx.set_scene_config(config)
+jax.distributed.initialize(coordinator_address, num_processes=world,
+                           process_id=rank, local_device_ids=[0])
+mesh = jax.make_mesh((world,), ("env",))
+sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("env"))
 
+physx_system.gpu_fetch_articulation_qpos()
+qpos = jax.dlpack.from_dlpack(physx_system.cuda_articulation_qpos)  # zero-copy
+action = act(model, qpos)                              # jitted policy on this GPU
+physx_system.cuda_articulation_target_qpos.copy_from(action)
+physx_system.gpu_apply_articulation_target_position()
+physx_system.step()
+...
+batch = jax.make_array_from_process_local_data(sharding, local_rollout)
+model, opt_state = update(model, opt_state, batch)   # gradients all-reduced by XLA
+```
+
+`jax.dlpack.from_dlpack` and `torch.from_dlpack` accept SAPIEN arrays directly and
+make the consumer's stream wait for the system's stream, so no host
+synchronization is needed. JAX arrays are immutable views here: take a fresh one
+after every fetch, copy what must survive the next fetch inside the jitted step,
+and never donate them. `copy_from` waits on the device for the JAX result and keeps
+it alive until the copy ran; `gpu_apply_*()` then returns without blocking the
+host.
+
+**Several GPUs in one process.** Create one system per device, each with its own
+scenes. Every device gets its own PhysX CUDA context manager on its primary CUDA
+context, the one Torch and JAX use, so `system.cuda_*` buffers of the system on
+`cuda:k` are tensors on `cuda:k`. Build every scene and call every `gpu_init()`
+from one thread, then drive each system from its own Python thread:
+
+```python
 systems = [sapien.physx.PhysxGpuSystem(f"cuda:{k}") for k in range(torch.cuda.device_count())]
 # build the scenes of every system, then call gpu_init() on each
 
-for system in systems:
-    system.step_start()
-for system in systems:
-    system.step_finish()
+def rollout(system):
+    for _ in range(horizon):
+        ...  # fetch, policy on this GPU, write actions, apply
+        system.step()
+
+with concurrent.futures.ThreadPoolExecutor(len(systems)) as pool:
+    list(pool.map(rollout, systems))
 ```
 
-Launching every system before waiting for any lets the GPUs simulate at the same
-time. With the default `cpu_workers = 0`, `step_start()` runs the whole step on
-the calling thread and the loop above serializes the GPUs. Alternatively, step
-each system from its own Python thread: `step()`, `step_start()`,
-`step_finish()` and `wait_idle()` release the GIL. Never call one system from
-two threads at once.
+Every steady-state call (`step()`, fetches, applies, computes, contact queries,
+`wait_idle()`, `close()`) releases the GIL, and calls into one system from several
+threads are serialized. With JAX, each thread dispatches its device's
+single-device jitted policy; run the multi-device update once after the threads
+joined. Stepping every system from a single thread also works: set
+`PhysxSceneConfig.cpu_workers = 1` before creating the systems and call
+`step_start()` on every system before any `step_finish()` (fetches and applies
+raise in between). With the default `cpu_workers = 0`, `step_start()` runs the
+whole step on the calling thread and that loop serializes the GPUs.
 
 Keep every input of a system on its device: index buffers passed to indexed
-`gpu_*` APIs and streams passed to `gpu_set_cuda_stream()` must belong to that
-device, and other devices raise `RuntimeError`. SAPIEN makes a system's device
-current only while it works on that system and then restores the caller's current
-CUDA device, so `torch.cuda.current_device()` is unchanged by SAPIEN calls;
-create tensors on explicit devices.
+`gpu_*` APIs, `copy_from` sources and streams passed to `gpu_set_cuda_stream()`
+must belong to that device, and other devices raise `RuntimeError`. SAPIEN makes a
+system's device current only while it works on that system and then restores the
+caller's current CUDA device, so `torch.cuda.current_device()` is unchanged by
+SAPIEN calls; create tensors on explicit devices.
 
 ## Job-scoped teardown
 
@@ -327,8 +360,9 @@ finally:
 `Scene.close()` is terminal: unlike `clear()`, it removes all entities, detaches
 its systems, returns managed environment-ID slots immediately, and rejects reuse.
 A PhysX system rejects `close()` while scenes, components, or CUDA views exported
-from its `cuda_*` buffers remain alive. Use `.torch()`, `.jax()`, `.cupy()` or
-`.dlpack()` for those buffers; their DLPack owner keeps the lifecycle tracked.
+from its `cuda_*` buffers remain alive. Use DLPack (`torch.from_dlpack`,
+`jax.dlpack.from_dlpack`, `.torch()`, `.jax()`, `.cupy()` or `.dlpack()`) for those
+buffers; their DLPack owner keeps the lifecycle tracked.
 
 `sapien.shutdown()` first waits for and releases SAPIEN-owned render groups/engine
 (the caller must close viewers/groups/systems), then clears PhysX caches, releases the

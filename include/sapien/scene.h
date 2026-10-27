@@ -15,8 +15,6 @@ class SapienRendererSystem;
 }
 
 class Scene : public std::enable_shared_from_this<Scene> {
-  static uint64_t gNextSceneId;
-
 public:
   Scene(std::vector<std::shared_ptr<System>> const &systems = {});
 

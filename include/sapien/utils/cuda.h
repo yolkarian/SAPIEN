@@ -1,5 +1,6 @@
 #ifdef SAPIEN_CUDA
 #pragma once
+#include <cstdint>
 #include <stdexcept>
 #include <string>
 
@@ -61,11 +62,20 @@ struct CudaEvent {
 
   void synchronize() const;
 
+  /** @return whether all work captured by the last record() has completed; true when the event
+   *  was never recorded */
+  bool query() const;
+
   ~CudaEvent();
 
   int cudaId{-1};
   CUevent event{nullptr};
 };
+
+/** Make `consumer` wait for all work submitted to `producer` so far, both streams of device
+ *  `cudaId`. Streams are raw handles in the DLPack convention: 0 and 1 (CU_STREAM_LEGACY) are the
+ *  legacy default stream, 2 is the per-thread default stream. Equal streams need no wait. */
+void cudaStreamWaitStream(int cudaId, uintptr_t consumer, uintptr_t producer);
 
 }; // namespace sapien
 #endif

@@ -873,6 +873,9 @@ class PhysxGpuSystem(PhysxSystem):
         """Query pair impulses with the same synchronization contract as body queries."""
     def gpu_wait_contact_queries(self) -> None:
         """Wait for contact copies and query kernels on the configured CUDA stream."""
+    def gpu_get_cuda_stream(self) -> int:
+        """The CUDA stream this system submits its work to, as an integer ``cudaStream_t``;
+        ``0`` is the device's legacy default stream."""
     def gpu_set_cuda_stream(self, stream: int) -> None:
         """
         PhysX GPU APIs will be synchronized with the provided stream and SAPIEN's CUDA
@@ -880,10 +883,21 @@ class PhysxGpuSystem(PhysxSystem):
 
         The stream must belong to this system's device (its primary CUDA context), for
         example ``torch.cuda.Stream(device=system.device.cuda_id)``; streams of another
-        device raise ``RuntimeError``. ``0`` selects the device's default stream.
+        device raise ``RuntimeError``. ``0`` selects the device's legacy default stream,
+        which is the default.
 
         Args:
             stream: integer representation of a cuda stream pointer
+        """
+    def gpu_wait_for(self, array: typing.Any) -> None:
+        """Make this system's CUDA stream wait until ``array`` is ready, without blocking
+        the host.
+
+        ``array`` is any ``__dlpack__`` producer on this system's device (JAX array, torch tensor,
+        CuPy array), a ``__cuda_array_interface__`` object with a ``stream`` entry, or a
+        ``sapien.CudaArray``. Use it as a fence before a fetch overwrites buffers that a consumer
+        still reads through DLPack views, when no ``copy_from``/indexed call already ordered the stream
+        after that consumer.
         """
     @typing.overload
     def gpu_update_articulation_kinematics(self) -> None:
@@ -903,9 +917,9 @@ class PhysxGpuSystem(PhysxSystem):
         """
     def step(self) -> None:
         """
-        Simulate one timestep and wait for it. Releases the GIL, so systems on different
-        GPUs can be stepped concurrently from separate Python threads. Do not call other
-        APIs of the same system from another thread while it steps.
+        Simulate one timestep and wait for it. Releases the GIL, so systems on
+        different GPUs can be stepped concurrently from separate Python threads. Calls into the same
+        system from several threads are serialized.
         """
     def step_finish(self) -> None:
         """
@@ -914,10 +928,10 @@ class PhysxGpuSystem(PhysxSystem):
     def step_start(self) -> None:
         """
         Launch one timestep without waiting for it; finish with step_finish(). Returns
-        immediately only when PhysxSceneConfig.cpu_workers >= 1: with the default 0 workers
-        PhysX runs the whole step on the calling thread here. Calling step_start() on
-        systems on different GPUs before their step_finish() overlaps their simulation.
-        Releases the GIL.
+        immediately only when PhysxSceneConfig.cpu_workers >= 1: with the default 0 workers PhysX runs
+        the whole step on the calling thread here. Calling step_start() on systems on different GPUs
+        before their step_finish() overlaps their simulation. Fetches, applies and queries raise until
+        step_finish(). Releases the GIL.
         """
     def sync_poses_gpu_to_cpu(self) -> None:
         """
@@ -1367,6 +1381,7 @@ class PhysxSystem(sapien.pysapien.System):
         Terminally close this system. All scenes owned by the system must be closed
         first so actors and components unbind with the system still alive. Idempotent; steady-state
         APIs raise afterwards. Destructors fall back to the same release as a noisy safety net.
+        Releases the GIL and waits for calls of other threads into this system to finish.
         """
         ...
     def get_articulation_link_components(self) -> list[PhysxArticulationLinkComponent]:
@@ -1387,8 +1402,9 @@ class PhysxSystem(sapien.pysapien.System):
         ...
     def wait_idle(self) -> None:
         """
-        Wait until all simulation and fetch work of this system completed. Releases the GIL
-        while waiting.
+        Wait until the in-flight step (if any) and all work this system submitted to its
+        CUDA stream completed. Does not wait for other streams or other systems on the device.
+        Releases the GIL while waiting.
         """
         ...
     @property

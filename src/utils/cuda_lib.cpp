@@ -42,10 +42,13 @@ CudaLib::CudaLib() {
   bindSymbol(cuCtxPopCurrent, load("cuCtxPopCurrent_v2"));
   bindSymbol(cuStreamGetCtx, load("cuStreamGetCtx"));
   bindSymbol(cuEventCreate, load("cuEventCreate"));
-  bindSymbol(cuEventDestroy, load("cuEventDestroy"));
+  // The unversioned cuEventDestroy keeps its CUDA 3 behavior and waits until the whole device is
+  // idle; _v2 returns at once and frees an event still in flight once it completes.
+  bindSymbol(cuEventDestroy, load("cuEventDestroy_v2"));
   bindSymbol(cuEventRecord, load("cuEventRecord"));
   bindSymbol(cuStreamWaitEvent, load("cuStreamWaitEvent"));
   bindSymbol(cuEventSynchronize, load("cuEventSynchronize"));
+  bindSymbol(cuEventQuery, load("cuEventQuery"));
   if (cuInit) {
     cuInit(0);
   }

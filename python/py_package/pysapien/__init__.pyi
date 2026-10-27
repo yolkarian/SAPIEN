@@ -54,10 +54,31 @@ class CudaArray:
         otherwise the current CUDA device at import. Keep the external allocation
         owner alive during use.
         """
+    def __dlpack__(self, *, stream: int | None = None, max_version: tuple[int, int] | None = None, dl_device: tuple[int, int] | None = None, copy: bool | None = None) -> typing.Any:
+        """Array-API DLPack export: a zero-copy view of this array.
+
+        ``stream`` is the consumer's CUDA stream (``None``: legacy default stream, ``1``: legacy
+        default stream, ``2``: per-thread default stream, ``-1``: no synchronization, otherwise a
+        ``cudaStream_t``). It is made to wait for the work the owner (e.g. a PhysxGpuSystem) has
+        submitted to its stream, so the consumer never reads a buffer that is still being written.
+        ``max_version >= (1, 0)`` returns a versioned capsule. The view keeps the owner's view guard,
+        so the owner cannot be closed while it is alive.
+        """
+    def __dlpack_device__(self) -> tuple[int, int]:
+        ...
+    def copy_from(self, src: typing.Any) -> None:
+        """Copy ``src`` into this array on its owner's CUDA stream and return without waiting.
+
+        ``src`` must be a contiguous CUDA array on the same device with the same shape and element type:
+        any ``__dlpack__`` producer (JAX array, torch tensor, CuPy array), a
+        ``__cuda_array_interface__`` object, or a ``sapien.CudaArray``. The owner's stream first waits
+        until ``src`` is ready, and ``src`` is kept alive until the copy has run, so a JAX result can be
+        handed to e.g. ``PhysxGpuSystem.cuda_articulation_qf`` and applied right away.
+        """
     def cupy(self) -> cupy.ndarray:
         ...
     def dlpack(self) -> typing.Any:
-        ...
+        """Legacy DLPack capsule for a consumer on the legacy default stream; prefer passing the array itself to a from_dlpack function."""
     def jax(self) -> jax.Array:
         ...
     def torch(self) -> torch.Tensor:

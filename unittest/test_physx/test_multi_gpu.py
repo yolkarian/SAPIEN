@@ -185,6 +185,31 @@ class TestMultiGpuPhysx(unittest.TestCase):
         for sim, start in zip(sims, starts):
             self._assert_free_fall(sim, start, 4.0, STEPS)
 
+    def test_threads_fetch_apply_and_step_their_device(self) -> None:
+        """Fetch, Torch writes, apply and step run concurrently from one thread per device."""
+        sims = [self._sim("cuda:0"), self._sim("cuda:1")]
+        velocities = [2.0, 6.0]
+        starts: List["torch.Tensor"] = [torch.empty(0), torch.empty(0)]
+        errors: List[BaseException] = []
+
+        def run(index: int) -> None:
+            try:
+                for _ in range(10):
+                    starts[index] = sims[index].launch(velocities[index])
+                    for _ in range(5):
+                        sims[index].system.step()
+            except BaseException as error:  # noqa: BLE001 - reported to the main thread
+                errors.append(error)
+
+        threads = [threading.Thread(target=run, args=(index,)) for index in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+        for sim, start, v in zip(sims, starts, velocities):
+            self._assert_free_fall(sim, start, v, 5)
+
     def test_gpu_set_cuda_stream_zero_roundtrip(self) -> None:
         """Stream 0 selects the system's own default stream and later own-device streams work."""
         torch.cuda.set_device(0)
@@ -230,6 +255,23 @@ class TestMultiGpuPhysx(unittest.TestCase):
         foreign_indices = torch.arange(4, dtype=torch.int32, device="cuda:0")
         with self.assertRaisesRegex(RuntimeError, "same CUDA device"):
             sim.system.gpu_apply_rigid_dynamic_data(foreign_indices)
+
+    def test_torch_inputs_on_the_system_device_while_another_is_current(self) -> None:
+        """Torch exports only from the current device; SAPIEN makes the input's device current."""
+        sim = self._sim("cuda:1")
+        sim.system.gpu_fetch_rigid_dynamic_data()
+        state = sim.bodies.clone()
+        state[:, 7:13] = 0.0
+        state[:, 9] = 3.0
+        start = state[:, 2].clone()
+        sim.system.cuda_rigid_dynamic_data.copy_from(state)
+        indices = torch.arange(state.shape[0], dtype=torch.int32, device="cuda:1")
+        sim.system.gpu_apply_rigid_dynamic_data(indices)
+        self.assertEqual(torch.cuda.current_device(), 0)
+        for _ in range(STEPS):
+            sim.system.step()
+        self._assert_free_fall(sim, start, 3.0, STEPS)
+        self.assertEqual(torch.cuda.current_device(), 0)
 
     def test_closing_one_device_keeps_the_other_running(self) -> None:
         """Closing the systems of one device leaves the systems of another device running."""

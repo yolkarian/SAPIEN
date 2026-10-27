@@ -1,5 +1,6 @@
 #pragma once
 #include <atomic>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <vector>
@@ -16,6 +17,9 @@ std::vector<int> ShapeToStrides(std::vector<int> const &shape, int elemSize);
  *  PhysxGpuSystem). The owner refuses to close while views are outstanding. */
 struct CudaArrayLifecycle {
   std::atomic<int64_t> views{0};
+  /** CUDA stream on which the owner writes the viewed buffers (0 is the legacy default stream).
+   *  DLPack exports order their consumer after the work submitted to it. */
+  std::atomic<uintptr_t> stream{0};
   int64_t viewCount() const { return views.load(std::memory_order_acquire); }
 };
 
@@ -46,7 +50,17 @@ struct CudaArrayHandle {
   std::shared_ptr<CudaArrayViewGuard> viewGuard{};
 
   bool isContiguous() const;
+
+  /** Stream on which the owner produces this buffer; 0 (legacy default stream) when the handle
+   *  has no owner. */
+  uintptr_t producerStream() const;
+
   DLManagedTensor *toDLPack() const;
+  DLManagedTensorVersioned *toDLPackVersioned() const;
+
+  /** Copy the contiguous array `src` (same device, shape and element type) into this contiguous
+   *  array on `stream`; returns before the copy runs. */
+  void copyFrom(CudaArrayHandle const &src, uintptr_t stream) const;
 
   void checkCongiguous() const;
   void checkShape(std::vector<int> const &expected) const;

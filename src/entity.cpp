@@ -2,15 +2,17 @@
 #include "./logger.h"
 #include "sapien/component.h"
 #include "sapien/scene.h"
+#include <atomic>
 
 namespace sapien {
 
-static uint64_t gNextEntityId = 1ul;
-static uint64_t gEntityCount = 0;
+// Atomic so entities created or destroyed on different threads keep unique IDs and exact counts.
+static std::atomic<uint64_t> gNextEntityId{1};
+static std::atomic<uint64_t> gEntityCount{0};
 
 Entity::Entity() : mId(gNextEntityId++) {
-  gEntityCount++;
-  logger::info("Created Entity {}, total {}", mId, gEntityCount);
+  uint64_t count = ++gEntityCount;
+  logger::info("Created Entity {}, total {}", mId, count);
 }
 
 std::shared_ptr<Scene> Entity::getScene() { return mScene ? mScene->shared_from_this() : nullptr; }
@@ -122,8 +124,8 @@ void Entity::removeFromScene() {
 uint64_t Entity::liveCount() { return gEntityCount; }
 
 Entity::~Entity() {
-  gEntityCount--;
-  logger::info("Deleting Entity {}, total {}", mId, gEntityCount);
+  uint64_t count = --gEntityCount;
+  logger::info("Deleting Entity {}, total {}", mId, count);
 }
 
 } // namespace sapien

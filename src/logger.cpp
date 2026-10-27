@@ -4,11 +4,12 @@ namespace sapien {
 namespace logger {
 
 std::shared_ptr<spdlog::logger> getLogger() {
-  static std::shared_ptr<spdlog::logger> logger;
-  if (!logger) {
-    logger = spdlog::stderr_color_mt("SAPIEN");
+  // initialized once even when several threads log first
+  static std::shared_ptr<spdlog::logger> logger = [] {
+    auto logger = spdlog::stderr_color_mt("SAPIEN");
     logger->set_level(spdlog::level::warn);
-  }
+    return logger;
+  }();
   return logger;
 }
 

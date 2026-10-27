@@ -22,6 +22,7 @@ struct CudaLib {
   decltype(::cuEventRecord) *cuEventRecord{};
   decltype(::cuStreamWaitEvent) *cuStreamWaitEvent{};
   decltype(::cuEventSynchronize) *cuEventSynchronize{};
+  decltype(::cuEventQuery) *cuEventQuery{};
 };
 
 /** Primary context of CUDA runtime device `cudaId`: the context the CUDA runtime, PyTorch, CuPy

@@ -4,6 +4,43 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+CUDA interop and threads (JAX/Torch handoff without host synchronization):
+
+- `sapien.CudaArray` implements the array-API DLPack protocol (`__dlpack__(stream=...,
+  max_version=...)`, `__dlpack_device__`): `torch.from_dlpack(x)`, `jax.dlpack.from_dlpack(x)`
+  and `cupy.from_dlpack(x)` take SAPIEN arrays directly, and the consumer's stream now waits
+  for the owner's stream (the PhysX system's configured stream, a camera group's stream,
+  otherwise the legacy default stream). `.torch()`, `.jax()` and `.cupy()` use the same
+  handshake. `.jax()` used to pass a bare capsule, which current JAX rejects.
+- New `CudaArray.copy_from(src)`: copy a same-shape, same-type CUDA array (JAX, Torch, CuPy,
+  CAI object, `sapien.CudaArray`) into a SAPIEN buffer on its owner's stream after the
+  producer finished it; the producer stays alive until the copy ran. This is how JAX writes
+  actions into e.g. `cuda_articulation_target_qpos` before an apply.
+- New `PhysxGpuSystem.gpu_get_cuda_stream()` and `PhysxGpuSystem.gpu_wait_for(array)` (make
+  the system's stream wait for a JAX/Torch/CuPy array without blocking the host).
+- Indexed GPU calls accept any `__dlpack__` producer, JAX arrays included, order the system's
+  stream after the producer and keep it alive until the stream ran past the call. Inputs used
+  to be read through `__cuda_array_interface__` with no stream ordering, so a JAX index array
+  could be read before JAX had written it.
+- **Behavior change:** `gpu_apply_*` and the Viewer wrench/teleport helpers no longer block the
+  host until PhysX has copied the data; they return once enqueued, and the system's stream is
+  ordered after PhysX's read. A buffer written from another stream after an apply must be
+  ordered after the system's stream (Torch's default stream shares the legacy default stream
+  with an unconfigured system and needs nothing).
+- **Behavior change:** `wait_idle()` waits for the in-flight step and the system's own stream
+  only, no longer for the whole device (other systems, Torch/JAX streams). `close()` still
+  quiesces the device before releasing.
+- **Behavior change:** fetch, apply, compute, contact-query, upload/download and `gpu_init()`
+  calls raise `RuntimeError` while a `step_start()` is in flight; PhysX used to drop applies
+  silently and fail fetches with a generic error.
+- Every steady-state `PhysxGpuSystem` call and `close()` release the GIL; calls into one system
+  from several threads are serialized by an internal lock instead of racing. Build scenes and
+  call `gpu_init()` from one thread; scene/entity/device/default-material bookkeeping is now
+  thread-safe, PhysX object creation is not.
+- Indexed calls with an empty index buffer return without touching PhysX. Articulation joint
+  buffers (`cuda_articulation_qpos`, `qvel`, `qf`, `qacc`, `target_qpos`, `target_qvel`, the
+  compensation buffers) now start on 256-byte boundaries, as XLA expects of imported buffers.
+
 Multi-GPU PhysX:
 
 - Single-GPU code needs no change: the Python API is the same, and `PhysxGpuSystem()`
