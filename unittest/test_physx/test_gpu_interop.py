@@ -1,8 +1,9 @@
 """CUDA interop of PhysxGpuSystem: DLPack stream handshake, borrowed inputs, host-async calls.
 
 Torch supplies CUDA buffers, streams, delay kernels and assertions; the JAX cases run only with a
-CUDA-enabled JAX. All simulation is SAPIEN. Delay kernels make every ordering deterministic: a
-missing stream dependency reads stale data or trips index validation while the delay runs.
+CUDA-enabled JAX, and the two-device case only when Torch and JAX both see two GPUs. All
+simulation is SAPIEN. Delay kernels make every ordering deterministic: a missing stream
+dependency reads stale data or trips index validation while the delay runs.
 """
 
 import ctypes
@@ -26,15 +27,21 @@ try:
     import jax
     import jax.numpy as jnp
 
-    HAS_JAX_CUDA = any(device.platform == "gpu" for device in jax.devices())
+    JAX_GPUS = [device for device in jax.devices() if device.platform == "gpu"]
 except Exception:  # pragma: no cover - depends on the test environment
     jax = None
     jnp = None
-    HAS_JAX_CUDA = False
+    JAX_GPUS = []
+HAS_JAX_CUDA = bool(JAX_GPUS)
 
 ARTICULATIONS = 32
 SLEEP_CYCLES = 400_000_000
 TIMESTEP = 0.005
+# Closed-loop tracking on two devices: per-step delay on the system stream, controller gain and
+# step count (gain * TIMESTEP = 0.1 keeps a one-step-stale trajectory 4% of the target away).
+TRACK_DELAY_CYCLES = 50_000_000
+TRACK_GAIN = 20.0
+TRACK_STEPS = 12
 
 _capsule_is_valid = ctypes.pythonapi.PyCapsule_IsValid
 _capsule_is_valid.argtypes = [ctypes.py_object, ctypes.c_char_p]
@@ -52,6 +59,35 @@ class _ForwardingArray:
 
     def __dlpack_device__(self):
         return self.tensor.__dlpack_device__()
+
+
+def _build_slider_system(
+    device: str = "cuda", *, index_validation: bool = True
+) -> tuple["sapien.physx.PhysxGpuSystem", "sapien.Scene"]:
+    """A GPU system holding fixed-root articulations with one frictionless horizontal slider."""
+    config = sapien.physx.PhysxSceneConfig()
+    config.gravity = [0.0, 0.0, -9.81]
+    config.num_scenes = 1
+    config.gpu_index_validation = index_validation
+    sapien.physx.set_scene_config(config)
+    system = sapien.physx.PhysxGpuSystem(device)
+    system.set_timestep(TIMESTEP)
+    scene = sapien.Scene([system])
+    builder = scene.create_articulation_builder()
+    root = builder.create_link_builder()
+    root.add_box_collision(half_size=[0.05, 0.05, 0.05])
+    slider = builder.create_link_builder(root)
+    slider.add_box_collision(half_size=[0.05, 0.05, 0.05])
+    slider.set_joint_properties(
+        "prismatic", limits=[[-100.0, 100.0]],
+        pose_in_parent=sapien.Pose([0.2, 0.0, 0.0]),
+        pose_in_child=sapien.Pose(), friction=0.0, damping=0.0,
+    )
+    for index in range(ARTICULATIONS):
+        builder.set_initial_pose(sapien.Pose([0.0, float(index), 0.0]))
+        builder.build(fix_root_link=True)
+    system.gpu_init()
+    return system, scene
 
 
 @unittest.skipUnless(
@@ -75,29 +111,7 @@ class TestGpuInterop(unittest.TestCase):
         sapien.physx.set_scene_config(self.old_config)
 
     def _build_sliders(self, *, index_validation: bool = True) -> None:
-        """Fixed-root articulations with one horizontal prismatic joint and no friction."""
-        config = sapien.physx.PhysxSceneConfig()
-        config.gravity = [0.0, 0.0, -9.81]
-        config.num_scenes = 1
-        config.gpu_index_validation = index_validation
-        sapien.physx.set_scene_config(config)
-        self.system = sapien.physx.PhysxGpuSystem()
-        self.system.set_timestep(TIMESTEP)
-        self.scene = sapien.Scene([self.system])
-        builder = self.scene.create_articulation_builder()
-        root = builder.create_link_builder()
-        root.add_box_collision(half_size=[0.05, 0.05, 0.05])
-        slider = builder.create_link_builder(root)
-        slider.add_box_collision(half_size=[0.05, 0.05, 0.05])
-        slider.set_joint_properties(
-            "prismatic", limits=[[-100.0, 100.0]],
-            pose_in_parent=sapien.Pose([0.2, 0.0, 0.0]),
-            pose_in_child=sapien.Pose(), friction=0.0, damping=0.0,
-        )
-        for index in range(ARTICULATIONS):
-            builder.set_initial_pose(sapien.Pose([0.0, float(index), 0.0]))
-            builder.build(fix_root_link=True)
-        self.system.gpu_init()
+        self.system, self.scene = _build_slider_system(index_validation=index_validation)
         self.device = torch.device("cuda", self.system.device.cuda_id)
 
     def _qvel_after_step(self) -> "torch.Tensor":
@@ -321,6 +335,104 @@ class TestGpuInterop(unittest.TestCase):
         torch.testing.assert_close(qvel, torch.full_like(qvel, 4.0), rtol=0.0, atol=1e-3)
         self.assertEqual(self.system.cuda_articulation_qvel.jax().shape, (ARTICULATIONS, 1))
         gc.collect()
+
+
+@unittest.skipUnless(
+    torch is not None
+    and torch.cuda.is_available()
+    and torch.cuda.device_count() >= 2
+    and len(JAX_GPUS) >= 2,
+    "requires two CUDA devices seen by both CUDA-enabled Torch and CUDA-enabled JAX",
+)
+class TestJaxOnTwoDevices(unittest.TestCase):
+    """One PhysxGpuSystem per GPU, each driven through JAX from its own thread."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        sapien.physx.enable_gpu()
+
+    def setUp(self) -> None:
+        self.old_config = sapien.physx.get_scene_config()
+        self.sims: list[tuple["sapien.physx.PhysxGpuSystem", "sapien.Scene"]] = []
+
+    def tearDown(self) -> None:
+        for system, _ in self.sims:
+            system.wait_idle()
+        gc.collect()
+        for system, scene in self.sims:
+            scene.close()
+            system.close()
+        sapien.physx.set_scene_config(self.old_config)
+
+    def test_threads_track_targets_through_jax(self) -> None:
+        """Each thread reads fetched joint positions into JAX and writes JAX's velocity command
+        back. The system stream sleeps before every fetch and the command waits for a matmul
+        chain, so skipping the stream handshake in either direction feeds the controller a
+        one-step-stale value and moves it off its closed-form trajectory."""
+        # Commands (at most TRACK_GAIN * target = 8 m/s) stay below PhysX's default 10 m/s
+        # articulation-link speed limit, which would otherwise clip them.
+        targets = [0.25, 0.4]
+        self.sims = [_build_slider_system(f"cuda:{k}") for k in range(2)]
+        devices = [
+            next(d for d in JAX_GPUS if d.local_hardware_id == system.device.cuda_id)
+            for system, _ in self.sims
+        ]
+        ballasts = [jax.device_put(jnp.full((1024, 1024), 1e-3, jnp.float32), d) for d in devices]
+
+        @jax.jit
+        def track(qpos: "jax.Array", ballast: "jax.Array", target: float) -> "jax.Array":
+            for _ in range(8):
+                ballast = jnp.tanh(ballast @ ballast)
+            ready = jnp.all(jnp.isfinite(ballast))
+            return jnp.where(ready, TRACK_GAIN * (target - qpos), jnp.nan)
+
+        # Compile, load the delay kernel and run one zero-velocity step per device up front: first
+        # launches synchronize the context and would hide a missing dependency. The joints start
+        # at the origin, so tracking target 0 commands zero velocity.
+        for (system, _), ballast in zip(self.sims, ballasts):
+            with torch.cuda.device(system.device.cuda_id):
+                torch.cuda._sleep(1)
+            system.gpu_fetch_articulation_qpos()
+            command = track(jax.dlpack.from_dlpack(system.cuda_articulation_qpos), ballast, 0.0)
+            system.cuda_articulation_qvel.copy_from(command)
+            system.gpu_apply_articulation_qvel()
+            system.step()
+            command.block_until_ready()
+
+        errors: list[BaseException] = []
+
+        def drive(k: int) -> None:
+            system = self.sims[k][0]
+            try:
+                for _ in range(TRACK_STEPS):
+                    with torch.cuda.device(system.device.cuda_id):
+                        torch.cuda._sleep(TRACK_DELAY_CYCLES)  # on the system's default stream
+                    system.gpu_fetch_articulation_qpos()
+                    qpos = jax.dlpack.from_dlpack(system.cuda_articulation_qpos)
+                    if qpos.devices() != {devices[k]}:
+                        raise AssertionError(f"cuda:{k} positions imported to {qpos.devices()}")
+                    command = track(qpos, ballasts[k], targets[k])
+                    del qpos
+                    system.cuda_articulation_qvel.copy_from(command)
+                    system.gpu_apply_articulation_qvel()
+                    system.step()
+                command.block_until_ready()
+            except BaseException as error:  # surfaced in the main thread below
+                errors.append(error)
+
+        threads = [threading.Thread(target=drive, args=(k,)) for k in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(errors, [])
+
+        decay = (1.0 - TRACK_GAIN * TIMESTEP) ** TRACK_STEPS
+        for (system, _), target in zip(self.sims, targets):
+            system.gpu_fetch_articulation_qpos()
+            qpos = torch.from_dlpack(system.cuda_articulation_qpos).cpu()
+            expected = torch.full_like(qpos, target * (1.0 - decay))
+            torch.testing.assert_close(qpos, expected, rtol=0.0, atol=1e-3)
 
 
 if __name__ == "__main__":
