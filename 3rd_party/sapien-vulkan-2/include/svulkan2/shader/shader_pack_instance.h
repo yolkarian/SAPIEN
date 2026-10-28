@@ -2,6 +2,7 @@
 #include "svulkan2/common/config.h"
 #include "svulkan2/common/layout.h"
 #include "svulkan2/shader/shader_pack.h"
+#include <atomic>
 #include <future>
 #include <map>
 #include <memory>
@@ -106,7 +107,7 @@ private:
   std::unordered_map<std::string, vk::ImageLayout> mRenderTargetFinalLayouts;
 
   std::mutex mLoadingMutex;
-  bool mLoaded{};
+  std::atomic<bool> mLoaded{false};
 };
 
 } // namespace shader

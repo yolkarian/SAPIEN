@@ -48,6 +48,27 @@ CudaArrayHandle getTransformCudaArray(std::shared_ptr<svulkan2::scene::Scene> co
 #endif
 }
 
+/** Create a timeline semaphore that Vulkan and CUDA both signal and wait on to order their work
+ *  on one device; `cudaSemaphore` is its CUDA import (left unset without CUDA). */
+void createCudaTimelineSemaphore(svulkan2::core::Context &context, vk::UniqueSemaphore &semaphore,
+                                 cudaExternalSemaphore_t &cudaSemaphore) {
+  vk::SemaphoreTypeCreateInfo timelineCreateInfo(vk::SemaphoreType::eTimeline, 0);
+  vk::ExportSemaphoreCreateInfo exportCreateInfo(
+      vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd);
+  exportCreateInfo.setPNext(&timelineCreateInfo);
+  vk::SemaphoreCreateInfo createInfo{};
+  createInfo.setPNext(&exportCreateInfo);
+  semaphore = context.getDevice().createSemaphoreUnique(createInfo);
+  int fd = context.getDevice().getSemaphoreFdKHR(
+      {semaphore.get(), vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd});
+#ifdef SAPIEN_CUDA
+  cudaExternalSemaphoreHandleDesc desc = {};
+  desc.handle.fd = fd;
+  desc.type = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
+  checkCudaErrors(cudaImportExternalSemaphore(&cudaSemaphore, &desc));
+#endif
+}
+
 } // namespace
 
 BatchedCamera::BatchedCamera(std::vector<std::shared_ptr<SapienRenderCameraComponent>> cameras,
@@ -98,6 +119,7 @@ void BatchedCamera::checkGpuInitialized() const {
 
 void BatchedCamera::setPoseMode(std::shared_ptr<SapienRenderCameraComponent> const &camera,
                                 CameraPoseMode mode) {
+  auto lock = lockGpuApi();
   if (mGpuInitialized) {
     throw std::runtime_error("failed to set camera pose mode: the camera group is already "
                              "initialized; configure pose modes before gpu_init()");
@@ -110,6 +132,7 @@ void BatchedCamera::setPoseMode(std::shared_ptr<SapienRenderCameraComponent> con
 }
 
 void BatchedCamera::internalGpuInit() {
+  auto lock = lockGpuApi();
   if (mGpuInitialized) {
     return;
   }
@@ -239,26 +262,12 @@ void BatchedCamera::internalGpuInit() {
   }
 #endif
 
-  // setup semaphore for CUDA
+  // Timelines shared with CUDA: copies done (Vulkan -> CUDA) and stream work done before a
+  // copy may overwrite the exported images (CUDA -> Vulkan).
   mFrameCounter = 0;
-  vk::SemaphoreTypeCreateInfo timelineCreateInfo(vk::SemaphoreType::eTimeline, 0);
-  vk::SemaphoreCreateInfo createInfo{};
-  vk::ExportSemaphoreCreateInfo exportCreateInfo(
-      vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd);
-  createInfo.setPNext(&exportCreateInfo);
-  exportCreateInfo.setPNext(&timelineCreateInfo);
-  auto device = context->getDevice();
-  mSemaphore = device.createSemaphoreUnique(createInfo);
-
-  int fd = device.getSemaphoreFdKHR(
-      {mSemaphore.get(), vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd});
-#ifdef SAPIEN_CUDA
-  cudaExternalSemaphoreHandleDesc desc = {};
-  desc.flags = 0;
-  desc.handle.fd = fd;
-  desc.type = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
-  checkCudaErrors(cudaImportExternalSemaphore(&mCudaSem, &desc));
-#endif
+  mConsumerValue = 0;
+  createCudaTimelineSemaphore(*context, mSemaphore, mCudaSem);
+  createCudaTimelineSemaphore(*context, mConsumerSemaphore, mCudaConsumerSem);
 
   // Seal pose ownership per configured mode: mounted cameras follow their parent CUDA
   // pose row, cuda cameras their group-owned row, static cameras their snapshot, and
@@ -331,6 +340,7 @@ void BatchedCamera::internalUploadDirtyCameraState() {
 }
 
 void BatchedCamera::takePicture() {
+  auto lock = lockGpuApi();
   checkGpuInitialized();
 #ifdef SAPIEN_CUDA
   // The semaphore wait below targets the renderer's device, not the caller's current one.
@@ -356,16 +366,40 @@ void BatchedCamera::takePicture() {
     recordCopyCommands();
   }
   mFrameCounter++;
+#ifdef SAPIEN_CUDA
+  // The copy overwrites the exported image buffers. It waits for everything submitted to the
+  // group's CUDA stream so far: consumers of the previous frame on that stream and waits added
+  // by gpu_wait_for(). Consumers on other streams must be ordered before it that way.
+  cudaExternalSemaphoreSignalParams streamDone{};
+  streamDone.params.fence.value = ++mConsumerValue;
+  checkCudaErrors(
+      cudaSignalExternalSemaphoresAsync(&mCudaConsumerSem, &streamDone, 1, mCudaStream));
+  vk::PipelineStageFlags copyStage = vk::PipelineStageFlagBits::eTransfer;
+  context->getQueue().submit(mCommandBuffer.get(), mConsumerSemaphore.get(), copyStage,
+                             mConsumerValue, mSemaphore.get(), mFrameCounter, {});
+  cudaExternalSemaphoreWaitParams copied{};
+  copied.params.fence.value = mFrameCounter;
+  checkCudaErrors(cudaWaitExternalSemaphoresAsync(&mCudaSem, &copied, 1, mCudaStream));
+#else
   context->getQueue().submit(mCommandBuffer.get(), {}, {}, {}, mSemaphore.get(), mFrameCounter,
                              {});
-#ifdef SAPIEN_CUDA
-  cudaExternalSemaphoreWaitParams waitParams{};
-  waitParams.params.fence.value = mFrameCounter;
-  cudaWaitExternalSemaphoresAsync(&mCudaSem, &waitParams, 1, mCudaStream);
 #endif
 }
 
+uintptr_t BatchedCamera::getCudaStreamHandle() const {
+  return mViewLifecycle->stream.load(std::memory_order_acquire);
+}
+
+int BatchedCamera::getCudaDeviceId() const {
+  auto lock = lockGpuApi();
+  if (mClosed || !mDevice) {
+    throw std::runtime_error("the camera group is closed");
+  }
+  return mDevice->cudaId;
+}
+
 CudaArrayHandle BatchedCamera::getCudaPoseHandle() const {
+  auto lock = lockGpuApi();
   checkGpuInitialized();
 #ifdef SAPIEN_CUDA
   if (mCudaRowCameras.empty()) {
@@ -386,6 +420,7 @@ CudaArrayHandle BatchedCamera::getCudaPoseHandle() const {
 
 int BatchedCamera::getCudaPoseIndex(
     std::shared_ptr<SapienRenderCameraComponent> const &camera) const {
+  auto lock = lockGpuApi();
   checkGpuInitialized();
   for (size_t i = 0; i < mCudaRowCameras.size(); ++i) {
     if (mCudaRowCameras[i] == camera) {
@@ -407,6 +442,7 @@ int BatchedCamera::getCudaPoseIndex(
 void BatchedCamera::setCudaPose(std::shared_ptr<SapienRenderCameraComponent> const &camera,
                                 Pose const &pose) {
 #ifdef SAPIEN_CUDA
+  auto lock = lockGpuApi();
   int row = getCudaPoseIndex(camera);
   CudaDeviceScope deviceScope(mDevice->cudaId);
   float data[7] = {pose.p.x, pose.p.y, pose.p.z, pose.q.w, pose.q.x, pose.q.y, pose.q.z};
@@ -423,6 +459,7 @@ void BatchedCamera::setCudaPose(std::shared_ptr<SapienRenderCameraComponent> con
 }
 
 CudaArrayHandle BatchedCamera::getPictureCuda(std::string const &name) {
+  auto lock = lockGpuApi();
   checkGpuInitialized();
   if (!mCudaImageHandles.contains(name)) {
     throw std::runtime_error("Failed to get image with name :" + name +
@@ -432,6 +469,8 @@ CudaArrayHandle BatchedCamera::getPictureCuda(std::string const &name) {
 }
 
 CudaArrayHandle BatchedCamera::trackView(CudaArrayHandle handle) const {
+  // close() holds the same lock from its view check through the release.
+  auto lock = lockGpuApi();
   if (mClosed) {
     throw std::runtime_error("failed to export CUDA view: the camera group is closed");
   }
@@ -440,6 +479,7 @@ CudaArrayHandle BatchedCamera::trackView(CudaArrayHandle handle) const {
 }
 
 void BatchedCamera::setCudaStream(CUstream_st *stream) {
+  auto lock = lockGpuApi();
   mCudaStream = stream;
   // The group's device, not the engine's default one: groups on other GPUs switch here too.
   mViewLifecycle->switchStream(mDevice ? mDevice->cudaId : -1,
@@ -447,6 +487,7 @@ void BatchedCamera::setCudaStream(CUstream_st *stream) {
 }
 
 void BatchedCamera::close() {
+  auto lock = lockGpuApi();
   if (mClosed) {
     return;
   }
@@ -459,6 +500,7 @@ void BatchedCamera::close() {
 }
 
 void BatchedCamera::closeImpl() {
+  auto lock = lockGpuApi();
   if (mClosed) {
     return;
   }
@@ -466,16 +508,18 @@ void BatchedCamera::closeImpl() {
     internalWaitForRendersIdle();
   }
   if (mContext) {
-    mContext->getDevice().waitIdle();
+    mContext->waitIdle();
   }
 #ifdef SAPIEN_CUDA
   if (mDevice) {
     CudaDeviceScope deviceScope(mDevice->cudaId);
     checkCudaErrors(cudaStreamSynchronize(mCudaStream));
     checkCudaErrors(cudaDeviceSynchronize());
-    if (mCudaSem) {
-      cudaDestroyExternalSemaphore(mCudaSem);
-      mCudaSem = nullptr;
+    for (auto *semaphore : {&mCudaSem, &mCudaConsumerSem}) {
+      if (*semaphore) {
+        cudaDestroyExternalSemaphore(*semaphore);
+        *semaphore = nullptr;
+      }
     }
   }
 #endif
@@ -488,6 +532,7 @@ void BatchedCamera::closeImpl() {
   // Follow C++ member destruction order: command/synchronization objects may retain
   // references to render images and CUDA row buffers, so destroy them first.
   mSemaphore.reset();
+  mConsumerSemaphore.reset();
   mCommandBuffer.reset();
   mCommandPool.reset();
   mRecordedCopyImages.clear();
@@ -747,30 +792,13 @@ void BatchedRenderSystem::init() {
   }
 #endif
 
-  // create semaphore
-  auto context = mContext;
   if (!mSem) {
-    vk::SemaphoreTypeCreateInfo timelineCreateInfo(vk::SemaphoreType::eTimeline, 0);
-    vk::SemaphoreCreateInfo createInfo{};
-    vk::ExportSemaphoreCreateInfo exportCreateInfo(
-        vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd);
-    createInfo.setPNext(&exportCreateInfo);
-    exportCreateInfo.setPNext(&timelineCreateInfo);
-    mSem = context->getDevice().createSemaphoreUnique(createInfo);
-
-    int fd = context->getDevice().getSemaphoreFdKHR(
-        {mSem.get(), vk::ExternalSemaphoreHandleTypeFlagBits::eOpaqueFd});
-#ifdef SAPIEN_CUDA
-    cudaExternalSemaphoreHandleDesc desc = {};
-    desc.flags = 0;
-    desc.handle.fd = fd;
-    desc.type = cudaExternalSemaphoreHandleTypeTimelineSemaphoreFd;
-    checkCudaErrors(cudaImportExternalSemaphore(&mCudaSem, &desc));
-#endif
+    createCudaTimelineSemaphore(*mContext, mSem, mCudaSem);
   }
 }
 
 void BatchedRenderSystem::setPoseSource(CudaArrayHandle const &poses) {
+  std::lock_guard lock(*mApiMutex);
   checkNotClosed();
   if (mGpuInitialized) {
     throw std::runtime_error(
@@ -831,6 +859,7 @@ void BatchedRenderSystem::assignCameraRenderScenes() {
 std::shared_ptr<BatchedCamera> BatchedRenderSystem::createCameraBatch(
     std::vector<std::shared_ptr<SapienRenderCameraComponent>> cameras,
     std::vector<std::string> renderTargets) {
+  std::lock_guard lock(*mApiMutex);
   checkNotClosed();
   if (mGpuInitialized) {
     throw std::runtime_error(
@@ -854,6 +883,7 @@ std::shared_ptr<BatchedCamera> BatchedRenderSystem::createCameraBatch(
     }
   }
   auto cameraBatch = std::make_shared<BatchedCamera>(cameras, renderTargets);
+  cameraBatch->mApiMutex = mApiMutex;
   cameraBatch->mDevice = mDevice;
   cameraBatch->mContext = mContext;
   cameraBatch->setCudaStream(mCudaStream);
@@ -862,6 +892,7 @@ std::shared_ptr<BatchedCamera> BatchedRenderSystem::createCameraBatch(
 }
 
 void BatchedRenderSystem::gpuInit() {
+  std::lock_guard lock(*mApiMutex);
   checkNotClosed();
   if (mGpuInitialized) {
     throw std::runtime_error("the render system group is already initialized");
@@ -950,7 +981,7 @@ void BatchedRenderSystem::gpuInit() {
   }
 #endif
   if (rebuildRenderScenes) {
-    mContext->getDevice().waitIdle();
+    mContext->waitIdle();
     init();
   }
   assignCameraRenderScenes();
@@ -1139,6 +1170,7 @@ void BatchedRenderSystem::gpuInit() {
 }
 
 void BatchedRenderSystem::update() {
+  std::lock_guard lock(*mApiMutex);
   checkNotClosed();
   SAPIEN_PROFILE_FUNCTION;
 #ifdef SAPIEN_CUDA
@@ -1371,7 +1403,13 @@ void BatchedRenderSystem::notifyUpdate() {
 }
 
 void BatchedRenderSystem::setCudaStream(uintptr_t stream) {
+  std::lock_guard lock(*mApiMutex);
   checkNotClosed();
+#ifdef SAPIEN_CUDA
+  if (mDevice->cudaId >= 0) {
+    checkCudaStreamDevice(mDevice->cudaId, stream, "RenderSystemGroup");
+  }
+#endif
   mCudaStream = (cudaStream_t)stream;
   for (auto &c : mCameraBatches) {
     c->setCudaStream(mCudaStream);
@@ -1385,6 +1423,7 @@ void BatchedRenderSystem::checkNotClosed() const {
 }
 
 void BatchedRenderSystem::close() {
+  std::lock_guard lock(*mApiMutex);
   if (mClosed) {
     return;
   }
@@ -1397,11 +1436,12 @@ void BatchedRenderSystem::close() {
 }
 
 void BatchedRenderSystem::closeImpl() {
+  std::lock_guard lock(*mApiMutex);
   if (mClosed) {
     return;
   }
   if (mContext) {
-    mContext->getDevice().waitIdle();
+    mContext->waitIdle();
   }
 #ifdef SAPIEN_CUDA
   // A renderer CUDA cannot see (e.g. hidden by CUDA_VISIBLE_DEVICES) never ran CUDA work for
@@ -1410,6 +1450,11 @@ void BatchedRenderSystem::closeImpl() {
     CudaDeviceScope deviceScope(cudaId);
     checkCudaErrors(cudaStreamSynchronize(mCudaStream));
     checkCudaErrors(cudaDeviceSynchronize());
+    // inside the scope: on the caller's current device it would create a context there
+    if (mCudaSem) {
+      cudaDestroyExternalSemaphore(mCudaSem);
+      mCudaSem = nullptr;
+    }
   }
 #endif
   for (auto const &body : mGpuSourcedBodies) {
@@ -1427,12 +1472,6 @@ void BatchedRenderSystem::closeImpl() {
   for (auto const &light : mSealedLights) {
     light->internalReleaseGroupStateSeal();
   }
-#ifdef SAPIEN_CUDA
-  if (mCudaSem) {
-    cudaDestroyExternalSemaphore(mCudaSem);
-    mCudaSem = nullptr;
-  }
-#endif
   mCameraBatches.clear();
   mGpuSourcedBodies.clear();
   mSealedShapes.clear();

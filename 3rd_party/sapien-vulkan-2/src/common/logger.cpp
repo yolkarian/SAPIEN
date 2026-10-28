@@ -5,11 +5,12 @@ namespace svulkan2 {
 namespace logger {
 
 std::shared_ptr<spdlog::logger> getLogger() {
-  static std::shared_ptr<spdlog::logger> logger;
-  if (!logger) {
-    logger = spdlog::stderr_color_mt("svulkan2");
-    logger->set_level(spdlog::level::warn);
-  }
+  // initialized exactly once even when several threads log for the first time concurrently
+  static std::shared_ptr<spdlog::logger> logger = [] {
+    auto created = spdlog::stderr_color_mt("svulkan2");
+    created->set_level(spdlog::level::warn);
+    return created;
+  }();
   return logger;
 }
 

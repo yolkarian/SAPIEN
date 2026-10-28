@@ -325,6 +325,8 @@ void VRDisplay::renderFrame(core::Image const &left, core::Image const &right) {
   vulkanData.m_nSampleCount = 1;
 
   vr::Texture_t texture = {&vulkanData, vr::TextureType_Vulkan, vr::ColorSpace_Auto};
+  // the compositor submits to the raw queue during Submit
+  auto queueLock = mContext->getQueue().lock();
   if (vr::VRCompositor()->Submit(vr::Eye_Left, &texture, &bounds) !=
       vr::EVRCompositorError::VRCompositorError_None) {
     throw std::runtime_error("failed to submit");

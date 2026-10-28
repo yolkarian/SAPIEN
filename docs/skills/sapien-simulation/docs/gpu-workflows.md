@@ -451,9 +451,14 @@ model, opt_state = update(model, opt_state, batch)  # eqx.filter_jit over global
 
 ## Multi-GPU rendering workflow
 
-One `RenderSystem` renders on one Vulkan device: the device it is created for, or the default render device when none is given. In one process, give each device's scenes a render system on that device and build one `RenderSystemGroup` per device, fed by the CUDA poses of the `PhysxGpuSystem` on the same device:
+One `RenderSystem` renders on one Vulkan device: the device it is created for, or the default render device when none is given. Pair each device's `PhysxGpuSystem` with render systems and one `RenderSystemGroup` on the same device, in the same two layouts as multi-GPU PhysX.
+
+**One process per GPU** (fastest). A rank that sees only its GPU through `CUDA_VISIBLE_DEVICES` keeps the defaults: `PhysxGpuSystem()` and `RenderSystem()` both pick that GPU, although Vulkan still enumerates every GPU. When all GPUs stay visible, pass the same `f"cuda:{local_rank}"` to both: their default is the first CUDA GPU in Vulkan order, which can differ from Torch/JAX `cuda:0` even on identical GPUs. SAPIEN then creates no CUDA context on any other GPU.
+
+**One thread per GPU in one process.** Build every scene, group and camera group and call every `gpu_init()` on one thread, then drive each device from its own thread:
 
 ```python
+jobs = []
 for k in range(torch.cuda.device_count()):
     device = f"cuda:{k}"
     physx_system = sapien.physx.PhysxGpuSystem(device)
@@ -463,12 +468,27 @@ for k in range(torch.cuda.device_count()):
     group.set_cuda_poses(physx_system.cuda_rigid_body_data)
     camera_group = group.create_camera_group(cameras, ["Color"])
     group.gpu_init()
+    jobs.append((physx_system, group, camera_group))
+
+def run(physx_system, group, camera_group):
+    for _ in range(steps):
+        physx_system.step()
+        physx_system.gpu_fetch_rigid_dynamic_data()   # and gpu_fetch_articulation_link_pose()
+        group.update_render()
+        camera_group.take_picture()
+        obs = jax.dlpack.from_dlpack(camera_group.get_picture_cuda("Color"))  # zero-copy
+        action = policy(obs)                          # single-device jit on this GPU
+        physx_system.cuda_articulation_target_qpos.copy_from(action)
+        physx_system.gpu_apply_articulation_target_position()
+
+threads = [threading.Thread(target=run, args=job) for job in jobs]
 ```
 
-- Materials, textures, cubemaps, meshes and loaded models are device-independent. Create them once and use them on every device; each device uploads its copy on first use, and later edits (e.g. `material.base_color = ...`, `texture.upload(...)`) reach every copy.
+- `update_render()`, `take_picture()`, `set_cuda_pose()`, `gpu_init()` and `close()` release the GIL, so devices render concurrently; calls into one group (and its camera groups) from several threads are serialized. Groups on different devices never wait for each other.
+- Stream order: the group's CUDA stream (`set_cuda_stream`, default the legacy default stream) must be the PhysX system's stream, so `update_render()` reads the poses the fetches wrote; another device's stream raises. DLPack exports of pictures order the consumer's stream after the group's stream. `take_picture()`'s copy into the picture buffers waits for all work already submitted to the group's stream, so a consumer of the previous pictures must be ordered on that stream before the next `take_picture()`: in the loop above `copy_from(action)` does it, because `action` comes from the program that read `obs` and PhysX and the group share the stream. Otherwise call `camera_group.gpu_wait_for(x)` with an output of that consumer. Writes to `cuda_poses` from another stream need the same fence before `update_render()` (or use `cuda_poses.copy_from(x)`).
+- Materials, textures, cubemaps, meshes and loaded models are device-independent. Create them once and use them on every device; each device uploads its copy on first use (several threads may do that at once), and later edits (e.g. `material.base_color = ...`, `texture.upload(...)`) reach every copy. Edits are not ordered with renders in flight: edit shared resources and call `sapien.render.clear_cache()` only while no thread renders, e.g. before starting the render threads.
 - A group's camera outputs (`camera_group.get_picture_cuda(...)`) are tensors on the group's device. Groups, windows and VR displays raise `RuntimeError` for render systems of another device; the Viewer and VR always render through the default render device.
 - GPU-written render buffers belong to one device: `RenderCudaMeshComponent(..., device=...)` fixes its device at construction and raises when added to a scene of another device; a point cloud's CUDA arrays follow its scene's device; `RenderShapeTriangleMeshPart.get_cuda_vertices/get_cuda_triangles(device=None)` export the copy of the given device (default render device when `None`).
-- Different devices may render from different Python threads at the same time.
 
 ## Collision and scene isolation
 

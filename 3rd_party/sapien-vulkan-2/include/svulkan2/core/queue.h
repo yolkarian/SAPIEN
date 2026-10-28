@@ -35,7 +35,10 @@ public:
                      vk::ArrayProxyNoTemporaries<vk::SwapchainKHR const> const &swapchains,
                      vk::ArrayProxyNoTemporaries<uint32_t const> const &imageIndices);
 
+  /** The raw handle must only be used while holding lock(): Vulkan requires external
+   *  synchronization of a queue, and everything else in svulkan2 goes through this class. */
   inline vk::Queue getVulkanQueue() const { return mQueue; }
+  [[nodiscard]] std::unique_lock<std::mutex> lock() const;
 
   void waitIdle() const;
 
@@ -49,7 +52,7 @@ public:
 private:
   Device &mDevice;
   vk::Queue mQueue;
-  std::mutex mMutex;
+  mutable std::mutex mMutex;
 };
 
 } // namespace core

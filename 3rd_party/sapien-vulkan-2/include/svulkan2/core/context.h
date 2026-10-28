@@ -66,6 +66,11 @@ public:
   Queue &getQueue() const;
   Allocator &getAllocator();
 
+  /** Block until all work submitted to this context's device has completed. Callable from any
+   *  thread: it holds the device's queue lock, so concurrent submissions wait for it. Use it
+   *  instead of vk::Device::waitIdle, which needs the queue externally synchronized. */
+  void waitIdle() const;
+
   std::unique_ptr<CommandPool> createCommandPool() const;
 
   uint32_t getGraphicsQueueFamilyIndex() const;

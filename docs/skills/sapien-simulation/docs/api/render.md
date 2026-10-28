@@ -4,7 +4,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 - Preferred import prefix: `sapien.render`
 - Source files: `python/py_package/pysapien/render.pyi`
-- Notes: Only instantiate RenderSystem for viewer/sensors/offscreen rendering. For GPU PhysX dynamic bodies prefer RenderSystemGroup + CUDA poses. Multi-GPU: one RenderSystem/RenderSystemGroup per device; materials, textures, meshes and models are shared across devices.
+- Notes: Only instantiate RenderSystem for viewer/sensors/offscreen rendering. For GPU PhysX dynamic bodies prefer RenderSystemGroup + CUDA poses. Multi-GPU: one RenderSystem/RenderSystemGroup per device, each driven from the thread (or process) that steps that device's PhysX system; materials, textures, meshes and models are shared across devices.
 
 ## Functions
 
@@ -198,10 +198,11 @@ image width/height ratio, including portrait images.
 | `outstanding_cuda_view_count` | property | `outstanding_cuda_view_count(self) -> int` | Owner-backed exported image/pose views. | close() raises while non-zero. |
 | `cuda_poses` | property | `cuda_poses(self) -> sapien.CudaArray` | World pose rows `[px, py, pz, qw, qx, qy, qz]` of the group's `'cuda'`-mode cameras. | Owner-tracked; raw CUDA-array-interface export raises. Use a tracked converter, and release the handle/consumer before close. Raises when no `'cuda'`-mode camera exists. |
 | `get_cuda_pose_index` | method | `get_cuda_pose_index(self, camera: RenderCameraComponent) -> int` | Row index of a `'cuda'`-mode camera. | Raises for mounted cameras and for `'static'`/`'cpu'` cameras. |
-| `get_picture_cuda` | method | `get_picture_cuda(self, name: str) -> sapien.CudaArray` | Read CUDA image buffer; avoids CPU copy. | Owner-tracked; use `.torch()` / `.jax()` / `.cupy()` / `.dlpack()` and release before close. No `sync_poses_gpu_to_cpu()` needed. |
+| `get_picture_cuda` | method | `get_picture_cuda(self, name: str) -> sapien.CudaArray` | Read CUDA image buffer; avoids CPU copy. | Owner-tracked; use `torch.from_dlpack` / `jax.dlpack.from_dlpack` / `.torch()` / `.cupy()` / `.dlpack()` (consumers on other streams wait for the group's stream) and release before close. The next `take_picture()` overwrites the buffer: copy what must outlive it, fence other-stream consumers with `gpu_wait_for`. No `sync_poses_gpu_to_cpu()` needed. |
+| `gpu_wait_for` | method | `gpu_wait_for(self, array: Any) -> None` | Make the group's CUDA stream wait for a JAX/Torch/CuPy array (or `sapien.CudaArray`) without blocking the host. | Pass the output of a consumer that read the pictures (or wrote `cuda_poses`) on another stream; the next `take_picture()` / `update_render()` then runs after it. |
 | `set_cuda_pose` | method | `set_cuda_pose(self, camera: RenderCameraComponent, pose: sapien.Pose) -> None` | Synchronous host-to-device copy of one CPU-authored camera pose into its CUDA row, ordered on the group's configured CUDA stream. | Takes effect at the next `update_render()`. |
 | `set_pose_mode` | method | `set_pose_mode(self, camera: RenderCameraComponent, mode: Literal['static', 'cpu', 'cuda']) -> None` | Configure a free camera's pose mode after `create_camera_group()` and before `gpu_init()`. | `'static'` default (one-time CPU snapshot); `'cpu'` host-driven uploads per `update_render()`; `'cuda'` group CUDA row moved via `cuda_poses`/`set_cuda_pose`. Mounted cameras cannot be configured. |
-| `take_picture` | method | `take_picture(self) -> None` | Trigger camera/camera-group rendering. |  |
+| `take_picture` | method | `take_picture(self) -> None` | Render the group's cameras and copy the pictures into its CUDA buffers. | Returns once submitted; blocks only for the group's previous capture. The copy waits for all work already on the group's CUDA stream. Releases the GIL; calls into one group from several threads are serialized. |
 
 ## `sapien.render.RenderCubemap`
 
@@ -673,8 +674,8 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 | `create_camera_group` | method | `create_camera_group(self, cameras: list[RenderCameraComponent], picture_names: list[str]) -> RenderCameraGroup` | Create a batched camera group. |  |
 | `set_cuda_poses` | method | `set_cuda_poses(self, pose_buffer: sapien.CudaArray) -> None` | Bind a RenderSystemGroup to a PhysX CUDA pose buffer. | Direct GPU render path; no sync_poses_gpu_to_cpu needed. |
 | `gpu_init` | method | `gpu_init(self) -> None` | One-time initialization and seal; call after `set_cuda_poses`, `create_camera_group`, and `set_pose_mode`. | Prepares resources, seeds CPU snapshots and `'cuda'`-mode camera rows, seals ownership, freezes topology. |
-| `set_cuda_stream` | method | `set_cuda_stream(self, stream: int) -> None` |  |  |
-| `update_render` | method | `update_render(self) -> None` | This function performs CUDA operations to transfer poses from the CUDA buffer provided by :func:`set_cuda_poses` into render systems. It updates the transformation mat... | GPU PhysX dynamic bodies read CPU poses; prefer the CUDA pose path for offscreen. |
+| `set_cuda_stream` | method | `set_cuda_stream(self, stream: int) -> None` | CUDA stream for the group's and its camera groups' CUDA work. | Use the PhysX system's stream so `update_render()` reads poses its fetches wrote. Must belong to the group's device; another device's stream raises `RuntimeError`. Work on the previous stream stays ordered before later work. |
+| `update_render` | method | `update_render(self) -> None` | Transfer poses from the buffer given to `set_cuda_poses` into the render systems (object transforms, mounted and cuda-mode camera views, RT instances). | Runs after work already on the group's stream without blocking the host; releases the GIL. Reads `cuda_rigid_body_data` exactly; no implicit PhysX fetch. |
 | `__init__` | method | `__init__(self, systems: list[RenderSystem]) -> None` |  | All systems must share one device; otherwise raises `RuntimeError`. Build one group per device. |
 
 ## `sapien.render.RenderTexture`

@@ -6,6 +6,7 @@
 #include "cubemap.h"
 #include "sapien/array.h"
 #include "sapien/math/vec3.h"
+#include <atomic>
 #include <mutex>
 #include <set>
 #include <svulkan2/core/context.h>
@@ -34,7 +35,8 @@ class SapienRenderCubemap;
  *  One engine serves every rendering device of the process. It owns the process-wide
  *  resource manager, meshes shared by all devices, the render-system registry and one
  *  svulkan2 context per device. Device-independent render objects (materials, textures,
- *  cubemaps, shapes) keep the engine alive and let each device upload them lazily. */
+ *  cubemaps, shapes) keep the engine alive and let each device upload them lazily. Every
+ *  member function may be called from any thread. */
 class SapienRenderEngine {
 public:
   /** the process-wide engine, created on first use */
@@ -72,19 +74,22 @@ public:
 private:
   SapienRenderEngine();
 
+  std::mutex mContextLock; // guards mDefaultDevice and mContexts
   std::shared_ptr<Device> mDefaultDevice;
-
-  std::mutex mContextLock;
   std::vector<std::shared_ptr<svulkan2::core::Context>> mContexts;
 
   // declared after the contexts: device objects it caches die before their devices
   std::shared_ptr<svulkan2::resource::SVResourceManager> mResourceManager;
 
+  std::mutex mMeshLock; // guards the lazily created shared meshes
   std::shared_ptr<svulkan2::resource::SVMesh> mSphereMesh;
   std::shared_ptr<svulkan2::resource::SVMesh> mPlaneMesh;
   std::shared_ptr<svulkan2::resource::SVMesh> mBoxMesh;
+  // Recursive: dropping the last reference to a system while scanning the registry closes it,
+  // and closing unregisters it.
+  std::recursive_mutex mRegistryLock;
   std::vector<std::weak_ptr<SapienRendererSystem>> mRenderSystems;
-  bool mShutdown{false};
+  std::atomic<bool> mShutdown{false};
 };
 
 class SapienRendererSystem : public System {

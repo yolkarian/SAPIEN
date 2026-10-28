@@ -56,7 +56,7 @@ Context::Context(std::shared_ptr<Instance> instance,
 }
 
 Context::~Context() {
-  getDevice().waitIdle();
+  waitIdle();
 
   std::scoped_lock lock(gContextLock);
   GLSLCompiler::FinalizeProcess();
@@ -180,6 +180,13 @@ vk::PhysicalDeviceLimits const &Context::getPhysicalDeviceLimits() const {
 vk::Device Context::getDevice() const { return mDevice->getInternal(); }
 Queue &Context::getQueue() const { return mDevice->getQueue(); }
 Allocator &Context::getAllocator() { return mDevice->getAllocator(); }
+
+void Context::waitIdle() const {
+  // vkDeviceWaitIdle needs every queue of the device externally synchronized; Device creates
+  // exactly one queue and all submissions go through core::Queue.
+  auto lock = mDevice->getQueue().lock();
+  mDevice->getInternal().waitIdle();
+}
 
 } // namespace core
 } // namespace svulkan2

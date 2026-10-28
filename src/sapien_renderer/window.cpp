@@ -192,7 +192,7 @@ SapienRendererWindow::SapienRendererWindow(int width, int height, std::string co
 
   mWindow = mContext->createWindow(width, height);
   mWindow->initImgui();
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
 
   mViewportWidth = width;
   mViewportHeight = height;
@@ -216,7 +216,7 @@ SapienRendererWindow::SapienRendererWindow(int width, int height, std::string co
 
 void SapienRendererWindow::setShader(std::string const &shaderDir) {
   mRequiresRebuild = true;
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
 
   auto config = std::make_shared<svulkan2::RendererConfig>();
   config->shaderDir = shaderDir;
@@ -249,9 +249,9 @@ SapienRendererWindow::~SapienRendererWindow() {
 
 void SapienRendererWindow::close() {
   mClosed = true;
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
   mWindow->close();
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
 }
 
 void SapienRendererWindow::hide() { mWindow->hide(); }
@@ -632,7 +632,7 @@ std::vector<std::string> SapienRendererWindow::getDisplayTargetNames() const {
 }
 
 void SapienRendererWindow::rebuild() {
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
   do {
     auto [vw, vh] = mWindow->getWindowFramebufferSize();
     mViewportWidth = vw;
@@ -642,7 +642,7 @@ void SapienRendererWindow::rebuild() {
   mSceneRenderFence =
       mContext->getDevice().createFenceUnique({vk::FenceCreateFlagBits::eSignaled});
   mSVulkanRenderer->resize(mViewportWidth, mViewportHeight);
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
   mRequiresRebuild = false;
 
   if (mRenderScene) {

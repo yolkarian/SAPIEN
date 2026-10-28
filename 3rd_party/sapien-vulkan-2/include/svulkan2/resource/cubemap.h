@@ -1,5 +1,6 @@
 #pragma once
 #include "image.h"
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -39,7 +40,7 @@ class SVCubemap {
   std::shared_ptr<SVImage> mLatLongImage;
   core::PerContext<DeviceState> mDeviceStates;
 
-  bool mLoaded{};
+  std::atomic<bool> mLoaded{false};
 
   /** the cube usage (including storage, needed by the prefilter pass) is set on mImage */
   bool mImageUsageSet{false};

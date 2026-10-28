@@ -48,6 +48,7 @@ DenoiserOptix::Context::~Context() {
 }
 
 std::map<int, std::weak_ptr<DenoiserOptix::Context>> DenoiserOptix::gContexts = {};
+std::mutex DenoiserOptix::gContextsMutex;
 
 bool DenoiserOptix::useAlbedo() { return mOptions.guideAlbedo; }
 
@@ -71,12 +72,15 @@ bool DenoiserOptix::init(std::shared_ptr<core::Context> context, bool albedo, bo
 
   int cudaDevice = mContext->getCudaDeviceId();
   CudaDeviceScope deviceScope(cudaDevice);
-  if (!(mOptixContext = gContexts[cudaDevice].lock())) {
-    try {
-      gContexts[cudaDevice] = mOptixContext = std::make_shared<Context>();
-    } catch (std::runtime_error const &e) {
-      logger::error("{}", error);
-      return false;
+  {
+    std::lock_guard lock(gContextsMutex);
+    if (!(mOptixContext = gContexts[cudaDevice].lock())) {
+      try {
+        gContexts[cudaDevice] = mOptixContext = std::make_shared<Context>();
+      } catch (std::runtime_error const &e) {
+        logger::error("{}", error);
+        return false;
+      }
     }
   }
 
@@ -201,7 +205,7 @@ void DenoiserOptix::free() {
   if (!mContext) {
     return;
   }
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
   CudaDeviceScope deviceScope(mContext->getCudaDeviceId());
   if (mCudaSem) {
     cudaDestroyExternalSemaphore(mCudaSem);

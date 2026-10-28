@@ -717,7 +717,7 @@ void Scene::prepareObjectTransformBuffer() {
   }
 
   // handle back-to-back render, update, render
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
 
   uint32_t count = 0;
 

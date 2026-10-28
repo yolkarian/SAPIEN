@@ -260,7 +260,7 @@ std::optional<Pose> StagedRenderSystem::getPose(int sourcePoseIndex) const {
 }
 
 StagedRenderSystem::~StagedRenderSystem() {
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
   for (auto const &body : mGpuSourcedBodies) {
     body->internalReleaseGpuPoseSource();
   }

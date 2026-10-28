@@ -110,7 +110,7 @@ void DenoiserOidn::free() {
   if (!mContext) {
     return;
   }
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
   if (mCudaSem) {
     CudaDeviceScope scope(mContext->getCudaDeviceId());
     cudaDestroyExternalSemaphore(mCudaSem);

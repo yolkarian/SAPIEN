@@ -457,7 +457,7 @@ bool GuiWindow::updateSize(uint32_t w, uint32_t h) {
     return false;
   }
   recreateImguiResources();
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
   return true;
 }
 
@@ -549,7 +549,7 @@ void GuiWindow::close() {
     mClosed = true;
     glfwSetWindowShouldClose(mWindow, true);
 
-    mContext->getDevice().waitIdle();
+    mContext->waitIdle();
 
     ImGui_ImplVulkan_Shutdown();
     ImGui_ImplGlfw_Shutdown();

@@ -77,5 +77,10 @@ struct CudaEvent {
  *  legacy default stream, 2 is the per-thread default stream. Equal streams need no wait. */
 void cudaStreamWaitStream(int cudaId, uintptr_t consumer, uintptr_t producer);
 
+/** Throw std::runtime_error unless `stream` (a raw handle; 0 and the special handles resolve to
+ *  this device's primary context) belongs to the primary CUDA context of `cudaId`. `owner` names
+ *  the object whose stream is being set in the message, e.g. "PhysxGpuSystem". */
+void checkCudaStreamDevice(int cudaId, uintptr_t stream, char const *owner);
+
 }; // namespace sapien
 #endif

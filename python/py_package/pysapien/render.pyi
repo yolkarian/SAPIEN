@@ -232,12 +232,28 @@ class RenderCameraGroup:
         from the GPU parent) and for cameras with pose mode 'static' or 'cpu'.
         """
     def get_picture_cuda(self, name: str) -> sapien.pysapien.CudaArray:
-        ...
+        """
+        CUDA view of the named picture of every camera, valid after take_picture(). DLPack consumers
+        (torch.from_dlpack, jax.dlpack.from_dlpack, ...) on another stream wait for the group's stream
+        through the export handshake. The next take_picture() overwrites the buffer: copy what must
+        outlive it, and fence consumers on other streams with gpu_wait_for().
+        """
+    def gpu_wait_for(self, array: typing.Any) -> None:
+        """
+        Make the group's CUDA stream wait until ``array`` is ready, without blocking the
+        host.
+        
+        ``array`` is any ``__dlpack__`` producer on the group's device (JAX array, torch tensor, CuPy
+        array), a ``__cuda_array_interface__`` object with a ``stream`` entry, or a ``sapien.CudaArray``.
+        Pass the output of a consumer that read the pictures (or wrote ``cuda_poses``) on another stream:
+        the next take_picture() then overwrites the pictures, and update_render() reads the poses, only
+        after that consumer finished.
+        """
     def set_cuda_pose(self, camera: RenderCameraComponent, pose: sapien.pysapien.Pose) -> None:
         """
         Copy one CPU-authored world pose into a cuda-mode camera's CUDA pose row on the camera group's
-        configured CUDA stream. This synchronous convenience call is ordered with transform updates
-        on that stream; the pose takes effect at the next update_render().
+        configured CUDA stream. This synchronous convenience call is ordered with transform updates on
+        that stream; the pose takes effect at the next update_render(). Releases the GIL.
         """
     def set_pose_mode(self, camera: RenderCameraComponent, mode: typing.Literal['static', 'cpu', 'cuda']) -> None:
         """
@@ -252,7 +268,14 @@ class RenderCameraGroup:
         Projection/intrinsics stay CPU real-time in every mode.
         """
     def take_picture(self) -> None:
-        ...
+        """
+        Render every camera of the group and copy the pictures into the group's CUDA buffers. Returns
+        once submitted; it blocks the host only until this group's previous take_picture() finished.
+        
+        The copy overwrites the buffers returned by get_picture_cuda(). It first waits for all work
+        submitted to the group's CUDA stream so far, so consumers of the previous pictures on that stream,
+        or on other streams fenced with gpu_wait_for(), finish reading them first. Releases the GIL.
+        """
     @property
     def cuda_poses(self) -> sapien.pysapien.CudaArray:
         """
@@ -773,19 +796,26 @@ class RenderSystemGroup:
     def set_cuda_poses(self, pose_buffer: sapien.pysapien.CudaArray) -> None:
         ...
     def set_cuda_stream(self, stream: int) -> None:
-        ...
+        """
+        CUDA stream for the CUDA work of this group and its camera groups: pose transfer kernels and
+        the hand-off of pictures. Use the stream of the PhysX system that writes the pose buffer, so
+        update_render() reads the poses its fetches wrote. The stream must belong to the group's
+        device; a stream of another device raises RuntimeError. Work already submitted to the
+        previous stream stays ordered before work submitted after the switch.
+        """
     def update_render(self) -> None:
         """
         Per-frame grouped update. It refreshes CPU components (raising if a sealed static pose was
-        tampered with), uploads dirty CPU camera state (projection/intrinsics and cpu-mode poses)
-        and dirty scene/light state (colors, FOVs, shapes, shadow parameters, ambient, cpu-mode
-        light poses), then performs CUDA operations to transfer poses from the buffer provided by
-        :func:`set_cuda_poses` into render systems: object transforms plus the view matrices of
-        mounted and cuda-mode cameras. With a ray-tracing shader pack, it also updates rigid TLAS
-        instances and resets accumulation. When nothing changed on the CPU, no CPU upload is
-        performed.
+        tampered with), uploads dirty CPU camera state (projection/intrinsics and cpu-mode poses) and
+        dirty scene/light state (colors, FOVs, shapes, shadow parameters, ambient, cpu-mode light
+        poses), then performs CUDA operations to transfer poses from the buffer provided by
+        :func:`set_cuda_poses` into render systems: object transforms plus the view matrices of mounted
+        and cuda-mode cameras. With a ray-tracing shader pack, it also updates rigid TLAS instances and
+        resets accumulation. When nothing changed on the CPU, no CPU upload is performed.
         
-        This function waits for any pending CUDA operations on cuda stream provided by :func:`set_cuda_stream`.
+        The transfer runs after the work already submitted to the stream provided by
+        :func:`set_cuda_stream`, without blocking the host. Releases the GIL; calls into this group and
+        its camera groups from several threads are serialized.
         """
 class RenderTexture:
     __hash__: typing.ClassVar[None] = None  # type: ignore[assignment]

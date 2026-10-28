@@ -26,9 +26,11 @@
 namespace sapien {
 namespace sapien_renderer {
 
+static std::mutex gRenderEngineLock;
 static std::weak_ptr<SapienRenderEngine> gRenderEngine;
 
 std::shared_ptr<SapienRenderEngine> SapienRenderEngine::Get() {
+  std::scoped_lock lock(gRenderEngineLock);
   auto engine = gRenderEngine.lock();
   if (engine && engine->isShutdown()) {
     engine.reset();
@@ -41,10 +43,12 @@ std::shared_ptr<SapienRenderEngine> SapienRenderEngine::Get() {
 }
 
 std::shared_ptr<SapienRenderEngine> SapienRenderEngine::GetIfExists() {
+  std::scoped_lock lock(gRenderEngineLock);
   return gRenderEngine.lock();
 }
 
 std::shared_ptr<Device> SapienRenderEngine::getDefaultDevice() {
+  std::scoped_lock lock(mContextLock);
   if (mShutdown) {
     throw std::runtime_error("failed to use render engine: the engine was shut down");
   }
@@ -119,6 +123,7 @@ SapienRenderEngine::SapienRenderEngine() {
 }
 
 std::shared_ptr<svulkan2::resource::SVMesh> SapienRenderEngine::getSphereMesh() {
+  std::scoped_lock lock(mMeshLock);
   if (!mSphereMesh) {
     mSphereMesh = svulkan2::resource::SVMesh::CreateUVSphere(32, 16);
   }
@@ -126,6 +131,7 @@ std::shared_ptr<svulkan2::resource::SVMesh> SapienRenderEngine::getSphereMesh() 
 }
 
 std::shared_ptr<svulkan2::resource::SVMesh> SapienRenderEngine::getPlaneMesh() {
+  std::scoped_lock lock(mMeshLock);
   if (!mPlaneMesh) {
     mPlaneMesh = svulkan2::resource::SVMesh::CreateYZPlane();
   }
@@ -133,6 +139,7 @@ std::shared_ptr<svulkan2::resource::SVMesh> SapienRenderEngine::getPlaneMesh() {
 }
 
 std::shared_ptr<svulkan2::resource::SVMesh> SapienRenderEngine::getBoxMesh() {
+  std::scoped_lock lock(mMeshLock);
   if (!mBoxMesh) {
     mBoxMesh = svulkan2::resource::SVMesh::CreateCube();
   }
@@ -150,19 +157,25 @@ void SapienRenderEngine::shutdown() {
   {
     std::scoped_lock lock(mContextLock);
     for (auto const &context : mContexts) {
-      context->getDevice().waitIdle();
+      context->waitIdle();
     }
     for (auto const &context : mContexts) {
       mResourceManager->releaseContext(*context);
     }
     mContexts.clear();
+    mDefaultDevice.reset();
   }
-  mSphereMesh.reset();
-  mPlaneMesh.reset();
-  mBoxMesh.reset();
-  mRenderSystems.clear();
+  {
+    std::scoped_lock lock(mMeshLock);
+    mSphereMesh.reset();
+    mPlaneMesh.reset();
+    mBoxMesh.reset();
+  }
+  {
+    std::scoped_lock lock(mRegistryLock);
+    mRenderSystems.clear();
+  }
   mResourceManager.reset();
-  mDefaultDevice.reset();
   mShutdown = true;
 }
 
@@ -198,6 +211,7 @@ bool SapienRendererSystem::isBatchedRenderShared() const {
 
 void SapienRenderEngine::registerRenderSystem(
     std::shared_ptr<SapienRendererSystem> const &system) {
+  std::scoped_lock lock(mRegistryLock);
   std::erase_if(mRenderSystems, [](auto const &candidate) { return candidate.expired(); });
   for (auto const &candidate : mRenderSystems) {
     if (candidate.lock() == system) {
@@ -208,6 +222,7 @@ void SapienRenderEngine::registerRenderSystem(
 }
 
 void SapienRenderEngine::unregisterRenderSystem(SapienRendererSystem const *system) {
+  std::scoped_lock lock(mRegistryLock);
   std::erase_if(mRenderSystems, [system](auto const &candidate) {
     auto locked = candidate.lock();
     return !locked || locked.get() == system;
@@ -222,6 +237,7 @@ SapienRenderEngine::getRenderSystems(std::shared_ptr<svulkan2::core::Context> co
 }
 
 std::vector<std::shared_ptr<SapienRendererSystem>> SapienRenderEngine::getRenderSystems() {
+  std::scoped_lock lock(mRegistryLock);
   std::vector<std::shared_ptr<SapienRendererSystem>> systems;
   std::erase_if(mRenderSystems, [](auto const &candidate) {
     auto locked = candidate.lock();
@@ -401,7 +417,7 @@ void SapienRendererSystem::close() {
     throw std::runtime_error("failed to close RenderSystem: " + std::to_string(views) +
                              " exported cuda_object_transforms views are still alive");
   }
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
   mEngine->unregisterRenderSystem(this);
   mCubemap.reset();
   mScene.reset();

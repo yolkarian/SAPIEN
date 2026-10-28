@@ -32,9 +32,12 @@ std::unique_ptr<ktxVulkanTexture> uploadKtxToDevice(core::Context &context, ktxT
   }
 
   ktxVulkanTexture vkTexture{};
-  result = ktxTexture_VkUploadEx(texture, &vdi, &vkTexture, VK_IMAGE_TILING_OPTIMAL,
-                                 static_cast<VkImageUsageFlags>(usage),
-                                 VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  {
+    auto queueLock = context.getQueue().lock(); // libktx submits to the raw queue and waits on it
+    result = ktxTexture_VkUploadEx(texture, &vdi, &vkTexture, VK_IMAGE_TILING_OPTIMAL,
+                                   static_cast<VkImageUsageFlags>(usage),
+                                   VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+  }
   ktxVulkanDeviceInfo_Destruct(&vdi);
   if (result != KTX_SUCCESS) {
     throw std::runtime_error("failed to upload ktx texture: " +

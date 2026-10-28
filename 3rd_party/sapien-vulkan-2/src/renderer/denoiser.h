@@ -10,6 +10,7 @@
 #include <cuda_runtime.h>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optix.h>
 
 static_assert(OPTIX_VERSION == 70600);
@@ -60,8 +61,10 @@ private:
     OptixDeviceContext optixDevice{};
   };
 
-  /** OptiX device contexts, one per CUDA device (an OptiX context belongs to a device) */
+  /** OptiX device contexts, one per CUDA device (an OptiX context belongs to a device);
+   *  guarded by gContextsMutex */
   static std::map<int, std::weak_ptr<Context>> gContexts;
+  static std::mutex gContextsMutex;
   std::shared_ptr<Context> mOptixContext;
   std::shared_ptr<core::Context> mContext;
 

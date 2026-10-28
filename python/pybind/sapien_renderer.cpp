@@ -690,18 +690,29 @@ Args:
 destroys RenderEngine/context after every viewer, camera/system group, renderer system and
 render object is released. Idempotent; raises without mutation while resources remain.)doc");
 
+  auto releaseGil = py::call_guard<py::gil_scoped_release>();
+
   PyRenderSystemGroup
       .def(py::init<std::vector<std::shared_ptr<SapienRendererSystem>>>(), py::arg("systems"))
-      .def("close", &BatchedRenderSystem::close)
+      .def("close", &BatchedRenderSystem::close, releaseGil)
       .def_property_readonly("is_closed", &BatchedRenderSystem::isClosed)
       .def("__enter__", [](py::object self) { return self; })
-      .def("__exit__", [](BatchedRenderSystem &s, py::object const &, py::object const &,
-                           py::object const &) { s.close(); })
+      .def("__exit__",
+           [](BatchedRenderSystem &s, py::object const &, py::object const &, py::object const &) {
+             py::gil_scoped_release release;
+             s.close();
+           })
       .def("create_camera_group", &BatchedRenderSystem::createCameraBatch, py::arg("cameras"),
            py::arg("picture_names"))
-      .def("set_cuda_stream", &BatchedRenderSystem::setCudaStream, py::arg("stream"))
+      .def("set_cuda_stream", &BatchedRenderSystem::setCudaStream, py::arg("stream"),
+           R"doc(
+CUDA stream for the CUDA work of this group and its camera groups: pose transfer kernels and
+the hand-off of pictures. Use the stream of the PhysX system that writes the pose buffer, so
+update_render() reads the poses its fetches wrote. The stream must belong to the group's
+device; a stream of another device raises RuntimeError. Work already submitted to the
+previous stream stays ordered before work submitted after the switch.)doc")
       .def("set_cuda_poses", &BatchedRenderSystem::setPoseSource, py::arg("pose_buffer"))
-      .def("gpu_init", &BatchedRenderSystem::gpuInit,
+      .def("gpu_init", &BatchedRenderSystem::gpuInit, releaseGil,
            R"doc(
 One-time initialization and seal. Resolves final output selections including shared scenes,
 validates their PhysX GPU systems, binds dynamic bodies and mounted cameras, parses camera and
@@ -709,7 +720,7 @@ light pose modes, prepares resources, snapshots static state, seals pose ownersh
 topology. Configure create_camera_group(), pose modes, and, when GPU objects or mounted cameras
 exist, set_cuda_poses() before calling; afterwards the steady state is update_render() plus
 capture only.)doc")
-      .def("update_render", &BatchedRenderSystem::update,
+      .def("update_render", &BatchedRenderSystem::update, releaseGil,
            R"doc(
 Per-frame grouped update. It refreshes CPU components (raising if a sealed static pose was
 tampered with), uploads dirty CPU camera state (projection/intrinsics and cpu-mode poses) and
@@ -719,18 +730,33 @@ poses), then performs CUDA operations to transfer poses from the buffer provided
 and cuda-mode cameras. With a ray-tracing shader pack, it also updates rigid TLAS instances and
 resets accumulation. When nothing changed on the CPU, no CPU upload is performed.
 
-This function waits for any pending CUDA operations on cuda stream provided by :func:`set_cuda_stream`.
+The transfer runs after the work already submitted to the stream provided by
+:func:`set_cuda_stream`, without blocking the host. Releases the GIL; calls into this group and
+its camera groups from several threads are serialized.
 )doc");
 
-  PyCameraGroup.def("close", &BatchedCamera::close)
+  PyCameraGroup.def("close", &BatchedCamera::close, releaseGil)
       .def_property_readonly("is_closed", &BatchedCamera::isClosed)
       .def_property_readonly("outstanding_cuda_view_count",
                              &BatchedCamera::outstandingCudaViewCount)
       .def("__enter__", [](py::object self) { return self; })
-      .def("__exit__", [](BatchedCamera &s, py::object const &, py::object const &,
-                           py::object const &) { s.close(); })
-      .def("take_picture", &BatchedCamera::takePicture)
-      .def("get_picture_cuda", &BatchedCamera::getPictureCuda, py::arg("name"))
+      .def("__exit__",
+           [](BatchedCamera &s, py::object const &, py::object const &, py::object const &) {
+             py::gil_scoped_release release;
+             s.close();
+           })
+      .def("take_picture", &BatchedCamera::takePicture, releaseGil, R"doc(
+Render every camera of the group and copy the pictures into the group's CUDA buffers. Returns
+once submitted; it blocks the host only until this group's previous take_picture() finished.
+
+The copy overwrites the buffers returned by get_picture_cuda(). It first waits for all work
+submitted to the group's CUDA stream so far, so consumers of the previous pictures on that stream,
+or on other streams fenced with gpu_wait_for(), finish reading them first. Releases the GIL.)doc")
+      .def("get_picture_cuda", &BatchedCamera::getPictureCuda, py::arg("name"), R"doc(
+CUDA view of the named picture of every camera, valid after take_picture(). DLPack consumers
+(torch.from_dlpack, jax.dlpack.from_dlpack, ...) on another stream wait for the group's stream
+through the export handshake. The next take_picture() overwrites the buffer: copy what must
+outlive it, and fence consumers on other streams with gpu_wait_for().)doc")
       .def("set_pose_mode", &BatchedCamera::setPoseMode, py::arg("camera"), py::arg("mode"),
            R"doc(
 Configure a member camera's pose source before RenderSystemGroup.gpu_init():
@@ -753,10 +779,34 @@ uses pose mode 'cuda'.)doc")
 Row index of a cuda-mode camera in cuda_poses. Raises for mounted cameras (their pose derives
 from the GPU parent) and for cameras with pose mode 'static' or 'cpu'.)doc")
       .def("set_cuda_pose", &BatchedCamera::setCudaPose, py::arg("camera"), py::arg("pose"),
+           releaseGil,
            R"doc(
 Copy one CPU-authored world pose into a cuda-mode camera's CUDA pose row on the camera group's
 configured CUDA stream. This synchronous convenience call is ordered with transform updates on
-that stream; the pose takes effect at the next update_render().)doc");
+that stream; the pose takes effect at the next update_render(). Releases the GIL.)doc");
+
+#ifdef SAPIEN_CUDA
+  PyCameraGroup.def(
+      "gpu_wait_for",
+      [](BatchedCamera &camera, py::object array) {
+        int cudaId = camera.getCudaDeviceId();
+        uintptr_t stream = camera.getCudaStreamHandle();
+        // The handshake enqueues the wait; nothing reads the array, so nothing is kept alive.
+        BorrowCudaArray(array, cudaId, stream);
+        py::gil_scoped_release release;
+        auto lock = camera.lockGpuApi();
+        FollowStream(cudaId, stream, camera.getCudaStreamHandle());
+      },
+      py::arg("array"),
+      R"doc(Make the group's CUDA stream wait until ``array`` is ready, without blocking the
+host.
+
+``array`` is any ``__dlpack__`` producer on the group's device (JAX array, torch tensor, CuPy
+array), a ``__cuda_array_interface__`` object with a ``stream`` entry, or a ``sapien.CudaArray``.
+Pass the output of a consumer that read the pictures (or wrote ``cuda_poses``) on another stream:
+the next take_picture() then overwrites the pictures, and update_render() reads the poses, only
+after that consumer finished.)doc");
+#endif
 
   PyRenderSystem
       .def(py::init([](std::shared_ptr<Device> device) {

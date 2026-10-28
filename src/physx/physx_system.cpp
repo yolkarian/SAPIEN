@@ -15,7 +15,6 @@
 #include <unordered_map>
 
 #ifdef SAPIEN_CUDA
-#include "../utils/cuda_lib.h"
 #include "./physx_system.cuh"
 #include <cuda.h>
 #include <cuda_runtime.h>
@@ -671,21 +670,7 @@ void PhysxSystemGpu::checkGpuInitialized() const {
 void PhysxSystemGpu::gpuSetCudaStream(uintptr_t stream) {
   std::lock_guard lock(mApiMutex);
   checkNotClosed();
-  // SAPIEN kernels and PhysX event waits run in this device's primary context. A stream from
-  // another device or context would fault or order work on the wrong GPU, so reject it here.
-  // Special handles (0, legacy, per-thread) resolve to the current context: this device's.
-  CudaDeviceScope deviceScope(mDevice->cudaId);
-  CUcontext streamContext{};
-  checkCudaDriverErrors(
-      CudaLib::Get().cuStreamGetCtx(reinterpret_cast<CUstream>(stream), &streamContext));
-  if (streamContext != cudaPrimaryContext(mDevice->cudaId)) {
-    throw std::runtime_error(
-        "failed to set CUDA stream: the stream does not belong to cuda:" +
-        std::to_string(mDevice->cudaId) +
-        ", the device of this PhysxGpuSystem. Create the stream on that device, e.g. "
-        "torch.cuda.Stream(device=\"cuda:" +
-        std::to_string(mDevice->cudaId) + "\").");
-  }
+  checkCudaStreamDevice(mDevice->cudaId, stream, "PhysxGpuSystem");
   mViewLifecycle->switchStream(mDevice->cudaId, stream);
   mCudaStream = (cudaStream_t)stream;
 }

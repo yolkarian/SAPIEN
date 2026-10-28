@@ -133,5 +133,23 @@ void cudaStreamWaitStream(int cudaId, uintptr_t consumer, uintptr_t producer) {
   produced.wait(reinterpret_cast<cudaStream_t>(consumer));
 }
 
+void checkCudaStreamDevice(int cudaId, uintptr_t stream, char const *owner) {
+  // SAPIEN kernels and Vulkan/PhysX event waits run in the device's primary context. A stream of
+  // another device or context would fault or order work on the wrong GPU. Special handles (0,
+  // legacy, per-thread) resolve to the current context, which the scope makes this device's.
+  CudaDeviceScope deviceScope(cudaId);
+  CUcontext streamContext{};
+  checkCudaDriverErrors(
+      CudaLib::Get().cuStreamGetCtx(reinterpret_cast<CUstream>(stream), &streamContext));
+  if (streamContext != cudaPrimaryContext(cudaId)) {
+    std::string device = "cuda:" + std::to_string(cudaId);
+    throw std::runtime_error("failed to set CUDA stream: the stream does not belong to " + device +
+                             ", the device of this " + owner +
+                             ". Create the stream on that device, e.g. "
+                             "torch.cuda.Stream(device=\"" +
+                             device + "\").");
+  }
+}
+
 } // namespace sapien
 #endif

@@ -317,7 +317,7 @@ void SapienRenderCameraComponent::onRemoveFromScene(Scene &scene) {
   // and render targets. Destroying them under that work leaves the group's timeline
   // semaphore unsignaled, and the group's close() then waits forever; drain the device first.
   if (mGpuOwnershipOwner && mCamera) {
-    mCamera->mContext->getDevice().waitIdle();
+    mCamera->mContext->waitIdle();
   }
   mCamera = nullptr;
   system->unregisterComponent(

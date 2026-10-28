@@ -283,6 +283,7 @@ std::shared_ptr<SVTexture> SVResourceManager::getDefaultBRDFLUT(core::Context &c
 
 // TODO: test this function
 std::shared_ptr<SVTexture> SVResourceManager::CreateRandomTexture(std::string const &name) {
+  std::lock_guard<std::mutex> lock(mCreateLock);
   if (mRandomTextureRegistry.find(name) != mRandomTextureRegistry.end()) {
     return mRandomTextureRegistry[name];
   }

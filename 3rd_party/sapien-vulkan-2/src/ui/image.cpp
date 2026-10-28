@@ -15,12 +15,12 @@ std::shared_ptr<DisplayImage> DisplayImage::Image(core::Image &image) {
   auto context = image.getContext();
   if (mContext && mContext != context) {
     // the widget moves to an image of another device: release the old device's objects
-    mContext->getDevice().waitIdle();
+    mContext->waitIdle();
     mCommandBuffer.reset();
     mCommandPool.reset();
   }
   mContext = context;
-  mContext->getDevice().waitIdle();
+  mContext->waitIdle();
   if (mDS) {
     ImGui_ImplVulkan_RemoveTexture(mDS);
     mDS = {};
@@ -63,7 +63,7 @@ std::shared_ptr<DisplayImage> DisplayImage::Image(core::Image &image) {
 
 std::shared_ptr<DisplayImage> DisplayImage::Clear() {
   if (mContext) {
-    mContext->getDevice().waitIdle();
+    mContext->waitIdle();
   }
   if (mDS) {
     ImGui_ImplVulkan_RemoveTexture(mDS);
@@ -110,7 +110,7 @@ void DisplayImage::build() {
 
 DisplayImage::~DisplayImage() {
   if (mContext) {
-    mContext->getDevice().waitIdle();
+    mContext->waitIdle();
   }
   mCommandBuffer.reset();
   if (mDS) {

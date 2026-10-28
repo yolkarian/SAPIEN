@@ -3,7 +3,9 @@
 #include "./camera_component.h"
 #include "./sapien_renderer_system.h"
 #include "sapien/math/pose.h"
+#include <atomic>
 #include <map>
+#include <mutex>
 struct CUstream_st;
 
 namespace sapien {
@@ -23,6 +25,15 @@ public:
   /** Stream for image/pose CUDA work; DLPack exports of this group's buffers order on it. Work
    *  queued on the previous stream stays ordered before work queued on the new one. */
   void setCudaStream(CUstream_st *stream);
+  /** The configured CUDA stream as a raw handle (0 is the legacy default stream). */
+  uintptr_t getCudaStreamHandle() const;
+  /** CUDA device of the group; throws once the group is closed. */
+  int getCudaDeviceId() const;
+  /** The lock every entry point of this camera group and of its RenderSystemGroup takes
+   *  (recursively). Holding it keeps the group from switching streams or closing. */
+  std::unique_lock<std::recursive_mutex> lockGpuApi() const {
+    return std::unique_lock(*mApiMutex);
+  }
 
   /** performs all GPU work deferred from construction; called by
    *  BatchedRenderSystem::gpuInit() */
@@ -75,8 +86,11 @@ private:
   std::shared_ptr<Device> mDevice;
   std::shared_ptr<svulkan2::core::Context> mContext;
   std::vector<std::shared_ptr<SapienRenderCameraComponent>> mCameras;
+  /** Shared with the RenderSystemGroup that created this camera group: its update_render()
+   *  drives this group's state, so one lock serializes both against other threads. */
+  std::shared_ptr<std::recursive_mutex> mApiMutex{std::make_shared<std::recursive_mutex>()};
   bool mGpuInitialized{false};
-  bool mClosed{false};
+  std::atomic<bool> mClosed{false};
   std::shared_ptr<CudaArrayLifecycle> mViewLifecycle{std::make_shared<CudaArrayLifecycle>()};
   std::vector<std::string> mRenderTargets;
   std::map<std::string, std::shared_ptr<svulkan2::core::Buffer>> mCudaImageBuffers;
@@ -108,6 +122,12 @@ private:
   vk::UniqueSemaphore mSemaphore;
   uint64_t mFrameCounter{0};
   cudaExternalSemaphore_t mCudaSem{nullptr};
+  // Signalled on the group's CUDA stream by take_picture() and waited on by the copy into the
+  // exported image buffers, so the copy cannot overwrite an image while work ordered before
+  // that stream (consumers on it, or fenced with gpu_wait_for) still reads the previous frame.
+  vk::UniqueSemaphore mConsumerSemaphore;
+  uint64_t mConsumerValue{0};
+  cudaExternalSemaphore_t mCudaConsumerSem{nullptr};
 };
 
 class BatchedRenderSystem {
@@ -156,7 +176,10 @@ private:
   std::shared_ptr<Device> mDevice;
   std::shared_ptr<svulkan2::core::Context> mContext;
   std::vector<std::shared_ptr<SapienRendererSystem>> mSystems;
-  bool mClosed{false};
+  /** Serializes this group's and its camera groups' entry points across threads; recursive
+   *  because entry points call each other. Never held while acquiring the GIL. */
+  std::shared_ptr<std::recursive_mutex> mApiMutex{std::make_shared<std::recursive_mutex>()};
+  std::atomic<bool> mClosed{false};
   std::shared_ptr<svulkan2::scene::Scene> mFixedRenderScene;
   bool mAutoBindPhysxGpuPoses{true};
   std::vector<std::shared_ptr<SapienRenderBodyComponent>> mFixedGpuSourcedBodies;

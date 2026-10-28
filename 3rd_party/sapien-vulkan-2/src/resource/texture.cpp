@@ -161,7 +161,8 @@ std::future<void> SVTexture::loadAsync() {
     return std::async(std::launch::deferred, []() {});
   }
 
-  if (!mImage && mDescription.source != SVTextureDescription::SourceType::eFILE) {
+  // test the source first: a file texture's mImage is written by a load that may be running
+  if (mDescription.source != SVTextureDescription::SourceType::eFILE && !mImage) {
     throw std::runtime_error("failed to load texture: the texture is not specified by a file");
   }
 

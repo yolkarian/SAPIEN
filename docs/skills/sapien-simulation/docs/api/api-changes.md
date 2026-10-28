@@ -23,6 +23,15 @@ Multi-GPU rendering:
   is unchanged by render calls.
 - Fixed: with `SAPIEN_DISABLE_RAY_TRACING=1`, render devices had no CUDA id, so
   `RenderSystem("cuda:N")` failed to find its device.
+- `RenderSystemGroup.update_render()`, `gpu_init()`, `close()` and `RenderCameraGroup.take_picture()`,
+  `set_cuda_pose()`, `close()` release the GIL, so groups on different devices render
+  concurrently from one thread each; calls into one group and its camera groups from several
+  threads are serialized by a per-group lock. Build and `gpu_init()` everything on one thread.
+- **Behavior change:** `RenderCameraGroup.take_picture()`'s copy into the picture buffers waits
+  for all work already submitted to the group's CUDA stream; it used to overwrite pictures that
+  a consumer on that stream had not read yet. New `RenderCameraGroup.gpu_wait_for(array)` orders
+  that stream after a consumer on another stream (JAX).
+- `RenderSystemGroup.set_cuda_stream()` raises `RuntimeError` for a stream of another device.
 
 CUDA interop and threads (JAX/Torch handoff without host synchronization):
 

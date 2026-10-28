@@ -338,8 +338,12 @@ caller's current CUDA device, so `torch.cuda.current_device()` is unchanged by
 SAPIEN calls; create tensors on explicit devices.
 
 **Rendering on several GPUs.** A `RenderSystem` renders on the device it is created
-for; without a device it uses the default render device. Give each device's scenes a
-render system on the same device, and build one `RenderSystemGroup` per device:
+for; without a device it uses the default render device. Rendering follows the PhysX
+layouts. With one process per GPU, a rank that sees only its GPU keeps
+`PhysxGpuSystem()` and `RenderSystem()`, which both pick that GPU; with every GPU
+visible, pass the same `f"cuda:{local_rank}"` to both. In one process, give each
+device's scenes a render system on the same device, and build one
+`RenderSystemGroup` per device:
 
 ```python
 devices = [f"cuda:{k}" for k in range(torch.cuda.device_count())]
@@ -357,11 +361,26 @@ for device in devices:
     groups.append((group, camera_group))
 ```
 
+Build every group and call every `gpu_init()` on one thread, then render each device
+from the thread that steps its PhysX system: `update_render()`, `take_picture()`,
+`set_cuda_pose()` and `close()` release the GIL, and calls into one group from
+several threads are serialized. Keep the group's CUDA stream (`set_cuda_stream`) equal
+to the PhysX system's, so `update_render()` sees the poses the fetches wrote; another
+device's stream raises.
+
+Read pictures with `torch.from_dlpack` or `jax.dlpack.from_dlpack`; the consumer's
+stream waits for the group's stream. The next `take_picture()` overwrites the
+pictures once the work already on the group's stream is done, so order a consumer on
+another stream there first: writing the action computed from the picture with
+`physx_system.cuda_*.copy_from(action)` does it when PhysX and the group share a
+stream, otherwise call `camera_group.gpu_wait_for(x)` with an output of the consumer.
+
 Materials, textures, meshes and loaded models are shared: create them once and use
 them in scenes of every device; each device uploads its own copy on first use, and
-later edits reach every copy. A group's camera outputs (`get_picture_cuda()`) are
-tensors on the group's device. A `RenderSystemGroup` cannot mix render systems of
-different devices, and the viewer always renders through the default render device.
+later edits reach every copy. Edit them only while no thread renders them. A group's
+camera outputs (`get_picture_cuda()`) are tensors on the group's device. A
+`RenderSystemGroup` cannot mix render systems of different devices, and the viewer
+always renders through the default render device.
 
 ## Job-scoped teardown
 

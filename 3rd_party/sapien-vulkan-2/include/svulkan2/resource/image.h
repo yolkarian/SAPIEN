@@ -1,6 +1,7 @@
 #pragma once
 #include "svulkan2/core/image.h"
 #include "svulkan2/core/per_context.h"
+#include <atomic>
 #include <future>
 
 struct ktxTexture;
@@ -48,7 +49,7 @@ class SVImage {
   std::shared_ptr<ktxTexture> mKtxTexture;
 
   /** the image is on the host */
-  bool mLoaded{};
+  std::atomic<bool> mLoaded{false};
 
   /** mipmap levels are provided on host */
   bool mMipLoaded{false};

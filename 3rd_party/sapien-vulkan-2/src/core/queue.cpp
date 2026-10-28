@@ -55,7 +55,12 @@ vk::Result Queue::present(vk::ArrayProxyNoTemporaries<vk::Semaphore const> const
   return mQueue.presentKHR(info);
 }
 
-void Queue::waitIdle() const { mQueue.waitIdle(); }
+std::unique_lock<std::mutex> Queue::lock() const { return std::unique_lock<std::mutex>(mMutex); }
+
+void Queue::waitIdle() const {
+  std::lock_guard lock(mMutex);
+  mQueue.waitIdle();
+}
 
 Queue::~Queue(){};
 

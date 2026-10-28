@@ -2,6 +2,7 @@
 #include "shape.h"
 #include "svulkan2/core/as.h"
 #include "svulkan2/core/per_context.h"
+#include <atomic>
 #include <vector>
 
 namespace svulkan2 {
@@ -52,7 +53,7 @@ private:
   std::shared_ptr<SVModel> mPrototype;
   ModelDescription mDescription;
   std::vector<std::shared_ptr<SVShape>> mShapes;
-  bool mLoaded{};
+  std::atomic<bool> mLoaded{false};
   std::mutex mLoadingMutex;
 
   struct DeviceState {

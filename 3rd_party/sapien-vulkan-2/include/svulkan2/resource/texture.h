@@ -1,5 +1,6 @@
 #pragma once
 #include "image.h"
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -91,7 +92,7 @@ private:
   std::shared_ptr<SVImage> mImage{};
   core::PerContext<DeviceState> mDeviceStates;
 
-  bool mLoaded{};
+  std::atomic<bool> mLoaded{false};
 
   std::mutex mUploadingMutex;
   std::mutex mLoadingMutex;
