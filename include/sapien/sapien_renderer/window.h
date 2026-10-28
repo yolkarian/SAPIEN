@@ -2,10 +2,12 @@
 #include "camera_component.h"
 #include "image.h"
 #include "material.h"
+#include "sapien/device.h"
 #include "sapien/math/mat.h"
 #include "sapien/scene.h"
 #include <functional>
 #include <optional>
+#include <svulkan2/core/context.h>
 #include <svulkan2/renderer/renderer.h>
 #include <svulkan2/renderer/rt_renderer.h>
 #include <svulkan2/ui/ui.h>
@@ -164,6 +166,8 @@ private:
   svulkan2::scene::Camera *getCamera();
 
   std::shared_ptr<SapienRenderEngine> mEngine;
+  std::shared_ptr<Device> mDevice;
+  std::shared_ptr<svulkan2::core::Context> mContext;
 
   std::vector<std::shared_ptr<SapienRendererSystem>> mBaseRenderSystems;
   std::vector<std::shared_ptr<SapienRendererSystem>> mRenderSystems;

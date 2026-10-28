@@ -1,16 +1,18 @@
+#include "svulkan2/scene/loader.h"
 #include "../common/logger.h"
+#include "../resource/internal.h"
 #include "svulkan2/common/image.h"
 #include "svulkan2/core/context.h"
+#include "svulkan2/resource/manager.h"
 #include "svulkan2/scene/scene.h"
 
 #include <assimp/GltfMaterial.h>
 #include <assimp/Importer.hpp>
 #include <assimp/postprocess.h>
 #include <assimp/scene.h>
+#include <cstring>
 #include <filesystem>
 #include <queue>
-
-#include <ktxvulkan.h>
 
 namespace fs = std::filesystem;
 
@@ -24,72 +26,37 @@ static std::vector<uint8_t> loadCompressedTexture(aiTexture const *texture, int 
                              width, height, channels, desiredChannels);
 }
 
+/** a texture description for an image sampled with linear filtering */
+static resource::SVTextureDescription makeTextureDescription(resource::SVImage const &image,
+                                                             bool srgb, int desiredChannels = 0) {
+  resource::SVTextureDescription description{};
+  description.source = resource::SVTextureDescription::SourceType::eCUSTOM;
+  description.format = image.getFormat();
+  description.desiredChannels = desiredChannels;
+  description.mipLevels = image.getMipLevels();
+  description.magFilter = vk::Filter::eLinear;
+  description.minFilter = vk::Filter::eLinear;
+  description.addressModeU = vk::SamplerAddressMode::eRepeat;
+  description.addressModeV = vk::SamplerAddressMode::eRepeat;
+  description.addressModeW = vk::SamplerAddressMode::eRepeat;
+  description.srgb = srgb;
+  description.dim = 2;
+  return description;
+}
+
+/** load an embedded texture to host memory; no device is touched */
 static std::shared_ptr<resource::SVTexture> loadEmbededTexture(aiTexture const *texture,
                                                                uint32_t mipLevels,
                                                                int desiredChannels = 0,
                                                                bool srgb = false) {
   if (strcmp(texture->achFormatHint, "kx2") == 0) {
-    ktxTexture *ktex{};
-    auto res = ktxTexture_CreateFromMemory(reinterpret_cast<unsigned char *>(texture->pcData),
-                                           texture->mWidth, {}, &ktex);
-    if (res != KTX_SUCCESS) {
-      throw std::runtime_error("failed to load ktx texture from memory");
+    auto image = resource::internal::imageFromMemory(texture->pcData, texture->mWidth);
+    auto description = makeTextureDescription(*image, srgb, desiredChannels);
+    if (description.mipLevels != mipLevels) {
+      logger::warn("embedded ktx texture has {} levels but {} levels requested",
+                   description.mipLevels, mipLevels);
     }
-
-    if (ktxTexture_NeedsTranscoding(ktex)) {
-      if (ktex->classId == ktxTexture2_c) {
-        res = ktxTexture2_TranscodeBasis(reinterpret_cast<ktxTexture2 *>(ktex),
-                                         ktx_transcode_fmt_e::KTX_TTF_BC7_RGBA, {});
-        if (res != KTX_SUCCESS) {
-          throw std::runtime_error("failed to transcode");
-        }
-      }
-    }
-
-    ktxVulkanDeviceInfo vdi;
-    auto context = core::Context::Get();
-    auto pool = context->createCommandPool();
-
-    ktxVulkanFunctions funcs{};
-    funcs.vkGetInstanceProcAddr = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr;
-    funcs.vkGetDeviceProcAddr = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr;
-
-    res = ktxVulkanDeviceInfo_ConstructEx(
-        &vdi, context->getInstance(), context->getPhysicalDevice(), context->getDevice(),
-        context->getQueue().getVulkanQueue(), pool->getVulkanCommandPool(), nullptr, &funcs);
-
-    if (res != KTX_SUCCESS) {
-      throw std::runtime_error("failed to construct ktx vulkan device");
-    }
-
-    ktxVulkanTexture vkTexture;
-
-    res = ktxTexture_VkUploadEx(ktex, &vdi, &vkTexture, VK_IMAGE_TILING_OPTIMAL,
-                                VK_IMAGE_USAGE_SAMPLED_BIT,
-                                VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
-    if (res != KTX_SUCCESS) {
-      throw std::runtime_error("failed to load ktx texture: " + std::string(ktxErrorString(res)));
-    }
-
-    auto image = std::make_unique<core::Image>(std::make_unique<ktxVulkanTexture>(vkTexture));
-    // TODO: ensure image has 1 layer
-    auto view = context->getDevice().createImageViewUnique(
-        vk::ImageViewCreateInfo({}, image->getVulkanImage(), vk::ImageViewType(vkTexture.viewType),
-                                vk::Format(vkTexture.imageFormat), {},
-                                vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0,
-                                                          image->getMipLevels(), 0, 1)));
-
-    // TODO: load sampler
-    auto tex = resource::SVTexture::FromImage(
-        resource::SVImage::FromDeviceImage(std::move(image)), std::move(view),
-        context->createSampler(vk::SamplerCreateInfo(
-            {}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear,
-            vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat,
-            vk::SamplerAddressMode::eRepeat, 0.f, false, 0.f, false, vk::CompareOp::eNever, 0.f,
-            vkTexture.levelCount)));
-
-    ktxVulkanDeviceInfo_Destruct(&vdi);
-    return tex;
+    return resource::SVTexture::FromImage(std::move(image), description);
   }
 
   if (texture->mHeight == 0) {
@@ -134,57 +101,31 @@ static std::shared_ptr<resource::SVTexture> loadEmbededTexture(aiTexture const *
       vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat, srgb);
 }
 
+/** the roughness (green) and metallic (blue) channels of one image, sampled through two views
+ *  that swizzle a single channel each; both textures share the image */
 static std::tuple<std::shared_ptr<resource::SVTexture>, std::shared_ptr<resource::SVTexture>>
-loadEmbededRoughnessMetallicTexture(aiTexture const *texture, uint32_t mipLevels) {
-  std::vector<uint8_t> roughness;
-  std::vector<uint8_t> metallic;
-  if (texture->mHeight != 0) {
-    std::runtime_error("Invalid roughness metallic texture");
-  }
-  // int width, height, channels;
+loadEmbededRoughnessMetallicTexture(aiTexture const *texture) {
+  auto image = loadEmbededTexture(texture, 1, 4, false)->getImage();
 
-  auto tex = loadEmbededTexture(texture, 1, 4, false);
-  auto image = tex->getImage();
-  auto context = core::Context::Get();
-  image->loadAsync().get();
-  image->uploadToDevice();
+  auto makeView = [](vk::ComponentSwizzle component) {
+    return vk::ComponentMapping(component, component, component, component);
+  };
 
-  // TODO: check image view type & layers
-  auto viewG = context->getDevice().createImageViewUnique(vk::ImageViewCreateInfo(
-      {}, image->getDeviceImage()->getVulkanImage(), vk::ImageViewType(vk::ImageViewType::e2D),
-      vk::Format(image->getFormat()),
-      vk::ComponentMapping(vk::ComponentSwizzle::eG, vk::ComponentSwizzle::eG,
-                           vk::ComponentSwizzle::eG, vk::ComponentSwizzle::eG),
-      vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0,
-                                image->getDeviceImage()->getMipLevels(), 0, 1)));
-  auto texRough = resource::SVTexture::FromImage(
-      tex->getImage(), std::move(viewG),
-      context->createSampler(vk::SamplerCreateInfo(
-          {}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear,
-          vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat,
-          vk::SamplerAddressMode::eRepeat, 0.f, false, 0.f, false, vk::CompareOp::eNever, 0.f,
-          image->getDeviceImage()->getMipLevels())));
+  auto roughnessDescription = makeTextureDescription(*image, false, 4);
+  roughnessDescription.components = makeView(vk::ComponentSwizzle::eG);
 
-  auto viewB = context->getDevice().createImageViewUnique(vk::ImageViewCreateInfo(
-      {}, image->getDeviceImage()->getVulkanImage(), vk::ImageViewType(vk::ImageViewType::e2D),
-      vk::Format(image->getFormat()),
-      vk::ComponentMapping(vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eB,
-                           vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eB),
-      vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0,
-                                image->getDeviceImage()->getMipLevels(), 0, 1)));
-  auto texMetal = resource::SVTexture::FromImage(
-      tex->getImage(), std::move(viewB),
-      context->createSampler(vk::SamplerCreateInfo(
-          {}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear,
-          vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat,
-          vk::SamplerAddressMode::eRepeat, 0.f, false, 0.f, false, vk::CompareOp::eNever, 0.f,
-          image->getDeviceImage()->getMipLevels())));
+  auto metallicDescription = roughnessDescription;
+  metallicDescription.components = makeView(vk::ComponentSwizzle::eB);
 
-  return {texRough, texMetal};
+  return {resource::SVTexture::FromImage(image, roughnessDescription),
+          resource::SVTexture::FromImage(image, metallicDescription)};
 }
 
-std::shared_ptr<Scene> LoadScene(std::string const &path) {
-  std::shared_ptr<Scene> result = std::make_shared<Scene>();
+std::shared_ptr<Scene> LoadScene(std::shared_ptr<core::Context> context, std::string const &path) {
+  if (!context) {
+    throw std::runtime_error("failed to load scene: invalid context");
+  }
+  std::shared_ptr<Scene> result = std::make_shared<Scene>(std::move(context));
 
   Assimp::Importer importer;
   uint32_t flags = aiProcess_CalcTangentSpace | aiProcess_Triangulate | aiProcess_GenNormals |
@@ -198,10 +139,10 @@ std::shared_ptr<Scene> LoadScene(std::string const &path) {
 
   std::vector<std::future<void>> futures; // futures of sub tasks
 
-  auto context = core::Context::Get();
-  auto manager = context->getResourceManager();
+  auto manager = resource::SVResourceManager::Get();
 
   const uint32_t MIP_LEVEL = manager->getDefaultMipLevels();
+  const bool loadTextures = !manager->shouldNotLoadTexture();
   std::vector<std::shared_ptr<resource::SVMaterial>> materials;
   std::unordered_map<std::string, std::shared_ptr<resource::SVTexture>> textureCache;
   std::unordered_map<std::string, std::tuple<std::shared_ptr<resource::SVTexture>,
@@ -317,7 +258,7 @@ std::shared_ptr<Scene> LoadScene(std::string const &path) {
     aiString path;
     if (m->GetTextureCount(aiTextureType_DIFFUSE) > 0 &&
         m->GetTexture(aiTextureType_DIFFUSE, 0, &path) == AI_SUCCESS) {
-      if (core::Context::Get()->shouldNotLoadTexture()) {
+      if (!loadTextures) {
         logger::info("Texture ignored {}", path.C_Str());
       } else {
         logger::info("Trying to load texture {}", path.C_Str());
@@ -347,7 +288,7 @@ std::shared_ptr<Scene> LoadScene(std::string const &path) {
 
     if (m->GetTextureCount(aiTextureType_METALNESS) > 0 &&
         m->GetTexture(aiTextureType_METALNESS, 0, &path) == AI_SUCCESS) {
-      if (core::Context::Get()->shouldNotLoadTexture()) {
+      if (!loadTextures) {
         logger::info("Texture ignored {}", path.C_Str());
       } else {
         if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
@@ -375,7 +316,7 @@ std::shared_ptr<Scene> LoadScene(std::string const &path) {
 
     if (m->GetTextureCount(aiTextureType_NORMALS) > 0 &&
         m->GetTexture(aiTextureType_NORMALS, 0, &path) == AI_SUCCESS) {
-      if (core::Context::Get()->shouldNotLoadTexture()) {
+      if (!loadTextures) {
         logger::info("Texture ignored {}", path.C_Str());
       } else {
         if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
@@ -402,7 +343,7 @@ std::shared_ptr<Scene> LoadScene(std::string const &path) {
 
     if (m->GetTextureCount(aiTextureType_EMISSIVE) > 0 &&
         m->GetTexture(aiTextureType_EMISSIVE, 0, &path) == AI_SUCCESS) {
-      if (core::Context::Get()->shouldNotLoadTexture()) {
+      if (!loadTextures) {
         logger::info("Texture ignored {}", path.C_Str());
       } else {
         if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
@@ -431,7 +372,7 @@ std::shared_ptr<Scene> LoadScene(std::string const &path) {
 
     if (m->GetTextureCount(aiTextureType_DIFFUSE_ROUGHNESS) > 0 &&
         m->GetTexture(aiTextureType_DIFFUSE_ROUGHNESS, 0, &path) == AI_SUCCESS) {
-      if (core::Context::Get()->shouldNotLoadTexture()) {
+      if (!loadTextures) {
         logger::info("Texture ignored {}", path.C_Str());
       } else {
         if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
@@ -459,7 +400,7 @@ std::shared_ptr<Scene> LoadScene(std::string const &path) {
 
     if (m->GetTexture(AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_METALLICROUGHNESS_TEXTURE, &path) ==
         AI_SUCCESS) {
-      if (core::Context::Get()->shouldNotLoadTexture()) {
+      if (!loadTextures) {
         logger::info("Texture ignored {}", path.C_Str());
       } else {
         if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
@@ -470,7 +411,7 @@ std::shared_ptr<Scene> LoadScene(std::string const &path) {
             logger::info("Loading embeded roughness metallic texture {}", path.C_Str());
             std::tie(roughnessTexture, metallicTexture) =
                 roughnessMetallicTextureCache[std::string(path.C_Str())] =
-                    loadEmbededRoughnessMetallicTexture(texture, MIP_LEVEL);
+                    loadEmbededRoughnessMetallicTexture(texture);
           }
         } else {
           logger::warn("Loading non-embeded roughness metallic texture is "
@@ -487,7 +428,7 @@ std::shared_ptr<Scene> LoadScene(std::string const &path) {
 
     if (m->GetTextureCount(aiTextureType_TRANSMISSION) > 0 &&
         m->GetTexture(aiTextureType_TRANSMISSION, 0, &path) == AI_SUCCESS) {
-      if (core::Context::Get()->shouldNotLoadTexture()) {
+      if (!loadTextures) {
         logger::info("Texture ignored {}", path.C_Str());
       } else {
         if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {

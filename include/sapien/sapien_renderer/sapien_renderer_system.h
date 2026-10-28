@@ -6,12 +6,18 @@
 #include "cubemap.h"
 #include "sapien/array.h"
 #include "sapien/math/vec3.h"
+#include <mutex>
 #include <set>
 #include <svulkan2/core/context.h>
 #include <svulkan2/scene/scene.h>
 
 typedef struct CUstream_st *cudaStream_t;
 typedef struct CUexternalSemaphore_st *cudaExternalSemaphore_t;
+
+namespace svulkan2::resource {
+class SVResourceManager;
+class SVMesh;
+} // namespace svulkan2::resource
 
 namespace sapien {
 namespace sapien_renderer {
@@ -23,14 +29,25 @@ class PointCloudComponent;
 class CudaDeformableMeshComponent;
 class SapienRenderCubemap;
 
+/** Process-wide render engine.
+ *
+ *  One engine serves every rendering device of the process. It owns the process-wide
+ *  resource manager, meshes shared by all devices, the render-system registry and one
+ *  svulkan2 context per device. Device-independent render objects (materials, textures,
+ *  cubemaps, shapes) keep the engine alive and let each device upload them lazily. */
 class SapienRenderEngine {
 public:
-  static std::shared_ptr<SapienRenderEngine> Get(std::shared_ptr<Device> device = nullptr);
+  /** the process-wide engine, created on first use */
+  static std::shared_ptr<SapienRenderEngine> Get();
   static std::shared_ptr<SapienRenderEngine> GetIfExists();
 
-  SapienRenderEngine(std::shared_ptr<Device> device);
+  /** the device used when a render object does not name one: the best render device */
+  std::shared_ptr<Device> getDefaultDevice();
 
-  std::shared_ptr<svulkan2::core::Context> getContext() const;
+  /** the svulkan2 context of `device`, created on first request; null means the default
+   *  device. Every live context is kept until shutdown(). */
+  std::shared_ptr<svulkan2::core::Context> getContext(std::shared_ptr<Device> device = nullptr);
+
   std::shared_ptr<svulkan2::resource::SVResourceManager> getResourceManager() const;
 
   std::shared_ptr<svulkan2::resource::SVMesh> getSphereMesh();
@@ -39,11 +56,13 @@ public:
 
   std::string getSummary();
 
-  std::shared_ptr<Device> getDevice() const { return mDevice; }
-
   void registerRenderSystem(std::shared_ptr<SapienRendererSystem> const &system);
   void unregisterRenderSystem(SapienRendererSystem const *system);
+  /** every live render system, on every device */
   std::vector<std::shared_ptr<SapienRendererSystem>> getRenderSystems();
+  /** live render systems of one device; a rendering group or window only sees these */
+  std::vector<std::shared_ptr<SapienRendererSystem>>
+  getRenderSystems(std::shared_ptr<svulkan2::core::Context> const &context);
 
   void shutdown();
   bool isShutdown() const { return mShutdown; }
@@ -51,8 +70,14 @@ public:
   ~SapienRenderEngine();
 
 private:
-  std::shared_ptr<Device> mDevice;
-  std::shared_ptr<svulkan2::core::Context> mContext;
+  SapienRenderEngine();
+
+  std::shared_ptr<Device> mDefaultDevice;
+
+  std::mutex mContextLock;
+  std::vector<std::shared_ptr<svulkan2::core::Context>> mContexts;
+
+  // declared after the contexts: device objects it caches die before their devices
   std::shared_ptr<svulkan2::resource::SVResourceManager> mResourceManager;
 
   std::shared_ptr<svulkan2::resource::SVMesh> mSphereMesh;
@@ -64,8 +89,10 @@ private:
 
 class SapienRendererSystem : public System {
 public:
+  /** `device` null selects the engine's default device */
   SapienRendererSystem(std::shared_ptr<Device> device);
   std::shared_ptr<Device> getDevice() const;
+  std::shared_ptr<svulkan2::core::Context> getContext() const;
 
   std::shared_ptr<svulkan2::scene::Scene> getScene();
   void setBatchedRenderShared(bool shared);
@@ -133,6 +160,8 @@ private:
   uint64_t mLightStateVersion{1};
 
   std::shared_ptr<SapienRenderEngine> mEngine;
+  std::shared_ptr<Device> mDevice;
+  std::shared_ptr<svulkan2::core::Context> mContext;
   std::shared_ptr<svulkan2::scene::Scene> mScene;
 
   std::set<std::shared_ptr<SapienRenderBodyComponent>, comp_cmp> mRenderBodyComponents;

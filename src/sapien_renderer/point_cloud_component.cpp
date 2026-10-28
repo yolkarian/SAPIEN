@@ -34,6 +34,7 @@ std::shared_ptr<PointCloudComponent> PointCloudComponent::setAttribute(
 void PointCloudComponent::onAddToScene(Scene &scene) {
   auto system = scene.getSapienRendererSystem();
   auto s = system->getScene();
+  mContext = system->getContext();
   mObject = &s->addPointObject(mPointSet, getTransform());
   system->registerComponent(std::static_pointer_cast<PointCloudComponent>(shared_from_this()));
 }
@@ -43,7 +44,16 @@ void PointCloudComponent::onRemoveFromScene(Scene &scene) {
   auto s = system->getScene();
   s->removeNode(*mObject);
   mObject = nullptr;
+  mContext.reset();
   system->unregisterComponent(std::static_pointer_cast<PointCloudComponent>(shared_from_this()));
+}
+
+svulkan2::core::Context &PointCloudComponent::internalGetContext() const {
+  if (!mContext) {
+    throw std::runtime_error(
+        "failed to access the GPU state of a point cloud that is not added to a scene");
+  }
+  return *mContext;
 }
 
 // called by system to sync pose
@@ -97,11 +107,12 @@ CudaArrayHandle PointCloudComponent::getCudaArray() const {
   int channels = mPointSet->getVertexSize() / 4;
   int itemsize = 4;
 
+  auto &buffer = mPointSet->getVertexBuffer(internalGetContext());
   return CudaArrayHandle{.shape = {count, channels},
                          .strides = {channels * itemsize, itemsize},
                          .type = "f4",
-                         .cudaId = mPointSet->getVertexBuffer().getCudaDeviceId(),
-                         .ptr = mPointSet->getVertexBuffer().getCudaPtr()};
+                         .cudaId = buffer.getCudaDeviceId(),
+                         .ptr = buffer.getCudaPtr()};
 #else
   throw std::runtime_error("sapien is not copmiled with CUDA support");
 #endif
@@ -109,7 +120,7 @@ CudaArrayHandle PointCloudComponent::getCudaArray() const {
 
 std::optional<CudaArrayHandle> PointCloudComponent::getCudaAABBArray() const {
 #ifdef SAPIEN_CUDA
-  auto buffer = mPointSet->getAabbBuffer();
+  auto buffer = mPointSet->getAabbBuffer(internalGetContext());
   if (!buffer) {
     return {};
   }

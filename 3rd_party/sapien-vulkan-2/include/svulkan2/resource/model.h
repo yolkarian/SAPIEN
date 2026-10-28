@@ -1,6 +1,7 @@
 #pragma once
 #include "shape.h"
 #include "svulkan2/core/as.h"
+#include "svulkan2/core/per_context.h"
 #include <vector>
 
 namespace svulkan2 {
@@ -37,10 +38,11 @@ public:
 
   inline ModelDescription const &getDescription() const { return mDescription; }
 
-  /** must be called only in 1 thread currently */
-  void buildBLAS(bool update = false);
-  void recordUpdateBLAS(vk::CommandBuffer commandBuffer);
-  core::BLAS *getBLAS();
+  /** build this device's BLAS of every shape; called from one thread per device */
+  void buildBLAS(core::Context &context, bool update = false);
+  void recordUpdateBLAS(core::Context &context, vk::CommandBuffer commandBuffer);
+  /** this device's BLAS, nullptr before buildBLAS on that device */
+  core::BLAS *getBLAS(core::Context const &context);
 
   ~SVModel();
 
@@ -53,7 +55,10 @@ private:
   bool mLoaded{};
   std::mutex mLoadingMutex;
 
-  std::unique_ptr<core::BLAS> mBLAS;
+  struct DeviceState {
+    std::unique_ptr<core::BLAS> blas;
+  };
+  core::PerContext<DeviceState> mDeviceStates;
 };
 
 } // namespace resource

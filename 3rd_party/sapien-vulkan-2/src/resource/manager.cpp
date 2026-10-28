@@ -11,6 +11,28 @@ namespace fs = std::filesystem;
 namespace svulkan2 {
 namespace resource {
 
+static std::mutex gManagerLock;
+static std::weak_ptr<SVResourceManager> gManager;
+
+std::shared_ptr<SVResourceManager> SVResourceManager::Create() {
+  std::scoped_lock lock(gManagerLock);
+  if (auto manager = gManager.lock()) {
+    return manager;
+  }
+  auto manager = std::shared_ptr<SVResourceManager>(new SVResourceManager);
+  gManager = manager;
+  return manager;
+}
+
+std::shared_ptr<SVResourceManager> SVResourceManager::Get() {
+  std::scoped_lock lock(gManagerLock);
+  auto manager = gManager.lock();
+  if (!manager) {
+    throw std::runtime_error("resource manager does not exist");
+  }
+  return manager;
+}
+
 SVResourceManager::SVResourceManager() {
   std::vector<char> rawData = toRawBytes(std::vector<uint8_t>{255, 255, 255, 255});
 
@@ -58,18 +80,21 @@ SVResourceManager::CreateShaderPack(std::string const &dirname) {
 }
 
 std::shared_ptr<shader::ShaderPackInstance>
-SVResourceManager::CreateShaderPackInstance(shader::ShaderPackInstanceDesc const &desc) {
+SVResourceManager::CreateShaderPackInstance(std::shared_ptr<core::Context> context,
+                                            shader::ShaderPackInstanceDesc const &desc) {
+  if (!context) {
+    throw std::runtime_error("failed to create shader pack instance: invalid context");
+  }
+
   std::lock_guard<std::mutex> lock(mShaderPackInstanceLock);
-  auto it = mShaderPackInstanceRegistry.find(desc.config->shaderDir);
-  if (it != mShaderPackInstanceRegistry.end()) {
-    for (auto inst : it->second) {
-      if (inst->getDesc() == desc) {
-        return inst;
-      }
+  auto &instances = mShaderPackInstanceRegistry[context->getId()][desc.config->shaderDir];
+  for (auto &inst : instances) {
+    if (inst->getDesc() == desc) {
+      return inst;
     }
   }
-  auto inst = std::make_shared<shader::ShaderPackInstance>(desc);
-  mShaderPackInstanceRegistry[desc.config->shaderDir].push_back(inst);
+  auto inst = std::make_shared<shader::ShaderPackInstance>(std::move(context), desc);
+  instances.push_back(inst);
   return inst;
 }
 
@@ -157,9 +182,8 @@ std::shared_ptr<SVTexture> SVResourceManager::CreateTextureFromRawData(
     std::vector<char> const &data, int dim, uint32_t mipLevels, vk::Filter magFilter,
     vk::Filter minFilter, vk::SamplerAddressMode addressModeU, vk::SamplerAddressMode addressModeV,
     vk::SamplerAddressMode addressModeW, bool srgb) {
-  auto tex = SVTexture::FromRawData(width, height, depth, format, data, dim, mipLevels, magFilter,
-                                    minFilter, addressModeU, addressModeV, addressModeW, srgb);
-  return tex;
+  return SVTexture::FromRawData(width, height, depth, format, data, dim, mipLevels, magFilter,
+                                minFilter, addressModeU, addressModeV, addressModeW, srgb);
 }
 
 std::shared_ptr<SVCubemap>
@@ -175,8 +199,6 @@ SVResourceManager::CreateCubemapFromFile(std::string const &filename, uint32_t m
                                .magFilter = magFilter,
                                .minFilter = minFilter,
                                .srgb = srgb};
-  auto cubemap =
-      SVCubemap::FromFile(desc.filenames[0], desc.mipLevels, desc.magFilter, desc.minFilter, srgb);
   auto it = mCubemapRegistry.find(desc.filenames[0]);
   if (it != mCubemapRegistry.end()) {
     for (auto &tex : it->second) {
@@ -185,6 +207,8 @@ SVResourceManager::CreateCubemapFromFile(std::string const &filename, uint32_t m
       }
     }
   }
+  auto cubemap =
+      SVCubemap::FromFile(desc.filenames[0], desc.mipLevels, desc.magFilter, desc.minFilter, srgb);
   mCubemapRegistry[desc.filenames[0]].push_back(cubemap);
   return cubemap;
 }
@@ -203,8 +227,6 @@ SVResourceManager::CreateCubemapFromFiles(std::array<std::string, 6> const &file
       .magFilter = magFilter,
       .minFilter = minFilter,
       .srgb = srgb};
-  auto cubemap =
-      SVCubemap::FromFile(desc.filenames, desc.mipLevels, desc.magFilter, desc.minFilter, srgb);
   auto it = mCubemapRegistry.find(desc.filenames[0]);
   if (it != mCubemapRegistry.end()) {
     for (auto &tex : it->second) {
@@ -213,35 +235,50 @@ SVResourceManager::CreateCubemapFromFiles(std::array<std::string, 6> const &file
       }
     }
   }
+  auto cubemap =
+      SVCubemap::FromFile(desc.filenames, desc.mipLevels, desc.magFilter, desc.minFilter, srgb);
   mCubemapRegistry[desc.filenames[0]].push_back(cubemap);
   return cubemap;
 }
 
-std::shared_ptr<SVTexture> SVResourceManager::getDefaultBRDFLUT() {
-  std::lock_guard<std::mutex> lock(mCreateLock);
-  if (mDefaultBRDFLUT) {
-    return mDefaultBRDFLUT;
-  }
-  return mDefaultBRDFLUT = generateBRDFLUT(512);
-}
-
-std::shared_ptr<SVTexture> SVResourceManager::generateBRDFLUT(uint32_t size) {
-  auto context = core::Context::Get();
-  if (!context->isVulkanAvailable()) {
+std::shared_ptr<SVTexture> SVResourceManager::generateBRDFLUT(core::Context &context,
+                                                              uint32_t size) {
+  if (!context.isVulkanAvailable()) {
     return nullptr;
   }
-  auto image = shader::generateBRDFLUT(512);
-  auto sampler = context->createSampler(vk::SamplerCreateInfo(
-      {}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eNearest,
-      vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge,
-      vk::SamplerAddressMode::eClampToEdge, 0.f, false, 0.f, false, vk::CompareOp::eNever, 0.f,
-      0.f, vk::BorderColor::eFloatOpaqueWhite));
-  auto view = context->getDevice().createImageViewUnique(vk::ImageViewCreateInfo(
-      {}, image->getVulkanImage(), vk::ImageViewType::e2D, image->getFormat(),
-      vk::ComponentSwizzle::eIdentity,
-      vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1)));
-  return resource::SVTexture::FromImage(resource::SVImage::FromDeviceImage(std::move(image)),
-                                        std::move(view), sampler);
+  std::unique_ptr<core::Image> image;
+  {
+    // the compute pass allocates from the context's descriptor pool, shared with material
+    // uploads that hold the same lock
+    std::scoped_lock lock(context.getGlobalLock());
+    image = shader::generateBRDFLUT(context, size);
+  }
+
+  SVTextureDescription description{};
+  description.source = SVTextureDescription::SourceType::eCUSTOM;
+  description.format = image->getFormat();
+  description.mipLevels = image->getMipLevels();
+  description.magFilter = vk::Filter::eLinear;
+  description.minFilter = vk::Filter::eLinear;
+  description.addressModeU = vk::SamplerAddressMode::eClampToEdge;
+  description.addressModeV = vk::SamplerAddressMode::eClampToEdge;
+  description.addressModeW = vk::SamplerAddressMode::eClampToEdge;
+  description.srgb = false;
+  description.dim = 2;
+
+  auto texture = SVTexture::FromImage(SVImage::FromDeviceImage(std::move(image)), description);
+  texture->uploadToDevice(context);
+  return texture;
+}
+
+std::shared_ptr<SVTexture> SVResourceManager::getDefaultBRDFLUT(core::Context &context) {
+  // generated once per context; a one-off cost, so devices may wait on each other here
+  std::lock_guard<std::mutex> lock(mBRDFLUTLock);
+  auto &lut = mDefaultBRDFLUTs[context.getId()];
+  if (!lut) {
+    lut = generateBRDFLUT(context, 512);
+  }
+  return lut;
 }
 
 // TODO: test this function
@@ -373,7 +410,10 @@ void SVResourceManager::clearCachedResources(bool models, bool images, bool shad
     mRandomTextureRegistry.clear();
   }
   if (shaders) {
-    mShaderPackInstanceRegistry.clear();
+    {
+      std::lock_guard<std::mutex> instanceLock(mShaderPackInstanceLock);
+      mShaderPackInstanceRegistry.clear();
+    }
     mShaderPackRegistry.clear();
   }
 }
@@ -402,6 +442,34 @@ void SVResourceManager::releaseGPUResourcesUnsafe() {
     for (auto &t : it.second) {
       t->removeFromDevice();
     }
+  }
+  for (auto &it : mRandomTextureRegistry) {
+    it.second->removeFromDevice();
+  }
+  mDefaultTexture1D->removeFromDevice();
+  mDefaultTexture2D->removeFromDevice();
+  mDefaultTexture3D->removeFromDevice();
+  mDefaultCubemap->removeFromDevice();
+
+  // pipelines and lookup tables of every device become invalid
+  {
+    std::lock_guard<std::mutex> instanceLock(mShaderPackInstanceLock);
+    mShaderPackInstanceRegistry.clear();
+  }
+  {
+    std::lock_guard<std::mutex> lutLock(mBRDFLUTLock);
+    mDefaultBRDFLUTs.clear();
+  }
+}
+
+void SVResourceManager::releaseContext(core::Context const &context) {
+  {
+    std::lock_guard<std::mutex> lock(mShaderPackInstanceLock);
+    mShaderPackInstanceRegistry.erase(context.getId());
+  }
+  {
+    std::lock_guard<std::mutex> lock(mBRDFLUTLock);
+    mDefaultBRDFLUTs.erase(context.getId());
   }
 }
 

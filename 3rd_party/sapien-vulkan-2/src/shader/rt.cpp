@@ -4,6 +4,8 @@
 #include "svulkan2/common/launch_policy.h"
 #include "svulkan2/core/buffer.h"
 #include "svulkan2/core/context.h"
+#include "svulkan2/resource/manager.h"
+#include <utility>
 
 namespace svulkan2 {
 namespace shader {
@@ -727,9 +729,14 @@ std::shared_ptr<InputDataLayout> RayTracingShaderPack::computePrimitiveLayout() 
 
 std::string RayTracingShaderPack::summary() const { return summarizeResources(mResources); }
 
-RayTracingShaderPackInstance::RayTracingShaderPackInstance(RayTracingShaderPackInstanceDesc desc)
-    : mDesc(desc) {
-  mShaderPack = core::Context::Get()->getResourceManager()->CreateRTShaderPack(desc.shaderDir);
+RayTracingShaderPackInstance::RayTracingShaderPackInstance(std::shared_ptr<core::Context> context,
+                                                           RayTracingShaderPackInstanceDesc desc)
+    : mContext(std::move(context)), mDesc(desc) {
+  if (!mContext) {
+    throw std::runtime_error(
+        "failed to create ray tracing shader pack instance: context must not be null");
+  }
+  mShaderPack = resource::SVResourceManager::Get()->CreateRTShaderPack(desc.shaderDir);
 }
 
 static vk::UniqueDescriptorSetLayout
@@ -861,8 +868,7 @@ void RayTracingShaderPackInstance::initPipeline() {
     return;
   }
 
-  auto context = core::Context::Get();
-  vk::Device device = context->getDevice();
+  vk::Device device = mContext->getDevice();
 
   std::vector<vk::PushConstantRange> pushConstantRanges;
   if (mShaderPack->getPushConstantLayout()) {
@@ -1035,12 +1041,10 @@ void RayTracingShaderPackInstance::initPipeline() {
 }
 
 void RayTracingShaderPackInstance::initSBT() {
-  auto context = core::Context::Get();
-
   initPipeline();
 
   // create shader binding table
-  auto properties = context->getPhysicalDevice()
+  auto properties = mContext->getPhysicalDevice()
                         .getProperties2<vk::PhysicalDeviceProperties2,
                                         vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
   auto pipelineProperties = properties.get<vk::PhysicalDeviceRayTracingPipelinePropertiesKHR>();
@@ -1053,7 +1057,7 @@ void RayTracingShaderPackInstance::initSBT() {
   uint32_t handleSize = pipelineProperties.shaderGroupHandleSize;
   uint32_t dataSize = handleCount * handleSize;
   std::vector<uint8_t> shaderHandleStorage(dataSize);
-  if (context->getDevice().getRayTracingShaderGroupHandlesKHR(
+  if (mContext->getDevice().getRayTracingShaderGroupHandlesKHR(
           mPipeline.get(), 0, handleCount, dataSize, shaderHandleStorage.data()) !=
       vk::Result::eSuccess) {
     throw std::runtime_error("failed to get ray tracing shader group handles");
@@ -1073,11 +1077,11 @@ void RayTracingShaderPackInstance::initSBT() {
 
   vk::DeviceSize sbtSize = rgenSize + missSize + hitSize; // there is no call region
   mSBTBuffer = core::Buffer::Create(
-      sbtSize,
+      *mContext, sbtSize,
       vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eShaderDeviceAddress |
           vk::BufferUsageFlagBits::eShaderBindingTableKHR | vk::BufferUsageFlagBits::eTransferDst,
       VMA_MEMORY_USAGE_CPU_TO_GPU, VmaAllocationCreateFlags{}, false,
-      context->getAllocator().getRTPool());
+      mContext->getAllocator().getRTPool());
 
   vk::DeviceSize rgenAddress = mSBTBuffer->getAddress();
   vk::DeviceSize missAddress = rgenAddress + rgenSize;

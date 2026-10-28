@@ -1,5 +1,7 @@
 #include "svulkan2/resource/primitive_set.h"
 #include "svulkan2/core/context.h"
+#include "svulkan2/resource/manager.h"
+#include <stdexcept>
 
 namespace svulkan2 {
 namespace resource {
@@ -8,13 +10,22 @@ SVPrimitiveSet::SVPrimitiveSet(uint32_t capacity) : mVertexCapacity(capacity) {}
 
 void SVPrimitiveSet::setVertexAttribute(std::string const &name,
                                         std::vector<float> const &attrib) {
-  mDirty = true;
   mAttributes[name] = attrib;
   if (name == "position") {
     mVertexCount = attrib.size() / 3;
   }
-  if (this->mOnDevice) {
-    this->uploadToDevice();
+  ++mVersion;
+
+  // Edits reach every device already holding the set: recorded draws bind its buffer
+  // directly. Collect first, uploading inside forEach would deadlock on the PerContext lock.
+  std::vector<std::shared_ptr<core::Context>> contexts;
+  mDeviceStates.forEach([&](DeviceState const &state) {
+    if (state.context) {
+      contexts.push_back(state.context);
+    }
+  });
+  for (auto const &context : contexts) {
+    uploadToDevice(*context);
   }
 }
 
@@ -26,26 +37,23 @@ std::vector<float> const &SVPrimitiveSet::getVertexAttribute(std::string const &
 }
 
 size_t SVPrimitiveSet::getVertexSize() {
-  auto layout = core::Context::Get()->getResourceManager()->getLineVertexLayout();
-  return layout->getSize();
+  return SVResourceManager::Get()->getLineVertexLayout()->getSize();
 }
 
-core::Buffer &SVPrimitiveSet::getVertexBuffer() {
-  if (!mVertexBuffer) {
-    uploadToDevice();
+core::Buffer &SVPrimitiveSet::getVertexBuffer(core::Context &context) {
+  uploadToDevice(context);
+  auto state = mDeviceStates.find(context);
+  if (!state || !state->vertexBuffer) {
+    throw std::runtime_error(
+        "failed to get vertex buffer: the primitive set is not on this device");
   }
-  return *mVertexBuffer;
+  return *state->vertexBuffer;
 }
 
-void SVPrimitiveSet::uploadToDevice() {
+void SVPrimitiveSet::uploadToDevice(core::Context &context) {
   std::scoped_lock lock(mUploadingMutex);
 
-  if (!mDirty) {
-    return;
-  }
-  auto context = core::Context::Get();
-
-  auto layout = context->getResourceManager()->getLineVertexLayout();
+  auto layout = SVResourceManager::Get()->getLineVertexLayout();
 
   if (mAttributes.find("position") == mAttributes.end() || mAttributes["position"].size() == 0) {
     throw std::runtime_error("primitive set upload failed: no vertex positions");
@@ -59,6 +67,11 @@ void SVPrimitiveSet::uploadToDevice() {
 
   if (mVertexCapacity < mVertexCount) {
     throw std::runtime_error("failed to upload primitive set: vertex count exceeds capacity");
+  }
+
+  auto &state = mDeviceStates.get(context);
+  if (state.vertexBuffer && state.version == mVersion) {
+    return;
   }
 
   size_t bufferSize = vertexSize * mVertexCapacity;
@@ -78,25 +91,28 @@ void SVPrimitiveSet::uploadToDevice() {
     offset += elem.getSize();
   }
 
-  if (!mVertexBuffer) {
-    mVertexBuffer = core::Buffer::Create(
-        bufferSize,
+  if (!state.vertexBuffer || state.vertexBuffer->getSize() != bufferSize) {
+    state.vertexBuffer = core::Buffer::Create(
+        context, bufferSize,
         vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst |
             vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eStorageBuffer,
         VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
+    state.context = context.shared_from_this();
   }
-  mVertexBuffer->upload(buffer.data(), bufferSize);
-  mOnDevice = true;
-  mDirty = false;
+  state.vertexBuffer->upload(buffer.data(), bufferSize);
+  state.version = mVersion;
 }
 
-void SVPrimitiveSet::removeFromDevice() {
-  mDirty = true;
-  mOnDevice = false;
-  mVertexBuffer.reset();
+void SVPrimitiveSet::removeFromDevice() { mDeviceStates.clear(); }
+
+//==================== Point Set ====================//
+
+void SVPointSet::removeFromDevice() {
+  mRTStates.clear();
+  SVPrimitiveSet::removeFromDevice();
 }
 
-void SVPointSet::buildBLAS(bool update) {
+void SVPointSet::buildBLAS(core::Context &context, bool update) {
   if (getVertexCapacity() == 0) {
     throw std::runtime_error("failed to build BLAS: unspecified vertex capacity");
   }
@@ -105,9 +121,11 @@ void SVPointSet::buildBLAS(bool update) {
     glm::vec3 max;
   };
 
-  if (!mAabbBuffer) {
-    mAabbBuffer = core::Buffer::Create(
-        getVertexCapacity() * sizeof(Aabb),
+  auto &state = mRTStates.get(context);
+
+  if (!state.aabbBuffer) {
+    state.aabbBuffer = core::Buffer::Create(
+        context, getVertexCapacity() * sizeof(Aabb),
         vk::BufferUsageFlagBits::eShaderDeviceAddress |
             vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR |
             vk::BufferUsageFlagBits::eStorageBuffer |
@@ -126,22 +144,37 @@ void SVPointSet::buildBLAS(bool update) {
     aabbs.push_back({center - glm::vec3(scale.at(i)),
                      center + glm::vec3(scale.at(i))}); // TODO use a proper scale
   }
-  mAabbBuffer->upload(aabbs);
+  state.aabbBuffer->upload(aabbs);
 
   static_assert(sizeof(Aabb) == sizeof(float) * 6);
 
-  vk::AccelerationStructureGeometryAabbsDataKHR data(mAabbBuffer->getAddress(), sizeof(Aabb));
+  vk::AccelerationStructureGeometryAabbsDataKHR data(state.aabbBuffer->getAddress(), sizeof(Aabb));
   vk::AccelerationStructureGeometryKHR geom(vk::GeometryTypeKHR::eAabbs, data,
                                             vk::GeometryFlagBitsKHR::eOpaque);
   vk::AccelerationStructureBuildRangeInfoKHR range(getVertexCount(), 0, 0, 0);
-  mBLAS = std::make_unique<core::BLAS>(std::vector{geom}, std::vector{range},
-                                       std::vector<uint32_t>{getVertexCapacity()}, false, update);
-  mBLAS->build();
+  state.blas =
+      std::make_unique<core::BLAS>(context, std::vector{geom}, std::vector{range},
+                                   std::vector<uint32_t>{getVertexCapacity()}, false, update);
+  state.blas->build();
 }
 
-void SVPointSet::recordUpdateBLAS(vk::CommandBuffer commandBuffer) {
+core::BLAS *SVPointSet::getBLAS(core::Context const &context) {
+  auto state = mRTStates.find(context);
+  return state && state->blas ? state->blas.get() : nullptr;
+}
+
+core::Buffer *SVPointSet::getAabbBuffer(core::Context const &context) const {
+  auto state = mRTStates.find(context);
+  return state && state->aabbBuffer ? state->aabbBuffer.get() : nullptr;
+}
+
+void SVPointSet::recordUpdateBLAS(core::Context &context, vk::CommandBuffer commandBuffer) {
+  auto state = mRTStates.find(context);
+  if (!state || !state->blas) {
+    throw std::runtime_error("failed to update BLAS: the point set has no BLAS on this device");
+  }
   vk::AccelerationStructureBuildRangeInfoKHR range(getVertexCount(), 0, 0, 0);
-  mBLAS->recordUpdate(commandBuffer, {range});
+  state->blas->recordUpdate(commandBuffer, {range});
 }
 
 } // namespace resource

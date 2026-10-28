@@ -2,20 +2,26 @@
 #include "../common/logger.h"
 #include "svulkan2/common/launch_policy.h"
 #include "svulkan2/core/context.h"
+#include "svulkan2/resource/manager.h"
 #include "svulkan2/shader/deferred.h"
 #include "svulkan2/shader/gbuffer.h"
 #include "svulkan2/shader/primitive.h"
 #include "svulkan2/shader/primitive_shadow.h"
 #include "svulkan2/shader/shadow.h"
 #include <set>
+#include <utility>
 
 namespace svulkan2 {
 namespace shader {
 
-ShaderPackInstance::ShaderPackInstance(ShaderPackInstanceDesc const &desc) : mDesc(desc) {
+ShaderPackInstance::ShaderPackInstance(std::shared_ptr<core::Context> context,
+                                       ShaderPackInstanceDesc const &desc)
+    : mDesc(desc), mContext(std::move(context)) {
+  if (!mContext) {
+    throw std::runtime_error("failed to create shader pack instance: context must not be null");
+  }
   // compile GLSL immediately
-  mContext = core::Context::Get();
-  mShaderPack = mContext->getResourceManager()->CreateShaderPack(mDesc.config->shaderDir);
+  mShaderPack = resource::SVResourceManager::Get()->CreateShaderPack(mDesc.config->shaderDir);
 }
 
 static vk::UniqueDescriptorSetLayout

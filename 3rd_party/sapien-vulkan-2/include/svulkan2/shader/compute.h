@@ -6,11 +6,13 @@
 namespace svulkan2 {
 namespace shader {
 
-std::unique_ptr<core::Image> generateBRDFLUT(uint32_t size);
+/** GPU image helpers; each runs on `context` and waits for completion */
+std::unique_ptr<core::Image> generateBRDFLUT(core::Context &context, uint32_t size);
 
-void prefilterCubemap(core::Image &image);
+void prefilterCubemap(core::Context &context, core::Image &image);
 
-std::unique_ptr<core::Image> latlongToCube(core::Image &latlong, int mipLevels);
+std::unique_ptr<core::Image> latlongToCube(core::Context &context, core::Image &latlong,
+                                           int mipLevels);
 
 } // namespace shader
 } // namespace svulkan2

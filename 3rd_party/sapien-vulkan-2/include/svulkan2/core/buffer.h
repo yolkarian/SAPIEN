@@ -7,14 +7,17 @@ typedef struct CUexternalMemory_st *cudaExternalMemory_t;
 namespace svulkan2 {
 namespace core {
 
+class Context;
 class Device;
 
 class Buffer {
 public:
-  static std::unique_ptr<Buffer> CreateStaging(vk::DeviceSize size, bool readback = false);
-  static std::unique_ptr<Buffer> CreateUniform(vk::DeviceSize size, bool deviceOnly = false,
-                                               bool external = false);
-  static std::unique_ptr<Buffer> Create(vk::DeviceSize size, vk::BufferUsageFlags usageFlags,
+  static std::unique_ptr<Buffer> CreateStaging(Context &context, vk::DeviceSize size,
+                                               bool readback = false);
+  static std::unique_ptr<Buffer> CreateUniform(Context &context, vk::DeviceSize size,
+                                               bool deviceOnly = false, bool external = false);
+  static std::unique_ptr<Buffer> Create(Context &context, vk::DeviceSize size,
+                                        vk::BufferUsageFlags usageFlags,
                                         VmaMemoryUsage memoryUsage,
                                         VmaAllocationCreateFlags allocationFlags = {},
                                         bool external = false, VmaPool pool = {});

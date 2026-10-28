@@ -1,8 +1,10 @@
 #include "svulkan2/resource/texture.h"
 #include "../common/logger.h"
+#include "internal.h"
 #include "svulkan2/common/launch_policy.h"
 #include "svulkan2/core/context.h"
 #include "svulkan2/resource/manager.h"
+#include <algorithm>
 
 namespace svulkan2 {
 namespace resource {
@@ -37,18 +39,6 @@ std::shared_ptr<SVTexture> SVTexture::FromRawData(uint32_t width, uint32_t heigh
     throw std::runtime_error("format does not support srgb");
   }
 
-  auto texture = std::shared_ptr<SVTexture>(new SVTexture);
-  texture->mDescription = {.source = SVTextureDescription::SourceType::eCUSTOM,
-                           .format = format,
-                           .filename = {},
-                           .mipLevels = mipLevels,
-                           .magFilter = magFilter,
-                           .minFilter = minFilter,
-                           .addressModeU = addressModeU,
-                           .addressModeV = addressModeV,
-                           .addressModeW = addressModeW,
-                           .srgb = srgb,
-                           .dim = dim};
   if (dim <= 0 || dim > 3) {
     throw std::runtime_error("texture dimension must be 1, 2 or 3");
   }
@@ -62,72 +52,108 @@ std::shared_ptr<SVTexture> SVTexture::FromRawData(uint32_t width, uint32_t heigh
   vk::ImageType type =
       dim == 1 ? vk::ImageType::e1D : (dim == 2 ? vk::ImageType::e2D : vk::ImageType::e3D);
 
+  auto texture = std::shared_ptr<SVTexture>(new SVTexture);
+  texture->mDescription = {.source = SVTextureDescription::SourceType::eCUSTOM,
+                           .format = format,
+                           .filename = {},
+                           .mipLevels = mipLevels,
+                           .magFilter = magFilter,
+                           .minFilter = minFilter,
+                           .addressModeU = addressModeU,
+                           .addressModeV = addressModeV,
+                           .addressModeW = addressModeW,
+                           .srgb = srgb,
+                           .dim = dim};
   texture->mImage = SVImage::FromRawData(type, width, height, depth, format, {data}, mipLevels);
   texture->mLoaded = true;
   return texture;
 }
 
 std::shared_ptr<SVTexture> SVTexture::FromImage(std::shared_ptr<SVImage> image,
-                                                vk::UniqueImageView imageView,
-                                                vk::Sampler sampler) {
+                                                SVTextureDescription const &description) {
+  if (!image) {
+    throw std::runtime_error("failed to create texture: invalid image");
+  }
   auto texture = std::shared_ptr<SVTexture>(new SVTexture);
-  texture->mContext = core::Context::Get();
-  texture->mDescription = {.source = SVTextureDescription::SourceType::eCUSTOM};
-  texture->mImage = image;
-  texture->mImageView = std::move(imageView);
-  texture->mSampler = sampler;
-  texture->mLoaded = true;
+  texture->mDescription = description;
+  texture->mImage = std::move(image);
+  texture->mLoaded = texture->mImage->isLoaded();
   return texture;
 }
 
-void SVTexture::uploadToDevice() {
+SVTexture::DeviceState const &SVTexture::getDeviceState(core::Context const &context) const {
+  auto state = mDeviceStates.find(context);
+  if (!state || !state->imageView) {
+    throw std::runtime_error("failed to get texture: it is not uploaded to this device");
+  }
+  return *state;
+}
+
+vk::ImageView SVTexture::getImageView(core::Context const &context) const {
+  return getDeviceState(context).imageView.get();
+}
+
+vk::Sampler SVTexture::getSampler(core::Context const &context) const {
+  return getDeviceState(context).sampler;
+}
+
+bool SVTexture::isOnDevice(core::Context const &context) const {
+  auto state = mDeviceStates.find(context);
+  return state && state->imageView;
+}
+
+void SVTexture::uploadToDevice(core::Context &context) {
   std::scoped_lock lock(mUploadingMutex);
-  if (mOnDevice) {
+  auto existing = mDeviceStates.find(context);
+  if (existing && existing->imageView) {
     return;
   }
-  mContext = core::Context::Get();
 
-  if (!mImage->isOnDevice()) {
-    mImage->uploadToDevice();
+  if (!mLoaded) {
+    loadAsync().get();
   }
-  if (!mImageView) {
-    auto format = mImage->getDeviceImage()->getFormat();
-    if (mDescription.srgb) {
-      if (format == vk::Format::eR8G8B8A8Unorm) {
-        format = vk::Format::eR8G8B8A8Srgb;
-      } else if (format == vk::Format::eR8Unorm) {
-        format = vk::Format::eR8Srgb;
-      }
-    }
+  if (!mImage) {
+    throw std::runtime_error("failed to upload texture: no image data");
+  }
 
-    vk::ImageViewType viewType = vk::ImageViewType::e2D;
-    if (mDescription.dim == 1) {
-      viewType = vk::ImageViewType::e1D;
-    } else if (mDescription.dim == 2) {
-      viewType = vk::ImageViewType::e2D;
-    } else {
-      viewType = vk::ImageViewType::e3D;
-    }
+  mImage->uploadToDevice(context);
+  auto image = mImage->getDeviceImage(context);
+  if (!image) {
+    throw std::runtime_error("failed to upload texture: the image is not on this device");
+  }
 
-    mImageView = mContext->getDevice().createImageViewUnique(
-        vk::ImageViewCreateInfo({}, mImage->getDeviceImage()->getVulkanImage(), viewType, format,
-                                vk::ComponentSwizzle::eIdentity,
-                                vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0,
-                                                          mDescription.mipLevels, 0, 1)));
+  auto format = image->getFormat();
+  if (mDescription.srgb) {
+    format = internal::toSrgbFormat(format);
   }
-  if (!mSampler) {
-    mSampler = mContext->createSampler(vk::SamplerCreateInfo(
-        {}, mDescription.magFilter, mDescription.minFilter, vk::SamplerMipmapMode::eLinear,
-        mDescription.addressModeU, mDescription.addressModeV, mDescription.addressModeW, 0.f,
-        false, 0.f, false, vk::CompareOp::eNever, 0.f, static_cast<float>(mDescription.mipLevels),
-        vk::BorderColor::eFloatOpaqueBlack));
+
+  vk::ImageViewType viewType = vk::ImageViewType::e2D;
+  if (mDescription.dim == 1) {
+    viewType = vk::ImageViewType::e1D;
+  } else if (mDescription.dim == 3) {
+    viewType = vk::ImageViewType::e3D;
   }
-  mOnDevice = true;
+
+  auto &state = mDeviceStates.get(context);
+  uint32_t mipLevels = std::min(mDescription.mipLevels, image->getMipLevels());
+  if (mipLevels == 0) {
+    mipLevels = 1;
+  }
+  state.context = context.shared_from_this();
+  state.imageView = context.getDevice().createImageViewUnique(vk::ImageViewCreateInfo(
+      {}, image->getVulkanImage(), viewType, format, mDescription.components,
+      vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, mipLevels, 0, 1)));
+  state.sampler = context.createSampler(vk::SamplerCreateInfo(
+      {}, mDescription.magFilter, mDescription.minFilter, vk::SamplerMipmapMode::eLinear,
+      mDescription.addressModeU, mDescription.addressModeV, mDescription.addressModeW, 0.f, false,
+      0.f, false, vk::CompareOp::eNever, 0.f, static_cast<float>(mipLevels),
+      vk::BorderColor::eFloatOpaqueBlack));
 }
 
 void SVTexture::removeFromDevice() {
-  mOnDevice = false;
-  mImageView.reset();
+  // the image may be shared with other textures (e.g. a channel split), so only this
+  // texture's views go; the image's owner releases the image
+  mDeviceStates.clear();
 }
 
 std::future<void> SVTexture::loadAsync() {
@@ -135,23 +161,27 @@ std::future<void> SVTexture::loadAsync() {
     return std::async(std::launch::deferred, []() {});
   }
 
-  auto context = core::Context::Get();
-  auto manager = context->getResourceManager();
-
-  logger::info("Loading: {}", mDescription.filename);
-  if (mDescription.source != SVTextureDescription::SourceType::eFILE) {
+  if (!mImage && mDescription.source != SVTextureDescription::SourceType::eFILE) {
     throw std::runtime_error("failed to load texture: the texture is not specified by a file");
   }
-  return std::async(LAUNCH_ASYNC, [this, manager]() {
+
+  if (mDescription.source == SVTextureDescription::SourceType::eFILE) {
+    logger::info("Loading: {}", mDescription.filename);
+  }
+  return std::async(LAUNCH_ASYNC, [this]() {
     std::scoped_lock lock(mLoadingMutex);
     if (mLoaded) {
       return;
     }
-    mImage = manager->CreateImageFromFile(mDescription.filename, mDescription.mipLevels,
-                                          mDescription.desiredChannels);
+    if (!mImage) {
+      mImage = SVResourceManager::Get()->CreateImageFromFile(
+          mDescription.filename, mDescription.mipLevels, mDescription.desiredChannels);
+    }
     mImage->loadAsync().get();
     mLoaded = true;
-    logger::info("Loaded: {}", mDescription.filename);
+    if (mDescription.source == SVTextureDescription::SourceType::eFILE) {
+      logger::info("Loaded: {}", mDescription.filename);
+    }
   });
 }
 

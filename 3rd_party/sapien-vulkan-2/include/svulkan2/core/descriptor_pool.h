@@ -13,9 +13,6 @@ class DynamicDescriptorPool {
   std::vector<vk::UniqueDescriptorPool> mPools;
 
 public:
-  // using Context singleton
-  DynamicDescriptorPool(std::vector<vk::DescriptorPoolSize> const &sizes);
-
   DynamicDescriptorPool(std::shared_ptr<Device> device,
                         std::vector<vk::DescriptorPoolSize> const &sizes);
   DynamicDescriptorPool(DynamicDescriptorPool &other) = delete;

@@ -4,7 +4,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 - Preferred import prefix: `sapien.render`
 - Source files: `python/py_package/pysapien/render.pyi`
-- Notes: Only instantiate RenderSystem for viewer/sensors/offscreen rendering. For GPU PhysX dynamic bodies prefer RenderSystemGroup + CUDA poses.
+- Notes: Only instantiate RenderSystem for viewer/sensors/offscreen rendering. For GPU PhysX dynamic bodies prefer RenderSystemGroup + CUDA poses. Multi-GPU: one RenderSystem/RenderSystemGroup per device; materials, textures, meshes and models are shared across devices.
 
 ## Functions
 
@@ -235,8 +235,8 @@ image width/height ratio, including portrait images.
 |---|---|---|---|---|
 | `cuda_triangles` | property | `cuda_triangles(self) -> sapien.CudaArray` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
 | `cuda_vertices` | property | `cuda_vertices(self) -> sapien.CudaArray` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
-| `get_cuda_triangles` | method | `get_cuda_triangles(self) -> sapien.CudaArray` |  |  |
-| `get_cuda_vertices` | method | `get_cuda_vertices(self) -> sapien.CudaArray` |  |  |
+| `get_cuda_triangles` | method | `get_cuda_triangles(self) -> sapien.CudaArray` |  | On the component's device. |
+| `get_cuda_vertices` | method | `get_cuda_vertices(self) -> sapien.CudaArray` |  | On the component's device. |
 | `get_material` | method | `get_material(self) -> RenderMaterial` |  |  |
 | `get_triangle_count` | method | `get_triangle_count(self) -> int` |  |  |
 | `get_vertex_count` | method | `get_vertex_count(self) -> int` |  |  |
@@ -245,7 +245,7 @@ image width/height ratio, including portrait images.
 | `set_triangle_count` | method | `set_triangle_count(self, count: int) -> None` |  |  |
 | `set_triangles` | method | `set_triangles(self, triangles: np.ndarray[np.uint32[M, 3]]) -> None` |  |  |
 | `set_vertex_count` | method | `set_vertex_count(self, count: int) -> None` |  |  |
-| `__init__` | method | `__init__(self, max_vertex_count: int, max_triangle_count: int) -> None` |  |  |
+| `__init__` | method | `__init__(self, max_vertex_count: int, max_triangle_count: int, device: sapien.Device \| None=None) -> None` | CUDA-writable mesh whose buffers live on `device` (default render device when `None`). | Adding it to a scene whose render system uses another device raises `RuntimeError`. |
 
 ## `sapien.render.RenderDirectionalLightComponent`
 
@@ -396,7 +396,7 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
 | `get_cuda_aabb` | method | `get_cuda_aabb(self) -> sapien.CudaArray \| None` | this function is a temporary hack to help update the AABBs used for ray tracing BLAS. returns None if ray tracing has not been initialized |  |
-| `get_cuda_vertices` | method | `get_cuda_vertices(self) -> sapien.CudaArray` |  |  |
+| `get_cuda_vertices` | method | `get_cuda_vertices(self) -> sapien.CudaArray` |  | On the device of the scene the point cloud belongs to; raises before it is added to a scene. |
 | `get_vertices` | method | `get_vertices(self) -> np.ndarray[tuple[M, Literal[3]], np.dtype[np.float32]]` | Get previously set vertices. This function does not reflect any changes directly made to the GPU. |  |
 | `set_attribute` | method | `set_attribute(self, name: str, attribute: np.ndarray[tuple[M, N], np.dtype[np.float32]] \| list \| tuple) -> RenderPointCloudComponent` |  |  |
 | `set_vertices` | method | `set_vertices(self, vertices: np.ndarray[tuple[M, Literal[3]], np.dtype[np.float32]] \| list \| tuple) -> RenderPointCloudComponent` |  |  |
@@ -581,8 +581,8 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 |---|---|---|---|---|
 | `cuda_triangles` | property | `cuda_triangles(self) -> sapien.CudaArray` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
 | `cuda_vertices` | property | `cuda_vertices(self) -> sapien.CudaArray` | CUDA state/render buffer property. | Get view after gpu_init; reuse torch/cupy/jax view in loop. |
-| `get_cuda_triangles` | method | `get_cuda_triangles(self) -> sapien.CudaArray` |  |  |
-| `get_cuda_vertices` | method | `get_cuda_vertices(self) -> sapien.CudaArray` |  |  |
+| `get_cuda_triangles` | method | `get_cuda_triangles(self, device: sapien.Device \| None=None) -> sapien.CudaArray` | CUDA view of this part's index buffer on `device`. | The mesh is shared across devices; `None` selects the default render device, like the `cuda_triangles` property. |
+| `get_cuda_vertices` | method | `get_cuda_vertices(self, device: sapien.Device \| None=None) -> sapien.CudaArray` | CUDA view of this part's vertex buffer on `device`. | The mesh is shared across devices; `None` selects the default render device, like the `cuda_vertices` property. |
 | `get_material` | method | `get_material(self) -> RenderMaterial` |  |  |
 | `get_triangles` | method | `get_triangles(self) -> np.ndarray[np.uint32[M, 3]]` |  |  |
 | `get_vertex_normal` | method | `get_vertex_normal(self) -> np.ndarray[tuple[M, Literal[3]], np.dtype[np.float32]]` |  |  |
@@ -639,7 +639,7 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 | `is_closed` | property | `is_closed(self) -> bool` | Terminal lifecycle state. |  |
 | `cameras` | property | `cameras(self) -> list[RenderCameraComponent]` |  |  |
 | `cuda_object_transforms` | property | `cuda_object_transforms(self) -> sapien.CudaArray` | Owner-tracked CUDA transform buffer. | Raw CUDA-array-interface export raises; use a tracked converter and release the handle/consumer before close. |
-| `device` | property | `device(self) -> sapien.Device` |  |  |
+| `device` | property | `device(self) -> sapien.Device` | Render device of this system (the default render device when created without one). | Systems on different devices coexist in one process. |
 | `get_ambient_light` | method | `get_ambient_light(self) -> np.ndarray[Literal[3], np.dtype[np.float32]]` |  |  |
 | `get_batched_render_shared` | method | `get_batched_render_shared(self) -> bool` | Read the shared-render-scene flag. |  |
 | `get_cameras` | method | `get_cameras(self) -> list[RenderCameraComponent]` |  |  |
@@ -675,7 +675,7 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 | `gpu_init` | method | `gpu_init(self) -> None` | One-time initialization and seal; call after `set_cuda_poses`, `create_camera_group`, and `set_pose_mode`. | Prepares resources, seeds CPU snapshots and `'cuda'`-mode camera rows, seals ownership, freezes topology. |
 | `set_cuda_stream` | method | `set_cuda_stream(self, stream: int) -> None` |  |  |
 | `update_render` | method | `update_render(self) -> None` | This function performs CUDA operations to transfer poses from the CUDA buffer provided by :func:`set_cuda_poses` into render systems. It updates the transformation mat... | GPU PhysX dynamic bodies read CPU poses; prefer the CUDA pose path for offscreen. |
-| `__init__` | method | `__init__(self, systems: list[RenderSystem]) -> None` |  |  |
+| `__init__` | method | `__init__(self, systems: list[RenderSystem]) -> None` |  | All systems must share one device; otherwise raises `RuntimeError`. Build one group per device. |
 
 ## `sapien.render.RenderTexture`
 
@@ -880,5 +880,5 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `__init__` | method | `__init__(self, device: sapien.Device \| None=None) -> None` |  |  |
+| `__init__` | method | `__init__(self, device: sapien.Device \| None=None) -> None` | The process-wide render engine; `device` only ensures that device's render context exists. | Other devices may be used at the same time. |
 | `_internal_context` | property | `_internal_context(self) -> sapien.internal_renderer.Context` |  |  |

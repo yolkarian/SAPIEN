@@ -16,7 +16,22 @@ VkBool32 myDebugCallback(VkDebugReportFlagsEXT flags, VkDebugReportObjectTypeEXT
   return false;
 }
 
-// static std::weak_ptr<Instance> gInstance;
+std::shared_ptr<Instance> Instance::Get(bool enableVR) {
+  static std::mutex lock;
+  static std::weak_ptr<Instance> gInstance;
+
+  std::scoped_lock guard(lock);
+  if (auto instance = gInstance.lock()) {
+    if (enableVR && !instance->mVRRequested) {
+      logger::warn("VR is ignored: it must be enabled before the first renderer is created");
+    }
+    return instance;
+  }
+  auto instance = std::shared_ptr<Instance>(new Instance(
+      VK_MAKE_VERSION(0, 0, 1), VK_MAKE_VERSION(0, 0, 1), VK_API_VERSION_1_2, enableVR));
+  gInstance = instance;
+  return instance;
+}
 
 static void glfwErrorCallback(int error_code, const char *description) {
   logger::error("GLFW error: {}. You may suppress this message by unsetting environment variable "
@@ -61,7 +76,7 @@ static bool GetVRInstanceExtensionsRequired(std::vector<std::string> &outInstanc
 }
 
 Instance::Instance(uint32_t appVersion, uint32_t engineVersion, uint32_t apiVersion, bool enableVR)
-    : mApiVersion(apiVersion) {
+    : mApiVersion(apiVersion), mVRRequested(enableVR) {
 
   bool glfw = false;
   if (glfwInit() && glfwVulkanSupported()) {
@@ -392,23 +407,22 @@ std::vector<PhysicalDeviceInfo> Instance::summarizePhysicalDevices() const {
     uint32_t subgroupSize = properties2.get<vk::PhysicalDeviceSubgroupProperties>().subgroupSize;
 
     int computeMode{-1};
+    bool exclusiveCuda = false;
+#ifdef SVULKAN2_CUDA_INTEROP
+    cudaId = getCudaDeviceIdFromPhysicalDevice(device);
+    cudaDeviceGetAttribute(&computeMode, cudaDevAttrComputeMode, cudaId);
+    exclusiveCuda =
+        computeMode == cudaComputeModeExclusiveProcess || computeMode == cudaComputeModeExclusive;
+#endif
     auto SAPIEN_DISABLE_RAY_TRACING = std::getenv("SAPIEN_DISABLE_RAY_TRACING");
     if (SAPIEN_DISABLE_RAY_TRACING && std::strcmp(SAPIEN_DISABLE_RAY_TRACING, "1") == 0) {
       rayTracing = 0;
-    } else {
-#ifdef SVULKAN2_CUDA_INTEROP
-      cudaId = getCudaDeviceIdFromPhysicalDevice(device);
-      cudaDeviceGetAttribute(&computeMode, cudaDevAttrComputeMode, cudaId);
-      if ((computeMode == cudaComputeModeExclusiveProcess ||
-           computeMode == cudaComputeModeExclusive) &&
-          rayTracing) {
-        logger::warn("CUDA device {} is in EXCLUSIVE or EXCLUSIVE_PROCESS mode. You "
-                     "many not use this renderer with external CUDA programs unless "
-                     "you switch off ray tracing by environment variable "
-                     "SAPIEN_DISABLE_RAY_TRACING=1.",
-                     cudaId);
-      }
-#endif
+    } else if (exclusiveCuda && rayTracing) {
+      logger::warn("CUDA device {} is in EXCLUSIVE or EXCLUSIVE_PROCESS mode. You "
+                   "many not use this renderer with external CUDA programs unless "
+                   "you switch off ray tracing by environment variable "
+                   "SAPIEN_DISABLE_RAY_TRACING=1.",
+                   cudaId);
     }
     bool supported = required_features && required_extensions && queueIdx != -1;
     bool discrete = deviceType == vk::PhysicalDeviceType::eDiscreteGpu;

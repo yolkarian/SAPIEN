@@ -424,7 +424,7 @@ One `PhysxGpuSystem` is one PhysX scene on one GPU; PhysX never splits it across
    - Drive each system from its own Python thread: every steady-state call (step, fetch, apply, compute, query, `wait_idle`, `close`) releases the GIL, applies no longer block the host, and calls into one system from several threads are serialized. JAX may be called from several threads: each thread dispatches its device's single-device jitted step, and one SPMD update over all devices runs after the threads joined (cross-device collectives need one multi-device executable).
    - Or step from one thread: set `PhysxSceneConfig.cpu_workers >= 1` before creating the systems, then `step_start()` every system before any `step_finish()`. With the default `cpu_workers = 0`, `step_start()` runs the whole step on the calling thread, so that loop serializes the GPUs. Fetch/apply calls raise between `step_start()` and `step_finish()`; the per-system fetch/apply glue still runs serially on that thread, so this is the slowest layout.
 
-SAPIEN makes a system's device current only for the duration of each call and then restores the caller's current device, so `torch.cuda.current_device()` is unchanged by SAPIEN calls. With several GPUs in one process, create tensors on each system's device rather than relying on the current device. This page does not cover multi-GPU rendering: a `RenderSystemGroup` still needs its CUDA pose source on the renderer's device.
+SAPIEN makes a system's device current only for the duration of each call and then restores the caller's current device, so `torch.cuda.current_device()` is unchanged by SAPIEN calls. With several GPUs in one process, create tensors on each system's device rather than relying on the current device.
 
 JAX + Equinox, one process per GPU (each rank sees one GPU). The SAPIEN calls are the same as on one GPU; the JAX update all-reduces gradients across ranks:
 
@@ -448,6 +448,27 @@ model, opt_state = update(model, opt_state, batch)  # eqx.filter_jit over global
 ```
 
 `copy_from(action)` also fences the next fetch: `action` comes from the program that read `qpos`, so the system's stream waits for that read before overwriting the buffer. When a step has nothing to copy back, call `system.gpu_wait_for(obs)` instead. Never donate arrays imported from SAPIEN (`donate_argnums`): XLA would write into SAPIEN's buffers. Set `XLA_PYTHON_CLIENT_PREALLOCATE=false` (or `XLA_PYTHON_CLIENT_MEM_FRACTION`) so JAX leaves memory for PhysX, and call `gpu_init()` before the first JAX computation.
+
+## Multi-GPU rendering workflow
+
+One `RenderSystem` renders on one Vulkan device: the device it is created for, or the default render device when none is given. In one process, give each device's scenes a render system on that device and build one `RenderSystemGroup` per device, fed by the CUDA poses of the `PhysxGpuSystem` on the same device:
+
+```python
+for k in range(torch.cuda.device_count()):
+    device = f"cuda:{k}"
+    physx_system = sapien.physx.PhysxGpuSystem(device)
+    scenes = [sapien.Scene([physx_system, sapien.render.RenderSystem(device)]) for _ in range(n)]
+    # build scenes and cameras, then physx_system.gpu_init()
+    group = sapien.render.RenderSystemGroup([scene.render_system for scene in scenes])
+    group.set_cuda_poses(physx_system.cuda_rigid_body_data)
+    camera_group = group.create_camera_group(cameras, ["Color"])
+    group.gpu_init()
+```
+
+- Materials, textures, cubemaps, meshes and loaded models are device-independent. Create them once and use them on every device; each device uploads its copy on first use, and later edits (e.g. `material.base_color = ...`, `texture.upload(...)`) reach every copy.
+- A group's camera outputs (`camera_group.get_picture_cuda(...)`) are tensors on the group's device. Groups, windows and VR displays raise `RuntimeError` for render systems of another device; the Viewer and VR always render through the default render device.
+- GPU-written render buffers belong to one device: `RenderCudaMeshComponent(..., device=...)` fixes its device at construction and raises when added to a scene of another device; a point cloud's CUDA arrays follow its scene's device; `RenderShapeTriangleMeshPart.get_cuda_vertices/get_cuda_triangles(device=None)` export the copy of the given device (default render device when `None`).
+- Different devices may render from different Python threads at the same time.
 
 ## Collision and scene isolation
 

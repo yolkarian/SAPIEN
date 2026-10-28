@@ -24,20 +24,18 @@ static void assertImageTypeExtent(vk::ImageType type, vk::Extent3D extent) {
   }
 }
 
-Image::Image(vk::ImageType type, vk::Extent3D extent, vk::Format format,
+Image::Image(Context &context, vk::ImageType type, vk::Extent3D extent, vk::Format format,
              vk::ImageUsageFlags usageFlags, VmaMemoryUsage memoryUsage,
              vk::SampleCountFlagBits sampleCount, uint32_t mipLevels, uint32_t arrayLayers,
              vk::ImageTiling tiling, vk::ImageCreateFlags flags)
-    : mType(type), mExtent(extent), mFormat(format), mUsageFlags(usageFlags),
-      mSampleCount(sampleCount), mMipLevels(mipLevels), mArrayLayers(arrayLayers),
-      mTiling(tiling) {
+    : mContext(context.shared_from_this()), mType(type), mExtent(extent), mFormat(format),
+      mUsageFlags(usageFlags), mSampleCount(sampleCount), mMipLevels(mipLevels),
+      mArrayLayers(arrayLayers), mTiling(tiling) {
   assertImageTypeExtent(type, extent);
   vk::ImageCreateInfo imageInfo(flags, type, format, extent, mipLevels, arrayLayers, sampleCount,
                                 tiling, usageFlags);
   VmaAllocationCreateInfo memoryInfo{};
   memoryInfo.usage = memoryUsage;
-
-  mContext = Context::Get();
 
   mCurrentLayerLayout.resize(mArrayLayers, vk::ImageLayout::eUndefined);
 
@@ -67,8 +65,8 @@ vk::ImageLayout Image::getCurrentLayout(uint32_t layer) const {
   return mCurrentLayerLayout.at(layer);
 }
 
-Image::Image(std::unique_ptr<ktxVulkanTexture> tex) : mKtxTexture(std::move(tex)) {
-  mContext = Context::Get();
+Image::Image(Context &context, std::unique_ptr<ktxVulkanTexture> tex)
+    : mContext(context.shared_from_this()), mKtxTexture(std::move(tex)) {
   mImage = mKtxTexture->image;
   setCurrentLayout(vk::ImageLayout(mKtxTexture->imageLayout));
   mTiling = vk::ImageTiling::eOptimal;
@@ -84,6 +82,7 @@ Image::Image(std::unique_ptr<ktxVulkanTexture> tex) : mKtxTexture(std::move(tex)
 Image::~Image() {
 #ifdef SVULKAN2_CUDA_INTEROP
   if (mCudaArray) {
+    CudaDeviceScope scope(mCudaDeviceId);
     cudaFreeMipmappedArray(mCudaArray);
     cudaDestroyExternalMemory(mCudaMem);
   }
@@ -105,7 +104,7 @@ void Image::uploadLevel(void const *data, size_t size, uint32_t arrayLayer, uint
     throw std::runtime_error("image upload failed: expecting size " + std::to_string(imageSize) +
                              ", got " + std::to_string(size));
   }
-  auto stagingBuffer = Buffer::CreateStaging(size);
+  auto stagingBuffer = Buffer::CreateStaging(*mContext, size);
   stagingBuffer->upload(data, size);
 
   vk::BufferImageCopy copyRegion(
@@ -130,7 +129,7 @@ void Image::upload(void const *data, size_t size, uint32_t arrayLayer, bool mipm
     throw std::runtime_error("image upload failed: expecting size " + std::to_string(imageSize) +
                              ", got " + std::to_string(size));
   }
-  auto stagingBuffer = Buffer::CreateStaging(size);
+  auto stagingBuffer = Buffer::CreateStaging(*mContext, size);
   stagingBuffer->upload(data, size);
 
   vk::BufferImageCopy copyRegion(
@@ -477,7 +476,7 @@ void Image::download(void *data, size_t size, vk::Offset3D offset, vk::Extent3D 
   }
 
   SVULKAN2_PROFILE_BLOCK_BEGIN("Allocating staging buffer");
-  auto stagingBuffer = Buffer::CreateStaging(size, true);
+  auto stagingBuffer = Buffer::CreateStaging(*mContext, size, true);
   SVULKAN2_PROFILE_BLOCK_END;
   vk::BufferImageCopy copyRegion(0, extent.width, extent.height, {aspect, mipLevel, arrayLayer, 1},
                                  offset, extent);
@@ -556,7 +555,7 @@ cudaMipmappedArray_t Image::getCudaArray() {
         "CUDA_VISIBLE_DEVICES until you find a working one.");
   }
 
-  checkCudaErrors(cudaSetDevice(mCudaDeviceId));
+  CudaDeviceScope scope(mCudaDeviceId);
   cudaExternalMemoryHandleDesc externalMemoryHandleDesc = {};
   externalMemoryHandleDesc.type = cudaExternalMemoryHandleTypeOpaqueFd;
   externalMemoryHandleDesc.size = mAllocationInfo.offset + mAllocationInfo.size; // TODO check

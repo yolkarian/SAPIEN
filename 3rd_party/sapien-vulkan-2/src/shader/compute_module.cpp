@@ -1,9 +1,11 @@
 #include "svulkan2/shader/compute_module.h"
 #include "../common/logger.h"
 #include "./reflect.h"
+#include "svulkan2/core/buffer.h"
 #include "svulkan2/core/context.h"
 #include "svulkan2/core/physical_device.h"
 #include "svulkan2/shader/glsl_compiler.h"
+#include <utility>
 
 namespace svulkan2 {
 namespace shader {
@@ -74,18 +76,23 @@ static std::string summarizeConstant(SpecializationConstantLayout const &layout)
   return ss.str();
 }
 
-ComputeModule::ComputeModule(std::vector<uint32_t> code, int blockSizeX, int blockSizeY,
-                             int blockSizeZ)
-    : mCode(code), mBlockSize({blockSizeX, blockSizeY, blockSizeZ}) {
-  mContext = core::Context::Get();
+ComputeModule::ComputeModule(std::shared_ptr<core::Context> context, std::vector<uint32_t> code,
+                             int blockSizeX, int blockSizeY, int blockSizeZ)
+    : mContext(std::move(context)), mCode(std::move(code)),
+      mBlockSize({blockSizeX, blockSizeY, blockSizeZ}) {
+  if (!mContext) {
+    throw std::runtime_error("failed to create compute module: context must not be null");
+  }
   reflect();
   compile();
 }
 
-ComputeModule::ComputeModule(std::string const &filename, int blockSizeX, int blockSizeY,
-                             int blockSizeZ)
-    : mBlockSize({blockSizeX, blockSizeY, blockSizeZ}) {
-  mContext = core::Context::Get();
+ComputeModule::ComputeModule(std::shared_ptr<core::Context> context, std::string const &filename,
+                             int blockSizeX, int blockSizeY, int blockSizeZ)
+    : mContext(std::move(context)), mBlockSize({blockSizeX, blockSizeY, blockSizeZ}) {
+  if (!mContext) {
+    throw std::runtime_error("failed to create compute module: context must not be null");
+  }
 
   if (filename.ends_with(".spv") || filename.ends_with(".SPV")) {
     auto data = readFile(filename);
@@ -194,7 +201,7 @@ void ComputeModule::compile() {
     for (uint32_t i = 0; i < elems.size(); ++i) {
       if (elems[i].name == "subgroupSize") {
         entries.emplace_back(elems[i].id, i * sizeof(int), sizeof(int));
-        uint32_t v = core::Context::Get()->getPhysicalDevice2()->getSubgroupSize();
+        uint32_t v = mContext->getPhysicalDevice2()->getSubgroupSize();
         std::memcpy(specializationData.data() + i, &v, sizeof(int));
       } else if (elems[i].name == "local_size_x_id") {
         entries.emplace_back(elems[i].id, i * sizeof(int), sizeof(int));
@@ -222,10 +229,6 @@ void ComputeModule::compile() {
   mPipeline =
       device.createComputePipelineUnique(pipelinCache.get(), computePipelineCreateInfo).value;
 
-  // mSets.clear();
-  // for (auto layout : layouts) {
-  //   mSets.push_back(core::Context::Get()->getDescriptorPool().allocateSet(layout));
-  // }
 }
 
 ComputeModuleInstance::ComputeModuleInstance(std::shared_ptr<ComputeModule> m) : mModule(m) {
@@ -233,11 +236,11 @@ ComputeModuleInstance::ComputeModuleInstance(std::shared_ptr<ComputeModule> m) :
     mPushConstantBuffer.resize(layout->size);
   }
   for (auto &layout : mModule->getSetLayouts()) {
-    mSets.push_back(core::Context::Get()->getDescriptorPool().allocateSet(layout.get()));
+    mSets.push_back(mModule->getContext()->getDescriptorPool().allocateSet(layout.get()));
   }
 }
 void ComputeModuleInstance::setBuffer(std::string const &name, core::Buffer *buffer) {
-  auto device = core::Context::Get()->getDevice();
+  auto device = mModule->getContext()->getDevice();
   for (auto &[id, binding] : mModule->getDescriptorSetDescriptions().at(0).bindings) {
     if (binding.name == name) {
       vk::DescriptorBufferInfo bufferInfo =
@@ -281,7 +284,7 @@ void ComputeModuleInstance::record(vk::CommandBuffer cb, int x, int y, int z) {
 }
 
 void ComputeModuleInstance::launch() {
-  core::Context::Get()->getQueue().submit(mCommandBuffer.get(), {});
+  mModule->getContext()->getQueue().submit(mCommandBuffer.get(), {});
 }
 
 ComputeModule::~ComputeModule() {}

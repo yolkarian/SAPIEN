@@ -11,7 +11,16 @@ std::shared_ptr<DisplayImage> DisplayImage::Image(core::Image &image) {
     return std::static_pointer_cast<DisplayImage>(shared_from_this());
   }
 
-  core::Context::Get()->getDevice().waitIdle();
+  // the context of the image (and of the device the ImGui backend runs on)
+  auto context = image.getContext();
+  if (mContext && mContext != context) {
+    // the widget moves to an image of another device: release the old device's objects
+    mContext->getDevice().waitIdle();
+    mCommandBuffer.reset();
+    mCommandPool.reset();
+  }
+  mContext = context;
+  mContext->getDevice().waitIdle();
   if (mDS) {
     ImGui_ImplVulkan_RemoveTexture(mDS);
     mDS = {};
@@ -20,11 +29,10 @@ std::shared_ptr<DisplayImage> DisplayImage::Image(core::Image &image) {
   mImage = &image;
 
   if (!mCommandPool) {
-    mCommandPool = core::Context::Get()->createCommandPool();
+    mCommandPool = mContext->createCommandPool();
     mCommandBuffer = mCommandPool->allocateCommandBuffer();
   }
 
-  auto context = core::Context::Get();
   mSampler = context->createSampler(vk::SamplerCreateInfo(
       {}, vk::Filter::eNearest, vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest,
       vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder,
@@ -54,7 +62,9 @@ std::shared_ptr<DisplayImage> DisplayImage::Image(core::Image &image) {
 }
 
 std::shared_ptr<DisplayImage> DisplayImage::Clear() {
-  core::Context::Get()->getDevice().waitIdle();
+  if (mContext) {
+    mContext->getDevice().waitIdle();
+  }
   if (mDS) {
     ImGui_ImplVulkan_RemoveTexture(mDS);
     mDS = {};
@@ -86,7 +96,7 @@ void DisplayImage::build() {
     mCommandBuffer->end();
 
     // TODO: async
-    core::Context::Get()->getQueue().submitAndWait(mCommandBuffer.get());
+    mContext->getQueue().submitAndWait(mCommandBuffer.get());
     mCommandBuffer->reset();
 
     if (mSize[0] <= 0 && mSize[1] <= 0) {
@@ -99,7 +109,9 @@ void DisplayImage::build() {
 }
 
 DisplayImage::~DisplayImage() {
-  core::Context::Get()->getDevice().waitIdle();
+  if (mContext) {
+    mContext->getDevice().waitIdle();
+  }
   mCommandBuffer.reset();
   if (mDS) {
     ImGui_ImplVulkan_RemoveTexture(mDS);

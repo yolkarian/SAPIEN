@@ -144,11 +144,11 @@ Device::Device(std::shared_ptr<PhysicalDevice> physicalDevice) : mPhysicalDevice
   vk::DeviceCreateInfo deviceInfo({}, deviceQueueCreateInfo, {}, deviceExtensions);
   deviceInfo.setPNext(&features);
   mDevice = mPhysicalDevice->getPickedDeviceInfo().device.createDeviceUnique(deviceInfo);
-  VULKAN_HPP_DEFAULT_DISPATCHER.init(mDevice.get());
+  // Device-level functions stay on the instance-loaded loader trampolines: they dispatch
+  // on the VkDevice handle, so one global dispatcher serves every device in the process.
 
   mQueue = std::make_unique<Queue>(*this, queueIndex);
 
-  auto instance = mPhysicalDevice->getInstance();
   mAllocator = std::make_unique<Allocator>(*this);
 }
 

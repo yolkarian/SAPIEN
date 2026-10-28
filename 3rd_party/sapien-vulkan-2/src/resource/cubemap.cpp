@@ -1,13 +1,35 @@
 #include "svulkan2/resource/cubemap.h"
 #include "../common/logger.h"
+#include "internal.h"
 #include "svulkan2/common/launch_policy.h"
 #include "svulkan2/core/context.h"
-#include "svulkan2/resource/manager.h"
 #include "svulkan2/shader/compute.h"
+#include <algorithm>
 #include <ktx.h>
 
 namespace svulkan2 {
 namespace resource {
+
+SVCubemap::DeviceState const &SVCubemap::getDeviceState(core::Context const &context) const {
+  auto state = mDeviceStates.find(context);
+  if (!state || !state->imageView) {
+    throw std::runtime_error("failed to get cubemap: it is not uploaded to this device");
+  }
+  return *state;
+}
+
+vk::ImageView SVCubemap::getImageView(core::Context const &context) const {
+  return getDeviceState(context).imageView.get();
+}
+
+vk::Sampler SVCubemap::getSampler(core::Context const &context) const {
+  return getDeviceState(context).sampler;
+}
+
+bool SVCubemap::isOnDevice(core::Context const &context) const {
+  auto state = mDeviceStates.find(context);
+  return state && state->imageView;
+}
 
 std::shared_ptr<SVCubemap> SVCubemap::FromFile(std::string const &filename, uint32_t mipLevels,
                                                vk::Filter magFilter, vk::Filter minFilter,
@@ -57,100 +79,81 @@ std::shared_ptr<SVCubemap> SVCubemap::FromData(uint32_t size, vk::Format format,
   return texture;
 }
 
-std::shared_ptr<SVCubemap> SVCubemap::FromImage(std::shared_ptr<SVImage> image,
-                                                vk::UniqueImageView imageView,
-                                                vk::Sampler sampler) {
-  auto texture = std::shared_ptr<SVCubemap>(new SVCubemap);
-  texture->mContext = core::Context::Get();
-  texture->mDescription = {.source = SVCubemapDescription::SourceType::eCUSTOM};
-  texture->mImage = image;
-  texture->mImageView = std::move(imageView);
-  texture->mSampler = sampler;
-  texture->mLoaded = true;
-
-  if (image->isOnDevice()) {
-    texture->mOnDevice = true;
-  }
-
-  return texture;
-}
-
-void SVCubemap::uploadToDevice() {
+void SVCubemap::uploadToDevice(core::Context &context) {
   std::scoped_lock lock(mUploadingMutex);
-  mContext = core::Context::Get();
-  if (mOnDevice) {
+
+  auto existing = mDeviceStates.find(context);
+  if (existing && existing->imageView) {
     return;
   }
 
+  loadAsync().get();
   if (!mImage && !mLatLongImage) {
     throw std::runtime_error("failed to upload cubemap: not loaded");
   }
 
-  // latlong
+  // the cube image of this device: converted from lat-long, or uploaded from the host faces
+  core::Image *cube = nullptr;
+  bool mipsProvided = mImage && mImage->mipmapIsLoaded();
   if (!mImage) {
-    mLatLongImage->uploadToDevice();
-    mImage = resource::SVImage::FromDeviceImage(
-        shader::latlongToCube(*mLatLongImage->getDeviceImage(), mDescription.mipLevels));
-  }
-
-  if (!mImage->isOnDevice()) {
-    mImage->setUsage(vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst |
-                     vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eStorage);
-    mImage->uploadToDevice(false);
-  }
-
-  auto viewFormat = mImage->getDeviceImage()->getFormat();
-  if (mDescription.srgb) {
-    switch (viewFormat) {
-    case vk::Format::eR8G8B8A8Unorm:
-      viewFormat = vk::Format::eR8G8B8A8Srgb;
-      break;
-    case vk::Format::eR8G8B8Unorm:
-      viewFormat = vk::Format::eR8G8B8Srgb;
-      break;
-    case vk::Format::eR8G8Unorm:
-      viewFormat = vk::Format::eR8G8Srgb;
-      break;
-    case vk::Format::eR8Unorm:
-      viewFormat = vk::Format::eR8Srgb;
-      break;
-    default:
-      break;
+    mLatLongImage->uploadToDevice(context);
+    auto latLong = mLatLongImage->getDeviceImage(context);
+    if (!latLong) {
+      throw std::runtime_error("failed to upload cubemap: the lat-long image was not uploaded");
     }
+    auto converted = shader::latlongToCube(context, *latLong, mDescription.mipLevels);
+    cube = converted.get();
+    mDeviceStates.get(context).latLongCube = std::move(converted);
+  } else {
+    // the host image is shared by every device: set usage before the first upload
+    if (!mImageUsageSet) {
+      mImage->setUsage(vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst |
+                       vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eStorage);
+      mImageUsageSet = true;
+    }
+    mImage->uploadToDevice(context, false);
+    cube = mImage->getDeviceImage(context);
+    if (!cube) {
+      throw std::runtime_error("failed to upload cubemap: the image was not uploaded");
+    }
+  }
+
+  auto viewFormat = cube->getFormat();
+  if (mDescription.srgb) {
+    viewFormat = internal::toSrgbFormat(viewFormat);
+  }
+
+  uint32_t mipLevels = std::min(mDescription.mipLevels, cube->getMipLevels());
+  if (mipLevels == 0) {
+    mipLevels = 1;
   }
 
   vk::ImageViewUsageCreateInfo usageInfo(vk::ImageUsageFlagBits::eSampled);
   vk::ImageViewCreateInfo viewInfo(
-      {}, mImage->getDeviceImage()->getVulkanImage(), vk::ImageViewType::eCube, viewFormat,
+      {}, cube->getVulkanImage(), vk::ImageViewType::eCube, viewFormat,
       vk::ComponentSwizzle::eIdentity,
-      vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, mDescription.mipLevels, 0, 6));
+      vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eColor, 0, mipLevels, 0, 6));
   viewInfo.setPNext(&usageInfo);
 
-  mImageView = mContext->getDevice().createImageViewUnique(viewInfo);
-
-  mSampler = mContext->createSampler(vk::SamplerCreateInfo(
+  auto &state = mDeviceStates.get(context);
+  state.context = context.shared_from_this();
+  state.imageView = context.getDevice().createImageViewUnique(viewInfo);
+  state.sampler = context.createSampler(vk::SamplerCreateInfo(
       {}, mDescription.magFilter, mDescription.minFilter, vk::SamplerMipmapMode::eLinear,
       vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat,
       vk::SamplerAddressMode::eRepeat, 0.f, false, 0.f, false, vk::CompareOp::eNever, 0.f,
-      static_cast<float>(mDescription.mipLevels), vk::BorderColor::eFloatOpaqueBlack));
+      static_cast<float>(mipLevels), vk::BorderColor::eFloatOpaqueBlack));
 
-  if (mDescription.mipLevels > 1 && !mImage->mipmapIsLoaded()) {
-    if (mImage->mipmapIsLoaded()) {
-      logger::info("Cube map mipmaps are loaded, no prefiltering required.");
-    } else {
-      logger::info("Prefiltering cube map...");
-      shader::prefilterCubemap(*mImage->getDeviceImage());
-      logger::info("Prefiltering cube map completed");
-    }
+  // levels beyond the base one are written by the prefilter pass; loaded mips are kept
+  if (mipLevels > 1 && !mipsProvided) {
+    logger::info("Prefiltering cube map...");
+    shader::prefilterCubemap(context, *cube);
+    logger::info("Prefiltering cube map completed");
   }
-  mImage->getDeviceImage()->setCurrentLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
-  mOnDevice = true;
+  cube->setCurrentLayout(vk::ImageLayout::eShaderReadOnlyOptimal);
 }
 
-void SVCubemap::removeFromDevice() {
-  mOnDevice = false;
-  mImageView.reset();
-}
+void SVCubemap::removeFromDevice() { mDeviceStates.clear(); }
 
 std::future<void> SVCubemap::loadAsync() {
   if (mLoaded) {
@@ -185,9 +188,12 @@ std::future<void> SVCubemap::loadAsync() {
       break;
     }
     case SVCubemapDescription::SourceType::eKTX: {
-      mImage = SVImage::FromFile({mDescription.filenames[0]}, mDescription.mipLevels, 4);
-      mImage->setCreateFlags(vk::ImageCreateFlagBits::eCubeCompatible);
-      mImage->loadAsync().get();
+      // libktx creates a cube-compatible image for a cube map
+      mImage = internal::imageFromFile(mDescription.filenames[0]);
+      if (mImage->getMipLevels() != mDescription.mipLevels) {
+        logger::warn("cube map ktx has {} levels but {} levels requested", mImage->getMipLevels(),
+                     mDescription.mipLevels);
+      }
       break;
     }
     case SVCubemapDescription::SourceType::eLATLONG: {
@@ -205,19 +211,24 @@ std::future<void> SVCubemap::loadAsync() {
 
 void SVCubemap::load() { loadAsync().get(); }
 
-void SVCubemap::exportKTX(std::string const &filename) {
-  if (!mOnDevice) {
-    throw std::runtime_error("failed to export KTX, uploadToDevice should be called first.");
+void SVCubemap::exportKTX(core::Context &context, std::string const &filename) {
+  auto state = mDeviceStates.find(context);
+  if (!state || !state->imageView) {
+    throw std::runtime_error("failed to export KTX: the cubemap is not uploaded to this device");
   }
 
-  auto img = mImage->getDeviceImage();
+  core::Image *img = state->latLongCube ? state->latLongCube.get()
+                                        : (mImage ? mImage->getDeviceImage(context) : nullptr);
+  if (!img) {
+    throw std::runtime_error("failed to export KTX: no cube image on this device");
+  }
   auto extent = img->getExtent();
 
   if (img->getFormat() != vk::Format::eR8G8B8A8Unorm) {
     throw std::runtime_error("exporting to ktx only supports R8G8B8A8Unorm texture for now");
   }
 
-  ktxTexture2 *texture;
+  ktxTexture2 *texture{};
   ktxTextureCreateInfo createInfo;
 
   createInfo.vkFormat = VK_FORMAT_R8G8B8A8_UNORM;
@@ -231,8 +242,12 @@ void SVCubemap::exportKTX(std::string const &filename) {
   createInfo.isArray = KTX_FALSE;
   createInfo.generateMipmaps = KTX_FALSE;
 
-  ktxTexture2_Create(&createInfo, KTX_TEXTURE_CREATE_ALLOC_STORAGE, &texture);
-  std::vector<uint8_t> data(extent.width * extent.height * 4);
+  auto result = ktxTexture2_Create(&createInfo, KTX_TEXTURE_CREATE_ALLOC_STORAGE, &texture);
+  if (result != KTX_SUCCESS) {
+    throw std::runtime_error("failed to export KTX: cannot create texture: " +
+                             std::string(ktxErrorString(result)));
+  }
+  std::vector<uint8_t> data(static_cast<size_t>(extent.width) * extent.height * 4);
 
   for (uint32_t face = 0; face < 6; ++face) {
     uint32_t width = extent.width;
@@ -254,16 +269,15 @@ void SVCubemap::exportKTX(std::string const &filename) {
   ktxTexture_WriteToNamedFile(ktxTexture(texture), filename.c_str());
   ktxTexture_Destroy(ktxTexture(texture));
 
-  auto context = core::Context::Get();
-  auto pool = context->createCommandPool();
+  auto pool = context.createCommandPool();
   auto buffer = pool->allocateCommandBuffer();
   buffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
   img->transitionLayout(buffer.get(), vk::ImageLayout::eTransferSrcOptimal,
                         vk::ImageLayout::eShaderReadOnlyOptimal, vk::AccessFlagBits::eTransferRead,
                         vk::AccessFlagBits::eShaderRead, vk::PipelineStageFlagBits::eTransfer,
-                        vk::PipelineStageFlagBits::eFragmentShader);
+                        internal::shaderReadStages(context));
   buffer->end();
-  context->getQueue().submitAndWait(buffer.get());
+  context.getQueue().submitAndWait(buffer.get());
 }
 
 } // namespace resource

@@ -8,17 +8,27 @@
 #include <cstdio>
 #include <cuda.h>
 #include <cuda_runtime.h>
+#include <map>
 #include <memory>
 #include <optix.h>
 
 static_assert(OPTIX_VERSION == 70600);
 
 namespace svulkan2 {
+
+namespace core {
+class Context;
+}
+
 namespace renderer {
 
+/** Denoises ray traced color images on the CUDA device of a renderer's context. */
 class Denoiser {
 public:
-  virtual bool init(bool albedo, bool normal, bool hdr) = 0;
+  /** `context` is the context of the rendering device; its CUDA device must be the one
+   *  the denoiser runs on. */
+  virtual bool init(std::shared_ptr<core::Context> context, bool albedo, bool normal,
+                    bool hdr) = 0;
   virtual void allocate(uint32_t width, uint32_t height) = 0;
   virtual void free() = 0;
   virtual void denoise(core::Image &color, core::Image *albedo, core::Image *normal) = 0;
@@ -31,7 +41,7 @@ public:
 
 class DenoiserOptix : public Denoiser {
 public:
-  bool init(bool albedo, bool normal, bool hdr) override;
+  bool init(std::shared_ptr<core::Context> context, bool albedo, bool normal, bool hdr) override;
   void allocate(uint32_t width, uint32_t height) override;
   void free() override;
   void denoise(core::Image &color, core::Image *albedo, core::Image *normal) override;
@@ -50,8 +60,10 @@ private:
     OptixDeviceContext optixDevice{};
   };
 
-  static std::weak_ptr<Context> gContext;
-  std::shared_ptr<Context> mContext;
+  /** OptiX device contexts, one per CUDA device (an OptiX context belongs to a device) */
+  static std::map<int, std::weak_ptr<Context>> gContexts;
+  std::shared_ptr<Context> mOptixContext;
+  std::shared_ptr<core::Context> mContext;
 
   CUstream mCudaStream{};
   OptixDenoiser mDenoiser{};
@@ -96,7 +108,7 @@ private:
 
 class DenoiserOidn : public Denoiser {
 public:
-  bool init(bool albedo, bool normal, bool hdr) override;
+  bool init(std::shared_ptr<core::Context> context, bool albedo, bool normal, bool hdr) override;
   void allocate(uint32_t width, uint32_t height) override;
   void free() override;
   void denoise(core::Image &color, core::Image *albedo, core::Image *normal) override;
@@ -109,6 +121,8 @@ public:
   ~DenoiserOidn();
 
 private:
+  std::shared_ptr<core::Context> mContext;
+
   bool mAlbedo{};
   bool mNormal{};
   bool mHdr{};

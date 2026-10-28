@@ -1,8 +1,10 @@
 #pragma once
 #include "image.h"
 #include "material.h"
+#include "sapien/device.h"
 #include "sapien/scene.h"
 
+#include <svulkan2/core/context.h>
 #include <svulkan2/renderer/renderer.h>
 #include <svulkan2/renderer/rt_renderer.h>
 #include <svulkan2/renderer/vr.h>
@@ -44,6 +46,8 @@ public:
 private:
   std::array<svulkan2::scene::Camera *, 2> getCameras();
   std::shared_ptr<SapienRenderEngine> mEngine;
+  std::shared_ptr<Device> mDevice;
+  std::shared_ptr<svulkan2::core::Context> mContext;
   std::array<std::shared_ptr<svulkan2::renderer::RendererBase>, 2> mRenderers;
   std::shared_ptr<svulkan2::renderer::VRDisplay> mVR;
 

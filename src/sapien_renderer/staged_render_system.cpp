@@ -43,6 +43,14 @@ StagedRenderSystem::StagedRenderSystem(
   if (!mRenderScene || mSystems.empty()) {
     throw std::runtime_error("staged rendering requires a non-empty render scene selection");
   }
+  mContext = mRenderScene->getContext();
+  for (auto const &system : mSystems) {
+    if (system->getContext() != mContext) {
+      throw std::runtime_error(
+          "failed to create staged render system: every source scene must render on the device "
+          "of the output render scene");
+    }
+  }
   mPoseSource.checkShape({-1, -1});
   if (typestrCode(mPoseSource.type) != 'f' ||
       typestrBytes(mPoseSource.type) != sizeof(float) || mPoseSource.shape[1] < 7 ||
@@ -105,26 +113,29 @@ StagedRenderSystem::StagedRenderSystem(
                                sourcePoseIndices.size() * sizeof(int), cudaMemcpyHostToDevice));
   }
 
-  auto context = SapienRenderEngine::Get()->getContext();
+  auto context = mContext;
   auto poseBytes = std::max<vk::DeviceSize>(mPoseCount * 7 * sizeof(float), sizeof(float));
   auto shapeBytes = std::max<vk::DeviceSize>(shapeData.size() * sizeof(StagedShapeData),
                                              sizeof(StagedShapeData));
-  mPoseBuffer = svulkan2::core::Buffer::Create(
-      poseBytes, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
-      VMA_MEMORY_USAGE_GPU_ONLY);
-  mShapeBuffer = svulkan2::core::Buffer::Create(
-      shapeBytes, vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
-      VMA_MEMORY_USAGE_GPU_ONLY);
+  mPoseBuffer = svulkan2::core::Buffer::Create(*context, poseBytes,
+                                               vk::BufferUsageFlagBits::eTransferDst |
+                                                   vk::BufferUsageFlagBits::eStorageBuffer,
+                                               VMA_MEMORY_USAGE_GPU_ONLY);
+  mShapeBuffer = svulkan2::core::Buffer::Create(*context, shapeBytes,
+                                                vk::BufferUsageFlagBits::eTransferDst |
+                                                    vk::BufferUsageFlagBits::eStorageBuffer,
+                                                VMA_MEMORY_USAGE_GPU_ONLY);
   mDummyRTInstanceBuffer = svulkan2::core::Buffer::Create(
-      sizeof(vk::AccelerationStructureInstanceKHR), vk::BufferUsageFlagBits::eStorageBuffer,
-      VMA_MEMORY_USAGE_GPU_ONLY);
+      *context, sizeof(vk::AccelerationStructureInstanceKHR),
+      vk::BufferUsageFlagBits::eStorageBuffer, VMA_MEMORY_USAGE_GPU_ONLY);
   if (!shapeData.empty()) {
     mShapeBuffer->upload(shapeData);
   }
 
   auto shaderPath = std::filesystem::path(SapienRendererDefault::internalGetShaderSearchPath()) /
                     "internal" / "staged_pose.comp";
-  mComputeModule = std::make_shared<svulkan2::shader::ComputeModule>(shaderPath.string(), 64);
+  mComputeModule =
+      std::make_shared<svulkan2::shader::ComputeModule>(mContext, shaderPath.string(), 64);
   mComputeInstance =
       std::make_unique<svulkan2::shader::ComputeModuleInstance>(mComputeModule);
   mComputeInstance->setBuffer("PoseBuffer", mPoseBuffer.get());
@@ -141,7 +152,7 @@ StagedRenderSystem::StagedRenderSystem(
   for (int index = 0; index < 2; ++index) {
     Slot slot;
     slot.hostPoses = CudaHostArray({static_cast<int>(mPoseCount), 7}, "f4");
-    slot.stagingBuffer = svulkan2::core::Buffer::CreateStaging(poseBytes);
+    slot.stagingBuffer = svulkan2::core::Buffer::CreateStaging(*context, poseBytes);
     slot.commandBuffer = mCommandPool->allocateCommandBuffer();
     slot.fence = context->getDevice().createFenceUnique({vk::FenceCreateFlagBits::eSignaled});
     mSlots.push_back(std::move(slot));
@@ -182,7 +193,7 @@ void StagedRenderSystem::update() {
   slot.cudaReady.synchronize();
   SAPIEN_PROFILE_BLOCK_END;
 
-  auto context = SapienRenderEngine::Get()->getContext();
+  auto context = mContext;
   auto device = context->getDevice();
   auto rtInstanceBuffer = mRenderScene->getTLAS()
                               ? &mRenderScene->getTLAS()->getInstanceBuffer()
@@ -249,7 +260,7 @@ std::optional<Pose> StagedRenderSystem::getPose(int sourcePoseIndex) const {
 }
 
 StagedRenderSystem::~StagedRenderSystem() {
-  SapienRenderEngine::Get()->getContext()->getDevice().waitIdle();
+  mContext->getDevice().waitIdle();
   for (auto const &body : mGpuSourcedBodies) {
     body->internalReleaseGpuPoseSource();
   }

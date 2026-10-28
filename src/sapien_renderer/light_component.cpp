@@ -204,7 +204,7 @@ void SapienRenderLightComponent::setPoseMode(LightPoseMode mode) {
 void SapienRenderLightComponent::prepareLightResourceUpdate() {
   if (auto scene = getScene()) {
     // Textures and shadow targets may still be referenced by an earlier capture.
-    SapienRenderEngine::Get()->getContext()->getDevice().waitIdle();
+    scene->getSapienRendererSystem()->getContext()->getDevice().waitIdle();
     scene->getSapienRendererSystem()->getScene()->updateVersion();
   }
 }

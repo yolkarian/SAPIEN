@@ -9,6 +9,7 @@
 #include <pybind11/smart_holder.h>
 #include <pybind11/stl.h>
 #include <svulkan2/core/instance.h>
+#include <svulkan2/resource/manager.h>
 
 namespace py = pybind11;
 
@@ -503,7 +504,10 @@ void init_sapien_renderer(py::module &sapien) {
       .def("get_vr_enabled", &SapienRendererDefault::getVREnabled)
       .def(
           "_force_vr_shutdown",
-          []() { SapienRenderEngine::Get()->getContext()->getInstance2()->shutdownVR(); },
+          []() {
+            // VR is process-wide: it belongs to the shared Vulkan instance.
+            svulkan2::core::Instance::Get()->shutdownVR();
+          },
           "SteamVR will be permanently broken (even across processes) when the process is killed "
           "without shutting down VR. This function is used to force shutting down VR when you "
           "know SAPIEN will be killed without a clean shutdown.")
@@ -542,8 +546,8 @@ void init_sapien_renderer(py::module &sapien) {
       .def(
           "clear_cache",
           [](bool models, bool images, bool shaders) {
-            SapienRenderEngine::Get(nullptr)->getResourceManager()->clearCachedResources(
-                models, images, shaders);
+            SapienRenderEngine::Get()->getResourceManager()->clearCachedResources(models, images,
+                                                                                  shaders);
           },
           py::arg("models") = true, py::arg("images") = true, py::arg("shaders") = false)
 
@@ -553,7 +557,7 @@ void init_sapien_renderer(py::module &sapien) {
             return LoadScene(filename, applyScale);
           },
           py::arg("filename"), py::arg("apply_scale") = true)
-      .def("get_device_summary", []() { return SapienRenderEngine::Get(nullptr)->getSummary(); })
+      .def("get_device_summary", []() { return SapienRenderEngine::Get()->getSummary(); })
 
       .def("set_global_config", &SapienRendererDefault::setGlobalConfig,
            py::arg("max_num_materials") = 128, py::arg("max_num_textures") = 512,
@@ -663,8 +667,16 @@ Args:
   auto PyRenderWindow = py::class_<SapienRendererWindow>(m, "RenderWindow");
   auto PyRenderVRDisplay = py::class_<SapienVRDisplay>(m, "RenderVRDisplay");
 
-  PySapienRenderer.def(py::init(&SapienRenderEngine::Get), py::arg("device") = nullptr)
-      .def_property_readonly("_internal_context", &SapienRenderEngine::getContext);
+  PySapienRenderer
+      .def(py::init([](std::shared_ptr<Device> device) {
+             // The engine is process-wide; `device` only ensures its context exists.
+             auto engine = SapienRenderEngine::Get();
+             engine->getContext(device);
+             return engine;
+           }),
+           py::arg("device") = nullptr)
+      .def_property_readonly("_internal_context",
+                             [](SapienRenderEngine &engine) { return engine.getContext(); });
 
   m.def("get_live_resources", []() {
      auto r = renderLiveResources();
@@ -1028,17 +1040,25 @@ version moved; an unchanged version means zero per-frame light uploads.)doc")
       .def("get_vertices", &RenderShapeTriangleMeshPart::getVertices)
       .def_property_readonly("triangles", &RenderShapeTriangleMeshPart::getTriangles)
       .def("get_triangles", &RenderShapeTriangleMeshPart::getTriangles)
-      .def_property_readonly("cuda_vertices",
-                             &RenderShapeTriangleMeshPart::getVertexBufferCudaArray)
+      .def("get_cuda_vertices", &RenderShapeTriangleMeshPart::getVertexBufferCudaArray,
+           py::arg("device") = nullptr)
+      .def(
+          "get_cuda_triangles",
+          [](RenderShapeTriangleMeshPart const &part, std::shared_ptr<Device> device) {
+            return part.getIndexBufferCudaArray(device);
+          },
+          py::arg("device") = nullptr)
+      .def_property_readonly(
+          "cuda_vertices",
+          [](RenderShapeTriangleMeshPart const &part) { return part.getVertexBufferCudaArray(); })
+      .def_property_readonly(
+          "cuda_triangles",
+          [](RenderShapeTriangleMeshPart const &part) { return part.getIndexBufferCudaArray(); })
       .def("get_vertex_normal", &RenderShapeTriangleMeshPart::getNormal)
       .def("set_vertex_normal", &RenderShapeTriangleMeshPart::setNormal, py::arg("normal"))
       .def("get_vertex_uv", &RenderShapeTriangleMeshPart::getUV)
       .def("set_vertex_uv", &RenderShapeTriangleMeshPart::setUV, py::arg("uv"))
 
-      .def("get_cuda_vertices", &RenderShapeTriangleMeshPart::getVertexBufferCudaArray)
-      .def_property_readonly("cuda_triangles",
-                             &RenderShapeTriangleMeshPart::getIndexBufferCudaArray)
-      .def("get_cuda_triangles", &RenderShapeTriangleMeshPart::getIndexBufferCudaArray)
       .def_property_readonly("material", &RenderShapeTriangleMeshPart::getMaterial)
       .def("get_material", &RenderShapeTriangleMeshPart::getMaterial)
       .def("__eq__", [](RenderShapeTriangleMeshPart &self, RenderShapeTriangleMeshPart &other) {
@@ -1346,8 +1366,8 @@ Color, FOV, shape, and shadow near/far/half-size stay CPU real-time in both mode
       .def("get_angle", &SapienRenderParallelogramLightComponent::getAngle);
 
   PyRenderCudaMeshComponent
-      .def(py::init<uint32_t, uint32_t>(), py::arg("max_vertex_count"),
-           py::arg("max_triangle_count"))
+      .def(py::init<uint32_t, uint32_t, std::shared_ptr<Device>>(), py::arg("max_vertex_count"),
+           py::arg("max_triangle_count"), py::arg("device") = nullptr)
       .def_property("vertex_count", &CudaDeformableMeshComponent::getVertexCount,
                     &CudaDeformableMeshComponent::setVertexCount)
       .def("get_vertex_count", &CudaDeformableMeshComponent::getVertexCount)

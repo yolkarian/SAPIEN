@@ -18,14 +18,17 @@ static Pose Mat4ToPose(glm::mat4 const &m) {
 
 SapienVRDisplay::SapienVRDisplay() {
   mEngine = SapienRenderEngine::Get();
+  // VR presents through the default device only.
+  mDevice = mEngine->getDefaultDevice();
+  mContext = mEngine->getContext(mDevice);
   auto &renderConfig = SapienRendererDefault::Get();
   auto config = std::make_shared<svulkan2::RendererConfig>();
   config->shaderDir = renderConfig.viewerShaderDirectory;
 
-  mRenderers = {svulkan2::renderer::RendererBase::Create(config),
-                svulkan2::renderer::RendererBase::Create(config)};
+  mRenderers = {svulkan2::renderer::RendererBase::Create(mContext, config),
+                svulkan2::renderer::RendererBase::Create(mContext, config)};
 
-  mVR = std::make_shared<svulkan2::renderer::VRDisplay>();
+  mVR = std::make_shared<svulkan2::renderer::VRDisplay>(mContext);
 
   auto [width, height] = mVR->getScreenSize();
   mWidth = width;
@@ -41,10 +44,10 @@ SapienVRDisplay::SapienVRDisplay() {
 
   mEyePoses = {Mat4ToPose(mVR->getEyePoseLeft()), Mat4ToPose(mVR->getEyePoseRight())};
 
-  mCommandPool = mEngine->getContext()->createCommandPool();
+  mCommandPool = mContext->createCommandPool();
   mCommandBuffer = mCommandPool->allocateCommandBuffer();
   mSceneRenderFence =
-      mEngine->getContext()->getDevice().createFenceUnique({vk::FenceCreateFlagBits::eSignaled});
+      mContext->getDevice().createFenceUnique({vk::FenceCreateFlagBits::eSignaled});
 }
 
 std::array<svulkan2::scene::Camera *, 2> SapienVRDisplay::getCameras() {
@@ -105,7 +108,12 @@ void SapienVRDisplay::setCameraParameters(float near, float far) {
 
 void SapienVRDisplay::setScene(std::shared_ptr<Scene> scene) {
   mRenderSystem = scene->getSapienRendererSystem();
-  mRenderScene = scene->getSapienRendererSystem()->getScene();
+  if (mRenderSystem->getContext() != mContext) {
+    throw std::runtime_error("failed to set VR scene: the scene renders on device \"" +
+                             mRenderSystem->getDevice()->getAlias() +
+                             "\" but VR presents through device \"" + mDevice->getAlias() + "\"");
+  }
+  mRenderScene = mRenderSystem->getScene();
   for (auto r : mRenderers) {
     r->setScene(mRenderScene);
   }
@@ -183,11 +191,11 @@ Pose SapienVRDisplay::getRootPose() const { return mRootPose; }
 void SapienVRDisplay::setRootPose(Pose const &pose) { mRootPose = pose; }
 
 void SapienVRDisplay::render() {
-  if (mEngine->getContext()->getDevice().waitForFences(mSceneRenderFence.get(), VK_TRUE,
-                                                       UINT64_MAX) != vk::Result::eSuccess) {
+  if (mContext->getDevice().waitForFences(mSceneRenderFence.get(), VK_TRUE, UINT64_MAX) !=
+      vk::Result::eSuccess) {
     throw std::runtime_error("failed on wait for fence.");
   }
-  mEngine->getContext()->getDevice().resetFences(mSceneRenderFence.get());
+  mContext->getDevice().resetFences(mSceneRenderFence.get());
 
   auto cams = getCameras();
   mRenderers[0]->render(*cams[0], {}, {}, {}, {});
@@ -209,7 +217,7 @@ void SapienVRDisplay::render() {
       vk::AccessFlagBits::eTransferRead, vk::PipelineStageFlagBits::eAllGraphics,
       vk::PipelineStageFlagBits::eTransfer);
   mCommandBuffer->end();
-  mEngine->getContext()->getQueue().submit(mCommandBuffer.get(), mSceneRenderFence.get());
+  mContext->getQueue().submit(mCommandBuffer.get(), mSceneRenderFence.get());
 
   // present to steam
   mVR->renderFrame(imageLeft, imageRight);
