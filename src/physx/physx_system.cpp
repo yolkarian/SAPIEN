@@ -486,8 +486,10 @@ void PhysxSystemGpu::waitIdle() {
 }
 
 CudaArrayHandle PhysxSystemGpu::trackView(CudaArrayHandle handle) const {
-  if (mClosed) {
-    throw std::runtime_error("failed to export a CUDA array view: the PhysxGpuSystem is closed");
+  std::lock_guard lock(mViewMutex);
+  if (mViewsClosed || mClosed) {
+    throw std::runtime_error(
+        "failed to export a CUDA array view: the PhysxGpuSystem is closed or being closed");
   }
   handle.viewGuard = std::make_shared<CudaArrayViewGuard>(mViewLifecycle);
   return handle;
@@ -684,8 +686,8 @@ void PhysxSystemGpu::gpuSetCudaStream(uintptr_t stream) {
         "torch.cuda.Stream(device=\"cuda:" +
         std::to_string(mDevice->cudaId) + "\").");
   }
+  mViewLifecycle->switchStream(mDevice->cudaId, stream);
   mCudaStream = (cudaStream_t)stream;
-  mViewLifecycle->stream.store(stream, std::memory_order_release);
 }
 
 // CudaArray zero-fills and blocking cudaMemcpy uploads run on the default stream. PhysX's own
@@ -2754,20 +2756,31 @@ void PhysxSystemGpu::closeImpl() {
         "failed to close PhysxGpuSystem: " + std::to_string(registered) +
         " components are still registered; close every scene owned by this system first");
   }
-  int64_t views = mViewLifecycle->viewCount();
-  if (views != 0) {
-    throw std::runtime_error(
-        "failed to close PhysxGpuSystem: " + std::to_string(views) +
-        " external CUDA array views of this system are still alive; drop Torch/JAX/CuPy "
-        "views exported from its cuda_* buffers first");
+  {
+    // trackView() takes the same lock: no view can be exported between this check and the
+    // release below.
+    std::lock_guard viewLock(mViewMutex);
+    int64_t views = mViewLifecycle->viewCount();
+    if (views != 0) {
+      throw std::runtime_error(
+          "failed to close PhysxGpuSystem: " + std::to_string(views) +
+          " external CUDA array views of this system are still alive; drop Torch/JAX/CuPy "
+          "views exported from its cuda_* buffers first");
+    }
+    mViewsClosed = true;
   }
 
-  waitIdle();
-  {
+  try {
+    waitIdle();
     // Release happens once per system, so a device-wide barrier is affordable here: no stream,
     // including ones that consumed exported views, may still touch the buffers freed below.
     CudaDeviceScope deviceScope(mDevice->cudaId);
     checkCudaErrors(cudaDeviceSynchronize());
+  } catch (...) {
+    // Nothing was released: the system stays open and exportable.
+    std::lock_guard viewLock(mViewMutex);
+    mViewsClosed = false;
+    throw;
   }
 
   if (mPxScene) {

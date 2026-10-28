@@ -105,6 +105,21 @@ uintptr_t CudaArrayHandle::producerStream() const {
   return viewGuard ? viewGuard->lifecycle->stream.load(std::memory_order_acquire) : 0;
 }
 
+std::unique_lock<std::mutex> CudaArrayHandle::lockProducerStream() const {
+  return viewGuard ? std::unique_lock(viewGuard->lifecycle->streamMutex)
+                   : std::unique_lock<std::mutex>();
+}
+
+void CudaArrayLifecycle::switchStream(int cudaId, uintptr_t newStream) {
+  std::lock_guard lock(streamMutex);
+#ifdef SAPIEN_CUDA
+  if (cudaId >= 0) {
+    cudaStreamWaitStream(cudaId, newStream, stream.load(std::memory_order_relaxed));
+  }
+#endif
+  stream.store(newStream, std::memory_order_release);
+}
+
 #ifdef SAPIEN_CUDA
 template <typename Managed> static void ManagedTensorDeleter(Managed *self) {
   delete[] self->dl_tensor.strides;

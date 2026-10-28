@@ -324,10 +324,13 @@ so the owner cannot be closed while it is alive.)doc")
       .def(
           "copy_from",
           [](CudaArrayHandle &array, py::object src) {
-            uintptr_t stream = array.producerStream();
-            RunWithBorrowedCudaArray(src, array.cudaId, stream, [&](CudaArrayHandle const &from) {
-              array.copyFrom(from, stream);
-            });
+            RunWithBorrowedCudaArray(src, array.cudaId, array.producerStream(),
+                                     [&](CudaArrayHandle const &from, uintptr_t &stream) {
+                                       // The owner cannot switch streams while this is held.
+                                       auto lock = array.lockProducerStream();
+                                       FollowStream(array.cudaId, stream, array.producerStream());
+                                       array.copyFrom(from, stream);
+                                     });
           },
           py::arg("src"),
           R"doc(Copy ``src`` into this array on its owner's CUDA stream and return without waiting.

@@ -10,6 +10,7 @@ import ctypes
 import gc
 import os
 import threading
+import time
 import unittest
 import weakref
 
@@ -59,6 +60,20 @@ class _ForwardingArray:
 
     def __dlpack_device__(self):
         return self.tensor.__dlpack_device__()
+
+
+class _SwitchingProducer(_ForwardingArray):
+    """Switches the system to another stream inside __dlpack__, before its handshake: the
+    handshake then orders the stream SAPIEN read before the switch, not the new one."""
+
+    def __init__(self, tensor: "torch.Tensor", system, stream: "torch.cuda.Stream") -> None:
+        super().__init__(tensor)
+        self.system = system
+        self.stream = stream
+
+    def __dlpack__(self, **kwargs):
+        self.system.gpu_set_cuda_stream(self.stream.cuda_stream)
+        return super().__dlpack__(**kwargs)
 
 
 def _build_slider_system(
@@ -117,6 +132,16 @@ class TestGpuInterop(unittest.TestCase):
     def _qvel_after_step(self) -> "torch.Tensor":
         """Joint velocity one step after the currently applied state."""
         self.system.step()
+        self.system.gpu_fetch_articulation_qvel()
+        qvel = torch.from_dlpack(self.system.cuda_articulation_qvel).clone()
+        torch.cuda.synchronize(self.device)
+        return qvel[:, 0]
+
+    def _settled_qvel_after_step(self) -> "torch.Tensor":
+        """Joint velocity PhysX holds one step after the applied state. Every stream drains before
+        the fetch, so a late write into the buffer cannot hide what PhysX received."""
+        self.system.step()
+        torch.cuda.synchronize(self.device)
         self.system.gpu_fetch_articulation_qvel()
         qvel = torch.from_dlpack(self.system.cuda_articulation_qvel).clone()
         torch.cuda.synchronize(self.device)
@@ -316,6 +341,135 @@ class TestGpuInterop(unittest.TestCase):
             thread.join()
         self.assertEqual(errors, [])
         self.assertEqual(self.system.total_steps, steps + 200)
+
+    def test_switching_streams_keeps_queued_work_ordered(self) -> None:
+        """Work queued on the previous stream stays ahead of exports and wait_idle() after a
+        gpu_set_cuda_stream() switch."""
+        self._build_sliders()
+        first, second, consumer = (torch.cuda.Stream(self.device) for _ in range(3))
+        # Warm up the fetch and delay kernels: a first launch synchronizes the whole context.
+        self.system.gpu_fetch_articulation_qvel()
+        torch.cuda._sleep(1)
+        torch.cuda.synchronize(self.device)
+        for check in ("export", "wait_idle"):
+            with self.subTest(check=check):
+                self.system.gpu_set_cuda_stream(first.cuda_stream)
+                with torch.cuda.stream(first):
+                    torch.from_dlpack(self.system.cuda_articulation_qvel).fill_(7.0)
+                first.synchronize()
+                with torch.cuda.stream(first):
+                    torch.cuda._sleep(SLEEP_CYCLES)
+                    self.system.gpu_fetch_articulation_qvel()  # PhysX holds 0
+                self.system.gpu_set_cuda_stream(second.cuda_stream)
+                if check == "export":
+                    with torch.cuda.stream(consumer):
+                        seen = torch.from_dlpack(self.system.cuda_articulation_qvel).clone()
+                    consumer.synchronize()
+                    torch.testing.assert_close(seen, torch.zeros_like(seen))
+                else:
+                    self.system.wait_idle()
+                    self.assertTrue(first.query(), "wait_idle() returned before the old stream")
+                torch.cuda.synchronize(self.device)
+
+    def test_copy_from_after_a_stream_switch_leaves_an_earlier_apply_intact(self) -> None:
+        """An apply queued on the previous stream reads its buffer before a copy_from issued after
+        a gpu_set_cuda_stream() switch overwrites it."""
+        self._build_sliders()
+        first, second = torch.cuda.Stream(self.device), torch.cuda.Stream(self.device)
+        source = torch.full((ARTICULATIONS, 1), 9.0, device=self.device)
+        self.system.gpu_set_cuda_stream(first.cuda_stream)
+        with torch.cuda.stream(first):
+            torch.from_dlpack(self.system.cuda_articulation_qvel).fill_(5.0)
+        # Warm up the apply and delay kernels: a first launch synchronizes the whole context.
+        self.system.gpu_apply_articulation_qvel()
+        torch.cuda._sleep(1)
+        torch.cuda.synchronize(self.device)
+        with torch.cuda.stream(first):
+            torch.cuda._sleep(SLEEP_CYCLES)
+            self.system.gpu_apply_articulation_qvel()  # sends 5, the buffer at this call
+        self.system.gpu_set_cuda_stream(second.cuda_stream)
+        self.system.cuda_articulation_qvel.copy_from(source)
+        qvel = self._settled_qvel_after_step()
+        torch.testing.assert_close(qvel, torch.full_like(qvel, 5.0), rtol=0.0, atol=1e-3)
+
+    def test_borrowed_inputs_follow_a_stream_switch_during_the_handshake(self) -> None:
+        """A gpu_set_cuda_stream() between SAPIEN reading the system's stream and the producer's
+        handshake must not let the call run ahead of the producer on the new stream."""
+        self._build_sliders()
+        old, new, producer = (torch.cuda.Stream(self.device) for _ in range(3))
+        all_rows = torch.arange(ARTICULATIONS, dtype=torch.int32, device=self.device)
+        # Warm up every kernel used below: a first launch synchronizes the whole context.
+        self.system.gpu_apply_articulation_qvel(all_rows)
+        torch.zeros_like(all_rows).copy_(all_rows)
+        torch.full((ARTICULATIONS, 1), 1.0, device=self.device).fill_(2.0)
+        torch.cuda._sleep(1)
+        torch.cuda.synchronize(self.device)
+        for call, expected in (("indexed", 5.0), ("copy_from", 3.0), ("gpu_wait_for", 2.0)):
+            with self.subTest(call=call):
+                self.system.gpu_set_cuda_stream(old.cuda_stream)
+                with torch.cuda.stream(old):
+                    qvel = torch.from_dlpack(self.system.cuda_articulation_qvel)
+                    qvel.zero_()
+                self.system.gpu_apply_articulation_qvel()
+                with torch.cuda.stream(old):
+                    qvel.fill_(expected if call == "indexed" else -1.0)
+                del qvel
+                torch.cuda.synchronize(self.device)
+                with torch.cuda.stream(producer):
+                    if call == "indexed":
+                        indices = torch.zeros_like(all_rows)
+                        torch.cuda._sleep(SLEEP_CYCLES)
+                        indices.copy_(all_rows)
+                        self.system.gpu_apply_articulation_qvel(
+                            _SwitchingProducer(indices, self.system, new)
+                        )
+                    elif call == "copy_from":
+                        source = torch.full((ARTICULATIONS, 1), -1.0, device=self.device)
+                        torch.cuda._sleep(SLEEP_CYCLES)
+                        source.fill_(expected)
+                        self.system.cuda_articulation_qvel.copy_from(
+                            _SwitchingProducer(source, self.system, new)
+                        )
+                    else:
+                        qvel = torch.from_dlpack(self.system.cuda_articulation_qvel)
+                        torch.cuda._sleep(SLEEP_CYCLES)
+                        qvel.fill_(expected)
+                        self.system.gpu_wait_for(_SwitchingProducer(qvel, self.system, new))
+                        del qvel
+                if call != "indexed":
+                    self.system.gpu_apply_articulation_qvel()
+                result = self._settled_qvel_after_step()
+                torch.testing.assert_close(
+                    result, torch.full_like(result, expected), rtol=0.0, atol=1e-3
+                )
+
+    def test_close_rejects_views_requested_while_it_runs(self) -> None:
+        """A view requested from another thread while close() runs raises instead of outliving
+        the buffers it views."""
+        self._build_sliders()
+        self.scene.close()
+        delay = torch.cuda.Stream(self.device)
+        torch.cuda._sleep(1)  # load the delay kernel: a first launch synchronizes the context
+        torch.cuda.synchronize(self.device)
+        with torch.cuda.stream(delay):
+            torch.cuda._sleep(4 * SLEEP_CYCLES)  # close() waits for it on the device
+        errors: list[BaseException] = []
+
+        def close() -> None:
+            try:
+                self.system.close()
+            except BaseException as error:  # surfaced in the main thread below
+                errors.append(error)
+
+        closer = threading.Thread(target=close)
+        closer.start()
+        time.sleep(0.1)  # close() has checked for views and waits for the delay kernel
+        with self.assertRaisesRegex(RuntimeError, "closed or being closed"):
+            _ = self.system.cuda_articulation_qvel
+        closer.join()
+        self.assertEqual(errors, [])
+        self.assertTrue(self.system.is_closed)
+        self.assertEqual(self.system.outstanding_cuda_view_count, 0)
 
     @unittest.skipUnless(HAS_JAX_CUDA, "requires a CUDA-enabled JAX")
     def test_jax_reads_and_writes_through_dlpack(self) -> None:

@@ -608,11 +608,17 @@ Releases the GIL while waiting.)doc")
 #ifdef SAPIEN_CUDA
   // Indexed calls borrow the index buffer for the system's CUDA stream (DLPack or
   // __cuda_array_interface__ handshake), run without the GIL and keep the producer alive until
-  // the stream ran past them.
+  // the stream ran past them. The system's lock keeps the stream fixed from FollowStream()
+  // through the call.
   auto withIndices = [](void (PhysxSystemGpu::*method)(CudaArrayHandle const &)) {
     return [method](PhysxSystemGpu &system, py::object indices) {
-      RunWithBorrowedCudaArray(indices, system.getDevice()->cudaId, system.gpuGetCudaStream(),
-                               [&](CudaArrayHandle const &handle) { (system.*method)(handle); });
+      int cudaId = system.getDevice()->cudaId;
+      RunWithBorrowedCudaArray(indices, cudaId, system.gpuGetCudaStream(),
+                               [&](CudaArrayHandle const &handle, uintptr_t &stream) {
+                                 auto lock = system.lockGpuApi();
+                                 FollowStream(cudaId, stream, system.gpuGetCudaStream());
+                                 (system.*method)(handle);
+                               });
     };
   };
   auto releaseGil = py::call_guard<py::gil_scoped_release>();
@@ -727,6 +733,10 @@ example ``torch.cuda.Stream(device=system.device.cuda_id)``; streams of another
 device raise ``RuntimeError``. ``0`` selects the device's legacy default stream,
 which is the default.
 
+Work already submitted to the previous stream stays ordered before work submitted
+after the switch: the new stream waits for it on the device, the host does not.
+``wait_idle()``, DLPack exports and ``copy_from`` after a switch therefore see it.
+
 Args:
     stream: integer representation of a cuda stream pointer
 )doc")
@@ -736,8 +746,13 @@ Args:
       .def(
           "gpu_wait_for",
           [](PhysxSystemGpu &system, py::object array) {
+            int cudaId = system.getDevice()->cudaId;
+            uintptr_t stream = system.gpuGetCudaStream();
             // The handshake enqueues the wait; nothing reads the array, so nothing is kept alive.
-            BorrowCudaArray(array, system.getDevice()->cudaId, system.gpuGetCudaStream());
+            BorrowCudaArray(array, cudaId, stream);
+            py::gil_scoped_release release;
+            auto lock = system.lockGpuApi();
+            FollowStream(cudaId, stream, system.gpuGetCudaStream());
           },
           py::arg("array"),
           R"doc(Make this system's CUDA stream wait until ``array`` is ready, without blocking

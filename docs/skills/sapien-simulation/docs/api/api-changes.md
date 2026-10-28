@@ -30,6 +30,10 @@ CUDA interop and threads (JAX/Torch handoff without host synchronization):
 - **Behavior change:** `wait_idle()` waits for the in-flight step and the system's own stream
   only, no longer for the whole device (other systems, Torch/JAX streams). `close()` still
   quiesces the device before releasing.
+- `gpu_set_cuda_stream()` makes the new stream wait for work already queued on the previous
+  one (on the device, not the host), so `wait_idle()`, DLPack exports and `copy_from` after a
+  switch include that work; it used to be left unordered. Exports and `copy_from` of
+  camera-group buffers follow `RenderSystemGroup.set_cuda_stream()` the same way.
 - **Behavior change:** fetch, apply, compute, contact-query, upload/download and `gpu_init()`
   calls raise `RuntimeError` while a `step_start()` is in flight; PhysX used to drop applies
   silently and fail fetches with a generic error.

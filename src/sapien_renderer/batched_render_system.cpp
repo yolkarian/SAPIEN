@@ -436,6 +436,11 @@ CudaArrayHandle BatchedCamera::trackView(CudaArrayHandle handle) const {
   return handle;
 }
 
+void BatchedCamera::setCudaStream(CUstream_st *stream) {
+  mCudaStream = stream;
+  mViewLifecycle->switchStream(mEngine->getDevice()->cudaId, reinterpret_cast<uintptr_t>(stream));
+}
+
 void BatchedCamera::close() {
   if (mClosed) {
     return;

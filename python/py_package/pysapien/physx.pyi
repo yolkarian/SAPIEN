@@ -886,6 +886,10 @@ class PhysxGpuSystem(PhysxSystem):
         device raise ``RuntimeError``. ``0`` selects the device's legacy default stream,
         which is the default.
 
+        Work already submitted to the previous stream stays ordered before work submitted
+        after the switch: the new stream waits for it on the device, the host does not.
+        ``wait_idle()``, DLPack exports and ``copy_from`` after a switch therefore see it.
+
         Args:
             stream: integer representation of a cuda stream pointer
         """

@@ -19,11 +19,9 @@ public:
     return mCameras;
   }
 
-  /** Stream for image/pose CUDA work; DLPack exports of this group's buffers order on it. */
-  void setCudaStream(CUstream_st *stream) {
-    mCudaStream = stream;
-    mViewLifecycle->stream.store(reinterpret_cast<uintptr_t>(stream), std::memory_order_release);
-  }
+  /** Stream for image/pose CUDA work; DLPack exports of this group's buffers order on it. Work
+   *  queued on the previous stream stays ordered before work queued on the new one. */
+  void setCudaStream(CUstream_st *stream);
 
   /** performs all GPU work deferred from construction; called by
    *  BatchedRenderSystem::gpuInit() */

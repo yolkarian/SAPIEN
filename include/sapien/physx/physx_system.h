@@ -205,8 +205,8 @@ public:
   bool isInitialized() const { return mGpuInitialized; }
   void checkGpuInitialized() const;
 
-  /** Attach this system's view lifecycle token to an exported buffer handle. Throws
-   *  when the system is closed. close() refuses while tracked views are alive. */
+  /** Attach this system's view lifecycle token to an exported buffer handle. Throws once
+   *  close() has passed its view check. close() refuses while tracked views are alive. */
   CudaArrayHandle trackView(CudaArrayHandle handle) const;
 
   /** Number of external view chains into this system's CUDA buffers still alive. */
@@ -218,12 +218,16 @@ public:
 
   /** Set the CUDA stream for all GPU operations; 0 is the device's legacy default stream, the
    *  default. Fetches, applies, queries and DLPack exports of this system's buffers are ordered on
-   *  it. */
+   *  it. Work already queued on the previous stream stays ordered before work queued after the
+   *  switch: the new stream waits for it on the device. */
   void gpuSetCudaStream(uintptr_t stream);
   /** The configured stream; lock-free so bindings can order other streams against it. */
   uintptr_t gpuGetCudaStream() const {
     return mViewLifecycle->stream.load(std::memory_order_acquire);
   }
+  /** The lock every GPU entry point takes (recursively). Holding it keeps gpuSetCudaStream() from
+   *  switching streams, e.g. between ordering the current stream and calling an entry point. */
+  std::unique_lock<std::recursive_mutex> lockGpuApi() const { return std::unique_lock(mApiMutex); }
 
   /** handle to the pose-vel buffer for rigid dynamic bodies and links */
   CudaArrayHandle gpuGetRigidBodyCudaHandle() const { return mCudaRigidBodyBuffer.handle(); }
@@ -524,6 +528,11 @@ private:
    *  interleave a simulate with fetches/applies on the shared scratch buffers and events.
    *  Recursive because entry points call each other. Never held while acquiring the GIL. */
   mutable std::recursive_mutex mApiMutex;
+
+  /** Orders trackView() against close(): close() checks the view count and closes the system
+   *  to new views under it, so no view can be exported between that check and the release. */
+  mutable std::mutex mViewMutex;
+  bool mViewsClosed{false};
 
   /** step_start() without a matching step_finish(). */
   bool mSimulateInFlight{false};

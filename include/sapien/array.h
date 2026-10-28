@@ -2,6 +2,7 @@
 #include <atomic>
 #include <cstdint>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.hpp>
@@ -20,7 +21,15 @@ struct CudaArrayLifecycle {
   /** CUDA stream on which the owner writes the viewed buffers (0 is the legacy default stream).
    *  DLPack exports order their consumer after the work submitted to it. */
   std::atomic<uintptr_t> stream{0};
+  /** Held by switchStream() and while work is queued on `stream` from outside the owner
+   *  (CudaArray.copy_from), so such work cannot land on a stream the owner just left. */
+  std::mutex streamMutex;
   int64_t viewCount() const { return views.load(std::memory_order_acquire); }
+
+  /** Make `newStream` the owner's stream. Work already queued on the previous stream stays
+   *  ordered before work queued on the new one: the new stream waits for it on device
+   *  `cudaId` (no wait without a CUDA device), the host does not. */
+  void switchStream(int cudaId, uintptr_t newStream);
 };
 
 /** RAII guard for one logical external view chain into an owned CUDA buffer. All
@@ -54,6 +63,10 @@ struct CudaArrayHandle {
   /** Stream on which the owner produces this buffer; 0 (legacy default stream) when the handle
    *  has no owner. */
   uintptr_t producerStream() const;
+
+  /** Keeps the owner from switching producerStream() while held; empty without an owner. Hold it
+   *  to queue work on that stream from outside the owner. */
+  std::unique_lock<std::mutex> lockProducerStream() const;
 
   DLManagedTensor *toDLPack() const;
   DLManagedTensorVersioned *toDLPackVersioned() const;

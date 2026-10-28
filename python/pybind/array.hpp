@@ -293,20 +293,30 @@ inline void ReleaseAfterStream(py::object keepAlive, int cudaId, uintptr_t strea
   }
 }
 
-/** Run `work` (C++ GPU calls, without the GIL) on an array borrowed from `obj` for `stream`,
- *  then keep the producer alive until that stream ran past the work, also when `work` throws
- *  after submitting device work. */
+/** Run `work(handle, stream)` (C++ GPU calls, without the GIL) on an array borrowed from `obj`
+ *  for `stream`, then keep the producer alive until the stream `work` submitted to ran past it,
+ *  also when `work` throws after submitting device work. The borrow's handshake calls into
+ *  Python before the owner's lock can be taken, so the owner may have switched streams since
+ *  `stream` was read: under its lock, `work` orders the owner's current stream after `stream`
+ *  with FollowStream() and submits there. */
 template <typename Work>
 void RunWithBorrowedCudaArray(py::handle obj, int cudaId, uintptr_t stream, Work &&work) {
   auto borrowed = BorrowCudaArray(obj, cudaId, stream);
   try {
     py::gil_scoped_release release;
-    work(borrowed.handle);
+    work(borrowed.handle, stream);
   } catch (...) {
     ReleaseAfterStream(std::move(borrowed.keepAlive), cudaId, stream);
     throw;
   }
   ReleaseAfterStream(std::move(borrowed.keepAlive), cudaId, stream);
+}
+
+/** Order `current`, the owner's stream read under its lock, after `borrowed`, the stream a borrow
+ *  was ordered against, and make it the stream to submit to. */
+inline void FollowStream(int cudaId, uintptr_t &borrowed, uintptr_t current) {
+  cudaStreamWaitStream(cudaId, current, borrowed);
+  borrowed = current;
 }
 #endif
 

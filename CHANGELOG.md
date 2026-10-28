@@ -18,6 +18,7 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 - `PhysxGpuSystem.gpu_set_cuda_stream()` raises `RuntimeError` for a stream that does not belong to the system's device.
 - `gpu_apply_*()` and the Viewer wrench/teleport helpers no longer block the host; order buffers written from another stream after an apply behind the system's stream.
 - `PhysxSystem.wait_idle()` waits only for the system's own stream and in-flight step, no longer for the whole device.
+- `PhysxGpuSystem.gpu_set_cuda_stream()` makes the new stream wait for work already queued on the previous one, so `wait_idle()`, DLPack exports and `copy_from` after a switch include it; exports and `copy_from` of camera-group buffers follow `RenderSystemGroup.set_cuda_stream()` the same way.
 - Fetch, apply, compute, contact-query and `gpu_init()` calls between `step_start()` and `step_finish()` raise `RuntimeError` instead of being dropped or failing generically.
 - All steady-state `PhysxGpuSystem` calls and `close()` release the GIL, and calls into one system from several threads are serialized; still build scenes and call `gpu_init()` from one thread.
 - Articulation joint buffers start on 256-byte boundaries, as XLA expects of imported buffers.
