@@ -188,6 +188,9 @@ class TestGpuInterop(unittest.TestCase):
             torch.arange(ARTICULATIONS, dtype=torch.int32, device=self.device)
         )
         alive = weakref.ref(producer)
+        # The first indexed apply in a process loads its gather kernel; under CUDA's lazy module
+        # loading that load waits for all queued device work, so warm the path up before the delay.
+        self.system.gpu_apply_articulation_qvel(producer.tensor)
         torch.cuda.synchronize(self.device)
         with torch.cuda.stream(stream):
             torch.cuda._sleep(SLEEP_CYCLES)
