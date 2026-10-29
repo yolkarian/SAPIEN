@@ -77,7 +77,7 @@ depth_cuda = sensor.get_depth_cuda()
 pointcloud_cuda = sensor.get_pointcloud_cuda(with_rgb=True)
 
 depth_torch = depth_cuda.torch()
-pointcloud_dlpack = pointcloud_cuda.dlpack()
+pointcloud_torch = torch.from_dlpack(pointcloud_cuda)  # zero-copy, stream-ordered
 ```
 
 `CudaArray` also supports `cupy()` and `jax()` when those libraries are

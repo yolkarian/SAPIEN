@@ -672,10 +672,10 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 | `close` | method | `close(self) -> None` | Close camera groups, release sealed pose sources/objects and destroy Vulkan/CUDA synchronization resources. | Idempotent. |
 | `is_closed` | property | `is_closed(self) -> bool` | Terminal lifecycle state. |  |
 | `create_camera_group` | method | `create_camera_group(self, cameras: list[RenderCameraComponent], picture_names: list[str]) -> RenderCameraGroup` | Create a batched camera group. |  |
-| `set_cuda_poses` | method | `set_cuda_poses(self, pose_buffer: sapien.CudaArray) -> None` | Bind a RenderSystemGroup to a PhysX CUDA pose buffer. | Direct GPU render path; no sync_poses_gpu_to_cpu needed. |
+| `set_cuda_poses` | method | `set_cuda_poses(self, pose_buffer: sapien.CudaArray) -> None` | Bind a RenderSystemGroup to a PhysX CUDA pose buffer. | Direct GPU render path; no sync_poses_gpu_to_cpu needed. The buffer must live on the group's device; `gpu_init()`/`update_render()` raise `RuntimeError` otherwise. |
 | `gpu_init` | method | `gpu_init(self) -> None` | One-time initialization and seal; call after `set_cuda_poses`, `create_camera_group`, and `set_pose_mode`. | Prepares resources, seeds CPU snapshots and `'cuda'`-mode camera rows, seals ownership, freezes topology. |
-| `set_cuda_stream` | method | `set_cuda_stream(self, stream: int) -> None` | CUDA stream for the group's and its camera groups' CUDA work. | Use the PhysX system's stream so `update_render()` reads poses its fetches wrote. Must belong to the group's device; another device's stream raises `RuntimeError`. Work on the previous stream stays ordered before later work. |
-| `update_render` | method | `update_render(self) -> None` | Transfer poses from the buffer given to `set_cuda_poses` into the render systems (object transforms, mounted and cuda-mode camera views, RT instances). | Runs after work already on the group's stream without blocking the host; releases the GIL. Reads `cuda_rigid_body_data` exactly; no implicit PhysX fetch. |
+| `set_cuda_stream` | method | `set_cuda_stream(self, stream: int) -> None` | CUDA stream for the group's and its camera groups' CUDA work. | Use the PhysX system's stream so `update_render()` reads poses its fetches wrote. Must belong to the group's device; another device's stream raises `RuntimeError`. Its camera groups switch with it, and the new stream then waits for work already queued on the previous one. |
+| `update_render` | method | `update_render(self) -> None` | Transfer poses from the buffer given to `set_cuda_poses` into the render systems (object transforms, mounted and cuda-mode camera views, RT instances). | The CUDA transfer runs after work already on the group's stream without blocking the host. When CPU camera or light state changed since the previous call (`'cpu'`-mode camera moves, projection or light edits), it first waits on the host for the group's in-flight `take_picture()`. Releases the GIL. Reads `cuda_rigid_body_data` exactly; no implicit PhysX fetch. |
 | `__init__` | method | `__init__(self, systems: list[RenderSystem]) -> None` |  | All systems must share one device; otherwise raises `RuntimeError`. Build one group per device. |
 
 ## `sapien.render.RenderTexture`
@@ -789,7 +789,7 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 | `render` | method | `render(self) -> None` |  |  |
 | `set_camera_parameters` | method | `set_camera_parameters(self, near: float, far: float) -> None` |  |  |
 | `set_root_pose` | method | `set_root_pose(self, pose: sapien.Pose) -> None` |  |  |
-| `set_scene` | method | `set_scene(self, scene: sapien.Scene) -> None` |  |  |
+| `set_scene` | method | `set_scene(self, scene: sapien.Scene) -> None` |  | The scene must render on the VR display's device (the default render device); otherwise `RuntimeError`. |
 | `update_render` | method | `update_render(self) -> None` | update_render implicitly calls fetch_poses to make sure the HMD pose is up-to-date | GPU PhysX dynamic bodies read CPU poses; prefer the CUDA pose path for offscreen. |
 | `__init__` | method | `__init__(self) -> None` |  |  |
 | `_internal_scene` | property | `_internal_scene(self) -> sapien.internal_renderer.Scene` |  |  |
@@ -856,8 +856,8 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 | `set_drop_callback` | method | `set_drop_callback(self, callback: Callable[[list[str]], None]) -> None` |  |  |
 | `set_focus_callback` | method | `set_focus_callback(self, callback: Callable[[int], None]) -> None` |  |  |
 | `set_intrinsic_parameters` | method | `set_intrinsic_parameters(self, near: float, far: float, fx: float, fy: float, cx: float, cy: float, skew: float) -> None` |  |  |
-| `set_scene` | method | `set_scene(self, scene: sapien.Scene) -> None` |  |  |
-| `set_scenes` | method | `set_scenes(self, scenes: list[sapien.Scene]) -> None` | Select base scenes plus associated shared scenes once. | No render offsets are applied. |
+| `set_scene` | method | `set_scene(self, scene: sapien.Scene) -> None` |  | The scene must render on the window's device (the default render device); otherwise `RuntimeError`. |
+| `set_scenes` | method | `set_scenes(self, scenes: list[sapien.Scene]) -> None` | Select base scenes plus associated shared scenes once. | No render offsets are applied. Scenes must render on the window's device (the default render device); otherwise `RuntimeError`. |
 | `configure_physx_gpu_rendering` | method | `configure_physx_gpu_rendering(self, physx_system: sapien.physx.PhysxGpuSystem, transport: Literal['auto', 'direct', 'staged', 'cpu-debug']='auto') -> None` | Configure Viewer pose transport. | Auto selects same-device direct or cross-device staged raster/RT transport. |
 | `set_shader_dir` | method | `set_shader_dir(self, shader_dir: str) -> None` |  |  |
 | `shift` | property | `shift(self) -> bool` |  |  |

@@ -7,7 +7,7 @@ These are practical, lookup-oriented references (not tutorial prose): workflow r
 ## Contents
 
 - `sapien-simulation/SKILL.md` — workflow checklist an agent follows when creating, refactoring, or reviewing a SAPIEN simulation environment.
-- `sapien-simulation/docs/gpu-workflows.md` — GPU simulation workflows: PhysX GPU setup, env IDs, CUDA buffers, direct/staged Viewer submission and interaction, Docker Vulkan/EGL setup, and exposed PhysX GPU articulation link/Jacobian buffers.
+- `sapien-simulation/docs/gpu-workflows.md` — GPU simulation workflows: PhysX GPU setup, env IDs, CUDA buffers and JAX/Torch stream handoff, multi-GPU PhysX and rendering (process- and thread-per-GPU), direct/staged Viewer submission and interaction, Docker Vulkan/EGL setup, and exposed PhysX GPU articulation link/Jacobian buffers.
 - `sapien-simulation/docs/api/` — compact API tables covering core, scene/builders/loaders, PhysX CPU/GPU, rendering, sensors, math, and the low-level internal renderer/UI.
 
 ## How to use it

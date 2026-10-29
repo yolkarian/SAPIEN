@@ -31,7 +31,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `sapien.physx.set_scene_config` | `set_scene_config(gravity: np.ndarray[Literal[3], np.dtype[np.float32]]=..., bounce_threshold: float=2.0, enable_pcm: bool=True, enable_tgs: bool=True, enable_ccd: bool=False, enable_enhanced_determinism: bool=False, enable_friction_every_iteration: bool=True, friction_offset_threshold: float=0.04, friction_correlation_distance: float=0.025, cpu_workers: int=0) -> None<br>set_scene_config(config: PhysxSceneConfig) -> None` | Set scene config. |  |
 | `sapien.physx.set_sdf_config` | `set_sdf_config(spacing: float=0.009999999776482582, subgrid_size: int=6, num_threads_for_construction: int=4, resolution: int=0, bits_per_subgrid_pixel: int=16, narrow_band_thickness: float=0.009999999776482582, margin: float=0.0, enable_remeshing: bool=False, triangle_count_reduction_factor: float=1.0) -> None<br>set_sdf_config(config: PhysxSDFConfig) -> None` | Set sdf config. |  |
 | `sapien.physx.set_shape_config` | `set_shape_config(contact_offset: float=0.009999999776482582, rest_offset: float=0.0) -> None<br>set_shape_config(config: PhysxShapeConfig) -> None` | Set shape config. |  |
-| `sapien.physx.shutdown` | `shutdown() -> None` | Release SAPIEN-owned PhysX caches, CUDA-context-manager leases, engine, and defaults. | Idempotent; never calls `cudaDeviceReset()`. |
+| `sapien.physx.shutdown` | `shutdown() -> None` | Release SAPIEN-owned PhysX caches, every per-device CUDA context manager, the engine, and defaults. | Idempotent; never calls `cudaDeviceReset()`. |
 | `sapien.physx.version` | `version() -> str` | Call version. |  |
 
 ## Class index

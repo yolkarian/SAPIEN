@@ -19,6 +19,10 @@ Multi-GPU rendering:
   max_triangle_count, device=None)` (raises when added to a scene of another device) and
   `RenderShapeTriangleMeshPart.get_cuda_vertices/get_cuda_triangles(device=None)` (the
   `cuda_vertices`/`cuda_triangles` properties keep returning the default device's copy).
+- **Behavior change:** `sapien.render.SapienRenderer(device)` no longer picks the process's
+  render device. The render engine is process-wide and `device` only creates that device's
+  render context, so `RenderSystem()` without a device keeps using the default render device;
+  pass the device to `RenderSystem(device)` instead.
 - Renderer CUDA interop restores the caller's current CUDA context; `torch.cuda.current_device()`
   is unchanged by render calls.
 - Fixed: with `SAPIEN_DISABLE_RAY_TRACING=1`, render devices had no CUDA id, so
@@ -51,11 +55,13 @@ CUDA interop and threads (JAX/Torch handoff without host synchronization):
   stream after the producer and keep it alive until the stream ran past the call. Inputs used
   to be read through `__cuda_array_interface__` with no stream ordering, so a JAX index array
   could be read before JAX had written it.
-- **Behavior change:** `gpu_apply_*` and the Viewer wrench/teleport helpers no longer block the
-  host until PhysX has copied the data; they return once enqueued, and the system's stream is
-  ordered after PhysX's read. A buffer written from another stream after an apply must be
-  ordered after the system's stream (Torch's default stream shares the legacy default stream
-  with an unconfigured system and needs nothing).
+- **Behavior change:** non-indexed `gpu_apply_*` and the Viewer wrench/teleport helpers no
+  longer block the host until PhysX has copied the data; they return once enqueued, and the
+  system's stream is ordered after PhysX's read. Indexed overloads still synchronize the
+  system's stream once for their index check while `gpu_index_validation` is on. A buffer
+  written from another stream after an apply must be ordered after the system's stream
+  (Torch's default stream shares the legacy default stream with an unconfigured system and
+  needs nothing).
 - **Behavior change:** `wait_idle()` waits for the in-flight step and the system's own stream
   only, no longer for the whole device (other systems, Torch/JAX streams). `close()` still
   quiesces the device before releasing.
@@ -115,6 +121,8 @@ Stream-order fixes for a non-blocking configured stream, e.g.
   `gpu_set_cuda_stream()`; before `sync_poses_gpu_to_cpu()`, call
   `gpu_fetch_rigid_dynamic_data()`, `gpu_fetch_articulation_link_pose()` and
   `stream.synchronize()` yourself. Contact-buffer growth and qpos/target uploads have none.
+
+## 3.0.0+fork.16
 
 Joint friction is now **Coulomb effort**, not the deprecated PhysX load-dependent
 coefficient: `PhysxArticulationJoint.friction/get_friction/set_friction`,

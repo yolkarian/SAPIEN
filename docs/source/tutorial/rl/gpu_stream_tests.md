@@ -43,6 +43,13 @@ PYTHONPATH=unittest/test_physx python -m unittest -v \
   step's impulses.
 - **Contact disappearance:** move all boxes away from the ground using GPU state
   APIs. Subsequent contact queries must return zeros rather than old impulses.
+- **First contact query on a busy default stream:** keep the default stream busy
+  and make the first contact query on the configured non-default stream. It must
+  report the contacts: buffers SAPIEN zero-fills on the default stream must not
+  overwrite the count PhysX wrote.
+- **Pose sync:** delay the configured stream, then call `sync_poses_gpu_to_cpu()`.
+  The CPU poses must equal the fetched GPU poses, so the default-stream copy waited
+  for the conversion on the configured stream.
 
 The delay kernels intentionally enlarge legal overlap between the configured
 SAPIEN stream and PhysX's internal non-blocking streams. They are not throughput

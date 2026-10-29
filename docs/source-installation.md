@@ -2,7 +2,8 @@
 
 ## Before building
 
-Initialize submodules before building:
+Initialize submodules before building. Only `simsense` is a submodule; the
+`svulkan2` renderer is vendored in `3rd_party/sapien-vulkan-2`.
 
 ```shell
 git submodule update --init --recursive

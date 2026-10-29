@@ -800,8 +800,8 @@ class RenderSystemGroup:
         CUDA stream for the CUDA work of this group and its camera groups: pose transfer kernels and
         the hand-off of pictures. Use the stream of the PhysX system that writes the pose buffer, so
         update_render() reads the poses its fetches wrote. The stream must belong to the group's
-        device; a stream of another device raises RuntimeError. Work already submitted to the
-        previous stream stays ordered before work submitted after the switch.
+        device; a stream of another device raises RuntimeError. Its camera groups switch with it, and
+        the new stream then waits for work already submitted to the previous one.
         """
     def update_render(self) -> None:
         """
@@ -814,8 +814,10 @@ class RenderSystemGroup:
         resets accumulation. When nothing changed on the CPU, no CPU upload is performed.
         
         The transfer runs after the work already submitted to the stream provided by
-        :func:`set_cuda_stream`, without blocking the host. Releases the GIL; calls into this group and
-        its camera groups from several threads are serialized.
+        :func:`set_cuda_stream`, without blocking the host. When CPU camera or light state changed
+        since the previous call, it first waits on the host until the group's in-flight take_picture()
+        finished. Releases the GIL; calls into this group and its camera groups from several threads are
+        serialized.
         """
 class RenderTexture:
     __hash__: typing.ClassVar[None] = None  # type: ignore[assignment]

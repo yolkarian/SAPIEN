@@ -650,7 +650,8 @@ class PhysxGpuSystem(PhysxSystem):
         Create a PhysX GPU system.
 
         `device` selects the CUDA device, e.g. ``"cuda:1"``; the default ``"cuda"`` is
-        the first CUDA device. Systems on different devices coexist in one process, each
+        the first CUDA device in SAPIEN's (Vulkan) device order, which can differ from Torch's
+        ``cuda:0``. Systems on different devices coexist in one process, each
         with its own PhysX CUDA context manager on that device's primary CUDA context
         (the one PyTorch uses), so their CUDA buffers live on and must be consumed on that
         device. SAPIEN calls on a system run on its device and restore the caller's current
@@ -1547,7 +1548,7 @@ def set_shape_config(config: PhysxShapeConfig) -> None:
 def shutdown() -> None:
     """
     Job-scope terminal shutdown of SAPIEN PhysX. Clears SAPIEN-owned caches,
-    releases every PhysX CUDA context manager whose lease was returned, destroys the
+    releases every per-device PhysX CUDA context manager, destroys the
     PhysX engine and restores module-level defaults. Never calls cudaDeviceReset.
     Idempotent; raises when caller-owned resources remain alive.
     """

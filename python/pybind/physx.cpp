@@ -992,8 +992,9 @@ for all articulations.)doc")
 object exposing `__cuda_array_interface__`.
 )doc")
 
-      // Every apply returns once its work is enqueued on the system's CUDA stream. The indexed
-      // overloads accept the same index buffers as gpu_update_articulation_kinematics.
+      // Non-indexed applies return once their work is enqueued on the system's CUDA stream; the
+      // indexed overloads first synchronize it for the index check unless gpu_index_validation is
+      // off, and accept the same index buffers as gpu_update_articulation_kinematics.
       .def("gpu_apply_rigid_dynamic_data",
            py::overload_cast<>(&PhysxSystemGpu::gpuApplyRigidDynamicData), releaseGil)
       .def("gpu_apply_rigid_dynamic_data",
@@ -1873,7 +1874,7 @@ PhysX system is open and no caller-owned PhysX object or CUDA view is alive. Doe
 mutate any state.)doc")
       .def("shutdown", &physxShutdown,
            R"doc(Job-scope terminal shutdown of SAPIEN PhysX. Clears SAPIEN-owned caches,
-releases every PhysX CUDA context manager whose lease was returned, destroys the
+releases every per-device PhysX CUDA context manager, destroys the
 PhysX engine and restores module-level defaults, so a new job can call enable_gpu()
 and build a fresh runtime in the same process. Never calls cudaDeviceReset, so
 torch/JAX CUDA state survives. Idempotent; raises when caller-owned resources are

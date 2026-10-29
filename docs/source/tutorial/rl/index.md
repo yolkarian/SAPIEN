@@ -277,8 +277,8 @@ multi-controller job and run the update over global arrays; the SAPIEN calls are
 the same as on one GPU:
 
 ```python
-jax.distributed.initialize(coordinator_address, num_processes=world,
-                           process_id=rank, local_device_ids=[0])
+jax.distributed.initialize(coordinator_address, num_processes=world, process_id=rank,
+                           local_device_ids=[local_rank])  # [0] if each rank sees one GPU
 mesh = jax.make_mesh((world,), ("env",))
 sharding = jax.sharding.NamedSharding(mesh, jax.sharding.PartitionSpec("env"))
 
@@ -298,8 +298,8 @@ make the consumer's stream wait for the system's stream, so no host
 synchronization is needed. JAX arrays are immutable views here: take a fresh one
 after every fetch, copy what must survive the next fetch inside the jitted step,
 and never donate them. `copy_from` waits on the device for the JAX result and keeps
-it alive until the copy ran; `gpu_apply_*()` then returns without blocking the
-host.
+it alive until the copy ran; a non-indexed `gpu_apply_*()` then returns without
+blocking the host.
 
 **Several GPUs in one process.** Create one system per device, each with its own
 scenes. Every device gets its own PhysX CUDA context manager on its primary CUDA

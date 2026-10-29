@@ -419,8 +419,8 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `set_camera_pose` | method | `set_camera_pose(self, pose)` |  |  |
 | `set_camera_rpy` | method | `set_camera_rpy(self, r, p, y)` |  |  |
 | `set_camera_xyz` | method | `set_camera_xyz(self, x, y, z)` |  |  |
-| `set_scene` | method | `set_scene(self, scene: Scene)` |  |  |
-| `set_scenes` | method | `set_scenes(self, scenes: list[Scene])` | Select base scenes plus associated shared scenes once. | No render offsets are applied. |
+| `set_scene` | method | `set_scene(self, scene: Scene)` |  | The scene must render on the Viewer's device (the default render device); otherwise `RuntimeError`. |
+| `set_scenes` | method | `set_scenes(self, scenes: list[Scene])` | Select base scenes plus associated shared scenes once. | No render offsets are applied. Scenes must render on the Viewer's device (the default render device); otherwise `RuntimeError`. |
 | `configure_physx_gpu_rendering` | method | `configure_physx_gpu_rendering(self, physx_system, transport="auto")` | Configure Viewer pose transport. | Auto selects same-device direct or cross-device staged raster/RT transport. |
 | `pose_transport` | property | `pose_transport(self) -> str` | Active pose transport. |  |
 | `pose_transfer_bytes` | property | `pose_transfer_bytes(self) -> int` | Cumulative pose D2H bytes for the active transport. | Staged transfers are 28 bytes per unique rendered GPU pose per submission. |
