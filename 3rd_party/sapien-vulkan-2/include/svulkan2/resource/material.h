@@ -1,6 +1,7 @@
 #pragma once
 #include "svulkan2/common/glm.h"
 #include "svulkan2/core/allocator.h"
+#include "svulkan2/core/descriptor_pool.h"
 #include "texture.h"
 
 namespace svulkan2 {
@@ -72,7 +73,7 @@ class SVMetallicMaterial : public SVMaterial {
   struct DeviceState {
     std::shared_ptr<core::Context> context; // keeps the descriptor pool alive
     std::unique_ptr<core::Buffer> buffer;
-    vk::UniqueDescriptorSet descriptorSet;
+    core::DescriptorSet descriptorSet;
     uint64_t bufferVersion{};  // mBufferVersion last written to `buffer`
     uint64_t textureVersion{}; // mTextureVersion last bound to `descriptorSet`
   };

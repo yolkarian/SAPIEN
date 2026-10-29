@@ -82,7 +82,7 @@ class Renderer : public RendererBase {
 
   vk::UniqueDescriptorSet mSceneSet;
   vk::UniqueDescriptorSet mCameraSet;
-  std::vector<vk::UniqueDescriptorSet> mObjectSet;
+  std::vector<core::DescriptorSet> mObjectSet; // from mObjectPool
 
   std::vector<vk::UniqueDescriptorSet> mInputTextureSets;
 

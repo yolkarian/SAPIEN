@@ -187,12 +187,21 @@ void DenoiserOidn::denoise(core::Image &color, core::Image *albedo, core::Image 
 
 DenoiserOidn::~DenoiserOidn() {
   logger::info("OIDN finished");
-  free();
+  // CUDA and Vulkan failures raise; an exception leaving a destructor would terminate the process
+  try {
+    free();
+  } catch (std::exception const &e) {
+    logger::error("failed to free the OIDN denoiser: {}", e.what());
+  }
 
   mDevice = {};
   if (mCudaStream && mContext) {
-    CudaDeviceScope scope(mContext->getCudaDeviceId());
-    checkCudaRuntime(cudaStreamDestroy(mCudaStream));
+    try {
+      CudaDeviceScope scope(mContext->getCudaDeviceId());
+      checkCudaRuntime(cudaStreamDestroy(mCudaStream));
+    } catch (std::exception const &e) {
+      logger::error("failed to destroy the OIDN denoiser stream: {}", e.what());
+    }
   }
 }
 } // namespace renderer

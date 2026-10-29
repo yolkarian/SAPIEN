@@ -1,5 +1,6 @@
 #pragma once
 #include "base_parser.h"
+#include "svulkan2/core/descriptor_pool.h"
 
 namespace svulkan2 {
 
@@ -75,7 +76,7 @@ public:
 private:
   std::shared_ptr<ComputeModule> mModule;
 
-  std::vector<vk::UniqueDescriptorSet> mSets;
+  std::vector<core::DescriptorSet> mSets;
   std::vector<char> mPushConstantBuffer;
 
   std::shared_ptr<core::CommandPool> mCommandPool;

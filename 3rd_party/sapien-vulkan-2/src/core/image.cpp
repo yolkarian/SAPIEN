@@ -1,4 +1,5 @@
 #include "svulkan2/core/image.h"
+#include "../common/logger.h"
 #include "svulkan2/common/profiler.h"
 #include "svulkan2/common/image.h"
 #include "svulkan2/core/allocator.h"
@@ -82,9 +83,14 @@ Image::Image(Context &context, std::unique_ptr<ktxVulkanTexture> tex)
 Image::~Image() {
 #ifdef SVULKAN2_CUDA_INTEROP
   if (mCudaArray) {
-    CudaDeviceScope scope(mCudaDeviceId);
-    cudaFreeMipmappedArray(mCudaArray);
-    cudaDestroyExternalMemory(mCudaMem);
+    // CUDA failures raise; an exception leaving a destructor would terminate the process
+    try {
+      CudaDeviceScope scope(mCudaDeviceId);
+      cudaFreeMipmappedArray(mCudaArray);
+      cudaDestroyExternalMemory(mCudaMem);
+    } catch (std::exception const &e) {
+      logger::error("failed to release the CUDA mapping of an image: {}", e.what());
+    }
   }
 #endif
 
@@ -568,7 +574,11 @@ cudaMipmappedArray_t Image::getCudaArray() {
   auto cudaFd = mContext->getDevice().getMemoryFdKHR(vkMemoryGetFdInfoKHR);
   externalMemoryHandleDesc.handle.fd = cudaFd;
 
-  checkCudaErrors(cudaImportExternalMemory(&mCudaMem, &externalMemoryHandleDesc));
+  if (cudaError_t result = cudaImportExternalMemory(&mCudaMem, &externalMemoryHandleDesc);
+      result != cudaSuccess) {
+    closeUnimportedFd(cudaFd);
+    checkCudaErrors(result);
+  }
 
   cudaExternalMemoryMipmappedArrayDesc desc = {};
   desc.extent.width = mExtent.width;
@@ -585,8 +595,15 @@ cudaMipmappedArray_t Image::getCudaArray() {
     desc.formatDesc.f = cudaChannelFormatKindFloat;
   }
 
-  // TODO: free!!!
-  checkCudaErrors(cudaExternalMemoryGetMappedMipmappedArray(&mCudaArray, mCudaMem, &desc));
+  if (cudaError_t result =
+          cudaExternalMemoryGetMappedMipmappedArray(&mCudaArray, mCudaMem, &desc);
+      result != cudaSuccess) {
+    // the destructor releases the import only together with a mapped array
+    cudaDestroyExternalMemory(mCudaMem);
+    mCudaMem = {};
+    mCudaArray = {};
+    checkCudaErrors(result);
+  }
   return mCudaArray;
 }
 

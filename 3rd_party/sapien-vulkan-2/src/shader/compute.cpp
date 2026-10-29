@@ -127,7 +127,7 @@ void prefilterCubemap(core::Context &context, core::Image &image) {
       device.createComputePipelineUnique(pipelinCache.get(), computePipelineCreateInfo).value;
 
   std::vector<vk::UniqueImageView> levelViews;
-  std::vector<vk::UniqueDescriptorSet> levelSets;
+  std::vector<core::DescriptorSet> levelSets;
 
   uint32_t size = image.getExtent().width;
   uint32_t levels = image.getMipLevels();

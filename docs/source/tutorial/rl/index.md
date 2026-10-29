@@ -364,7 +364,8 @@ for device in devices:
 Build every group and call every `gpu_init()` on one thread, then render each device
 from the thread that steps its PhysX system: `update_render()`, `take_picture()`,
 `set_cuda_pose()` and `close()` release the GIL, and calls into one group from
-several threads are serialized. Keep the group's CUDA stream (`set_cuda_stream`) equal
+several threads are serialized. Groups on one GPU that share no render system may
+also run on separate threads. Keep the group's CUDA stream (`set_cuda_stream`) equal
 to the PhysX system's, so `update_render()` sees the poses the fetches wrote; another
 device's stream raises.
 

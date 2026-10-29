@@ -25,7 +25,8 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 - All steady-state `PhysxGpuSystem` calls and `close()` release the GIL, and calls into one system from several threads are serialized; still build scenes and call `gpu_init()` from one thread.
 - Articulation joint buffers start on 256-byte boundaries, as XLA expects of imported buffers.
 - Renderer CUDA interop (camera CUDA outputs, mesh/point-cloud CUDA buffers, denoisers) restores the caller's current CUDA context instead of leaving the render device current.
-- `RenderSystemGroup.update_render()`, `gpu_init()`, `close()` and `RenderCameraGroup.take_picture()`, `set_cuda_pose()`, `close()` release the GIL, so groups on different GPUs render concurrently from one thread each; calls into one group from several threads are serialized.
+- `RenderSystemGroup.update_render()`, `gpu_init()`, `close()` and `RenderCameraGroup.take_picture()`, `set_cuda_pose()`, `close()` release the GIL, so groups render concurrently from one thread each: groups on different GPUs, and groups on one GPU that share no render system; calls into one group from several threads are serialized.
+- CUDA failures inside the renderer (CUDA views of render buffers and images, renderer CUDA interop) raise `RuntimeError` instead of terminating the process with `exit()`.
 - `RenderSystemGroup.set_cuda_stream()` raises `RuntimeError` for a stream of another device.
 - **Behavior change:** `sapien.render.SapienRenderer(device)` no longer selects the process's render device: the render engine is process-wide and `device` only creates that device's render context, so `RenderSystem()` without a device keeps using the default render device. Pass the device to `RenderSystem(device)` instead.
 - `svulkan2` now lives in the repository at `3rd_party/sapien-vulkan-2` instead of a git submodule, so renderer and SAPIEN changes land in one commit; its demo `app/` no longer ships the 94 MB environment-map EXR and renders without an environment map. Only `simsense` remains a submodule.
@@ -40,7 +41,7 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 - Fixed `SAPIEN_DISABLE_RAY_TRACING=1` hiding the CUDA ids of render devices, which made `RenderSystem("cuda:N")` fail to find its device.
 - Fixed `RenderCameraGroup.take_picture()` overwriting pictures that a consumer on the group's CUDA stream had not read yet; the copy now waits for work already on that stream.
 - Fixed `RenderSystemGroup.close()` creating a CUDA context on the caller's current device (usually `cuda:0`) for a group on another GPU, which cost each per-GPU rank that keeps every GPU visible memory on the first GPU.
-- Fixed races between render threads in svulkan2 (random-texture registry, OptiX denoiser contexts, logger setup, lazy-load flags, device waits bypassing the queue lock) and in the render engine's lazy singletons and registry, which the GIL used to hide.
+- Fixed races between render threads in svulkan2 (random-texture registry, OptiX denoiser contexts, logger setup, lazy-load flags, device waits bypassing the queue lock, and a device's shared descriptor pool) and in the render engine's lazy singletons and registry, which the GIL used to hide. The descriptor pool was allocated from and freed to without the external synchronization Vulkan requires: material uploads were serialized among themselves, but environment-map prefiltering, compute modules and descriptor-set frees on other threads were not, so concurrent `gpu_init()` calls on one GPU, or a material freed on one thread while another uploads to the same GPU, accessed it concurrently.
 
 ## 3.0.0+fork.16 - 2026-09-28
 

@@ -174,12 +174,12 @@ private:
   std::unique_ptr<core::DynamicDescriptorPool> mCameraPool;
   std::unique_ptr<core::DynamicDescriptorPool> mScenePool;
 
-  vk::UniqueDescriptorSet mSceneSet;
-  vk::UniqueDescriptorSet mOutputSet;
-  vk::UniqueDescriptorSet mCameraSet;
+  core::DescriptorSet mSceneSet;
+  core::DescriptorSet mOutputSet;
+  core::DescriptorSet mCameraSet;
 
   std::unique_ptr<core::DynamicDescriptorPool> mPostprocessingPool;
-  std::vector<vk::UniqueDescriptorSet> mPostprocessingSets;
+  std::vector<core::DescriptorSet> mPostprocessingSets;
 
   std::unique_ptr<core::Buffer> mCameraBuffer;
   std::unique_ptr<core::Buffer> mObjectBuffer;

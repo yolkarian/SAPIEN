@@ -5,16 +5,33 @@
 #include <cuda.h>
 #include <cuda_runtime.h>
 #include <map>
+#include <stdexcept>
 #include <string>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
+// Raises std::runtime_error, which the Python bindings turn into RuntimeError. Destructors must
+// catch it: an exception leaving a destructor terminates the process.
 #define checkCudaErrors(call)                                                                     \
   do {                                                                                            \
-    cudaError_t err = call;                                                                       \
-    if (err != cudaSuccess) {                                                                     \
-      fprintf(stderr, "CUDA error at %s %d: %s\n", __FILE__, __LINE__, cudaGetErrorString(err));  \
-      exit(EXIT_FAILURE);                                                                         \
+    cudaError_t svulkan2CudaError_ = (call);                                                      \
+    if (svulkan2CudaError_ != cudaSuccess) {                                                      \
+      throw std::runtime_error(std::string("CUDA error at ") + __FILE__ + ":" +                  \
+                               std::to_string(__LINE__) + ": " +                                 \
+                               cudaGetErrorString(svulkan2CudaError_));                          \
     }                                                                                             \
   } while (0)
+
+/** Close a file descriptor exported for a CUDA import that failed: CUDA takes ownership only on
+ *  success, and an open descriptor keeps the exported Vulkan memory alive. */
+inline void closeUnimportedFd(int fd) {
+#ifdef _WIN32
+  (void)fd;
+#else
+  ::close(fd);
+#endif
+}
 
 inline std::array<uint32_t, 4> parsePCIString(std::string s) {
   if (s.length() == 12) {
@@ -103,8 +120,7 @@ private:
   }
   static void checkCudaDriverErrors(CUresult result) {
     if (result != CUDA_SUCCESS) {
-      fprintf(stderr, "CUDA driver error %d\n", static_cast<int>(result));
-      exit(EXIT_FAILURE);
+      throw std::runtime_error("CUDA driver error " + std::to_string(static_cast<int>(result)));
     }
   }
 

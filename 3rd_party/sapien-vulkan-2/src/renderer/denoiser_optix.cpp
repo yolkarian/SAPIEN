@@ -311,7 +311,12 @@ void DenoiserOptix::denoise(core::Image &color, core::Image *albedo, core::Image
 }
 
 DenoiserOptix::~DenoiserOptix() {
-  free();
+  // CUDA and Vulkan failures raise; an exception leaving a destructor would terminate the process
+  try {
+    free();
+  } catch (std::exception const &e) {
+    logger::error("failed to free the OptiX denoiser: {}", e.what());
+  }
 
   if (mDenoiser) {
     optixDenoiserDestroy(mDenoiser);
@@ -319,8 +324,12 @@ DenoiserOptix::~DenoiserOptix() {
   }
 
   if (mCudaStream && mContext) {
-    CudaDeviceScope deviceScope(mContext->getCudaDeviceId());
-    checkCudaRuntime(cudaStreamDestroy(mCudaStream));
+    try {
+      CudaDeviceScope deviceScope(mContext->getCudaDeviceId());
+      checkCudaRuntime(cudaStreamDestroy(mCudaStream));
+    } catch (std::exception const &e) {
+      logger::error("failed to destroy the OptiX denoiser stream: {}", e.what());
+    }
   }
 }
 

@@ -6,10 +6,14 @@ take_picture() makes into the exported picture buffers.
 """
 
 import gc
+import os
+import subprocess
+import sys
+import textwrap
 import threading
 import time
 import unittest
-from typing import List, Tuple
+from typing import List, Sequence, Tuple
 
 import sapien
 
@@ -26,14 +30,15 @@ def _has_cuda() -> bool:
     return torch is not None and torch.cuda.is_available()
 
 
-def _build_scene() -> Tuple[sapien.Scene, sapien.render.RenderCameraComponent]:
-    """A lit box in front of a camera, rendered on the default device."""
+def _build_scene(
+    color: Sequence[float] = (0.8, 0.3, 0.1, 1.0),
+) -> Tuple[sapien.Scene, sapien.render.RenderCameraComponent]:
+    """A lit box of `color` in front of a camera, rendered on the default device."""
     scene = sapien.Scene([sapien.physx.PhysxCpuSystem(), sapien.render.RenderSystem()])
     scene.set_ambient_light([1.0, 1.0, 1.0])
     builder = scene.create_actor_builder()
     builder.add_box_visual(
-        half_size=[0.5, 0.5, 0.5],
-        material=sapien.render.RenderMaterial(base_color=[0.8, 0.3, 0.1, 1.0]),
+        half_size=[0.5, 0.5, 0.5], material=sapien.render.RenderMaterial(base_color=color)
     )
     builder.build_kinematic()
     camera = scene.add_camera("camera", SIZE, SIZE, 1.0, 0.1, 20.0)
@@ -174,6 +179,104 @@ class TestBatchedRenderInterop(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertTrue(self.camera_group.is_closed)
         self.assertEqual(self.camera_group.outstanding_cuda_view_count, 0)
+
+
+@unittest.skipUnless(_has_cuda(), "requires a CUDA device and CUDA-enabled Torch")
+class TestGroupsOnOneDevice(unittest.TestCase):
+    FRAMES = 20
+
+    def test_groups_render_concurrently_from_threads(self) -> None:
+        """Two groups on the default render device that share no render system, set up on one
+        thread and then each driven from its own thread, keep rendering their own scene."""
+        colors = ([1.0, 0.0, 0.0, 1.0], [0.0, 0.0, 1.0, 1.0])
+        scenes = [_build_scene(color) for color in colors]
+        groups = []
+        for scene, camera in scenes:
+            group = sapien.render.RenderSystemGroup([scene.render_system])
+            camera_group = group.create_camera_group([camera], ["Color"])
+            group.gpu_init()
+            groups.append((group, camera_group))
+        frames: List[List["torch.Tensor"]] = [[] for _ in groups]
+        errors: List[BaseException] = []
+
+        def drive(index: int) -> None:
+            group, camera_group = groups[index]
+            try:
+                for _ in range(self.FRAMES):
+                    group.update_render()
+                    camera_group.take_picture()
+                    picture = torch.from_dlpack(camera_group.get_picture_cuda("Color"))
+                    frames[index].append(picture[0, ..., :3].cpu())
+                    del picture
+            except BaseException as error:  # surfaced in the main thread below
+                errors.append(error)
+
+        try:
+            threads = [threading.Thread(target=drive, args=(i,)) for i in range(len(groups))]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+        finally:
+            gc.collect()
+            for group, _ in groups:
+                group.close()
+            for scene, _ in scenes:
+                scene.close()
+
+        self.assertEqual(errors, [])
+        for color, images in zip(colors, frames):
+            self.assertEqual(len(images), self.FRAMES)
+            center = images[0][SIZE // 2, SIZE // 2]
+            own = 0 if color[0] > 0 else 2
+            self.assertGreater(float(center[own]), float(center[2 - own]) + 0.3)
+            for image in images[1:]:
+                torch.testing.assert_close(image, images[0], rtol=0.0, atol=0.0)
+
+
+@unittest.skipUnless(_has_cuda(), "requires a CUDA device and CUDA-enabled Torch")
+class TestRenderDeviceWithoutRayTracing(unittest.TestCase):
+    def test_cuda_render_device_is_found_with_ray_tracing_disabled(self) -> None:
+        """SAPIEN_DISABLE_RAY_TRACING=1 must keep the CUDA ids of render devices, which
+        RenderSystem("cuda:N") uses to find its device."""
+        script = textwrap.dedent(
+            """
+            import gc
+            import sapien, torch
+
+            scene = sapien.Scene(
+                [sapien.physx.PhysxCpuSystem(), sapien.render.RenderSystem("cuda:0")]
+            )
+            scene.set_ambient_light([1.0, 1.0, 1.0])
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(half_size=[0.5, 0.5, 0.5])
+            builder.build_kinematic()
+            camera = scene.add_camera("camera", 32, 32, 1.0, 0.1, 20.0)
+            camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+            group = sapien.render.RenderSystemGroup([scene.render_system])
+            camera_group = group.create_camera_group([camera], ["Color"])
+            group.gpu_init()
+            group.update_render()
+            camera_group.take_picture()
+            picture = camera_group.get_picture_cuda("Color")
+            print("CUDA_ID", picture.cuda_id)
+            print("BOX_VISIBLE", bool(torch.from_dlpack(picture)[..., :3].max() > 0.1))
+            del picture
+            gc.collect()
+            group.close()
+            scene.close()
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=600,
+            env={**os.environ, "SAPIEN_DISABLE_RAY_TRACING": "1"},
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("CUDA_ID 0", result.stdout)
+        self.assertIn("BOX_VISIBLE True", result.stdout)
 
 
 if __name__ == "__main__":

@@ -188,6 +188,35 @@ class TestMultiGpuRender(unittest.TestCase):
             for scene, _ in jobs:
                 scene.close()
 
+    def test_viewer_rejects_a_scene_of_another_device(self) -> None:
+        """The viewer renders through the default render device and raises for a scene that
+        renders on another one."""
+        from sapien.utils import Viewer
+
+        default_system = sapien.render.RenderSystem()
+        default_id = default_system.device.cuda_id
+        default_system.close()
+        material = sapien.render.RenderMaterial()
+        jobs = [_build_scene(device, material) for device in DEVICES]
+        ids = [scene.render_system.device.cuda_id for scene, _ in jobs]
+        viewer = None
+        try:
+            if default_id not in ids:
+                self.skipTest("the default render device is none of the tested devices")
+            own = jobs[ids.index(default_id)][0]
+            foreign = jobs[1 - ids.index(default_id)][0]
+            viewer = Viewer(resolutions=(SIZE, SIZE))
+            viewer.set_scene(own)
+            viewer.update_render()
+            viewer.render()
+            with self.assertRaisesRegex(RuntimeError, "renders on device"):
+                viewer.set_scene(foreign)
+        finally:
+            if viewer is not None:
+                viewer.close()
+            for scene, _ in jobs:
+                scene.close()
+
     def test_devices_render_concurrently_from_threads(self) -> None:
         material = sapien.render.RenderMaterial(base_color=[0.9, 0.6, 0.1, 1.0])
         jobs = [_build_scene(device, material) for device in DEVICES]

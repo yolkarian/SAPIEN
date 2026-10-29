@@ -97,9 +97,14 @@ Buffer::Buffer(std::shared_ptr<Device> device, vk::DeviceSize size,
 Buffer::~Buffer() {
 #ifdef SVULKAN2_CUDA_INTEROP
   if (mCudaPtr) {
-    CudaDeviceScope scope(mCudaDeviceId);
-    checkCudaErrors(cudaFree(mCudaPtr));
-    checkCudaErrors(cudaDestroyExternalMemory(mCudaMem));
+    // CUDA failures raise; an exception leaving a destructor would terminate the process
+    try {
+      CudaDeviceScope scope(mCudaDeviceId);
+      checkCudaErrors(cudaFree(mCudaPtr));
+      checkCudaErrors(cudaDestroyExternalMemory(mCudaMem));
+    } catch (std::exception const &e) {
+      logger::error("failed to release the CUDA mapping of a buffer: {}", e.what());
+    }
   }
 #endif
   vmaDestroyBuffer(mDevice->getAllocator().getVmaAllocator(), mBuffer, mAllocation);
@@ -227,14 +232,26 @@ void *Buffer::getCudaPtr() {
   auto cudaFd = mDevice->getInternal().getMemoryFdKHR(vkMemoryGetFdInfoKHR);
   externalMemoryHandleDesc.handle.fd = cudaFd;
 
-  checkCudaErrors(cudaImportExternalMemory(&mCudaMem, &externalMemoryHandleDesc));
+  if (cudaError_t result = cudaImportExternalMemory(&mCudaMem, &externalMemoryHandleDesc);
+      result != cudaSuccess) {
+    closeUnimportedFd(cudaFd);
+    checkCudaErrors(result);
+  }
 
   cudaExternalMemoryBufferDesc externalMemBufferDesc = {};
   externalMemBufferDesc.offset = mAllocationInfo.offset;
   externalMemBufferDesc.size = mAllocationInfo.size;
   externalMemBufferDesc.flags = 0;
 
-  checkCudaErrors(cudaExternalMemoryGetMappedBuffer(&mCudaPtr, mCudaMem, &externalMemBufferDesc));
+  if (cudaError_t result =
+          cudaExternalMemoryGetMappedBuffer(&mCudaPtr, mCudaMem, &externalMemBufferDesc);
+      result != cudaSuccess) {
+    // the destructor releases the import only together with a mapped pointer
+    cudaDestroyExternalMemory(mCudaMem);
+    mCudaMem = {};
+    mCudaPtr = nullptr;
+    checkCudaErrors(result);
+  }
   return mCudaPtr;
 }
 
