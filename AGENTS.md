@@ -34,7 +34,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
 - Ask the user and get approval before writing or modifying any `AGENTS.md`, including documentation-sync edits.
 - Keep public C++ headers, C++ implementation, Python bindings, and Python wrappers in sync when an API crosses those layers.
 - Every API change—including additions, removals, renames, signature/default changes, and behavior, lifecycle, or ownership changes—must update the checked-in SAPIEN skill under `docs/skills/sapien-simulation/` in the same change. Keep its workflow guidance, API tables, and `docs/api/api-changes.md` consistent with the source and stubs.
-- After updating the checked-in SAPIEN skill, sync it to `~/.agents/skills/sapien-simulation/` only if that installed skill directory already exists; do not create it when absent. The checked-in directory remains the source of truth.
+- The checked-in skill follows development; the installed copy at `~/.agents/skills/sapien-simulation/` follows the last published SAPIEN release. Do not sync development edits to the installed copy. After a release is published, update the installed copy from that release tag (see the `sapien-release` skill), only if the directory already exists; do not create it when absent. The checked-in directory remains the source of truth.
 - When adding a new feature, add appropriate automated tests with it. Prefer Python `unittest/` coverage for Python-facing behavior and C++ `test/` coverage for native behavior.
 - For Python-facing API changes, inspect all affected surfaces:
   - `include/sapien/**`

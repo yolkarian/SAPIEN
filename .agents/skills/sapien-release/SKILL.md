@@ -206,6 +206,21 @@ you later create a changelog/release-prep commit, rerun this snippet so
    gh run watch <run-id> --exit-status
    ```
 
+6. Once the release is published (`gh release view "${RELEASE_TAG}"` succeeds), update the
+   locally installed simulation skill from the release tag, only if that directory exists.
+   This is the only time the installed copy changes; during development only the
+   checked-in `docs/skills/sapien-simulation/` follows the code.
+
+   ```bash
+   skill_dir="$HOME/.agents/skills/sapien-simulation"
+   if [ -d "$skill_dir" ]; then
+     tmp=$(mktemp -d)
+     git archive "${RELEASE_TAG}" docs/skills/sapien-simulation | tar -x -C "$tmp"
+     rsync -a --delete --exclude .DS_Store "$tmp/docs/skills/sapien-simulation/" "$skill_dir/"
+     rm -rf "$tmp"
+   fi
+   ```
+
 ## Guardrails
 
 - This skill is manual-only; invoke it explicitly with `/skill:sapien-release`.
