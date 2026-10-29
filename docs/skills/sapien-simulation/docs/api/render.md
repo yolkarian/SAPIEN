@@ -881,5 +881,5 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
-| `__init__` | method | `__init__(self, device: sapien.Device \| None=None) -> None` | The process-wide render engine; `device` only ensures that device's render context exists. | Other devices may be used at the same time. |
+| `__init__` | method | `__init__(self) -> None` | The process-wide render engine. | Selects no device; pass the device to `RenderSystem(device)`. `RenderSystem()` without one, windows and VR use the default render device. |
 | `_internal_context` | property | `_internal_context(self) -> sapien.internal_renderer.Context` |  |  |

@@ -668,13 +668,11 @@ Args:
   auto PyRenderVRDisplay = py::class_<SapienVRDisplay>(m, "RenderVRDisplay");
 
   PySapienRenderer
-      .def(py::init([](std::shared_ptr<Device> device) {
-             // The engine is process-wide; `device` only ensures its context exists.
-             auto engine = SapienRenderEngine::Get();
-             engine->getContext(device);
-             return engine;
-           }),
-           py::arg("device") = nullptr)
+      .def(py::init([]() { return SapienRenderEngine::Get(); }),
+           R"doc(
+The process-wide render engine. It selects no render device: pass the device to
+RenderSystem(device); RenderSystem() without one, windows and VR use the default render device.
+)doc")
       .def_property_readonly("_internal_context",
                              [](SapienRenderEngine &engine) { return engine.getContext(); });
 

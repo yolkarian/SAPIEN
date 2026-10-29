@@ -1143,8 +1143,11 @@ class RenderWindow:
     def super(self) -> bool:
         ...
 class SapienRenderer:
-    def __init__(self, device: sapien.pysapien.Device | None = None) -> None:
-        ...
+    def __init__(self) -> None:
+        """
+        The process-wide render engine. It selects no render device: pass the device to
+        RenderSystem(device); RenderSystem() without one, windows and VR use the default render device.
+        """
     @property
     def _internal_context(self) -> sapien.pysapien.internal_renderer.Context:
         ...

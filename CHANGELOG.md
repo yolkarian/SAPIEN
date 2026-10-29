@@ -28,7 +28,7 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 - `RenderSystemGroup.update_render()`, `gpu_init()`, `close()` and `RenderCameraGroup.take_picture()`, `set_cuda_pose()`, `close()` release the GIL, so groups render concurrently from one thread each: groups on different GPUs, and groups on one GPU that share no render system; calls into one group from several threads are serialized.
 - CUDA failures inside the renderer (CUDA views of render buffers and images, renderer CUDA interop) raise `RuntimeError` instead of terminating the process with `exit()`.
 - `RenderSystemGroup.set_cuda_stream()` raises `RuntimeError` for a stream of another device.
-- **Behavior change:** `sapien.render.SapienRenderer(device)` no longer selects the process's render device: the render engine is process-wide and `device` only creates that device's render context, so `RenderSystem()` without a device keeps using the default render device. Pass the device to `RenderSystem(device)` instead.
+- **Breaking:** `sapien.render.SapienRenderer()` no longer takes a `device` argument; calls passing one raise `TypeError`. The render engine is process-wide and the argument no longer selected the device of later `RenderSystem()` calls, windows or VR, so it was silently ignored. Pass the device to `RenderSystem(device)` instead. The deprecated `sapien.SapienRenderer(**args)` wrapper already ignored its arguments and is unchanged.
 - `svulkan2` now lives in the repository at `3rd_party/sapien-vulkan-2` instead of a git submodule, so renderer and SAPIEN changes land in one commit; its demo `app/` no longer ships the 94 MB environment-map EXR and renders without an environment map. Only `simsense` remains a submodule.
 
 ### Fixed

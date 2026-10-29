@@ -19,10 +19,10 @@ Multi-GPU rendering:
   max_triangle_count, device=None)` (raises when added to a scene of another device) and
   `RenderShapeTriangleMeshPart.get_cuda_vertices/get_cuda_triangles(device=None)` (the
   `cuda_vertices`/`cuda_triangles` properties keep returning the default device's copy).
-- **Behavior change:** `sapien.render.SapienRenderer(device)` no longer picks the process's
-  render device. The render engine is process-wide and `device` only creates that device's
-  render context, so `RenderSystem()` without a device keeps using the default render device;
-  pass the device to `RenderSystem(device)` instead.
+- **Breaking:** `sapien.render.SapienRenderer()` takes no `device` argument. The render engine
+  is process-wide and never selected a device for later systems in multi-GPU builds, so a
+  passed device was silently ignored by `RenderSystem()`; old calls now raise `TypeError`. Pass
+  the device to `RenderSystem(device)` instead.
 - Renderer CUDA interop restores the caller's current CUDA context; `torch.cuda.current_device()`
   is unchanged by render calls.
 - Fixed: with `SAPIEN_DISABLE_RAY_TRACING=1`, render devices had no CUDA id, so
