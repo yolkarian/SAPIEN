@@ -2,11 +2,18 @@
 #include "./broadphase_env_id.hpp"
 #include "sapien/physx/material.h"
 #include "sapien/physx/physx_system.h"
+#include <PxPhysicsAPI.h>
 #include <algorithm>
+#include <cstdlib>
+#include <filesystem>
 #include <mutex>
 #include <stdexcept>
 #include <string>
 #include <utility>
+#ifndef _WIN32
+#include <pwd.h>
+#include <unistd.h>
+#endif
 
 namespace sapien {
 namespace physx {
@@ -112,7 +119,60 @@ void PhysxDefault::setShapeConfig(float contactOffset, float restOffset) {
 void PhysxDefault::setShapeConfig(PhysxShapeConfig const &config) { gShapeConfig = config; }
 PhysxShapeConfig const &PhysxDefault::getShapeConfig() { return gShapeConfig; }
 
-void PhysxDefault::EnableGPU() {
+namespace {
+
+namespace fs = std::filesystem;
+
+#if PX_SUPPORT_GPU_PHYSX
+/** Names the PhysX GPU runtime PhysX loads (PxLoadPhysxGPUModule). PhysX keeps the returned
+ *  pointer, so the path is stored here for the life of the process. */
+class PhysxGpuLibraryHook : public ::PxGpuLoadHook {
+public:
+  std::string path;
+  char const *getPhysXGpuDllName() const override { return path.c_str(); }
+};
+PhysxGpuLibraryHook gPhysxGpuLibraryHook;
+#endif
+
+fs::path homeDirectory() {
+#ifdef _WIN32
+  if (char const *profile = std::getenv("USERPROFILE"); profile && *profile) {
+    return profile;
+  }
+#else
+  if (char const *home = std::getenv("HOME"); home && *home) {
+    return home;
+  }
+  if (passwd const *entry = getpwuid(getuid()); entry && entry->pw_dir) {
+    return entry->pw_dir;
+  }
+#endif
+  throw std::runtime_error("failed to find the home directory holding the PhysX GPU runtime");
+}
+
+} // namespace
+
+std::string PhysxDefault::GetPhysxGpuCacheDirectory() {
+  return (homeDirectory() / ".sapien" / "physx" / getPhysxVersion()).string();
+}
+
+std::vector<std::string> PhysxDefault::GetPhysxGpuLibraryCandidates() {
+  // the layout of the release packages sapien.physx.enable_gpu() downloads
+  fs::path dir = GetPhysxGpuCacheDirectory();
+#ifdef _WIN32
+  return {(dir / "PhysXGpu_64.dll").string(),
+          (dir / "physxgpu-windows-vc17win64" / "PhysX" / "bin" / "win.x86_64.vc143.mt" /
+           "release" / "PhysXGpu_64.dll")
+              .string()};
+#else
+  return {(dir / "libPhysXGpu_64.so").string(),
+          (dir / "physxgpu-linux-clang" / "PhysX" / "bin" / "linux.x86_64" / "release" /
+           "libPhysXGpu_64.so")
+              .string()};
+#endif
+}
+
+void PhysxDefault::EnableGPU(std::string const &physxGpuLibrary) {
   // A zombie engine left by sapien.physx.shutdown() must not block a fresh job. Only
   // a live engine means GPU PhysX state may have already been committed elsewhere.
   auto engine = PhysxEngine::GetIfExists();
@@ -120,6 +180,42 @@ void PhysxDefault::EnableGPU() {
     throw std::runtime_error(
         "GPU PhysX can only be enabled once before any other code involving PhysX");
   }
+
+  fs::path library = physxGpuLibrary;
+  if (library.empty()) {
+    auto candidates = GetPhysxGpuLibraryCandidates();
+    auto found = std::find_if(candidates.begin(), candidates.end(),
+                              [](std::string const &path) { return fs::is_regular_file(path); });
+    if (found == candidates.end()) {
+      std::string searched;
+      for (auto const &path : candidates) {
+        searched += "\n  " + path;
+      }
+      throw std::runtime_error(
+          "failed to enable GPU PhysX: no PhysX GPU runtime found; call "
+          "sapien.physx.enable_gpu() once from Python to download it, or pass its path. "
+          "Searched:" +
+          searched);
+    }
+    library = *found;
+  } else if (!fs::is_regular_file(library)) {
+    throw std::runtime_error("failed to enable GPU PhysX: the PhysX GPU runtime " +
+                             library.string() + " does not exist");
+  }
+  library = fs::absolute(library);
+
+#if PX_SUPPORT_GPU_PHYSX
+  // PhysX loads the runtime once per process and never unloads it, so a different file would be
+  // silently ignored after the first GPU system.
+  if (!gPhysxGpuLibraryHook.path.empty() && gPhysxGpuLibraryHook.path != library.string()) {
+    throw std::runtime_error("failed to enable GPU PhysX with " + library.string() +
+                             ": this process already uses the PhysX GPU runtime " +
+                             gPhysxGpuLibraryHook.path);
+  }
+  gPhysxGpuLibraryHook.path = library.string();
+  // PhysX itself loads the CUDA driver (libcuda.so.1 / nvcuda.dll) before this runtime.
+  ::PxSetPhysXGpuLoadHook(&gPhysxGpuLibraryHook);
+#endif
   gGPUEnabled = true;
 }
 

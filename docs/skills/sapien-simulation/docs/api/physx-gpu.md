@@ -19,7 +19,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | API | Signature | Use | Notes |
 |---|---|---|---|
-| `sapien.physx.enable_gpu` | `enable_gpu() -> None` | Enable the PhysX GPU runtime; call before creating a PhysxGpuSystem. | Pre-bake the PhysX GPU .so into the package to avoid runtime download. A missing library is downloaded once under `~/.sapien/physx/<version>/.download.lock` and renamed into place complete, so concurrent ranks of a multi-process job wait for one download instead of loading a half-extracted library. |
+| `sapien.physx.enable_gpu` | `enable_gpu() -> None` | Enable the PhysX GPU runtime; call before creating a PhysxGpuSystem. | Pre-bake the PhysX GPU .so into the package to avoid runtime download. A missing library is downloaded once under `~/.sapien/physx/<version>/.download.lock` and renamed into place complete, so concurrent ranks of a multi-process job wait for one download instead of loading a half-extracted library. PhysX loads the CUDA driver itself. C++ programs call `PhysxDefault::EnableGPU()`, which finds the same cached runtime. |
 | `sapien.physx.get_live_resources` | `get_live_resources() -> dict[str, object]` | Diagnose job-scoped lifecycle blockers. | Reports open systems, PhysX-backed objects and library-owned mesh/default caches. |
 | `sapien.physx.can_shutdown` | `can_shutdown() -> bool` | Side-effect-free shutdown preflight. | False while caller-owned systems/objects/CUDA views remain. |
 | `sapien.physx.shutdown` | `shutdown() -> None` | Release SAPIEN-owned PhysX caches/context managers/engine and reset defaults. | Idempotent; never calls cudaDeviceReset; process-exit-equivalent CUDA isolation still requires a fresh process. |

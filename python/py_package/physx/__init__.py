@@ -11,7 +11,11 @@ from zipfile import ZipFile
 import requests
 
 from ..pysapien.physx import *
-from ..pysapien.physx import _enable_gpu
+from ..pysapien.physx import (
+    _enable_gpu,
+    _physx_gpu_cache_directory,
+    _physx_gpu_library_candidates,
+)
 
 
 @contextlib.contextmanager
@@ -87,36 +91,18 @@ def enable_gpu():
         return
 
     physx_version = version()
-    parent = Path.home() / ".sapien" / "physx" / physx_version
-    parent.mkdir(exist_ok=True, parents=True)
-
-    candidates = []
     if platform.system() == "Windows":
-        candidates = [
-            parent / "PhysXGpu_64.dll",
-            parent
-            / "physxgpu-windows-vc17win64"
-            / "PhysX"
-            / "bin"
-            / "win.x86_64.vc143.mt"
-            / "release"
-            / "PhysXGpu_64.dll",
-        ]
         url = f"https://github.com/yolkarian/physx-release/releases/download/{physx_version}-windows/physxgpu-windows-vc17win64.zip"
     elif platform.system() == "Linux":
-        candidates = [
-            parent / "libPhysXGpu_64.so",
-            parent
-            / "physxgpu-linux-clang"
-            / "PhysX"
-            / "bin"
-            / "linux.x86_64"
-            / "release"
-            / "libPhysXGpu_64.so",
-        ]
         url = f"https://github.com/yolkarian/physx-release/releases/download/{physx_version}-Linux/physxgpu-linux-clang.zip"
     else:
         raise RuntimeError("Unsupported platform")
+
+    # The cache location and the runtime's place inside the release package come from C++, so
+    # Python downloads to where C++ programs (PhysxDefault::EnableGPU) look as well.
+    parent = Path(_physx_gpu_cache_directory())
+    parent.mkdir(exist_ok=True, parents=True)
+    candidates = [Path(path) for path in _physx_gpu_library_candidates()]
 
     dll = _find_library(candidates)
     if dll is None:
@@ -125,13 +111,5 @@ def enable_gpu():
         with _exclusive_file_lock(parent / ".download.lock"):
             dll = _find_library(candidates) or _download_library(url, parent, candidates)
 
-    import ctypes
-
-    if platform.system() == "Windows":
-        ctypes.CDLL("cuda.dll", ctypes.RTLD_GLOBAL)
-        ctypes.CDLL(str(dll), ctypes.RTLD_LOCAL)
-    elif platform.system() == "Linux":
-        ctypes.CDLL("libcuda.so", ctypes.RTLD_GLOBAL)
-        ctypes.CDLL(str(dll), ctypes.RTLD_LOCAL)
-
-    _enable_gpu()
+    # PhysX loads this runtime, and the CUDA driver before it, when the first GPU system is created.
+    _enable_gpu(str(dll))

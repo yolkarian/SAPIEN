@@ -40,6 +40,8 @@ from sapien.pysapien.physx import PhysxSceneConfig as PhysxSceneConfig
 from sapien.pysapien.physx import PhysxShapeConfig as PhysxShapeConfig
 from sapien.pysapien.physx import PhysxSystem as PhysxSystem
 from sapien.pysapien.physx import _enable_gpu as _enable_gpu
+from sapien.pysapien.physx import _physx_gpu_cache_directory as _physx_gpu_cache_directory
+from sapien.pysapien.physx import _physx_gpu_library_candidates as _physx_gpu_library_candidates
 from sapien.pysapien.physx import can_shutdown as can_shutdown
 from sapien.pysapien.physx import get_live_resources as get_live_resources
 from sapien.pysapien.physx import get_body_config as get_body_config
