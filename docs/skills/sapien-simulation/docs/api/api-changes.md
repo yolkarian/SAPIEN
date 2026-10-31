@@ -14,6 +14,11 @@ C++ programs (native trainers such as PufferLib 5.0, no Python at runtime):
   the runtime with `ctypes`; it passes the runtime's path to C++, and PhysX loads the CUDA driver
   (`libcuda.so.1` on Linux) itself when the first GPU system is created. Machines that have only
   the versioned `libcuda.so.1` (no `libcuda.so` development link) now work.
+- The installed headers (`sapien/include` in the wheel) need no `-D` flags: generated
+  `sapien/config.h` and `svulkan2/build_options.h` carry `SAPIEN_CUDA`, `SVULKAN2_CUDA_INTEROP`,
+  `VK_NO_PROTOTYPES` and `VULKAN_HPP_STORAGE_SHARED`, and the Eigen 3.4 headers ship alongside.
+  Compile with `-std=c++20 -I<sapien>/include -I<sapien>/include/physx/include`. Before, a program
+  built without `-DSAPIEN_CUDA` silently saw other class layouts than `libsapien.so`.
 
 Multi-GPU rendering:
 

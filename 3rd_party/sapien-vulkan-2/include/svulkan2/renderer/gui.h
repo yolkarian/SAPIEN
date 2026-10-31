@@ -1,4 +1,5 @@
 #pragma once
+#include "svulkan2/build_options.h"
 #include <functional>
 #include <iostream>
 #include <memory>

@@ -1,6 +1,7 @@
 #pragma once
 #include "../component.h"
 #include "sapien/array.h"
+#include "sapien/config.h"
 #include "sapien/math/pose.h"
 #include "sapien_renderer_system.h"
 #include <Eigen/Dense>

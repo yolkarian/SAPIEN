@@ -54,8 +54,14 @@ if (${VK_VALIDATION})
     target_compile_definitions(svulkan2 PUBLIC VK_VALIDATION)
 endif()
 
+# The PUBLIC compile definitions above and below, baked into a header that every public header
+# including Vulkan includes, so programs built against the installed headers need no -D flags.
+configure_file(cmake/build_options.h.in
+    "${CMAKE_CURRENT_BINARY_DIR}/include/svulkan2/build_options.h")
+
 target_include_directories(svulkan2 PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "svulkan2/build_options.h"
 #include <glm/glm.hpp>
 #include <vulkan/vulkan.hpp>
 

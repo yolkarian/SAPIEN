@@ -116,7 +116,13 @@ if (${SAPIEN_CUDA})
     target_include_directories(sapien PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/3rd_party/dlpack/include>)
 endif()
 
-target_include_directories(sapien PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>)
+# The PUBLIC SAPIEN_CUDA definition above, baked into sapien/config.h, which every public header
+# depending on it includes, so programs built against the installed headers need no -D flags.
+configure_file(cmake/sapien_config.h.in "${CMAKE_CURRENT_BINARY_DIR}/include/sapien/config.h")
+target_include_directories(sapien PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
+)
 target_include_directories(sapien PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 set_target_properties(sapien PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
@@ -153,12 +159,21 @@ else()
 endif()
 
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/sapien" DESTINATION "include")
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/include/sapien/config.h" DESTINATION "include/sapien")
 install(DIRECTORY "${physx5_CPU_INCLUDE_DIR}/" DESTINATION "include/physx/include")
 if (NOT physx5_GPU_INCLUDE_DIR STREQUAL physx5_CPU_INCLUDE_DIR)
     install(DIRECTORY "${physx5_GPU_INCLUDE_DIR}/" DESTINATION "include/physx/include")
 endif()
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/3rd_party/dlpack/include/dlpack" DESTINATION "include")
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/3rd_party/sapien-vulkan-2/include/svulkan2" DESTINATION "include")
+install(
+    FILES "${CMAKE_CURRENT_BINARY_DIR}/3rd_party/sapien-vulkan-2/include/svulkan2/build_options.h"
+    DESTINATION "include/svulkan2"
+)
+# public headers include <Eigen/...>; ship the Eigen headers SAPIEN was built with
+if (DEFINED eigen_SOURCE_DIR)
+    install(DIRECTORY "${eigen_SOURCE_DIR}/Eigen" DESTINATION "include")
+endif()
 install(DIRECTORY "${glm_SOURCE_DIR}/glm" DESTINATION "include")
 install(DIRECTORY "${vulkan_SOURCE_DIR}/include/vulkan" DESTINATION "include")
 install(DIRECTORY "${vulkan_SOURCE_DIR}/include/vk_video" DESTINATION "include")

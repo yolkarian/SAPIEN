@@ -1,3 +1,4 @@
+#include "svulkan2/build_options.h"
 #include <string>
 #include <vector>
 #include <vulkan/vulkan.hpp>

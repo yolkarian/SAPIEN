@@ -5,6 +5,8 @@
 #include <mutex>
 #include <string>
 #include <vector>
+// before Vulkan: VK_NO_PROTOTYPES and the shared vulkan.hpp dispatcher of libsvulkan2
+#include <svulkan2/build_options.h>
 #include <vulkan/vulkan.hpp>
 
 struct DLManagedTensorVersioned;
