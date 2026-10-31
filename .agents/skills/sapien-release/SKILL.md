@@ -229,7 +229,7 @@ you later create a changelog/release-prep commit, rerun this snippet so
 - Do not publish raw commit logs as release descriptions unless the user explicitly asks.
 - Do not paste changelog sections into release notes verbatim — rewrite to one line per entry per the template above.
 - Do not overwrite or delete an existing GitHub release or stable release tag without explicit user approval.
-- Ignore `nightly` when computing the previous release tag; it is a moving test release.
+- Ignore `nightly` and `dev-nightly` when computing the previous release tag; they are moving test releases of `main` and `dev`.
 - If the user does not clearly specify the release commit/ref (`GIT_REF`), use the current `HEAD` commit, not `dev`, `main`, or another moving branch.
 - Before dispatch, ensure the target commit is pushed and visible from remote refs.
 - If a changelog or release-prep commit is created, rerun preflight and release the new final `HEAD`.

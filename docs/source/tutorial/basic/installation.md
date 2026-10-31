@@ -13,6 +13,9 @@ SDK archive ({ref}`cpp_sdk`), on
 The checked-in build automation currently builds Linux wheels for Python 3.9,
 3.10, 3.11, 3.12, and 3.13, and Windows wheels for Python 3.9, 3.10, 3.11,
 and 3.12. Prefer these versions when installing released or nightly wheels.
+Besides the numbered releases, the `nightly` prerelease holds the wheels of the
+latest `main` commit and `dev-nightly` those of the latest `dev` commit; both
+are replaced on every push and meant for testing.
 
 Supported platforms and hardware depend on which SAPIEN features you use:
 

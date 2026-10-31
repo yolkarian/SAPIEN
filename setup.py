@@ -87,8 +87,8 @@ def generate_version():
     if git_branch == "master":
         assert git_tag is not None
 
-    if git_tag in ["", "nightly"]:
-        # no meaning tag
+    if git_tag in ["", "nightly", "dev-nightly"]:
+        # no tag, or a rolling prerelease tag moved by .github/workflows/build.yml
         with open(
             os.path.join(os.path.dirname(__file__), "python", "VERSION"), "r"
         ) as f:

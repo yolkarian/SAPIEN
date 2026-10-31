@@ -35,6 +35,7 @@ Release descriptions are written from reviewed commits and diffs, then passed to
 - **Breaking:** `sapien.render.SapienRenderer()` no longer takes a `device` argument; calls passing one raise `TypeError`. The render engine is process-wide and the argument no longer selected the device of later `RenderSystem()` calls, windows or VR, so it was silently ignored. Pass the device to `RenderSystem(device)` instead. The deprecated `sapien.SapienRenderer(**args)` wrapper already ignored its arguments and is unchanged.
 - `svulkan2` now lives in the repository at `3rd_party/sapien-vulkan-2` instead of a git submodule, so renderer and SAPIEN changes land in one commit; its demo `app/` no longer ships the 94 MB environment-map EXR and renders without an environment map. Only `simsense` remains a submodule.
 - Removed the macOS (MoltenVK) code left in the vendored svulkan2: the `SAPIEN_MACOS` build switch, the portability-subset and MVK-surface extensions, the Apple patches for GLFW and OpenVR, and the macOS-only descriptor-pool sizes and sampler comparator. SAPIEN builds for Linux and Windows only.
+- Pushes to `dev` build Linux and Windows wheels and publish them to the rolling `dev-nightly` prerelease, as pushes to `main` do for `nightly`; the Build workflow can also be started by hand for a branch (`gh workflow run build.yml --ref dev`). A newer build of a branch cancels the one still running, so an older build cannot overwrite the rolling release.
 
 ### Fixed
 
