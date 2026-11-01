@@ -4,6 +4,7 @@
 #include "sapien/physx/physx_system.h"
 #include <PxPhysicsAPI.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdlib>
 #include <filesystem>
 #include <mutex>
@@ -37,7 +38,9 @@ static float gRestitution{0.1};
 static std::weak_ptr<PhysxMaterial> gDefaultMaterial;
 // guards gDefaultMaterial and the friction/restitution defaults it is built from
 static std::mutex gDefaultMaterialMutex;
-static bool gGPUEnabled{false};
+static std::atomic<bool> gGPUEnabled{false};
+// serializes EnableGPU: the runtime path it selects is shared by the whole process
+static std::mutex gEnableGPUMutex;
 static PhysxSceneConfig gSceneConfig{};
 static PhysxBodyConfig gBodyConfig{};
 static PhysxShapeConfig gShapeConfig{};
@@ -173,6 +176,7 @@ std::vector<std::string> PhysxDefault::GetPhysxGpuLibraryCandidates() {
 }
 
 void PhysxDefault::EnableGPU(std::string const &physxGpuLibrary) {
+  std::lock_guard lock(gEnableGPUMutex);
   // A zombie engine left by sapien.physx.shutdown() must not block a fresh job. Only
   // a live engine means GPU PhysX state may have already been committed elsewhere.
   auto engine = PhysxEngine::GetIfExists();

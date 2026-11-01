@@ -149,7 +149,8 @@ public:
    *  empty path selects the first existing file of GetPhysxGpuLibraryCandidates(). A process
    *  loads one runtime: a later call, also after the job-scope shutdown, must select the same
    *  file. Throws when the runtime does not exist, another runtime was selected, or a live PhysX
-   *  engine exists. sapien.physx.enable_gpu() downloads the runtime and calls this. */
+   *  engine exists. Concurrent calls are serialized; enabling must still precede every other use
+   *  of PhysX. sapien.physx.enable_gpu() downloads the runtime and calls this. */
   static void EnableGPU(std::string const &physxGpuLibrary = "");
   static bool GetGPUEnabled();
 

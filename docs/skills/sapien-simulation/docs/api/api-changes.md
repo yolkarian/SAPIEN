@@ -9,7 +9,8 @@ C++ programs (native trainers such as PufferLib 5.0, no Python at runtime):
 - New C++ `PhysxDefault::EnableGPU(physxGpuLibrary = "")` selects the PhysX GPU runtime through
   PhysX's own load hook; empty searches `PhysxDefault::GetPhysxGpuLibraryCandidates()`, the cache
   `sapien.physx.enable_gpu()` downloads into (`GetPhysxGpuCacheDirectory()`). C++ programs no longer
-  have to `dlopen` libcuda and the runtime themselves. A process uses one runtime file.
+  have to `dlopen` libcuda and the runtime themselves. A process uses one runtime file; concurrent
+  calls are serialized, but enabling must still precede every other use of PhysX.
 - **Behavior change:** `sapien.physx.enable_gpu()` no longer preloads `libcuda.so` / `cuda.dll` and
   the runtime with `ctypes`; it passes the runtime's path to C++, and PhysX loads the CUDA driver
   (`libcuda.so.1` on Linux) itself when the first GPU system is created. Machines that have only
