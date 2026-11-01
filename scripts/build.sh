@@ -128,6 +128,24 @@ function build_pybind() {
     echo "auditwheel produced no manylinux wheel for cp${PY_VERSION}" >&2
     exit 1
   fi
+
+  # auditwheel leaves libsapien and libsvulkan2 without a RUNPATH: Python finds their dependencies
+  # through pysapien's RPATH alone. Give them, and the OIDN libraries, RUNPATHs relative to their
+  # own location, so a C++ program linking sapien.libs/libsapien.so resolves libsvulkan2 and
+  # OpenImageDenoise without Python or extra loader paths.
+  local unpacked root
+  unpacked=$(mktemp -d)
+  ${BIN} -m wheel unpack -d "${unpacked}" "${repaired}"
+  root=$(ls -d "${unpacked}"/sapien-*/)
+  patchelf --set-rpath '$ORIGIN' "${root}sapien.libs/libsapien.so"
+  patchelf --set-rpath '$ORIGIN/../sapien/oidn_library' "${root}sapien.libs/libsvulkan2.so"
+  for lib in "${root}"sapien/oidn_library/*.so*; do
+    patchelf --set-rpath '$ORIGIN' "${lib}"
+  done
+  rm "${repaired}"
+  ${BIN} -m wheel pack -d wheelhouse "${root}"
+  rm -rf "${unpacked}"
+
   ${BIN} - "${repaired}" <<'PYCHECK'
 import re, subprocess, sys, zipfile, tempfile, pathlib
 

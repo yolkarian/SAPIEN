@@ -19,6 +19,10 @@ C++ programs (native trainers such as PufferLib 5.0, no Python at runtime):
   `VK_NO_PROTOTYPES` and `VULKAN_HPP_STORAGE_SHARED`, and the Eigen 3.4 headers ship alongside.
   Compile with `-std=c++20 -I<sapien>/include -I<sapien>/include/physx/include`. Before, a program
   built without `-DSAPIEN_CUDA` silently saw other class layouts than `libsapien.so`.
+- Link with `-L<site-packages>/sapien.libs -lsapien -Wl,-rpath,<site-packages>/sapien.libs`: the
+  wheel's libsapien, libsvulkan2 and OpenImageDenoise libraries now carry `$ORIGIN`-relative
+  RUNPATHs and OIDN ships under its SONAME, so no symlinks, `LD_LIBRARY_PATH` or OIDN preloading
+  are needed outside Python.
 
 Multi-GPU rendering:
 

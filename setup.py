@@ -288,7 +288,10 @@ class CMakeBuild(build_ext):
 
         # provide OIDN for linux. The exact OIDN patch version is controlled by
         # sapien-vulkan-2, so copy all real OpenImageDenoise shared libraries
-        # instead of hard-coding names such as 2.0.1.
+        # instead of hard-coding names such as 2.0.1. Each is copied under its SONAME,
+        # the name the dynamic loader searches for (libsvulkan2 needs
+        # libOpenImageDenoise.so.2, a symlink in the install tree; wheels cannot hold
+        # symlinks).
         if platform.system() == "Linux":
             for folder in ["lib", "lib64"]:
                 library_dir = os.path.join(sapien_install_dir, folder)
@@ -303,7 +306,16 @@ class CMakeBuild(build_ext):
                         and os.path.isfile(source)
                         and not os.path.islink(source)
                     ):
-                        shutil.copy2(source, oidn_library_path)
+                        dynamic = subprocess.check_output(
+                            ["readelf", "-d", source], text=True
+                        )
+                        soname = re.search(r"Library soname: \[([^\]]+)\]", dynamic)
+                        shutil.copy2(
+                            source,
+                            os.path.join(
+                                oidn_library_path, soname.group(1) if soname else lib
+                            ),
+                        )
 
     def copy_assets(self, ext):
         vulkan_shader_path = os.path.join(self.build_lib, "sapien", "vulkan_shader")
