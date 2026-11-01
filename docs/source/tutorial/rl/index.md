@@ -383,6 +383,19 @@ camera outputs (`get_picture_cuda()`) are tensors on the group's device. A
 `RenderSystemGroup` cannot mix render systems of different devices, and the viewer
 always renders through the default render device.
 
+## Native trainers without Python
+
+Trainers such as PufferLib 5.0 compile environments into a native binary and load no
+Python. SAPIEN's C++ API serves them: `PhysxDefault::EnableGPU()` finds the PhysX GPU
+runtime that `sapien.physx.enable_gpu()` downloaded, the installed headers need no `-D`
+flags, and a program links `sapien.libs/libsapien.so` with just an rpath to that
+directory. `examples/pufferlib5` trains a GPU CartPole this way: a C interface library
+builds the scene with SAPIEN's C++ components, and a PufferLib GPU environment moves
+data between the trainer's GPU buffers and SAPIEN's with CUDA kernels. A PhysX step
+waits for the GPU on the host, so it cannot be recorded into a CUDA graph; the example
+patches PufferLib to graph only the policy and training steps around it. The URDF loader
+and the actor/articulation builders exist in Python only.
+
 ## Job-scoped teardown
 
 Long-lived experiment launchers may run several jobs in one Python process. Close

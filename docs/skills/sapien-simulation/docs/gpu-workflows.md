@@ -490,6 +490,17 @@ threads = [threading.Thread(target=run, args=job) for job in jobs]
 - A group's camera outputs (`camera_group.get_picture_cuda(...)`) are tensors on the group's device. Groups, windows and VR displays raise `RuntimeError` for render systems of another device; the Viewer and VR always render through the default render device.
 - GPU-written render buffers belong to one device: `RenderCudaMeshComponent(..., device=...)` fixes its device at construction and raises when added to a scene of another device; a point cloud's CUDA arrays follow its scene's device; `RenderShapeTriangleMeshPart.get_cuda_vertices/get_cuda_triangles(device=None)` export the copy of the given device (default render device when `None`).
 
+## Native trainers without Python (PufferLib 5.0)
+
+Reference: `examples/pufferlib5` in the SAPIEN repository (continuous CartPole, 4096 environments, trains in PufferLib 5.0's native trainer).
+
+- Enable GPU PhysX with `PhysxDefault::EnableGPU()` before any PhysX object; it finds the runtime `sapien.physx.enable_gpu()` downloaded (run that once in Python, e.g. while building the image). Do not `dlopen` libcuda or the runtime yourself.
+- Compile against the installed package: `-std=c++20 -I<sapien>/include -I<sapien>/include/physx/include`, no `-D` flags; link `-L<site-packages>/sapien.libs -lsapien -Wl,-rpath,<site-packages>/sapien.libs`.
+- Trainers that compile everything as one nvcc C++17 translation unit (PufferLib 5.0) cannot include SAPIEN's C++20/PhysX headers: build the scene in a separate C++20 library with a C interface, and keep only C declarations and CUDA kernels in the environment file.
+- Build articulations from components (`PhysxArticulationLinkComponent::Create(parent)`, joint type/anchor poses/limits/friction/drives, link mass/inertia/center of mass); the URDF loader and the actor/articulation builders are Python-only.
+- One `PhysxGpuSystem` holds all environments. In the step, move data between the trainer's GPU buffers and SAPIEN's `gpuGet*CudaHandle()` buffers with kernels on the trainer's stream (`gpuSetCudaStream`), and use whole-buffer `gpuApply*`/`gpuFetch*` calls; indexed applies synchronize the stream for index validation.
+- `PhysxSystemGpu::step()` waits for PhysX on the host, so the environment step cannot be recorded into a CUDA graph (PhysX fails with `CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED`). Graph the policy and training steps around it instead; for PufferLib 5.0 apply the example's `pufferlib-env-capturable.patch` and define `PUF_ENV_CAPTURABLE 0` in the environment.
+
 ## Collision and scene isolation
 
 - Prefer PhysX GPU environment IDs when available:
