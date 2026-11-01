@@ -28,6 +28,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
   - `test/`: C++ unit tests
   - `unittest/`: Python `unittest` suite
   - `manualtest/`: interactive/manual validation scripts
+  - `examples/`: standalone integrations built against an installed wheel, outside the `sapien` package (unlike `sapien.example.*`), e.g. `examples/pufferlib5` for PufferLib 5.0's native trainer; validated manually, not by CI
   - `assets/`: bundled models, robots, and data files
 
 ## Development Rules
