@@ -57,11 +57,14 @@ the paths must not contain spaces.
   waits for the GPU on the host in every step, and recording the step makes PhysX fail
   (`Fetching GPU Narrowphase failed! 900`, CUDA error 900 being
   `CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED`). The patch adds `PUF_ENV_CAPTURABLE`: the environment
-  defines it as 0, and the trainer then graphs each policy step and the training epoch but runs
-  `puf_step` outside the graphs. On an RTX 3090 with 4096 environments, float32 training ran at
-  1.58M steps/s this way, 5.8% faster than turning graphs off entirely (`cudagraphs = -1`, 1.49M
-  steps/s). With the shipped configuration, bfloat16 (1.93M steps/s) and float32 (1.60M steps/s)
-  both reached the maximum return of 500 within 15M steps on seeds 1 and 2.
+  defines it as 0, and the trainer then graphs each policy step (per rollout slot when
+  `async = 1`, PufferLib's default) and the training epoch but runs `puf_step` outside the graphs.
+  Both `async = 1` and `async = 0` train. On an otherwise idle RTX 3090 with 4096 environments,
+  float32 training ran at 1.58M steps/s this way, 5.8% faster than turning graphs off entirely
+  (`cudagraphs = -1`, 1.49M steps/s; three runs each, spread under 1%). With the shipped
+  configuration, bfloat16 (1.93M steps/s) and float32 (1.60M steps/s) both reached the maximum
+  return of 500 within 15M steps on seeds 1 and 2. The host waits on every physics step, so other
+  jobs on the machine cost throughput: a busy host gave 1.3M to 1.9M steps/s for the same run.
 
 ## Adapting it
 
