@@ -153,9 +153,6 @@ Instance::Instance(uint32_t appVersion, uint32_t engineVersion, uint32_t apiVers
 
   // ========== set up extensions ========== //
   std::vector<const char *> extensions;
-#ifdef VK_USE_PLATFORM_MACOS_MVK
-  extensions.push_back(VK_MVK_MACOS_SURFACE_EXTENSION_NAME);
-#endif
   auto vkEnumerateInstanceExtensionProperties =
       mDynamicLoader->getProcAddress<PFN_vkEnumerateInstanceExtensionProperties>(
           "vkEnumerateInstanceExtensionProperties");
@@ -190,41 +187,6 @@ Instance::Instance(uint32_t appVersion, uint32_t engineVersion, uint32_t apiVers
       }
     }
   }
-  // Get extensions supported by the instance and store for later use
-  std::vector<std::string> supportedInstanceExtensions;
-	uint32_t extCount = 0;
-      VULKAN_HPP_DEFAULT_DISPATCHER.vkEnumerateInstanceExtensionProperties(nullptr, &extCount, nullptr);
-	if (extCount > 0) {
-		std::vector<VkExtensionProperties> extensions(extCount);
-		if (VULKAN_HPP_DEFAULT_DISPATCHER.vkEnumerateInstanceExtensionProperties(nullptr, &extCount, &extensions.front()) == VK_SUCCESS) {
-			for (VkExtensionProperties& extension : extensions) {
-				supportedInstanceExtensions.push_back(extension.extensionName);
-			}
-		}
-	}
-  std::vector<const char*> enabledInstanceExtensions;
-#ifdef VK_USE_PLATFORM_MACOS_MVK
-	// SRS - When running on iOS/macOS with MoltenVK, enable VK_KHR_get_physical_device_properties2 if not already enabled by the example (required by VK_KHR_portability_subset)
-	if (std::find(enabledInstanceExtensions.begin(), enabledInstanceExtensions.end(), VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME) == enabledInstanceExtensions.end()) {
-		enabledInstanceExtensions.push_back(VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME);
-	}
-#endif
-  // Enabled requested instance extensions
-	if (enabledInstanceExtensions.size() > 0) {
-		for (const char * enabledExtension : enabledInstanceExtensions) {
-			// Output message if requested extension is not available
-			if (std::find(supportedInstanceExtensions.begin(), supportedInstanceExtensions.end(), enabledExtension) == supportedInstanceExtensions.end()) {
-        printf("Enabled instance extension %s is not present at instance level.\n", enabledExtension);
-			}
-			extensions.push_back(enabledExtension);
-		}
-	}
-#if defined(VK_USE_PLATFORM_MACOS_MVK) && defined(VK_KHR_portability_enumeration)
-	// SRS - When running on iOS/macOS with MoltenVK and VK_KHR_portability_enumeration is defined and supported by the instance, enable the extension and the flag
-	if (std::find(supportedInstanceExtensions.begin(), supportedInstanceExtensions.end(), VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME) != supportedInstanceExtensions.end()) {
-		extensions.push_back(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-	}
-#endif
 
   // vr
   if (enableVR && vr::VR_IsHmdPresent()) {
@@ -256,9 +218,6 @@ Instance::Instance(uint32_t appVersion, uint32_t engineVersion, uint32_t apiVers
 
   try {
     auto info = vk::InstanceCreateInfo({}, &appInfo, layers, extensions);
-#ifdef VK_USE_PLATFORM_MACOS_MVK
-    info.flags |= vk::InstanceCreateFlagBits::eEnumeratePortabilityKHR;
-#endif
 #ifdef VK_VALIDATION
     info.setPNext(&validationFeatures);
 #endif

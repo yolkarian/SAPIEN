@@ -1,5 +1,12 @@
 
 @PACKAGE_INIT@
+# The public headers include Eigen. Programs without an Eigen3::Eigen target of their own use the
+# Eigen headers installed with SAPIEN.
+if (NOT TARGET Eigen3::Eigen)
+  add_library(Eigen3::Eigen INTERFACE IMPORTED)
+  set_target_properties(Eigen3::Eigen PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/include")
+endif ()
 if (NOT TARGET sapien)
   include ("${CMAKE_CURRENT_LIST_DIR}/sapienTargets.cmake")
 endif ()

@@ -11,7 +11,7 @@ Use this skill when creating, refactoring, or reviewing SAPIEN simulation enviro
 
 1. Read `docs/gpu-workflows.md` before editing SAPIEN simulation code.
 2. For API lookup, use the compact agent tables under `docs/api/README.md` before guessing names/signatures.
-3. When installing SAPIEN for examples, validation, or containers, use the fork's GitHub release wheels from `https://github.com/yolkarian/SAPIEN/releases`; do not install SAPIEN from PyPI.
+3. When installing SAPIEN for examples, validation, or containers, use the fork's GitHub release wheels from `https://github.com/yolkarian/SAPIEN/releases`; do not install SAPIEN from PyPI. C++ programs (native trainers without Python) build against the C++ SDK archive `sapien-sdk-<version>-linux_x86_64.tar.gz` from the same releases, never against the wheel's files.
 4. Use SAPIEN GPU PhysX and GPU APIs for parallel simulation.
 5. Preserve initialization order: configure PhysX (including `PhysxSceneConfig.num_scenes` and `with_shared_scene`, which are read once when the GPU system is constructed and frozen there), create systems, create builders, create scenes, mark the shared scene and apply any scene offsets, build bodies, add lights, call `gpu_init()`, initialize GPU buffers, then initialize viewer/sensors/rendering.
 6. For many identical URDF robots, parse the URDF once, cache the builder, and reuse it with `builder.set_scene(scene)` plus a restored initial pose before each `builder.build()`. For kinematics-only or IK-only workflows, set `loader.load_visuals = False` and `loader.load_collisions = False` when geometry is unnecessary.

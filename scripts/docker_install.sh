@@ -4,6 +4,11 @@ DOCKER_ENV_ARGS=()
 if [ -n "${CMAKE_BUILD_PARALLEL_LEVEL:-}" ]; then
        DOCKER_ENV_ARGS+=("-e" "CMAKE_BUILD_PARALLEL_LEVEL")
 fi
+# a terminal only when there is one, so the build also runs from ssh or tmux scripts
+DOCKER_TTY_ARGS=()
+if [ -t 0 ] && [ -t 1 ]; then
+       DOCKER_TTY_ARGS+=("-it")
+fi
 
 [[ `python -V` =~ ^Python\ 3\.([0-9]+)\..*$ ]] || echo failed to detect Python version
 
@@ -16,7 +21,7 @@ BUILD_ARGS=("${PYTHON_VERSION}" "$@")
 rm -rf sapien.egg-info
 rm -f wheelhouse/*.whl
 
-docker run -v `pwd`:/workspace/SAPIEN -it --rm \
+docker run -v `pwd`:/workspace/SAPIEN "${DOCKER_TTY_ARGS[@]}" --rm \
        -u $(id -u ${USER}):$(id -g ${USER}) \
        "${DOCKER_ENV_ARGS[@]}" \
        -e SAPIEN_PHYSX5_DIR \
@@ -29,7 +34,7 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 
 cd wheelhouse
 pip3 uninstall -y sapien
-pip3 install *
+pip3 install *.whl
 
 cd /tmp && rm stubs -rf && python3 ${DIR}/python/stubgen.py sapien
 cp -r /tmp/stubs/sapien/__init__.pyi ${DIR}/python/py_package

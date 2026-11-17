@@ -1,0 +1,66 @@
+PufferLib 5.0 trainer: let a GPU environment opt out of CUDA-graph capture.
+
+Base: https://github.com/PufferAI/PufferLib branch 5.0, commit ea7f989.
+
+The trainer records a GPU environment's whole rollout (policy step + puf_step) into one CUDA
+graph. A step that waits on the host, such as SAPIEN/PhysX simulation, cannot be recorded.
+An environment that defines PUF_ENV_CAPTURABLE 0 gets the CPU environments' mode instead:
+each policy step is graphed, puf_step runs outside the graphs, and the training epoch keeps
+its graph. Without the define nothing changes.
+
+--- a/src/pufferl.cu
++++ b/src/pufferl.cu
+@@ -63,6 +63,14 @@
+ 
+ // Compile vs a single env: -DENV_HEADER=ocean/<env>/<env>.h or .cu (--cu)
+ #include ENV_HEADER
++
++// A GPU env whose step blocks the host or synchronizes streams (e.g. SAPIEN/PhysX, whose
++// PxScene::fetchResults waits on the GPU) cannot be stream-captured. Such an env defines
++// PUF_ENV_CAPTURABLE 0: its rollout then graphs only each policy step and runs puf_step
++// eagerly, while the train graphs stay on.
++#ifndef PUF_ENV_CAPTURABLE
++#define PUF_ENV_CAPTURABLE 1
++#endif
+ 
+ typedef struct {
+     float* data;
+@@ -879,7 +887,7 @@
+ 
+ void pufferl_forward(PuffeRL* pufferl, int buf, int t, cudaStream_t stream) {
+     Hypers* hypers = &pufferl->hypers;
+-    // GPU rollout graphs the whole horizon; CPU still graphs one net step.
++    // GPU rollout graphs the whole horizon; CPU and non-capturable GPU envs graph one net step.
+     bool step_graph = hypers->cudagraphs && pufferl->rollout_graphs != NULL;
+     int graph_slot = hypers->async ? pufferl->write_slot : 0;
+     int graph = (graph_slot * hypers->horizon + t) * hypers->num_buffers + buf;
+@@ -1251,6 +1259,18 @@
+         puf_bind_stream(stream);
+         cudaEvent_t* ev = p->profile.rollout_ev;
+         int slot = p->write_slot;
++        if (!PUF_ENV_CAPTURABLE) {
++            int H = p->hypers.horizon;
++            for (int t = 0; t < H; t++) {
++                int base = t * EV_T;
++                cudaEventRecord(ev[base + MODEL_START], stream);
++                pufferl_forward(p, 0, t, stream);
++                cudaEventRecord(ev[base + MODEL_END], stream);
++                puf_step(p->vec->envs);
++                cudaEventRecord(ev[base + ENV_END], stream);
++            }
++            return;
++        }
+         bool first = p->hypers.cudagraphs && p->gpu_rollout_graph[slot] == NULL;
+         p->profile.skip_rollout_time = first;
+         if (p->hypers.cudagraphs && !first) {
+@@ -2059,8 +2079,8 @@
+     nethack_policy_init(ini);
+ #endif
+ 
+-    // CPU: per-step net graphs. GPU: full-horizon. Both captured on first use.
+-    if (hypers.cudagraphs && PUF_BACKEND != PUF_GPU) {
++    // CPU and non-capturable GPU envs: per-step net graphs. GPU: full-horizon. Captured on first use.
++    if (hypers.cudagraphs && (PUF_BACKEND != PUF_GPU || !PUF_ENV_CAPTURABLE)) {
+         int rollout_graph_slots = pufferl->async_num_slots;
+         pufferl->rollout_graphs = (cudaGraphExec_t*)calloc(1,
+             rollout_graph_slots*horizon*num_buffers*sizeof(cudaGraphExec_t));

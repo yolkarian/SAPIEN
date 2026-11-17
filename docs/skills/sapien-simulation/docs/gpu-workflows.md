@@ -490,6 +490,19 @@ threads = [threading.Thread(target=run, args=job) for job in jobs]
 - A group's camera outputs (`camera_group.get_picture_cuda(...)`) are tensors on the group's device. Groups, windows and VR displays raise `RuntimeError` for render systems of another device; the Viewer and VR always render through the default render device.
 - GPU-written render buffers belong to one device: `RenderCudaMeshComponent(..., device=...)` fixes its device at construction and raises when added to a scene of another device; a point cloud's CUDA arrays follow its scene's device; `RenderShapeTriangleMeshPart.get_cuda_vertices/get_cuda_triangles(device=None)` export the copy of the given device (default render device when `None`).
 
+## Native trainers without Python (PufferLib 5.0)
+
+Reference: `examples/pufferlib5` in the SAPIEN repository, 4096 environments each in PufferLib 5.0's native trainer: a continuous CartPole, and PufferLib's `robot_arm` task (Franka Panda pick and place) with SAPIEN replacing its hand-written CUDA physics while the task code (`robot_arm.h`) runs unchanged.
+
+- Build against the C++ SDK (`sapien-sdk-<version>-linux_x86_64.tar.gz` from the release), not the wheel: `-std=c++20 -I<sdk>/include -I<sdk>/include/physx/include`, no `-D` flags; link `-L<sdk>/lib -lsapien -Wl,-rpath,<sdk>/lib`. CMake projects use `find_package(sapien)` with `CMAKE_PREFIX_PATH=<sdk>` and link `sapien::sapien`.
+- Enable GPU PhysX with `PhysxDefault::EnableGPU()` before any PhysX object; it finds the runtime the SDK ships next to `libsapien.so`, so neither the build nor the trainer needs Python. Do not `dlopen` libcuda or the runtime yourself.
+- Trainers that compile everything as one nvcc C++17 translation unit (PufferLib 5.0) cannot include SAPIEN's C++20/PhysX headers: build the scene in a separate C++20 library with a C interface, and keep only C declarations and CUDA kernels in the environment file.
+- Build articulations from components (`PhysxArticulationLinkComponent::Create(parent)`, joint type/anchor poses/limits/friction/drives, link mass/inertia/center of mass); the URDF loader and the actor/articulation builders are Python-only. Configure every joint's type, anchors, limits and drives before adding the link entities to a scene: PhysX ignores joint motion changes on an articulation already in a scene (SAPIEN logs `setMotion() not allowed while the articulation is in a scene`).
+- Many environments with contacts: set `PhysxSceneConfig::numScenes` and `withSharedScene` through `PhysxDefault::setSceneConfig` before creating the system, give each environment its own `Scene`, and put shared static geometry (the ground) into one scene marked with `PhysxSystemGpu::markSceneShared` before it gets a body. Collision filtering per shape uses `setCollisionGroups({word0, word1, 0, 0})`: two shapes collide when one's word0 meets the other's word1.
+- Contact impulses: create `gpuCreateContactPairImpulseQuery` / `gpuCreateContactBodyImpulseQuery` once after `gpuInit()` (results are in the order of the pairs/bodies passed) and run them each step with `synchronize = false`, so the impulses land on the system's stream for the environment's kernels.
+- One `PhysxGpuSystem` holds all environments. In the step, move data between the trainer's GPU buffers and SAPIEN's `gpuGet*CudaHandle()` buffers with kernels on the trainer's stream (`gpuSetCudaStream`), and use whole-buffer `gpuApply*`/`gpuFetch*` calls; indexed applies synchronize the stream for index validation.
+- `PhysxSystemGpu::step()` waits for PhysX on the host, so the environment step cannot be recorded into a CUDA graph (PhysX fails with `CUDA_ERROR_STREAM_CAPTURE_UNSUPPORTED`). Graph the policy and training steps around it instead; for PufferLib 5.0 apply the example's `pufferlib-env-capturable.patch` and define `PUF_ENV_CAPTURABLE 0` in the environment.
+
 ## Collision and scene isolation
 
 - Prefer PhysX GPU environment IDs when available:

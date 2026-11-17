@@ -4,6 +4,7 @@
 #include "../device.h"
 #include "../system.h"
 #include "./physx_default.h"
+#include "sapien/config.h"
 #include "./physx_engine.h"
 #include "mesh_manager.h"
 #include "sapien/scene.h"

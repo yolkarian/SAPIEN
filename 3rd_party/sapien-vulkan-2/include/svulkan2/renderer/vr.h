@@ -1,4 +1,5 @@
 #pragma once
+#include "svulkan2/build_options.h"
 #include "svulkan2/common/glm.h"
 #include <memory>
 #include <vector>

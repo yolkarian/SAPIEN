@@ -57,13 +57,18 @@ jobs:
         with:
           path: docker_sapien_build/_sapien_deps
           key: ${{ runner.os }}.${{ hashFiles('**/*.cmake', '**/CMakeLists.txt') }}
-      - name: Build wheels
+      - name: Build wheels and C++ SDK
         run: ./scripts/build.sh
       - name: Upload wheels
         uses: actions/upload-artifact@v4
         with:
           name: linux-wheels-all
           path: ./wheelhouse/*.whl
+      - name: Upload C++ SDK
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-sdk
+          path: ./dist/sapien-sdk-*.tar.gz
 
   build-windows-sapien:
     runs-on: windows-2022
@@ -194,7 +199,12 @@ jobs:
         with:
           name: linux-wheels-all
           path: wheelhouse
-      - name: List wheels
+      - name: Download linux C++ SDK
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-sdk
+          path: wheelhouse
+      - name: List release assets
         run: ls wheelhouse
       - name: Write release notes
         shell: bash
@@ -225,4 +235,5 @@ jobs:
             --title "SAPIEN ${RELEASE_TAG}" \
             --notes-file release_notes.md \
             "${args[@]}" \
-            wheelhouse/*.whl
+            wheelhouse/*.whl \
+            wheelhouse/sapien-sdk-*.tar.gz

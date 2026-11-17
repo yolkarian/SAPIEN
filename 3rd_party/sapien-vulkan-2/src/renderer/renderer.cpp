@@ -106,17 +106,9 @@ Renderer::Renderer(std::shared_ptr<core::Context> context, std::shared_ptr<Rende
   vk::DescriptorPoolSize pool_sizes[] = {
       {vk::DescriptorType::eCombinedImageSampler,
        100}, // render targets and input textures TODO: configure instead of 100
-#ifdef VK_USE_PLATFORM_MACOS_MVK
-      {vk::DescriptorType::eUniformBuffer, 100},
-#endif
   };
   auto info = vk::DescriptorPoolCreateInfo(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-#ifdef VK_USE_PLATFORM_MACOS_MVK
-                                           200, 2,
-#else
-                                           100, 1,
-#endif
-                                           pool_sizes);
+                                           100, 1, pool_sizes);
   mDescriptorPool = mContext->getDevice().createDescriptorPoolUnique(info);
 
   mObjectPool = std::make_unique<core::DynamicDescriptorPool>(

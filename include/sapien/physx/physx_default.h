@@ -4,6 +4,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <vector>
 
 namespace physx {
 struct PxGpuDynamicsMemoryConfig;
@@ -142,9 +143,25 @@ public:
   static void setSDFShapeConfig(PhysxSDFShapeConfig const &);
   static PhysxSDFShapeConfig getSDFShapeConfig();
 
-  // enable GPU simulation, may not be disabled
-  static void EnableGPU();
+  /** Use GPU PhysX for every PhysX system created from now on; cannot be disabled. PhysX loads
+   *  `physxGpuLibrary`, the PhysX GPU runtime (libPhysXGpu_64.so / PhysXGpu_64.dll) built for
+   *  getPhysxVersion(), together with the CUDA driver when the first GPU system is created. An
+   *  empty path selects the first existing file of GetPhysxGpuLibraryCandidates(). A process
+   *  loads one runtime: a later call, also after the job-scope shutdown, must select the same
+   *  file. Throws when the runtime does not exist, another runtime was selected, or a live PhysX
+   *  engine exists. Concurrent calls are serialized; enabling must still precede every other use
+   *  of PhysX. sapien.physx.enable_gpu() downloads the runtime if none of the candidates exists
+   *  and calls this. */
+  static void EnableGPU(std::string const &physxGpuLibrary = "");
   static bool GetGPUEnabled();
+
+  /** Directory sapien.physx.enable_gpu() installs the PhysX GPU runtime into:
+   *  $HOME/.sapien/physx/<getPhysxVersion()> (%USERPROFILE% on Windows). */
+  static std::string GetPhysxGpuCacheDirectory();
+
+  /** Locations EnableGPU() searches for the PhysX GPU runtime, in order: on Linux next to
+   *  libsapien, where the C++ SDK ships it, then inside GetPhysxGpuCacheDirectory(). */
+  static std::vector<std::string> GetPhysxGpuLibraryCandidates();
 
   /** Whether the lazily created default material is still alive. */
   static bool HasDefaultMaterial();

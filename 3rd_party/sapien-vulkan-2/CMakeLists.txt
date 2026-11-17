@@ -45,17 +45,18 @@ set_target_properties(svulkan2 PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 target_compile_definitions(imgui PRIVATE VK_NO_PROTOTYPES)
 target_compile_definitions(svulkan2 PUBLIC VK_NO_PROTOTYPES)
 
-if (${SAPIEN_MACOS})
-    target_compile_definitions(svulkan2 PUBLIC SAPIEN_MACOS)
-    target_compile_definitions(svulkan2 PUBLIC VK_USE_PLATFORM_MACOS_MVK)
-    target_compile_definitions(svulkan2 PUBLIC VK_ENABLE_BETA_EXTENSIONS)
-endif()
 if (${VK_VALIDATION})
     target_compile_definitions(svulkan2 PUBLIC VK_VALIDATION)
 endif()
 
+# The PUBLIC compile definitions above and below, baked into a header that every public header
+# including Vulkan includes, so programs built against the installed headers need no -D flags.
+configure_file(cmake/build_options.h.in
+    "${CMAKE_CURRENT_BINARY_DIR}/include/svulkan2/build_options.h")
+
 target_include_directories(svulkan2 PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}/include>
     $<INSTALL_INTERFACE:include>
 )
 
@@ -99,7 +100,6 @@ target_compile_definitions(svulkan2 PUBLIC VULKAN_HPP_STORAGE_SHARED)
 
 if (${SVULKAN2_CUDA_INTEROP})
     install(DIRECTORY ${binary_dir}/../preinstall/lib DESTINATION "." OPTIONAL)
-    install(DIRECTORY ${binary_dir}/../preinstall/lib64 DESTINATION "." OPTIONAL)
     install(TARGETS svulkan2 Vulkan-Headers glm OpenImageDenoise OpenImageDenoise_core OpenImageDenoise_common
         EXPORT svulkan2Targets
         LIBRARY DESTINATION lib

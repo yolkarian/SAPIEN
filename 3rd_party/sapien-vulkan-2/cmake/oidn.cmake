@@ -13,6 +13,8 @@ set(OIDN_DEVICE_SYCL OFF CACHE BOOL "" FORCE)
 set(OIDN_FILTER_RT ON CACHE BOOL "" FORCE)
 set(OIDN_FILTER_RTLIGHTMAP OFF CACHE BOOL "" FORCE)
 set(OIDN_INSTALL_DEPENDENCIES OFF CACHE BOOL "" FORCE)
+# relocatable install: libraries in lib/ with $ORIGIN/../lib RUNPATHs instead of absolute ones
+set(OIDN_ZIP_MODE ON CACHE BOOL "" FORCE)
 
 FetchContent_GetProperties(oidn)
 if(NOT oidn_POPULATED)

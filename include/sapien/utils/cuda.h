@@ -1,5 +1,6 @@
-#ifdef SAPIEN_CUDA
 #pragma once
+#include "sapien/config.h"
+#ifdef SAPIEN_CUDA
 #include <cstdint>
 #include <stdexcept>
 #include <string>

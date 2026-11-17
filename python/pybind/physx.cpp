@@ -1882,7 +1882,9 @@ still alive.)doc")
       .def("set_default_material", &PhysxDefault::SetDefaultMaterial, py::arg("static_friction"),
         py::arg("dynamic_friction"), py::arg("restitution"))
       .def("get_default_material", &PhysxDefault::GetDefaultMaterial)
-      .def("_enable_gpu", &PhysxDefault::EnableGPU)
+      .def("_enable_gpu", &PhysxDefault::EnableGPU, py::arg("physx_gpu_library") = "")
+      .def("_physx_gpu_cache_directory", &PhysxDefault::GetPhysxGpuCacheDirectory)
+      .def("_physx_gpu_library_candidates", &PhysxDefault::GetPhysxGpuLibraryCandidates)
       .def("is_gpu_enabled", &PhysxDefault::GetGPUEnabled)
       .def("set_gpu_memory_config", &PhysxDefault::setGpuMemoryConfig,
            py::arg("temp_buffer_capacity") = 16 * 1024 * 1024,

@@ -87,8 +87,8 @@ def generate_version():
     if git_branch == "master":
         assert git_tag is not None
 
-    if git_tag in ["", "nightly"]:
-        # no meaning tag
+    if git_tag in ["", "nightly", "dev-nightly"]:
+        # no tag, or a rolling prerelease tag moved by .github/workflows/build.yml
         with open(
             os.path.join(os.path.dirname(__file__), "python", "VERSION"), "r"
         ) as f:
@@ -112,8 +112,11 @@ if args.get_version:
 def build_sapien(sapien_source_dir, sapien_build_dir):
     build_dir = os.path.join(sapien_build_dir, "_sapien_build")
     install_dir = os.path.join(sapien_build_dir, "_sapien_install")
+    # The install tree is the C++ SDK that scripts/build.sh packs: install it from scratch, so no
+    # file of an earlier build stays in it.
+    shutil.rmtree(install_dir, ignore_errors=True)
     os.makedirs(build_dir, exist_ok=True)
-    os.makedirs(install_dir, exist_ok=True)
+    os.makedirs(install_dir)
 
     cmake_args = []
 
@@ -290,20 +293,17 @@ class CMakeBuild(build_ext):
         # sapien-vulkan-2, so copy all real OpenImageDenoise shared libraries
         # instead of hard-coding names such as 2.0.1.
         if platform.system() == "Linux":
-            for folder in ["lib", "lib64"]:
-                library_dir = os.path.join(sapien_install_dir, folder)
-                if not os.path.exists(library_dir):
-                    continue
-                print("copy library from", library_dir)
-                for lib in os.listdir(library_dir):
-                    source = os.path.join(library_dir, lib)
-                    if (
-                        lib.startswith("libOpenImageDenoise")
-                        and ".so" in lib
-                        and os.path.isfile(source)
-                        and not os.path.islink(source)
-                    ):
-                        shutil.copy2(source, oidn_library_path)
+            library_dir = os.path.join(sapien_install_dir, "lib")
+            print("copy library from", library_dir)
+            for lib in os.listdir(library_dir):
+                source = os.path.join(library_dir, lib)
+                if (
+                    lib.startswith("libOpenImageDenoise")
+                    and ".so" in lib
+                    and os.path.isfile(source)
+                    and not os.path.islink(source)
+                ):
+                    shutil.copy2(source, oidn_library_path)
 
     def copy_assets(self, ext):
         vulkan_shader_path = os.path.join(self.build_lib, "sapien", "vulkan_shader")
