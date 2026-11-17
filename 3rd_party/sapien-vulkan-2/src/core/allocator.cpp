@@ -53,11 +53,9 @@ Allocator::Allocator(Device &device) {
                                   vk::BufferUsageFlagBits::eVertexBuffer |
                                       vk::BufferUsageFlagBits::eIndexBuffer |
                                       vk::BufferUsageFlagBits::eTransferDst);
-#if !defined(VK_USE_PLATFORM_MACOS_MVK)
   vk::ExternalMemoryBufferCreateInfo externalMemoryBufferInfo(
       vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd);
   bufferInfo.setPNext(&externalMemoryBufferInfo);
-#endif
 
   vk::MemoryRequirements memReq;
   {
@@ -84,11 +82,9 @@ Allocator::Allocator(Device &device) {
     // poolInfo.minAllocationAlignment = std::max(
     //     std::max(limits.minStorageBufferOffsetAlignment, limits.minTexelBufferOffsetAlignment),
     //     limits.minUniformBufferOffsetAlignment);
-#if !defined(VK_USE_PLATFORM_MACOS_MVK)
     mExternalAllocInfo =
         vk::ExportMemoryAllocateInfo(vk::ExternalMemoryHandleTypeFlagBits::eOpaqueFd);
     poolInfo.pMemoryAllocateNext = &mExternalAllocInfo;
-#endif
     vmaCreatePool(mMemoryAllocator, &poolInfo, &mExternalMemoryPool);
   }
 

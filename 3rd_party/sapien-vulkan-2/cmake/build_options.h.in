@@ -17,13 +17,3 @@
 /* Members of core::Buffer, core::Image, core::Instance and the renderers. */
 #cmakedefine SVULKAN2_CUDA_INTEROP 1
 #cmakedefine VK_VALIDATION 1
-
-#cmakedefine SAPIEN_MACOS 1
-#ifdef SAPIEN_MACOS
-#ifndef VK_USE_PLATFORM_MACOS_MVK
-#define VK_USE_PLATFORM_MACOS_MVK 1
-#endif
-#ifndef VK_ENABLE_BETA_EXTENSIONS
-#define VK_ENABLE_BETA_EXTENSIONS 1
-#endif
-#endif
