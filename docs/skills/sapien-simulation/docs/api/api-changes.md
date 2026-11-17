@@ -4,10 +4,22 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
-C++ programs (native trainers such as PufferLib 5.0, no Python at runtime):
+C++ programs (native trainers such as PufferLib 5.0, no Python):
 
+- **New C++ SDK:** use `sapien-sdk-<version>-linux_x86_64.tar.gz` from the release, not the
+  wheel. Unpacked anywhere it holds `include/` (SAPIEN, PhysX, Eigen, glm, Vulkan headers),
+  `lib/` (`libsapien.so`, the libraries it loads, `libPhysXGpu_64.so`, the CMake package in
+  `lib/cmake/sapien`) and `share/sapien/vulkan_shader`. Compile with
+  `-std=c++20 -I<sdk>/include -I<sdk>/include/physx/include` and no `-D` flags, link
+  `-L<sdk>/lib -lsapien -Wl,-rpath,<sdk>/lib`; or `find_package(sapien)` with
+  `CMAKE_PREFIX_PATH=<sdk>` and link `sapien::sapien`. The libraries load each other through
+  `$ORIGIN` RUNPATHs, so no `LD_LIBRARY_PATH` is needed. Rendering programs first make the calls
+  the Python package makes on import: `SapienRendererDefault::internalSetShaderSearchPath(
+  "<sdk>/share/sapien/vulkan_shader")`, then `setViewerShaderDirectory("default")` and
+  `setCameraShaderDirectory("default")`.
 - New C++ `PhysxDefault::EnableGPU(physxGpuLibrary = "")` selects the PhysX GPU runtime through
-  PhysX's own load hook; empty searches `PhysxDefault::GetPhysxGpuLibraryCandidates()`, the cache
+  PhysX's own load hook; empty searches `PhysxDefault::GetPhysxGpuLibraryCandidates()`: on Linux
+  `libPhysXGpu_64.so` next to `libsapien.so` (the SDK ships it), then the cache
   `sapien.physx.enable_gpu()` downloads into (`GetPhysxGpuCacheDirectory()`). C++ programs no longer
   have to `dlopen` libcuda and the runtime themselves. A process uses one runtime file; concurrent
   calls are serialized, but enabling must still precede every other use of PhysX.
@@ -15,15 +27,11 @@ C++ programs (native trainers such as PufferLib 5.0, no Python at runtime):
   the runtime with `ctypes`; it passes the runtime's path to C++, and PhysX loads the CUDA driver
   (`libcuda.so.1` on Linux) itself when the first GPU system is created. Machines that have only
   the versioned `libcuda.so.1` (no `libcuda.so` development link) now work.
-- The installed headers (`sapien/include` in the wheel) need no `-D` flags: generated
-  `sapien/config.h` and `svulkan2/build_options.h` carry `SAPIEN_CUDA`, `SVULKAN2_CUDA_INTEROP`,
-  `VK_NO_PROTOTYPES` and `VULKAN_HPP_STORAGE_SHARED`, and the Eigen 3.4 headers ship alongside.
-  Compile with `-std=c++20 -I<sapien>/include -I<sapien>/include/physx/include`. Before, a program
-  built without `-DSAPIEN_CUDA` silently saw other class layouts than `libsapien.so`.
-- Link with `-L<site-packages>/sapien.libs -lsapien -Wl,-rpath,<site-packages>/sapien.libs`: the
-  wheel's libsapien, libsvulkan2 and OpenImageDenoise libraries now carry `$ORIGIN`-relative
-  RUNPATHs and OIDN ships under its SONAME, so no symlinks, `LD_LIBRARY_PATH` or OIDN preloading
-  are needed outside Python.
+- The installed headers (the SDK's `include/`, also `sapien/include` in the wheel) need no `-D`
+  flags: generated `sapien/config.h` and `svulkan2/build_options.h` carry `SAPIEN_CUDA`,
+  `SVULKAN2_CUDA_INTEROP`, `VK_NO_PROTOTYPES` and `VULKAN_HPP_STORAGE_SHARED`, and the Eigen 3.4
+  headers ship alongside. Before, a program built without `-DSAPIEN_CUDA` silently saw other class
+  layouts than `libsapien.so`.
 
 Multi-GPU rendering:
 

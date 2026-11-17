@@ -1,7 +1,7 @@
 // libsapien_cartpole.so: the C interface of shim/sapien_cartpole.h over SAPIEN's C++ API.
 //
-// Built against the installed SAPIEN package with only its include and library directories
-// (build.sh): the package's headers carry their compile options and its libraries their RUNPATHs.
+// Built against SAPIEN's C++ SDK with only its include and library directories (build.sh): the
+// SDK's headers carry their compile options and its libraries their RUNPATHs.
 //
 // Each cartpole is one 3-link articulation without collision shapes, so all of them share one scene:
 //   base (fixed root) -> cart (prismatic along world x) -> pole (revolute about world y,

@@ -12,6 +12,7 @@
 #include <string>
 #include <utility>
 #ifndef _WIN32
+#include <dlfcn.h>
 #include <pwd.h>
 #include <unistd.h>
 #endif
@@ -168,7 +169,14 @@ std::vector<std::string> PhysxDefault::GetPhysxGpuLibraryCandidates() {
            "release" / "PhysXGpu_64.dll")
               .string()};
 #else
-  return {(dir / "libPhysXGpu_64.so").string(),
+  // first the runtime the C++ SDK ships next to libsapien
+  Dl_info self{};
+  if (!dladdr(reinterpret_cast<void *>(&PhysxDefault::GetPhysxGpuLibraryCandidates), &self) ||
+      !self.dli_fname) {
+    throw std::runtime_error("failed to find the location of libsapien");
+  }
+  return {(fs::absolute(self.dli_fname).parent_path() / "libPhysXGpu_64.so").string(),
+          (dir / "libPhysXGpu_64.so").string(),
           (dir / "physxgpu-linux-clang" / "PhysX" / "bin" / "linux.x86_64" / "release" /
            "libPhysXGpu_64.so")
               .string()};
@@ -196,9 +204,9 @@ void PhysxDefault::EnableGPU(std::string const &physxGpuLibrary) {
         searched += "\n  " + path;
       }
       throw std::runtime_error(
-          "failed to enable GPU PhysX: no PhysX GPU runtime found; call "
-          "sapien.physx.enable_gpu() once from Python to download it, or pass its path. "
-          "Searched:" +
+          "failed to enable GPU PhysX: no PhysX GPU runtime found next to libsapien, where the "
+          "C++ SDK ships it, or in the cache sapien.physx.enable_gpu() downloads it into; or "
+          "pass its path. Searched:" +
           searched);
     }
     library = *found;

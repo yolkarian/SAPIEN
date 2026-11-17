@@ -1,8 +1,8 @@
 /* C interface of libsapien_cartpole.so: N continuous CartPoles on one SAPIEN PhysxSystemGpu.
  *
  * PufferLib 5.0 compiles its trainer and the environment as one nvcc C++17 translation unit, which
- * cannot include SAPIEN's C++20 and PhysX headers. The library is built separately against the
- * installed SAPIEN package (shim/sapien_cartpole.cpp) and exposes plain C functions.
+ * cannot include SAPIEN's C++20 and PhysX headers. The library is built separately against
+ * SAPIEN's C++ SDK (shim/sapien_cartpole.cpp) and exposes plain C functions.
  *
  * The pointers returned by the *_ptr getters are CUDA device buffers owned by SAPIEN: float32
  * [num_envs, max_dofs] row-major, dof 0 = cart x, dof 1 = pole angle. They stay valid until
@@ -19,9 +19,9 @@ extern "C" {
 
 typedef struct SapienCartpole SapienCartpole;
 
-/* Enables GPU PhysX (PhysxDefault::EnableGPU with the runtime sapien.physx.enable_gpu()
- * downloaded), builds `num_envs` cartpoles in one scene on CUDA device `cuda_id` and initializes
- * the GPU simulation. Returns NULL on failure and writes the reason into `err`. */
+/* Enables GPU PhysX (PhysxDefault::EnableGPU with the PhysX GPU runtime the SDK ships), builds
+ * `num_envs` cartpoles in one scene on CUDA device `cuda_id` and initializes the GPU simulation.
+ * Returns NULL on failure and writes the reason into `err`. */
 SAPIEN_CARTPOLE_API SapienCartpole *sapien_cartpole_create(int num_envs, int cuda_id, char *err,
                                                            int err_len);
 SAPIEN_CARTPOLE_API void sapien_cartpole_destroy(SapienCartpole *h);

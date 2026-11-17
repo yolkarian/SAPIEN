@@ -33,6 +33,11 @@ jobs:
         with:
           name: linux-wheels-all
           path: ./wheelhouse/*.whl
+      - name: Upload C++ SDK
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-sdk
+          path: ./dist/sapien-sdk-*.tar.gz
 
   build-windows-sapien:
     runs-on: windows-2022
@@ -132,6 +137,11 @@ jobs:
         with:
           name: linux-wheels-all
           path: wheelhouse
+      - name: Download C++ SDK
+        uses: actions/download-artifact@v4
+        with:
+          name: linux-sdk
+          path: wheelhouse
       - name: ls
         run: ls wheelhouse
       - name: Update Nightly Release
@@ -145,3 +155,4 @@ jobs:
           body: 'SAPIEN development nightly release. This release is mainly for internal testing. Release wheels are published on GitHub Releases.'
           files: |
             ./wheelhouse/*.whl
+            ./wheelhouse/sapien-sdk-*.tar.gz

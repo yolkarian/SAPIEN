@@ -28,7 +28,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
   - `test/`: C++ unit tests
   - `unittest/`: Python `unittest` suite
   - `manualtest/`: interactive/manual validation scripts
-  - `examples/`: standalone integrations built against an installed wheel, outside the `sapien` package (unlike `sapien.example.*`), e.g. `examples/pufferlib5` for PufferLib 5.0's native trainer; validated manually, not by CI
+  - `examples/`: standalone integrations outside the `sapien` package (unlike `sapien.example.*`), built against the C++ SDK or an installed wheel, e.g. `examples/pufferlib5` (PufferLib 5.0's native trainer, built against the C++ SDK); validated manually, not by CI
   - `assets/`: bundled models, robots, and data files
 
 ## Development Rules
@@ -91,6 +91,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
 - On drivers with repeated Vulkan-instance initialization failures, run ordinary test modules in separate processes. OOM recovery validation must keep its entire recovery sequence in one process; separate processes do not validate recovery. Run deliberate VRAM-exhaustion tests separately from builds and other workloads. `test_gpu_oom` is opt-in with `SAPIEN_TEST_GPU_OOM=1` and needs an isolated idle GPU plus a process timeout. It makes one device-memory reservation, leaves 128 MiB GPU headroom, and attempts one bounded 256 MiB PhysX heap. Use a memory-limited container and a process timeout; never exhaust memory by creating giant pinned-host heaps.
 - Python tests live under `unittest/` and use the standard library `unittest` runner.
 - C++ tests live under `test/` and require configuring CMake with `-DSAPIEN_BUILD_TEST=ON`, then building the `sapien_test` target.
+- C++ SDK: `scripts/build.sh` packs the CMake install tree into `dist/sapien-sdk-<version>-linux_x86_64.tar.gz` and runs `scripts/test_sdk.sh` on it (CPU PhysX). On a GPU host also run `scripts/test_sdk.sh dist/sapien-sdk-*.tar.gz --gpu`. `test/sdk/` is that consumer program, built against the unpacked archive, not part of `sapien_test`. C++ programs build against the SDK, never against the wheel's files.
 - Documented runtime smoke tests:
   - `python -m sapien.example.offscreen`
   - `python -m sapien.example.hello_world`

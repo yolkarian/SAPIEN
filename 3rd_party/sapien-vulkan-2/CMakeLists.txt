@@ -100,7 +100,6 @@ target_compile_definitions(svulkan2 PUBLIC VULKAN_HPP_STORAGE_SHARED)
 
 if (${SVULKAN2_CUDA_INTEROP})
     install(DIRECTORY ${binary_dir}/../preinstall/lib DESTINATION "." OPTIONAL)
-    install(DIRECTORY ${binary_dir}/../preinstall/lib64 DESTINATION "." OPTIONAL)
     install(TARGETS svulkan2 Vulkan-Headers glm OpenImageDenoise OpenImageDenoise_core OpenImageDenoise_common
         EXPORT svulkan2Targets
         LIBRARY DESTINATION lib

@@ -7,8 +7,8 @@ trainer binary. This example runs SAPIEN PhysX-GPU environments there, 4096 copi
 - `sapien_robot_arm`: PufferLib's own GPU task `robot_arm` (a Franka Panda picks a cube and places
   it on a target) with SAPIEN as its simulator instead of the hand-written CUDA physics it ships with.
 
-Python is needed only to install SAPIEN and to download the PhysX GPU runtime once; the trainer
-process does not load Python.
+Neither the build nor the trainer needs Python: the C interface libraries build against SAPIEN's
+C++ SDK, which also ships the PhysX GPU runtime.
 
 ## Layout
 
@@ -30,33 +30,32 @@ PufferLib's `build.sh` needs for its native trainer (nvcc, ccache, NCCL, libomp,
 access for raylib).
 
 ```shell
-python -m pip install sapien-*.whl
-python -c "import sapien; sapien.physx.enable_gpu()"  # downloads the PhysX GPU runtime once
+tar -xzf sapien-sdk-*-linux_x86_64.tar.gz           # SAPIEN's C++ SDK from GitHub Releases
+SDK=$(ls -d sapien-sdk-*/)
 
 git clone -b 5.0 https://github.com/PufferAI/PufferLib.git
 git -C PufferLib checkout ea7f989                     # the commit the patch targets
 
-examples/pufferlib5/build.sh PufferLib sapien_cartpole    # writes PufferLib/puffer_sapien_cartpole
-examples/pufferlib5/build.sh PufferLib sapien_robot_arm   # writes PufferLib/puffer_sapien_robot_arm
+examples/pufferlib5/build.sh "$SDK" PufferLib sapien_cartpole    # writes PufferLib/puffer_sapien_cartpole
+examples/pufferlib5/build.sh "$SDK" PufferLib sapien_robot_arm   # writes PufferLib/puffer_sapien_robot_arm
 cd PufferLib && ./puffer_sapien_robot_arm train
 ```
 
-`build.sh PUFFERLIB_DIR ENV [OUT] [--float]` uses the SAPIEN package that `$PYTHON` (default
-`python3`) imports. It compiles `libENV.so` with nothing but the package's include and library
-directories, copies the environment and its configuration into the PufferLib tree, applies the patch
-once, and runs PufferLib's `build.sh ENV OUT --cu`. `--float` trains in float32 instead of bfloat16.
-PufferLib passes the extra linker flags through `NVCC_EXTRA`, split on whitespace, so the paths must
-not contain spaces.
+`build.sh SAPIEN_SDK PUFFERLIB_DIR ENV [OUT] [--float]` compiles `libENV.so` with nothing but the
+SDK's include and library directories, copies the environment and its configuration into the
+PufferLib tree, applies the patch once, and runs PufferLib's `build.sh ENV OUT --cu`. `--float`
+trains in float32 instead of bfloat16. PufferLib passes the extra linker flags through
+`NVCC_EXTRA`, split on whitespace, so the paths must not contain spaces.
 
 ## How it fits together
 
 - **C interface.** PufferLib compiles the trainer and the environment as one nvcc C++17
   translation unit. SAPIEN's headers are C++20 and include PhysX, so each environment talks to
   SAPIEN through a C library compiled separately with g++.
-- **No Python at runtime.** `PhysxDefault::EnableGPU()` finds the PhysX GPU runtime in the cache
-  `sapien.physx.enable_gpu()` downloads into, and PhysX loads it and the CUDA driver. The installed
-  headers carry SAPIEN's compile options, and the installed libraries find their dependencies
-  through their RUNPATHs, so the libraries need no `-D` flags or loader paths.
+- **No Python.** `PhysxDefault::EnableGPU()` finds the PhysX GPU runtime the SDK ships next to
+  `libsapien.so`, and PhysX loads it and the CUDA driver. The SDK's headers carry SAPIEN's compile
+  options, and its libraries find their dependencies through their RUNPATHs, so the libraries
+  need no `-D` flags or loader paths.
 - **Data stays on the GPU.** The trainer allocates the observation, action, reward and terminal
   buffers on the GPU and hands their pointers to `puf_vec_create`. Each `puf_step` runs CUDA kernels
   between these buffers and SAPIEN's buffers, and SAPIEN's GPU calls, all on the stream the trainer

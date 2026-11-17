@@ -6,7 +6,8 @@
 .. highlight:: python
 ```
 
-SAPIEN release binaries are distributed as Python wheels on
+SAPIEN release binaries are distributed as Python wheels, and for Linux also as a C++
+SDK archive ({ref}`cpp_sdk`), on
 [GitHub Releases](https://github.com/yolkarian/SAPIEN/releases).
 
 The checked-in build automation currently builds Linux wheels for Python 3.9,
@@ -67,6 +68,53 @@ python -m sapien.example.hello_world
 
 You can learn more about this scene in {ref}`hello_world`.
 
+(cpp_sdk)=
+
+## C++ SDK
+
+Programs that use SAPIEN from C++ without Python, such as native RL trainers, use the
+C++ SDK instead of the wheel. Each Linux release has a
+`sapien-sdk-<version>-linux_x86_64.tar.gz`; unpack it anywhere.
+
+| Path | Contents |
+| --- | --- |
+| `include/` | SAPIEN's public headers and the PhysX, Eigen, glm and Vulkan headers they include |
+| `lib/` | `libsapien.so`, the libraries it loads, and the PhysX GPU runtime `libPhysXGpu_64.so` |
+| `lib/cmake/sapien/` | CMake package: `find_package(sapien)`, target `sapien::sapien` |
+| `share/sapien/vulkan_shader/` | Shaders for rendering |
+
+With CMake, add the unpacked directory to `CMAKE_PREFIX_PATH`; `sapien::sapien` brings
+the include directories, compile definitions and C++20:
+
+```cmake
+find_package(sapien REQUIRED)
+add_executable(app main.cpp)
+target_link_libraries(app PRIVATE sapien::sapien)
+```
+
+Without CMake, the include and library directories are all the compiler needs; the
+headers carry SAPIEN's build options, so no `-D` flags (g++ 11 or newer):
+
+```shell
+g++ -std=c++20 -I"$SDK/include" -I"$SDK/include/physx/include" main.cpp \
+    -L"$SDK/lib" -lsapien -Wl,-rpath,"$SDK/lib"
+```
+
+The libraries find each other through `$ORIGIN`-relative RUNPATHs, so programs run
+without `LD_LIBRARY_PATH`. `PhysxDefault::EnableGPU()` without arguments selects the
+PhysX GPU runtime in `lib/`. Programs that render first set the shader search path, as
+the Python package does on import:
+
+```cpp
+using sapien::sapien_renderer::SapienRendererDefault;
+SapienRendererDefault::internalSetShaderSearchPath(sdk + "/share/sapien/vulkan_shader");
+SapienRendererDefault::setViewerShaderDirectory("default");
+SapienRendererDefault::setCameraShaderDirectory("default");
+```
+
+The URDF loader and the actor and articulation builders are Python-only; C++ programs
+build scenes from components, as `examples/pufferlib5` does.
+
 ## Build from source
 
 Initialize submodules before any source build. Only `simsense` is a submodule; the
@@ -119,6 +167,16 @@ shared machines:
 
 ```shell
 ./scripts/build.sh 311 --jobs 4
+```
+
+Besides the wheels, `scripts/build.sh` packs the CMake install tree into the C++ SDK,
+`dist/sapien-sdk-<version>-linux_x86_64.tar.gz`, and fails unless
+`scripts/test_sdk.sh` builds and runs a program against the unpacked archive, through
+CMake and with plain compiler flags. On a machine with an NVIDIA GPU, also run the
+program on GPU PhysX:
+
+```shell
+./scripts/test_sdk.sh dist/sapien-sdk-*-linux_x86_64.tar.gz --gpu
 ```
 
 ## Validation

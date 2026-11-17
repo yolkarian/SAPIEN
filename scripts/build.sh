@@ -61,6 +61,22 @@ function build_sapien() {
   eval "${COMMAND} --sapien-only --build-dir=docker_sapien_build"
 }
 
+# SAPIEN's C++ SDK for programs that use SAPIEN from C++ instead of Python: the CMake install tree
+# (headers, libraries with $ORIGIN RUNPATHs, CMake package, shaders, PhysX GPU runtime) packed into
+# dist/. A test program must build and run against the unpacked archive before it ships.
+function package_sdk() {
+  local bin version name
+  bin=/opt/python/cp310-cp310/bin/python
+  version=`${bin} setup.py --get-version`
+  version=`${bin} -c "from packaging.version import Version; print(Version('${version}'))"`
+  name="sapien-sdk-${version}-linux_x86_64"
+  mkdir -p dist
+  rm -f dist/sapien-sdk-*.tar.gz
+  tar -C docker_sapien_build -czf "dist/${name}.tar.gz" \
+    --transform "s,^_sapien_install,${name}," _sapien_install
+  ./scripts/test_sdk.sh "dist/${name}.tar.gz"
+}
+
 function build_pybind() {
   echo "Building Pybind"
 
@@ -128,24 +144,6 @@ function build_pybind() {
     echo "auditwheel produced no manylinux wheel for cp${PY_VERSION}" >&2
     exit 1
   fi
-
-  # auditwheel leaves libsapien and libsvulkan2 without a RUNPATH: Python finds their dependencies
-  # through pysapien's RPATH alone. Give them, and the OIDN libraries, RUNPATHs relative to their
-  # own location, so a C++ program linking sapien.libs/libsapien.so resolves libsvulkan2 and
-  # OpenImageDenoise without Python or extra loader paths.
-  local unpacked root
-  unpacked=$(mktemp -d)
-  ${BIN} -m wheel unpack -d "${unpacked}" "${repaired}"
-  root=$(ls -d "${unpacked}"/sapien-*/)
-  patchelf --set-rpath '$ORIGIN' "${root}sapien.libs/libsapien.so"
-  patchelf --set-rpath '$ORIGIN/../sapien/oidn_library' "${root}sapien.libs/libsvulkan2.so"
-  for lib in "${root}"sapien/oidn_library/*.so*; do
-    patchelf --set-rpath '$ORIGIN' "${lib}"
-  done
-  rm "${repaired}"
-  ${BIN} -m wheel pack -d wheelhouse "${root}"
-  rm -rf "${unpacked}"
-
   ${BIN} - "${repaired}" <<'PYCHECK'
 import re, subprocess, sys, zipfile, tempfile, pathlib
 
@@ -179,6 +177,7 @@ PYCHECK
 }
 
 build_sapien
+package_sdk
 if [ -z "${VERSION}" ]
 then
    build_pybind 39

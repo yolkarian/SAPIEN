@@ -17,6 +17,12 @@ Use the provided Docker build helper:
 CMAKE_BUILD_PARALLEL_LEVEL=4 ./scripts/docker_build_wheels.sh 311
 ```
 
+Besides the wheels in `wheelhouse/`, the build writes SAPIEN's C++ SDK (the CMake install tree) to `dist/sapien-sdk-<version>-linux_x86_64.tar.gz` and fails unless `scripts/test_sdk.sh` builds and runs a program against the unpacked archive. On a machine with an NVIDIA GPU, also check GPU PhysX:
+
+```shell
+./scripts/test_sdk.sh dist/sapien-sdk-*-linux_x86_64.tar.gz --gpu
+```
+
 SAPIEN currently targets PhysX `107.3-physx-5.6.1`. GPU-enabled builds require a CUDA toolkit and driver stack compatible with CUDA `>= 12.8`.
 
 To build against locally extracted PhysX SDK archives, point the build at both the CPU and GPU packages before invoking the Docker helper:

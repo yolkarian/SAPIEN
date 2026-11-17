@@ -386,10 +386,10 @@ always renders through the default render device.
 ## Native trainers without Python
 
 Trainers such as PufferLib 5.0 compile environments into a native binary and load no
-Python. SAPIEN's C++ API serves them: `PhysxDefault::EnableGPU()` finds the PhysX GPU
-runtime that `sapien.physx.enable_gpu()` downloaded, the installed headers need no `-D`
-flags, and a program links `sapien.libs/libsapien.so` with just an rpath to that
-directory. `examples/pufferlib5` runs two environments this way: a GPU CartPole, and
+Python. They build against SAPIEN's C++ SDK (see {ref}`cpp_sdk`) instead of the
+wheel: its headers need no `-D` flags, a program links `lib/libsapien.so` with just an
+rpath to that directory, and `PhysxDefault::EnableGPU()` finds the PhysX GPU runtime the
+SDK ships. `examples/pufferlib5` runs two environments this way: a GPU CartPole, and
 PufferLib's own `robot_arm` pick-and-place task with SAPIEN as its simulator, its task code
 unchanged. A C interface library builds each scene with SAPIEN's C++ components, and a
 PufferLib GPU environment moves data between the trainer's GPU buffers and SAPIEN's with

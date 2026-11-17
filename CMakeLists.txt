@@ -43,6 +43,14 @@ if (WIN32)
     set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
 endif()
 
+# The install tree is SAPIEN's C++ SDK, which scripts/build.sh packs into an archive: every shared
+# library goes to lib/ and finds the others through $ORIGIN, so the tree works wherever it is
+# unpacked.
+set(CMAKE_INSTALL_LIBDIR lib)
+if (UNIX)
+    set(CMAKE_INSTALL_RPATH "$ORIGIN")
+endif()
+
 macro(FetchContent_MakeAvailableExclude)
     FetchContent_GetProperties(${ARGV})
     if(NOT ${ARGV}_POPULATED)
@@ -105,6 +113,8 @@ if (${SAPIEN_CUDA})
 endif ()
 
 target_link_libraries(sapien PUBLIC eigen svulkan2)
+# the public headers are C++20, also for programs using the installed CMake package
+target_compile_features(sapien PUBLIC cxx_std_20)
 target_link_libraries(sapien PRIVATE physx5 spdlog::spdlog ${CMAKE_DL_LIBS} assimp::assimp)
 
 if (UNIX)
@@ -145,7 +155,6 @@ if (${SAPIEN_CUDA})
 
     message(---- ${binary_dir}/../preinstall/lib)
     install(DIRECTORY ${binary_dir}/../preinstall/lib DESTINATION "." OPTIONAL)
-    install(DIRECTORY ${binary_dir}/../preinstall/lib64 DESTINATION "." OPTIONAL)
 
     install(
         TARGETS sapien svulkan2 simsense physx5 OpenImageDenoise OpenImageDenoise_core OpenImageDenoise_common glm Vulkan-Headers
@@ -182,6 +191,22 @@ if (${SAPIEN_CUDA})
     install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/3rd_party/simsense/include/simsense" DESTINATION "include")
 endif()
 
+# PhysxDefault::EnableGPU() looks for the PhysX GPU runtime next to libsapien first, so the SDK
+# enables GPU PhysX without the download sapien.physx.enable_gpu() makes. The wheel leaves it out.
+if (UNIX AND ${SAPIEN_CUDA})
+    set(_sapien_physx_gpu_runtime "${physx5_GPU_SOURCE_DIR}/bin/linux.x86_64/release/libPhysXGpu_64.so")
+    if (EXISTS "${_sapien_physx_gpu_runtime}")
+        install(FILES "${_sapien_physx_gpu_runtime}" DESTINATION "${CMAKE_INSTALL_LIBDIR}")
+    else()
+        message(WARNING "${_sapien_physx_gpu_runtime} does not exist: the installed SDK will not "
+            "contain the PhysX GPU runtime")
+    endif()
+endif()
+
+# Shaders for C++ programs that render: they pass <prefix>/share/sapien/vulkan_shader to
+# SapienRendererDefault::internalSetShaderSearchPath, as the Python package does with its copy.
+install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/vulkan_shader" DESTINATION "share/sapien")
+
 include(CMakePackageConfigHelpers)
 configure_package_config_file(
     cmake/sapienConfig.cmake.in
@@ -213,6 +238,8 @@ endif()
 if (${SAPIEN_BUILD_TEST})
     include(googletest)
     file(GLOB_RECURSE SAPIEN_TEST_SRC "test/*.cpp")
+    # test/sdk is a separate project built against the packed SDK (scripts/test_sdk.sh)
+    list(FILTER SAPIEN_TEST_SRC EXCLUDE REGEX "/test/sdk/")
     add_executable(sapien_test EXCLUDE_FROM_ALL ${SAPIEN_TEST_SRC})
     target_link_libraries(sapien_test sapien GTest::gtest_main physx5
         # -fsanitize=address

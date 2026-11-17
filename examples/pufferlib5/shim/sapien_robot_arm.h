@@ -37,10 +37,10 @@ typedef struct SapienRobotArmBuffers {
                                 finger over the last physics step */
 } SapienRobotArmBuffers;
 
-/* Enables GPU PhysX (PhysxDefault::EnableGPU with the runtime sapien.physx.enable_gpu()
- * downloaded) and builds `num_envs` environments on CUDA device `cuda_id`, stepping `physics_dt`
- * seconds per physics step with the given solver iteration counts, and initializes the GPU
- * simulation. The joint and body state stays as built until the caller writes it and calls
+/* Enables GPU PhysX (PhysxDefault::EnableGPU with the PhysX GPU runtime the SDK ships) and
+ * builds `num_envs` environments on CUDA device `cuda_id`, stepping `physics_dt` seconds per
+ * physics step with the given solver iteration counts, and initializes the GPU simulation. The
+ * joint and body state stays as built until the caller writes it and calls
  * sapien_robot_arm_apply_state(). Returns NULL on failure and writes the reason into `err`. */
 SAPIEN_ROBOT_ARM_API SapienRobotArm* sapien_robot_arm_create(int num_envs, int cuda_id,
     float physics_dt, int solver_position_iterations, int solver_velocity_iterations, char* err,

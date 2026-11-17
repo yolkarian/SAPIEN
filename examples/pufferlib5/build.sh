@@ -1,23 +1,28 @@
 #!/usr/bin/env bash
 # Builds a SAPIEN environment into a PufferLib 5.0 native trainer.
 #
-#   examples/pufferlib5/build.sh PUFFERLIB_DIR ENV [OUT] [--float]
+#   examples/pufferlib5/build.sh SAPIEN_SDK PUFFERLIB_DIR ENV [OUT] [--float]
 #
-# PUFFERLIB_DIR: a checkout of PufferLib's 5.0 branch at commit ea7f989, the commit
-# pufferlib-env-capturable.patch targets. ENV: sapien_cartpole or sapien_robot_arm.
-# OUT (default puffer_ENV) is written into PUFFERLIB_DIR.
-# $PYTHON (default python3) must import sapien; only its include and library directories are used.
+# SAPIEN_SDK: SAPIEN's C++ SDK, an unpacked sapien-sdk-*-linux_x86_64.tar.gz; only its include and
+# library directories are used. PUFFERLIB_DIR: a checkout of PufferLib's 5.0 branch at commit
+# ea7f989, the commit pufferlib-env-capturable.patch targets. ENV: sapien_cartpole or
+# sapien_robot_arm. OUT (default puffer_ENV) is written into PUFFERLIB_DIR.
 # Remaining arguments go to PufferLib's build.sh (e.g. --float).
 set -euo pipefail
 
-if [ $# -lt 2 ]; then
-  echo "usage: $0 PUFFERLIB_DIR ENV [OUT] [--float]" >&2
+if [ $# -lt 3 ]; then
+  echo "usage: $0 SAPIEN_SDK PUFFERLIB_DIR ENV [OUT] [--float]" >&2
   exit 1
 fi
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-PUFFER=$(cd "$1" && pwd)
-ENV=$2
-shift 2
+SDK=$(cd "$1" && pwd)
+PUFFER=$(cd "$2" && pwd)
+ENV=$3
+shift 3
+if [ ! -f "$SDK/lib/libsapien.so" ]; then
+  echo "not a SAPIEN C++ SDK: $SDK/lib/libsapien.so does not exist" >&2
+  exit 1
+fi
 if [ ! -f "$HERE/shim/$ENV.cpp" ]; then
   echo "unknown environment $ENV: expected $HERE/shim/$ENV.cpp" >&2
   exit 1
@@ -28,16 +33,14 @@ if [ $# -gt 0 ] && [[ "$1" != -* ]]; then
   shift
 fi
 
-SAPIEN=$("${PYTHON:-python3}" -c 'import pathlib, sapien; print(pathlib.Path(sapien.__file__).resolve().parent)')
-LIBS=$(cd "$SAPIEN/../sapien.libs" && pwd)
 BUILD="$PUFFER/build/$ENV"
 mkdir -p "$BUILD"
 
-# The C interface over SAPIEN, built with the package's own directories only.
+# The C interface over SAPIEN, built with the SDK's own directories only.
 g++ -std=c++20 -O2 -fPIC -shared \
-  -I"$SAPIEN/include" -I"$SAPIEN/include/physx/include" \
+  -I"$SDK/include" -I"$SDK/include/physx/include" \
   "$HERE/shim/$ENV.cpp" -o "$BUILD/lib$ENV.so" \
-  -L"$LIBS" -lsapien -Wl,-rpath,"$LIBS"
+  -L"$SDK/lib" -lsapien -Wl,-rpath,"$SDK/lib"
 
 # The environment and its configuration inside the PufferLib tree.
 mkdir -p "$PUFFER/ocean/$ENV"

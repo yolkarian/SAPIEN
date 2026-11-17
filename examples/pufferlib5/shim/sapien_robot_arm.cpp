@@ -1,7 +1,7 @@
 // libsapien_robot_arm.so: the C interface of shim/sapien_robot_arm.h over SAPIEN's C++ API.
 //
-// Built against the installed SAPIEN package with only its include and library directories
-// (build.sh), like libsapien_cartpole.so.
+// Built against SAPIEN's C++ SDK with only its include and library directories (build.sh), like
+// libsapien_cartpole.so.
 //
 // The world of PufferLib's robot_arm task (ocean/robot_arm/robot_arm.h at ea7f989): a fixed-base
 // Franka Panda (base, links 1-7 on revolute joints, a hand fixed to link 7, two prismatic fingers)

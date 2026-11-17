@@ -150,7 +150,8 @@ public:
    *  loads one runtime: a later call, also after the job-scope shutdown, must select the same
    *  file. Throws when the runtime does not exist, another runtime was selected, or a live PhysX
    *  engine exists. Concurrent calls are serialized; enabling must still precede every other use
-   *  of PhysX. sapien.physx.enable_gpu() downloads the runtime and calls this. */
+   *  of PhysX. sapien.physx.enable_gpu() downloads the runtime if none of the candidates exists
+   *  and calls this. */
   static void EnableGPU(std::string const &physxGpuLibrary = "");
   static bool GetGPUEnabled();
 
@@ -158,8 +159,8 @@ public:
    *  $HOME/.sapien/physx/<getPhysxVersion()> (%USERPROFILE% on Windows). */
   static std::string GetPhysxGpuCacheDirectory();
 
-  /** Locations of the installed PhysX GPU runtime inside GetPhysxGpuCacheDirectory(), in the
-   *  order EnableGPU() searches them. */
+  /** Locations EnableGPU() searches for the PhysX GPU runtime, in order: on Linux next to
+   *  libsapien, where the C++ SDK ships it, then inside GetPhysxGpuCacheDirectory(). */
   static std::vector<std::string> GetPhysxGpuLibraryCandidates();
 
   /** Whether the lazily created default material is still alive. */
