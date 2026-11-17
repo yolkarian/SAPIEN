@@ -389,12 +389,13 @@ Trainers such as PufferLib 5.0 compile environments into a native binary and loa
 Python. SAPIEN's C++ API serves them: `PhysxDefault::EnableGPU()` finds the PhysX GPU
 runtime that `sapien.physx.enable_gpu()` downloaded, the installed headers need no `-D`
 flags, and a program links `sapien.libs/libsapien.so` with just an rpath to that
-directory. `examples/pufferlib5` trains a GPU CartPole this way: a C interface library
-builds the scene with SAPIEN's C++ components, and a PufferLib GPU environment moves
-data between the trainer's GPU buffers and SAPIEN's with CUDA kernels. A PhysX step
-waits for the GPU on the host, so it cannot be recorded into a CUDA graph; the example
-patches PufferLib to graph only the policy and training steps around it. The URDF loader
-and the actor/articulation builders exist in Python only.
+directory. `examples/pufferlib5` runs two environments this way: a GPU CartPole, and
+PufferLib's own `robot_arm` pick-and-place task with SAPIEN as its simulator, its task code
+unchanged. A C interface library builds each scene with SAPIEN's C++ components, and a
+PufferLib GPU environment moves data between the trainer's GPU buffers and SAPIEN's with
+CUDA kernels. A PhysX step waits for the GPU on the host, so it cannot be recorded into a
+CUDA graph; the example patches PufferLib to graph only the policy and training steps
+around it. The URDF loader and the actor/articulation builders exist in Python only.
 
 ## Job-scoped teardown
 
