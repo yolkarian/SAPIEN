@@ -14,7 +14,9 @@ release workflow.
 
 Paths below are relative to the repository root:
 
-- `.github/workflows/build-tagged-release.yml`: workflow dispatched by `gh`.
+- `.github/workflows/build-tagged-release.yml`: workflow dispatched by `gh`; it publishes the
+  Linux and Windows wheels and the Linux C++ SDK
+  (`sapien-sdk-<version>-linux_x86_64.tar.gz`, packed and tested by `scripts/build.sh`).
 - `CHANGELOG.md`: manually maintained project changelog.
 
 Run shell commands from the repository root unless a command says otherwise.
@@ -206,10 +208,18 @@ you later create a changelog/release-prep commit, rerun this snippet so
    gh run watch <run-id> --exit-status
    ```
 
-6. Once the release is published (`gh release view "${RELEASE_TAG}"` succeeds), update the
-   locally installed simulation skill from the release tag, only if that directory exists.
-   This is the only time the installed copy changes; during development only the
-   checked-in `docs/skills/sapien-simulation/` follows the code.
+6. Once the release is published (`gh release view "${RELEASE_TAG}"` succeeds), check its
+   assets: Linux wheels for CPython 3.9-3.13, Windows wheels for 3.9-3.12, and the C++ SDK
+   `sapien-sdk-<version>-linux_x86_64.tar.gz`. A missing asset means a job of the run failed;
+   report it instead of announcing the release.
+
+   ```bash
+   gh release view "${RELEASE_TAG}" --json assets --jq '.assets[].name' | sort
+   ```
+
+   Then update the locally installed simulation skill from the release tag, only if that
+   directory exists. This is the only time the installed copy changes; during development only
+   the checked-in `docs/skills/sapien-simulation/` follows the code.
 
    ```bash
    skill_dir="$HOME/.agents/skills/sapien-simulation"
@@ -230,6 +240,8 @@ you later create a changelog/release-prep commit, rerun this snippet so
 - Do not paste changelog sections into release notes verbatim — rewrite to one line per entry per the template above.
 - Do not overwrite or delete an existing GitHub release or stable release tag without explicit user approval.
 - Ignore `nightly` and `dev-nightly` when computing the previous release tag; they are moving test releases of `main` and `dev`.
+- A release is incomplete without the Linux C++ SDK archive next to the wheels; C++ programs
+  (`examples/pufferlib5`) build against it, not against the wheels.
 - If the user does not clearly specify the release commit/ref (`GIT_REF`), use the current `HEAD` commit, not `dev`, `main`, or another moving branch.
 - Before dispatch, ensure the target commit is pushed and visible from remote refs.
 - If a changelog or release-prep commit is created, rerun preflight and release the new final `HEAD`.

@@ -57,7 +57,7 @@ jobs:
         with:
           path: docker_sapien_build/_sapien_deps
           key: ${{ runner.os }}.${{ hashFiles('**/*.cmake', '**/CMakeLists.txt') }}
-      - name: Build wheels
+      - name: Build wheels and C++ SDK
         run: ./scripts/build.sh
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -204,7 +204,7 @@ jobs:
         with:
           name: linux-sdk
           path: wheelhouse
-      - name: List wheels
+      - name: List release assets
         run: ls wheelhouse
       - name: Write release notes
         shell: bash

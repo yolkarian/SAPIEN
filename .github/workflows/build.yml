@@ -1,9 +1,9 @@
 name: Build
 
-# Every push to main or dev builds Linux and Windows wheels and publishes them to a rolling
-# prerelease: `nightly` for main, `dev-nightly` for dev. A manual run (Actions tab, or
+# Every push to main or dev builds Linux and Windows wheels and the Linux C++ SDK and publishes them
+# to a rolling prerelease: `nightly` for main, `dev-nightly` for dev. A manual run (Actions tab, or
 # `gh workflow run build.yml --ref dev`) does the same for the selected branch; on other branches
-# it only keeps the wheels as workflow artifacts.
+# it only keeps the wheels and the SDK as workflow artifacts.
 on:
   push:
     branches: [main, dev]
@@ -37,7 +37,7 @@ jobs:
         with:
           path: docker_sapien_build/_sapien_deps
           key: ${{ runner.os }}.${{ hashFiles('**/*.cmake', '**/CMakeLists.txt') }}
-      - name: Build wheels
+      - name: Build wheels and C++ SDK
         run: "git config --global --add safe.directory '*' && ./scripts/build.sh"
       - name: Upload wheels
         uses: actions/upload-artifact@v4
@@ -164,9 +164,9 @@ jobs:
           tag_name: ${{ github.ref_name == 'main' && 'nightly' || 'dev-nightly' }}
           name: ${{ github.ref_name == 'main' && 'Nightly Release' || 'Dev Nightly Release' }}
           prerelease: true
-          # a manual rerun of the commit the tag already points at still replaces the wheels
+          # a manual rerun of the commit the tag already points at still replaces the assets
           only-when-changed: false
-          body: ${{ github.ref_name == 'main' && 'SAPIEN development nightly release. This release is mainly for internal testing. Release wheels are published on GitHub Releases.' || 'Rolling build of the dev branch, replaced on every push to dev. For internal testing only; stable wheels are published as numbered releases.' }}
+          body: ${{ github.ref_name == 'main' && 'SAPIEN development nightly release. This release is mainly for internal testing. Release wheels and the C++ SDK are published on GitHub Releases.' || 'Rolling build of the dev branch (wheels and the Linux C++ SDK), replaced on every push to dev. For internal testing only; stable builds are published as numbered releases.' }}
           files: |
             ./wheelhouse/*.whl
             ./wheelhouse/sapien-sdk-*.tar.gz
