@@ -88,7 +88,8 @@ Viewer copies the config it is given.
 | `set_ray_tracing_samples_per_pixel` / `..._path_depth` / `..._denoiser` / `..._dof_aperture` / `..._dof_plane` | `cfg["spp"]`, `cfg["maxDepth"]`, `cfg.denoiser`, `cfg["aperture"]`, `cfg["focusPlane"]` |
 | `set_picture_format(name, format)` | `cfg.picture_formats = {name: format}` |
 | `set_msaa` / `get_msaa` | `cfg.msaa` |
-| `camera.set_property(name, value)` | unchanged; it now validates the name and type |
+| `cfg.defines = {...}` | parameters of the pack's `pack.json`; `cfg["shadows"] = True`, `cfg["shading"] = "pbr"` |
+| `camera.set_property(name, value)` / `camera.get_property(name)` | unchanged; both now read the pack's `pack.json` |
 
 ```python
 config = sapien.render.RenderConfig("rt")
@@ -100,6 +101,41 @@ camera = scene.add_camera("camera", 640, 480, 1.0, 0.01, 100.0, render_config=co
 
 sapien.render.set_default_render_config("viewer", sapien.render.RenderConfig("rt"))
 ```
+
+### `pack.json` and the removed `defines`
+
+Every shader pack, built-in or not, now needs a `pack.json` next to its entry
+point. It declares the parameters a config may assign (their kind, type, default,
+range and description) and optional presets. A pack without one raises
+`RuntimeError` naming the directory. `RenderConfig` validates every assignment
+against it immediately, so a typo, a wrong type or an out-of-range value fails
+where it is written; `cfg[name]` returns the effective value (assignment or
+default), `del cfg[name]` reverts to the default, and `cfg.parameters` /
+`cfg.presets` expose the manifest.
+
+`cfg.defines` is gone: shader preprocessor definitions now come from variant
+parameters. `cfg.defines = {"SHADING_PBR": "", "SHADOWS": ""}` becomes
+`cfg["shading"] = "pbr"; cfg["shadows"] = True`, and the `rt_batch` `SPP` define
+is gone too — `cfg["spp"]` is the only sampler control.
+
+```python
+config = sapien.render.RenderConfig("rt_batch", preset="pbr")
+config["shadows"] = True
+config["spp"] = 4
+```
+
+Defaults also moved: `spp=32`, `maxDepth=8`, `aperture=0.0`, `focusPlane=1.0`,
+`russianRoulette=False`, `russianRouletteMinBounces=2`, `exposure=1.0` and
+`toneMapper=2` are now the `pack.json` defaults of the `rt` pack rather than
+hard-coded SAPIEN values, and the `rt_batch` `toneMapper` default is 0. A pack
+that declares a different default renders that default.
+
+`camera.set_property` accepts uniform parameters only; a variant parameter raises
+telling you to set it on the `RenderConfig` before creating the camera, and
+`camera.get_property` returns the runtime override or the config's effective value.
+
+`sapien.render.clear_cache(shaders=True)` also drops the parsed manifests, so an
+edited `pack.json` is read again.
 
 Old examples may use `sapien.render_config`; that module does not exist.
 

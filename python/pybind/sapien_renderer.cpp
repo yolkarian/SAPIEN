@@ -486,6 +486,43 @@ template <> struct type_caster<SapienRenderTexture::AddressMode> {
 
 } // namespace pybind11::detail
 
+namespace {
+
+/** a Python bool/int/float/str as a pack.json value; ints stay ints so a float parameter can
+ *  convert them, and anything else is a type error naming the parameter */
+PackValue packValueOf(std::string const &name, py::object const &value) {
+  if (py::isinstance<py::bool_>(value)) {
+    return value.cast<bool>();
+  }
+  if (py::isinstance<py::int_>(value)) {
+    return value.cast<int>();
+  }
+  if (py::isinstance<py::float_>(value)) {
+    return value.cast<float>();
+  }
+  if (py::isinstance<py::str>(value)) {
+    return value.cast<std::string>();
+  }
+  throw std::runtime_error("render config parameter \"" + name +
+                           "\" must be a bool, int, float or str, not " +
+                           std::string(py::str(value.get_type())));
+}
+
+py::object packValueToPython(PackValue const &value) {
+  if (std::holds_alternative<bool>(value)) {
+    return py::bool_(std::get<bool>(value));
+  }
+  if (std::holds_alternative<int>(value)) {
+    return py::int_(std::get<int>(value));
+  }
+  if (std::holds_alternative<float>(value)) {
+    return py::float_(std::get<float>(value));
+  }
+  return py::str(std::get<std::string>(value));
+}
+
+} // namespace
+
 void init_sapien_renderer(py::module &sapien) {
   auto m = sapien.def_submodule("render");
 
@@ -534,8 +571,15 @@ copied.)doc")
           [](bool models, bool images, bool shaders) {
             SapienRenderEngine::Get()->getResourceManager()->clearCachedResources(models, images,
                                                                                   shaders);
+            if (shaders) {
+              // parsed pack.json manifests are cached per pack directory: drop them with the
+              // compiled shaders so an edited pack.json is picked up
+              clearPackManifestCache();
+            }
           },
-          py::arg("models") = true, py::arg("images") = true, py::arg("shaders") = false)
+          py::arg("models") = true, py::arg("images") = true, py::arg("shaders") = false,
+          R"doc(Drop cached models, images and compiled shaders. `shaders=True` also drops the
+parsed pack.json manifests, so an edited pack.json is read again by the next RenderConfig.)doc")
 
       .def(
           "load_scene",
@@ -797,24 +841,31 @@ after that consumer finished.)doc");
 #endif
 
   PyRenderConfig
-      .def(py::init<std::string const &>(), py::arg("shader_pack") = "default",
+      .def(py::init<std::string const &, std::optional<std::string> const &>(),
+           py::arg("shader_pack") = "default", py::arg("preset") = py::none(),
            R"doc(
 Per-camera render configuration replacing the process-wide render setters.
 
 `shader_pack` is a built-in pack name resolved under the shader search path (for example
-"default", "rt", "minimal") or a directory path. It is resolved and validated immediately and
-must contain gbuffer.vert (rasterization) or camera.rgen (ray tracing).
+"default", "rt", "rt_batch") or a directory path. It is resolved and validated immediately: it
+must contain gbuffer.vert (rasterization), camera.rgen (ray tracing) or batch.comp (batched ray
+tracing) next to the pack.json that declares the pack's parameters. A pack without pack.json, or
+with a malformed one, raises.
+
+`preset` expands a preset of that pack.json into assignments, for example
+``RenderConfig("rt_batch", preset="pbr")``.
 
 Consumers copy the config: editing it afterwards does not affect cameras or windows that
 already exist.
 
-Properties become renderer custom properties and are validated when a renderer is created:
-ray tracing packs declare them as push constants (spp, maxDepth, aperture, focusPlane,
-russianRoulette, russianRouletteMinBounces, exposure, toneMapper), rasterization packs as
-specialization constants (exposure, toneMapper, ambientOcclusionStrength, ...).
+``cfg[name] = value`` is checked immediately against pack.json (unknown name, wrong type or out
+of range raise naming the key and the pack) and ``cfg[name]`` returns the effective value: the
+assignment, else the parameter's default. Use ``cfg.parameters`` to inspect the pack's
+parameters and ``cfg.presets`` the preset names.
 )doc")
       .def_property("shader_pack", &RenderConfig::getShaderPack, &RenderConfig::setShaderPack,
-                    "Canonical shader pack directory.")
+                    R"doc(Canonical shader pack directory. Assigning re-validates every explicit
+assignment against the new pack.json and raises without changing anything if one is invalid.)doc")
       .def_property_readonly("kind", &RenderConfig::getKindName, R"doc(
 What the pack renders: "raster" (gbuffer.vert), "ray_tracing" (camera.rgen, one renderer per
 camera) or "batch_ray_tracing" (batch.comp, one renderer per RenderCameraGroup). A batch pack has
@@ -823,37 +874,58 @@ no per-camera renderer: add its cameras to one RenderCameraGroup.)doc")
                              "True for both ray tracing kinds, including batch_ray_tracing.")
       .def_property_readonly("is_batch_ray_tracing", &RenderConfig::isBatchRayTracing,
                              "True when the pack renders only through a RenderCameraGroup.")
-      .def("__getitem__",
-           [](RenderConfig const &config, std::string const &name) -> py::object {
-             auto value = config.getProperty(name);
-             if (std::holds_alternative<int>(value)) {
-               return py::int_(std::get<int>(value));
-             }
-             return py::float_(std::get<float>(value));
-           },
-           py::arg("name"))
+      .def(
+          "__getitem__",
+          [](RenderConfig const &config, std::string const &name) {
+            // an unassigned parameter reports its pack.json default; an unknown one raises
+            return packValueToPython(config.getParameter(name));
+          },
+          py::arg("name"), "Effective value of a parameter: the assignment, else the default.")
       .def("__setitem__",
            [](RenderConfig &config, std::string const &name, py::object const &value) {
-             if (py::isinstance<py::bool_>(value)) {
-               config.setProperty(name, value.cast<bool>() ? 1 : 0);
-             } else if (py::isinstance<py::int_>(value)) {
-               config.setProperty(name, value.cast<int>());
-             } else if (py::isinstance<py::float_>(value)) {
-               config.setProperty(name, value.cast<float>());
-             } else {
-               throw std::runtime_error("render config property \"" + name +
-                                        "\" must be an int, float or bool");
-             }
+             config.setParameter(name, packValueOf(name, value));
            },
-           py::arg("name"), py::arg("value"))
-      .def("__contains__", [](RenderConfig const &config, std::string const &name) {
-        return config.hasProperty(name);
-      })
-      .def("__delitem__", &RenderConfig::removeProperty, py::arg("name"))
+           py::arg("name"), py::arg("value"),
+           "Assign a parameter, checked against pack.json: name, type and range.")
+      .def("__contains__",
+           [](RenderConfig const &config, std::string const &name) {
+             return config.hasParameter(name);
+           },
+           py::arg("name"), "True when the parameter is explicitly assigned.")
+      .def("__delitem__", &RenderConfig::removeParameter, py::arg("name"),
+           "Revert a parameter to its pack.json default.")
       .def_property_readonly("properties", &RenderConfig::getProperties,
-                             "Copy of the shader properties as a dict.")
-      .def_property("defines", &RenderConfig::getDefines, &RenderConfig::setDefines,
-                    "Shader preprocessor definitions, name -> value (a bare name uses \"\").")
+                             "Copy of the explicitly assigned parameters as a dict.")
+      .def_property_readonly(
+          "parameters",
+          [](RenderConfig const &config) {
+            // a dict keeps insertion order, which is the file order of pack.json
+            py::dict result;
+            for (auto const &parameter : config.describeParameters()) {
+              py::dict described;
+              described["kind"] = parameter.kind;
+              described["type"] = parameter.type;
+              described["default"] = packValueToPython(parameter.defaultValue);
+              if (parameter.minimum) {
+                described["minimum"] = *parameter.minimum;
+              }
+              if (parameter.maximum) {
+                described["maximum"] = *parameter.maximum;
+              }
+              if (!parameter.values.empty()) {
+                described["values"] = parameter.values;
+              }
+              described["description"] = parameter.description;
+              result[py::str(parameter.name)] = described;
+            }
+            return result;
+          },
+          R"doc(Copy of the pack.json parameters, in file order: name -> dict with "kind"
+("uniform" or "variant"), "type" ("bool", "int", "float" or "enum"), "default", the inclusive
+"minimum"/"maximum" of numeric parameters, the "values" of enum parameters and a
+"description".)doc")
+      .def_property_readonly("presets", &RenderConfig::getPresets,
+                             "Preset names the pack.json declares, in file order.")
       .def_property("denoiser", &RenderConfig::getDenoiser, &RenderConfig::setDenoiser,
                     "Ray tracing denoiser; a rasterization pack rejects a denoiser other than "
                     "'none' when the renderer is created.")
@@ -1360,15 +1432,20 @@ the camera keeps the config it copied.)doc")
 
       .def(
           "set_property",
-          py::overload_cast<const std::string &, float>(&SapienRenderCameraComponent::setProperty),
+          [](SapienRenderCameraComponent &camera, std::string const &name,
+             py::object const &value) {
+            // bool is a separate Python type but travels as an int specialization constant
+            camera.setParameter(name, packValueOf(name, value));
+          },
           py::arg("name"), py::arg("value"),
-          R"doc(Runtime per-camera property setter. Once the camera has a renderer, an unknown
-name or a wrong type raises naming the key and the shader pack.)doc")
-      .def("set_property",
-           py::overload_cast<const std::string &, int>(&SapienRenderCameraComponent::setProperty),
-           py::arg("name"), py::arg("value"))
+          R"doc(Runtime per-camera override of one uniform parameter of this camera's pack.
+
+A variant parameter raises (it selects shader source: set it on the RenderConfig before creating
+the camera), as do an unknown name, a wrong type and an out-of-range value. All three are
+checked against the pack's pack.json, before the renderer sees the value.)doc")
       .def("get_property", &SapienRenderCameraComponent::getProperty, py::arg("name"),
-           "Current value of a property set on this camera.")
+           R"doc(Runtime override of a property, else the config's effective value. A bool
+parameter reads as 0 or 1.)doc")
       .def("set_texture", &SapienRenderCameraComponent::setTexture, py::arg("name"),
            py::arg("texture"))
       .def("set_texture_array", &SapienRenderCameraComponent::setTextureArray, py::arg("name"),
@@ -1594,9 +1671,10 @@ at construction.)doc")
 
       .def("set_render_config", &SapienRendererWindow::setRenderConfig, py::arg("render_config"),
            R"doc(
-Replace the renderer with one built from `render_config`. Property values that the new pack
-also declares with the same type carry over, so the viewer's pack switcher keeps its spp,
-depth and exposure.)doc")
+Replace the renderer with one built from `render_config`. Explicit parameter assignments the
+new pack also declares with a compatible type carry over (an int for a float parameter
+included); everything else takes the new pack's pack.json defaults, so the viewer's pack
+switcher keeps its spp, depth and exposure.)doc")
       .def_property_readonly("render_config", &SapienRendererWindow::getRenderConfig,
                              "Render config of the current renderer.")
       .def("get_content_scale", &SapienRendererWindow::getContentScale)

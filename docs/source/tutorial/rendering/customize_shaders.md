@@ -25,8 +25,10 @@ To locate the installed shader directory:
 python -c 'import importlib.resources as r; print(r.files("sapien").joinpath("vulkan_shader"))'
 ```
 
-Select a shader pack per consumer with `sapien.render.RenderConfig`, or change
-the process-wide defaults that new cameras and windows copy:
+Every pack declares what a `RenderConfig` may set in its `pack.json`; see
+[pack.json](#pack-json) below. Select a shader pack per consumer with
+`sapien.render.RenderConfig`, or change the process-wide defaults that new cameras
+and windows copy:
 
 ```python
 import sapien
@@ -51,6 +53,100 @@ search path. A custom directory path can also be supplied, and
 `config.shader_pack` returns the canonical directory. Consumers copy the config
 they are given: editing it afterwards does not affect cameras or windows that
 already exist.
+
+## pack.json
+
+Every shader pack directory must contain a `pack.json` next to its entry point
+(`gbuffer.vert`, `camera.rgen` or `batch.comp`). A pack without one, or with a
+malformed one, raises when a `RenderConfig` names it, and the message names the
+directory and points here. The file declares the pack's **parameters** and its
+optional **presets**:
+
+```json
+{
+  "parameters": {
+    "spp": {
+      "kind": "uniform",
+      "type": "int",
+      "default": 32,
+      "minimum": 1,
+      "description": "Samples per pixel accumulated per frame."
+    },
+    "shading": {
+      "kind": "variant",
+      "type": "enum",
+      "values": ["visibility", "lambert", "pbr"],
+      "default": "lambert",
+      "define": {
+        "visibility": "SHADING_VISIBILITY",
+        "lambert": "SHADING_LAMBERT",
+        "pbr": "SHADING_PBR"
+      },
+      "description": "Shading tier."
+    }
+  },
+  "presets": {"pbr": {"shading": "pbr"}}
+}
+```
+
+Each parameter takes:
+
+| Field | Meaning |
+|---|---|
+| `kind` | `"uniform"`: applied to the renderer (a specialization constant of a rasterization pack, a push-constant member of a ray-tracing pack). `"variant"`: selects shader source through a preprocessor definition and is fixed for the life of a renderer. |
+| `type` | `"bool"`, `"int"`, `"float"` or `"enum"` (variants only; a uniform enum is rejected). |
+| `default` | Required. The value the parameter takes when a config does not assign it. This is the pack's only default: the renderer applies it. |
+| `minimum`, `maximum` | Optional inclusive bounds of an int or float, checked at assignment. |
+| `values` | Required for an enum: the allowed strings. |
+| `define` | Variants only. A bool variant defines its name when true; an int or float variant defines `NAME value`; an enum variant maps each value to a definition (`""` defines nothing). |
+| `description` | Optional one-sentence text, reported through `RenderConfig.parameters`. |
+
+`presets` maps a preset name to parameter assignments:
+`RenderConfig("rt_batch", preset="pbr")` assigns `shading = "pbr"`, exactly as if
+every entry had been written to the config. An unknown preset raises naming the
+pack and the presets it declares.
+
+Assignment is checked immediately against the manifest, so a typo or a wrong type
+fails where it is written rather than at renderer creation:
+
+```python
+config = sapien.render.RenderConfig("rt_batch")
+config["spp"] = 8            # int parameter
+config["shadows"] = True     # bool variant: defines SHADOWS
+config["shading"] = "pbr"    # enum variant: defines SHADING_PBR
+config["exposure"]           # 1.0, the pack.json default
+print(config.parameters["spp"])   # kind, type, default, minimum, description
+print(config.presets)             # ["visibility", "lambert", "pbr"]
+```
+
+- `cfg[name] = value` raises `RuntimeError` naming the key and the pack for an
+  unknown name, a wrong type and an out-of-range value; an `int` assigned to a
+  `float` parameter is accepted and stored as a float.
+- `cfg[name]` returns the **effective** value: the assignment, else the default.
+  `name in cfg` is true only for explicit assignments; `del cfg[name]` reverts to
+  the default.
+- `cfg.properties` is the dict of explicit assignments only.
+- Assigning `cfg.shader_pack` re-validates every explicit assignment against the
+  new pack.json and raises without changing anything if one is invalid.
+
+A **uniform** parameter is applied with its effective value every time a renderer
+is created or the config is applied to an existing one: a bool as `0`/`1`, an int
+as an integer specialization constant or push-constant member, a float likewise.
+When the shader does not declare a uniform the manifest declares (or declares it
+with another scalar type) the renderer creation raises `RuntimeError` naming the
+parameter, the declared type and the pack, e.g. `<pack>/pack.json declares uniform
+"spp" as int but the shader declares it as float`. There are no SAPIEN-side
+defaults beyond the manifest: a pack that declares `spp` with default 32 renders
+32 samples per pixel without any assignment.
+
+A **variant** parameter produces the pack's preprocessor definitions from the
+effective values (`bool true` → `NAME`, `int`/`float` → `NAME value`, enum → its
+mapped name). `camera.set_property` rejects a variant parameter: recreate the
+camera with a config that assigns it instead.
+
+The parsed manifests are cached per pack directory. After editing a `pack.json`
+call `sapien.render.clear_cache(models=False, images=False, shaders=True)`, which
+drops them together with the compiled shaders.
 
 ## Shader ownership
 
@@ -81,13 +177,14 @@ camera.set_property("exposure", 1.0)
 camera.set_property("toneMapper", 2)  # 0: gamma 2.2, 1: sRGB, 2: ACES + sRGB
 ```
 
-These are the same properties a `RenderConfig` carries; set them on the config
-to fix them before the camera exists, or through `camera.set_property` at
-runtime.
+These are uniform parameters of the pack's `pack.json`, applied from the
+`RenderConfig` at creation; `camera.set_property` overrides one at runtime.
 
-The viewer's Render panel exposes the same controls for both rasterization and
-ray tracing. Ray-tracing `HdrColor` and `Radiance` targets remain linear; use
-`Color` when saving a display-ready image.
+The viewer's Render panel builds one widget per uniform parameter from
+`RenderConfig.parameters`, so it exposes exactly the parameters of the current
+pack (types and ranges included) for both rasterization and ray tracing.
+Ray-tracing `HdrColor` and `Radiance` targets remain linear; use `Color` when
+saving a display-ready image.
 
 ## Default visual style
 
@@ -214,9 +311,11 @@ camera = scene.add_camera(
 )
 ```
 
-When an RT pack is used and a key is absent, SAPIEN's defaults apply:
-`russianRoulette=0`, `aperture=0.0`, `focusPlane=1.0`, and no denoiser.
-`spp` and `maxDepth` come from the pack unless the config sets them.
+When a key is absent, the pack.json default applies: the built-in `rt` pack
+declares `spp=32`, `maxDepth=8`, `aperture=0.0`, `focusPlane=1.0`,
+`russianRoulette=False`, `russianRouletteMinBounces=2`, `exposure=1.0` and
+`toneMapper=2`. The denoiser is a separate `RenderConfig` property and defaults
+to none.
 
 The renderer fills these optional push-constant members by name when a pack
 declares them: `frameCount` (frames accumulated since the last restart; `0`
@@ -240,7 +339,7 @@ reports it as `"batch_ray_tracing"`, and such a pack has no per-camera renderer:
 example is `vulkan_shader/rt_batch`.
 
 `batch.comp` is a compute shader with `local_size` 8x8x1, compiled at run time like
-any other pack, so `config.defines` applies:
+any other pack, so the variant parameters of its `pack.json` apply:
 
 ```
 gl_GlobalInvocationID.xy   pixel
@@ -249,12 +348,13 @@ gl_GlobalInvocationID.z    camera row of the group
 
 One dispatch covers every camera of the group. All cameras share one resolution;
 `width`, `height` and `cameraCount` are push-constant members the renderer
-writes. Every other `int`/`float` push-constant member is a property set
-through the camera group's `RenderConfig` (the built-in pack declares `exposure`,
-default 1.0, `toneMapper` and `spp`); a config property the pack does not declare
-raises at `gpu_init()`. Each camera row carries the index of its environment; trace with
-`GL_EXT_ray_query` against `tlas[nonuniformEXT(envIndex)]`, since neighbouring
-workgroups may belong to different environments.
+writes. Every other push-constant member is a **uniform** parameter of the pack's
+`pack.json`, applied from the group's `RenderConfig` (the built-in pack declares
+`exposure` default 1.0, `toneMapper` default 0 and `spp` default 1, 1..32); a
+uniform the shader does not declare raises at `gpu_init()`. Each camera row
+carries the index of its environment; trace with `GL_EXT_ray_query` against
+`tlas[nonuniformEXT(envIndex)]`, since neighbouring workgroups may belong to
+different environments.
 
 ### Output blocks
 
@@ -292,16 +392,25 @@ type must equal the requested format or construction raises.
 
 ### Shading tiers
 
-Select a tier with a define; the tier is fixed for the life of the camera group:
+The tier is the `shading` **variant** parameter; it is fixed for the life of the
+camera group because it selects shader source:
 
-- `SHADING_VISIBILITY` — primary ray only; albedo, depth, normal, position, segmentation.
-- `SHADING_LAMBERT` (default) — emission + albedo·(ambient + Σ lights N·L).
-- `SHADING_PBR` — adds the GGX specular lobe of `common/bsdf.glsl`.
+- `visibility` (`SHADING_VISIBILITY`) — primary ray only; albedo, depth, normal, position,
+  segmentation.
+- `lambert` (`SHADING_LAMBERT`, the default) — emission + albedo·(ambient + Σ lights N·L).
+- `pbr` (`SHADING_PBR`) — adds the GGX specular lobe of `common/bsdf.glsl`.
 
-`SHADOWS` casts a hard shadow ray for each of the first `MAX_SHADOW_LIGHTS` (default
-4) lights facing the surface point; later lights are unshadowed. `SPP` > 1
-supersamples the primary ray with a fixed, deterministic Halton pattern; there is no
-accumulation and no denoiser. The pure BSDF functions live in
+```python
+config = sapien.render.RenderConfig("rt_batch", preset="pbr")
+config["shadows"] = True    # the `shadows` bool variant defines SHADOWS
+config["maxShadowLights"] = 2
+```
+
+The `shadows` bool variant casts a hard shadow ray for each of the first
+`maxShadowLights` (default 4) lights facing the surface point; later lights are
+unshadowed. The `spp` uniform supersamples the primary ray with a fixed,
+deterministic Halton pattern; there is no accumulation and no denoiser, and there is
+no `SPP` preprocessor definition. The pure BSDF functions live in
 `vulkan_shader/common/bsdf.glsl`, shared with the `rt` pack, so a custom batched pack
 and the `rt` pack shade identically when they use the same tier.
 
@@ -324,13 +433,17 @@ is rasterization-only and raises on an RT config.
 
 ## Tips for custom packs
 
-0. Shader files are compiled when a pack is first used and the pack is then
-   cached. After editing a file or one of its includes, call
+0. Shader files and the pack's `pack.json` are compiled and parsed when a pack
+   is first used and then cached. After editing a file, one of its includes or the
+   `pack.json`, call
    `sapien.render.clear_cache(models=False, images=False, shaders=True)` and
    create a new camera; a compile error raises `RuntimeError` with the file
-   and line. `config.defines` selects a preprocessor variant: each entry is
-   inserted as `#define NAME value` (`#define NAME` when the value is empty).
-1. Copy an existing pack from `vulkan_shader/default` or `vulkan_shader/rt`.
+   and line.
+1. Copy an existing pack from `vulkan_shader/default` or `vulkan_shader/rt`,
+   including its `pack.json`, and delete the parameters your shader does not
+   declare. A parameter the manifest keeps but the shader drops raises when a
+   renderer is created.
+
 2. Point the camera and viewer configs to your copy:
    `sapien.render.RenderConfig("/path/to/pack")`.
 3. Keep the required buffer and sampler names unchanged unless you also update

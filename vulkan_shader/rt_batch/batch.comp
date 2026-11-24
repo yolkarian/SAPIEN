@@ -36,12 +36,9 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 #define SHADING_LIGHTING 1
 #endif
 
-// Samples per pixel of the primary ray. SPP > 1 supersamples with a fixed Halton(2, 3) pattern:
-// deterministic, no random numbers and no accumulation. The push constant "spp" overrides it at
-// run time (the RenderConfig property "spp"), so SPP is only the default of a variant.
-#ifndef SPP
-#define SPP 1
-#endif
+// Samples per pixel of the primary ray: the push constant "spp" (the RenderConfig parameter
+// "spp", 1..BATCH_MAX_SPP) spreads a fixed Halton(2, 3) pattern over the pixel. Deterministic, no
+// random numbers and no accumulation.
 #define BATCH_MAX_SPP 32
 
 // Hard shadow rays: the first MAX_SHADOW_LIGHTS lights that face a surface point (in light
@@ -716,7 +713,7 @@ void main() {
   float depth = 0.0;
   float nearest = 0.0;
 
-  int samples = spp > 0 ? clamp(spp, 1, BATCH_MAX_SPP) : SPP;
+  int samples = clamp(spp, 1, BATCH_MAX_SPP);
   for (int s = 0; s < samples; ++s) {
     // one sample reads the pixel centre, exactly like a rasterizer's pixel; more samples spread
     // a fixed Halton(2, 3) pattern over the pixel

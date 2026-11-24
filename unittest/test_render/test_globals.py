@@ -37,16 +37,32 @@ class TestGlobals(unittest.TestCase):
         self.assertAlmostEqual(config["aperture"], 0.02)
         self.assertIn("spp", config)
         self.assertNotIn("maxDepth", config)
+        # an unassigned parameter reads its pack.json default
+        self.assertEqual(config["maxDepth"], 8)
 
         properties = config.properties
+        # values live in the renderer as float32, so a float reads back with float32 precision
         self.assertEqual(properties["spp"], 7)
+        self.assertAlmostEqual(properties["aperture"], 0.02, places=6)
         properties["spp"] = 99  # a copy
         self.assertEqual(config["spp"], 7)
 
         del config["spp"]
         self.assertNotIn("spp", config)
-        with self.assertRaisesRegex(RuntimeError, "spp"):
-            config["spp"]
+        self.assertEqual(config["spp"], 32)
+
+    def test_render_config_parameters_and_presets(self) -> None:
+        config = sapien.render.RenderConfig("rt_batch")
+        self.assertEqual(
+            list(config.parameters),
+            ["exposure", "toneMapper", "spp", "shading", "shadows", "maxShadowLights"],
+        )
+        shading = config.parameters["shading"]
+        self.assertEqual(shading["kind"], "variant")
+        self.assertEqual(shading["type"], "enum")
+        self.assertEqual(shading["default"], "lambert")
+        self.assertEqual(shading["values"], ["visibility", "lambert", "pbr"])
+        self.assertEqual(config.presets, ["visibility", "lambert", "pbr"])
 
     def test_render_config_rejects_non_numeric_property(self) -> None:
         config = sapien.render.RenderConfig("rt")

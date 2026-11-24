@@ -255,11 +255,13 @@ all raise. Read pictures from the camera group instead.
   `[camera][height][width][channel]`. Create one camera group per resolution.
 - Different camera groups of one `RenderSystemGroup` may use different kinds,
   for example one raster group and one `rt_batch` group.
-- Shader properties come from the config and apply to the whole group:
-  `config["exposure"]` (default 1.0), `config["toneMapper"]` (0 gamma 2.2,
-  1 sRGB, 2 ACES) and `config["spp"]` (primary-ray samples, default from the
-  `SPP` define). `camera.set_property` raises for a batch camera, and an
-  undeclared property raises at `gpu_init()` naming the key and the pack.
+- Uniform parameters come from the config and apply to the whole group:
+  `config["exposure"]` (default 1.0), `config["toneMapper"]` (default 0, 0 gamma
+  2.2, 1 sRGB, 2 ACES) and `config["spp"]` (default 1, 1..32 primary-ray
+  samples). Variant parameters — `shading`, `shadows`, `maxShadowLights` —
+  select shader source and are fixed when the group renderer is built.
+  `camera.set_property` raises for a batch camera, and a uniform the shader does
+  not declare raises at `gpu_init()` naming the parameter and the pack.
 - The lifecycle is unchanged: construct → `set_cuda_poses` → `create_camera_group`
   → pose modes → `gpu_init()` → per frame `update_render()` + `take_picture()` +
   `get_picture_cuda(name)`. CUDA-sourced poses, `'cpu'` and `'cuda'` camera pose
@@ -298,27 +300,38 @@ channels and the rasterizer's normalized depth in its fourth; a miss leaves all
 four at zero except the depth of 1.
 `Segmentation` is the rasterizer's `uvec4` per-object segmentation id.
 
-### Shading tiers and defines
+### Shading tiers and variants
 
-The pack selects a tier with a define; the tier is fixed for the life of the
-camera group.
+The pack selects a tier with the `shading` **variant** parameter of its
+`pack.json`; the tier is fixed for the life of the camera group because it selects
+shader source.
 
-| Define | Content |
-|---|---|
-| `SHADING_VISIBILITY` | one primary ray; albedo, depth, normal, position, segmentation |
-| `SHADING_LAMBERT` (default) | emission + albedo·(ambient + Σ light N·L) |
-| `SHADING_PBR` | diffuse + GGX specular direct light, ambient term |
+| `shading` | Shader define | Content |
+|---|---|---|
+| `"visibility"` | `SHADING_VISIBILITY` | one primary ray; albedo, depth, normal, position, segmentation |
+| `"lambert"` (default) | `SHADING_LAMBERT` | emission + albedo·(ambient + Σ light N·L) |
+| `"pbr"` | `SHADING_PBR` | diffuse + GGX specular direct light, ambient term |
 
-`SHADOWS` casts one hard shadow ray per light for the first `MAX_SHADOW_LIGHTS`
-(default 4) lights facing the surface point, in the order point, directional,
-spot, parallelogram; later lights are unshadowed. `SPP` > 1 supersamples the
-primary ray with a fixed Halton pattern: deterministic, no random numbers, no
-accumulation or denoiser. Parallelogram
-lights are sampled at their centre with a hard shadow.
+The `shadows` bool variant defines `SHADOWS`: one hard shadow ray per light for the
+first `maxShadowLights` (default 4) lights facing the surface point, in the order
+point, directional, spot, parallelogram; later lights are unshadowed. The `spp`
+uniform (default 1, 1..32) supersamples the primary ray with a fixed Halton pattern:
+deterministic, no random numbers, no accumulation or denoiser. Parallelogram lights
+are sampled at their centre with a hard shadow.
 
-Set them through `config.defines`:
+Set the variants through the config, before creating the camera or the camera group:
 
 ```python
 config = sapien.render.RenderConfig("rt_batch")
-config.defines = {"SHADING_PBR": "", "SHADOWS": "", "SPP": "4"}
+config["shading"] = "pbr"
+config["shadows"] = True
+config["maxShadowLights"] = 2
+config["spp"] = 4
+
+# the pack declares the same tiers as presets:
+pbr = sapien.render.RenderConfig("rt_batch", preset="pbr")
 ```
+
+Assigning a variant on a live camera through `camera.set_property` raises: a variant
+selects shader source and cannot change after renderer creation. `cfg["spp"]` is a
+uniform and stays settable at runtime.

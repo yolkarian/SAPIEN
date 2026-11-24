@@ -10,6 +10,7 @@
 #include "sapien/sapien_renderer/render_body_component.h"
 #include "sapien/sapien_renderer/sapien_renderer_default.h"
 #include "sapien/sapien_renderer/sapien_renderer_system.h"
+#include <algorithm>
 #include <svulkan2/renderer/rt_renderer.h>
 #include <svulkan2/scene/scene_group.h>
 
@@ -182,29 +183,21 @@ void SapienRendererWindow::setRenderConfig(RenderConfig const &renderConfig) {
   mRequiresRebuild = true;
   mContext->waitIdle();
 
-  auto renderer = createRenderer(mContext, renderConfig);
-  // The Viewer's render panel switches packs at runtime: keep the current values of properties
-  // that the new pack also declares with the same type, unless the new config sets them itself.
+  // The Viewer's render panel switches packs at runtime: keep the explicit values of the
+  // parameters the new pack also declares with a compatible type, unless the new config assigns
+  // them itself. Every other parameter takes the new pack.json's default.
   RenderConfig config = renderConfig;
   for (auto const &[name, value] : mRenderConfig.getProperties()) {
-    if (config.hasProperty(name)) {
+    if (config.hasParameter(name) || !config.declaresParameter(name)) {
       continue;
     }
-    bool isInt = std::holds_alternative<int>(value);
-    auto declared = renderer->getCustomPropertyType(name);
-    if (isInt ? declared == svulkan2::renderer::CustomPropertyType::eInt
-              : declared == svulkan2::renderer::CustomPropertyType::eFloat) {
-      if (isInt) {
-        auto v = std::get<int>(value);
-        renderer->setCustomProperty(name, v);
-        config.setProperty(name, v);
-      } else {
-        auto v = std::get<float>(value);
-        renderer->setCustomProperty(name, v);
-        config.setProperty(name, v);
-      }
+    try {
+      config.setParameter(name, value);
+    } catch (std::runtime_error const &) {
+      // the new pack declares the same name with another type or range: keep its default
     }
   }
+  auto renderer = createRenderer(mContext, config);
 
   mSVulkanRenderer = std::move(renderer);
   mRenderConfig = config;
@@ -218,11 +211,22 @@ void SapienRendererWindow::setRenderConfig(RenderConfig const &renderConfig) {
 
 RenderConfig SapienRendererWindow::getRenderConfig() const {
   RenderConfig config = mRenderConfig;
+  auto const parameters = config.describeParameters();
   for (auto const &[name, value] : mRenderConfig.getProperties()) {
-    if (std::holds_alternative<int>(value)) {
-      config.setProperty(name, mSVulkanRenderer->getCustomPropertyInt(name));
+    auto const it = std::find_if(parameters.begin(), parameters.end(),
+                                 [&](RenderConfigParameter const &p) { return p.name == name; });
+    if (it == parameters.end()) {
+      continue;
+    }
+    if (it->type == "float") {
+      config.setParameter(name, mSVulkanRenderer->getCustomPropertyFloat(name));
     } else {
-      config.setProperty(name, mSVulkanRenderer->getCustomPropertyFloat(name));
+      int const integer = mSVulkanRenderer->getCustomPropertyInt(name);
+      if (it->type == "bool") {
+        config.setParameter(name, integer != 0);
+      } else {
+        config.setParameter(name, integer);
+      }
     }
   }
   return config;
@@ -595,14 +599,20 @@ void SapienRendererWindow::setCameraProperty(std::string const &name, float prop
   mSVulkanRenderer->setCustomProperty(name, property);
   if (mSVulkanRenderer->getCustomPropertyType(name) ==
       svulkan2::renderer::CustomPropertyType::eFloat) {
-    mRenderConfig.setProperty(name, property);
+    mRenderConfig.setParameter(name, property);
   }
 }
 void SapienRendererWindow::setCameraProperty(std::string const &name, int property) {
   mSVulkanRenderer->setCustomProperty(name, property);
   if (mSVulkanRenderer->getCustomPropertyType(name) ==
       svulkan2::renderer::CustomPropertyType::eInt) {
-    mRenderConfig.setProperty(name, property);
+    // a bool uniform travels as an int specialization constant; keep the parameter a bool
+    auto const parameters = mRenderConfig.describeParameters();
+    auto const it = std::find_if(parameters.begin(), parameters.end(),
+                                 [&](RenderConfigParameter const &p) { return p.name == name; });
+    mRenderConfig.setParameter(name, it != parameters.end() && it->type == "bool"
+                                         ? PackValue(property != 0)
+                                         : PackValue(property));
   }
 }
 

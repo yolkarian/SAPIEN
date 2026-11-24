@@ -119,10 +119,6 @@ BatchRTRenderer::BatchRTRenderer(std::shared_ptr<core::Context> context,
     mPictureBytes = static_cast<vk::DeviceSize>(mWidth) * mHeight * getFormatSize(declared);
   }
 
-  // the ray tracing renderers' default exposure; every other property starts at zero
-  if (getCustomPropertyType("exposure") == CustomPropertyType::eFloat) {
-    mProperties["exposure"] = 1.f;
-  }
 }
 
 BatchRTRenderer::~BatchRTRenderer() = default;

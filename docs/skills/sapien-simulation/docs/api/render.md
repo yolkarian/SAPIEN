@@ -35,7 +35,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | Class | Bases | Use | Notes |
 |---|---|---|---|
 | `sapien.render.RenderBodyComponent` | `sapien.Component` | Render body; holds RenderShape. |  |
-| `sapien.render.RenderConfig` |  | Per-camera render configuration: shader pack, shader properties, defines, denoiser, MSAA, picture formats. `kind` is `"raster"`, `"ray_tracing"` or `"batch_ray_tracing"`. | Consumers copy it; unknown property names or wrong types raise `RuntimeError` naming key and pack. `cfg["spp"]`, `cfg.denoiser`, `cfg.defines`, `cfg.picture_formats`, `cfg.msaa`, `cfg.kind`, `cfg.is_batch_ray_tracing`, `cfg.copy()`. A `batch_ray_tracing` pack (`vulkan_shader/rt_batch`, `batch.comp`) has no per-camera renderer: only `RenderCameraGroup.take_picture()` / `get_picture_cuda(name)` render it. |
+| `sapien.render.RenderConfig` |  | Per-camera render configuration: shader pack, its `pack.json` parameters, denoiser, MSAA, picture formats. `kind` is `"raster"`, `"ray_tracing"` or `"batch_ray_tracing"`. | Consumers copy it. Every pack dir needs `pack.json`: assignment-time validation, `cfg["spp"]` (effective value), `cfg.parameters`, `cfg.presets`, `RenderConfig(pack, preset=...)`, `cfg.denoiser`, `cfg.picture_formats`, `cfg.msaa`, `cfg.kind`, `cfg.is_batch_ray_tracing`, `cfg.copy()`. Unknown names, wrong types and out-of-range values raise `RuntimeError` naming key and pack at assignment; `cfg.defines` is gone (variants like `cfg["shadows"] = True`). A `batch_ray_tracing` pack (`vulkan_shader/rt_batch`, `batch.comp`) has no per-camera renderer: only `RenderCameraGroup.take_picture()` / `get_picture_cuda(name)` render it. |
 | `sapien.render.RenderCameraComponent` | `sapien.Component` | Camera component; read image/CUDA image after take_picture. |  |
 | `sapien.render.RenderCameraGroup` |  | Batched camera group; take/read CUDA for multiple cameras at once. |  |
 | `sapien.render.RenderCubemap` |  | Environment cubemap. |  |
@@ -158,11 +158,12 @@ image width/height ratio, including portrait images.
 | `set_orthographic_parameters` | method | `set_orthographic_parameters(self, near: float, far: float, top: float) -> None<br>set_orthographic_parameters(self, near: float, far: float, left: float, right: float, bottom: float, top: float) -> None` |  |  |
 | `set_perspective_parameters` | method | `set_perspective_parameters(self, near: float, far: float, fx: float, fy: float, cx: float, cy: float, skew: float) -> None` |  |  |
 | `set_principal_point` | method | `set_principal_point(self, cx: float, cy: float) -> None` |  |  |
-| `set_property` | method | `set_property(self, name: str, value: float) -> None<br>set_property(self, name: str, value: int) -> None` | Validated against the camera's pack; raises for a `batch_ray_tracing` camera, whose properties come from its `RenderConfig`. |
+| `set_property` | method | `set_property(self, name: str, value: bool \| int \| float \| str) -> None` | Runtime override of one **uniform** parameter of the camera's pack, validated against its `pack.json` (unknown name, wrong type, out of range). A variant parameter raises (set it on the `RenderConfig` before creating the camera); a `batch_ray_tracing` camera raises for every property, since its properties come from the group's `RenderConfig`. |
 | `set_skew` | method | `set_skew(self, skew: float) -> None` |  |  |
 | `set_texture` | method | `set_texture(self, name: str, texture: RenderTexture) -> None` |  |  |
 | `set_texture_array` | method | `set_texture_array(self, name: str, textures: list[RenderTexture]) -> None` |  |  |
 | `take_picture` | method | `take_picture(self) -> None` | Trigger camera/camera-group rendering. |  |
+| `get_property` | method | `get_property(self, name: str) -> bool \| int \| float` | Runtime override of a uniform parameter, else the config's effective value. | A bool parameter reads as 0 or 1; a variant parameter raises. |
 | `width` | property | `width(self) -> int` |  |  |
 | `__init__` | method | `__init__(self, width: int, height: int, render_config: RenderConfig | None = None) -> None` |  |  |
 | `_cuda_buffer` | property | `_cuda_buffer(self) -> sapien.CudaArray` | Debug only. Get the CUDA buffer containing GPU data for this camera, including transformaion matrices, sizes, and user-defined shader fields. |  |

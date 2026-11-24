@@ -84,7 +84,7 @@ public:
       : mContext(std::move(context)), mCameras(cameras), mRenderTargets(renderTargets) {
     auto const &config = mCameras.front()->getRenderConfig();
     mRenderer = std::make_unique<svulkan2::renderer::BatchRTRenderer>(
-        mContext, config.getShaderPack(), config.getDefines(),
+        mContext, config.getShaderPack(), config.getShaderDefinitions(),
         static_cast<int>(mCameras.front()->getWidth()),
         static_cast<int>(mCameras.front()->getHeight()), mRenderTargets,
         config.getPictureFormats());

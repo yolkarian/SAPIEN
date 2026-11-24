@@ -20,10 +20,9 @@ except ImportError:  # pragma: no cover - the batched pictures are CUDA buffers
 SIZE = 64
 
 
-def batch_config(**properties: float) -> "sapien.render.RenderConfig":
+def batch_config(**properties) -> "sapien.render.RenderConfig":
     """A `rt_batch` config with the visibility tier: one primary ray, no lighting."""
-    config = sapien.render.RenderConfig("rt_batch")
-    config.defines = {"SHADING_VISIBILITY": ""}
+    config = sapien.render.RenderConfig("rt_batch", preset="visibility")
     config["spp"] = 1
     for name, value in properties.items():
         config[name] = value
@@ -354,7 +353,7 @@ class TestBatchLighting(unittest.TestCase):
         try:
             unshadowed = color(sapien.render.RenderConfig("rt_batch"), "unshadowed")
             shadowed_config = sapien.render.RenderConfig("rt_batch")
-            shadowed_config.defines = {"SHADOWS": ""}
+            shadowed_config["shadows"] = True
             shadowed = color(shadowed_config, "shadowed")
         finally:
             scene.close()
@@ -446,14 +445,9 @@ class TestBatchMisuse(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "batched ray tracing"):
             camera.set_property("exposure", 2.0)
 
-        # an undeclared config property fails when the group renderer is built
-        unknown = batch_config(not_declared=1)
-        unknown_camera = scene.add_camera("unknown", SIZE, SIZE, 1.0, 0.05, 20.0,
-                                          render_config=unknown)
-        with sapien.render.RenderSystemGroup([scene.render_system]) as group:
-            group.create_camera_group([unknown_camera], ["Color"])
-            with self.assertRaisesRegex(RuntimeError, "not_declared.*rt_batch"):
-                group.gpu_init()
+        # an undeclared parameter is rejected when it is assigned, before any group exists
+        with self.assertRaisesRegex(RuntimeError, 'rt_batch.*no parameter "not_declared"'):
+            batch_config(not_declared=1)
 
         group, camera_group = render_group([camera], ["Color"])
         try:

@@ -11,6 +11,7 @@ flight. A final extra capture drains the last frame before the clock stops.
 
     python render_benchmark.py --out results.csv            # default matrix
     python render_benchmark.py --shaders rt --envs 64 256 --sizes 128 --out rt.csv
+    python render_benchmark.py --shaders rt_batch --params shading='"pbr"' shadows=true
 """
 
 import argparse
@@ -58,9 +59,10 @@ def run_worker(config: Dict[str, Any]) -> Dict[str, Any]:
         # batched ray tracing: the pack renders the whole camera group in one dispatch, so the
         # scene only needs a RenderSystem per environment
         render_config["spp"] = config["spp"]
-    if config["defines"]:
-        render_config.defines = dict(pair.split("=", 1) if "=" in pair else (pair, "")
-                                     for pair in config["defines"])
+    # pack.json parameters, e.g. "shadows=true" or "shading="pbr""; values are JSON, matching
+    # the Python types RenderConfig accepts
+    for name, value in config["params"].items():
+        render_config[name] = value
     if config["color_format"] != "default":
         render_config.picture_formats = {"Color": config["color_format"]}
     sapien.render.set_default_render_config("camera", render_config)
@@ -152,8 +154,9 @@ def main() -> None:
     parser.add_argument("--frames", type=int, default=60)
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--spp", type=int, default=1, help="ray-tracing samples per pixel")
-    parser.add_argument("--defines", nargs="*", default=[],
-                        help="shader defines as NAME or NAME=VALUE, e.g. SHADOWS")
+    parser.add_argument("--params", nargs="*", default=[],
+                        help="pack.json parameters as NAME=JSON, e.g. shadows=true or "
+                             "shading=\"pbr\"")
     parser.add_argument("--depth", type=int, default=2, help="ray-tracing path depth")
     parser.add_argument("--shadows", action="store_true", help="directional light casts shadows")
     parser.add_argument("--timeout", type=float, default=1800.0, help="seconds per configuration")
@@ -162,6 +165,14 @@ def main() -> None:
     if args.worker:
         print("RESULT " + json.dumps(run_worker(json.loads(args.worker))), flush=True)
         return
+
+    # parse the parameter assignments once: a typo should fail before the matrix runs
+    params: Dict[str, Any] = {}
+    for pair in args.params:
+        name, separator, text = pair.partition("=")
+        if not separator:
+            raise SystemExit(f"--params entries must be NAME=JSON, got '{pair}'")
+        params[name] = json.loads(text)
 
     configs: List[Dict[str, Any]] = []
     for shader in args.shaders:
@@ -175,7 +186,7 @@ def main() -> None:
                             "objects": objects, "width": size, "height": size,
                             "frames": args.frames, "warmup": args.warmup, "spp": args.spp,
                             "depth": args.depth, "shadows": args.shadows,
-                            "defines": args.defines,
+                            "params": params,
                         })
 
     with open(args.out, "w", newline="") as file:

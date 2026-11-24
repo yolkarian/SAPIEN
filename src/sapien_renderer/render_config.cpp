@@ -1,7 +1,9 @@
 #include "sapien/sapien_renderer/render_config.h"
+#include "pack_manifest.hpp"
 #include "sapien/sapien_renderer/sapien_renderer_default.h"
-#include <svulkan2/renderer/batch_rt_renderer.h>
+#include <charconv>
 #include <filesystem>
+#include <svulkan2/renderer/batch_rt_renderer.h>
 #include <sstream>
 
 namespace fs = std::filesystem;
@@ -10,6 +12,11 @@ namespace sapien {
 namespace sapien_renderer {
 
 namespace {
+
+using svulkan2::renderer::CustomPropertyType;
+using detail::PackManifest;
+using detail::PackParameterKind;
+using detail::PackParameterType;
 
 std::string denoiserToString(svulkan2::renderer::RTRenderer::DenoiserType type) {
   switch (type) {
@@ -76,71 +83,235 @@ vk::SampleCountFlagBits msaaSampleCount(int msaa) {
   }
 }
 
-bool propertyTypeMatches(svulkan2::renderer::CustomPropertyType type, bool isInt) {
-  using T = svulkan2::renderer::CustomPropertyType;
-  return isInt ? type == T::eInt : type == T::eFloat;
+/** shortest decimal text that reads back as the same value; a define may be pasted anywhere */
+std::string numberText(float value) {
+  char buffer[64];
+  auto [end, error] =
+      std::to_chars(buffer, buffer + sizeof(buffer), value, std::chars_format::general);
+  if (error != std::errc()) {
+    throw std::runtime_error("failed to format the shader definition value " +
+                             std::to_string(value));
+  }
+  return std::string(buffer, end);
 }
 
-/** validate one property of `config` against the pack of `renderer`, then apply it */
+std::string valueText(PackValue const &value) {
+  switch (value.index()) {
+  case 0:
+    return std::get<bool>(value) ? "1" : "0";
+  case 1:
+    return std::to_string(std::get<int>(value));
+  case 2:
+    return numberText(std::get<float>(value));
+  default:
+    return std::get<std::string>(value);
+  }
+}
+
+/** check `value` for parameter `name` of `manifest`; an int becomes a float for a float
+ *  parameter. Unknown names, wrong types and out-of-range values raise naming both. */
+PackValue checkAgainst(PackManifest const &manifest, std::string const &pack,
+                       std::string const &name, PackValue value) {
+  int const index = manifest.findParameter(name);
+  if (index < 0) {
+    std::string available;
+    for (auto const &parameter : manifest.getParameters()) {
+      available += (available.empty() ? "" : ", ") + parameter.name;
+    }
+    throw std::runtime_error("shader pack \"" + pack + "\" declares no parameter \"" + name +
+                             "\"" +
+                             (available.empty() ? ": its pack.json declares no parameters"
+                                                : ": its pack.json declares " + available));
+  }
+  try {
+    manifest.check(static_cast<std::size_t>(index), value);
+  } catch (std::runtime_error const &error) {
+    throw std::runtime_error("shader pack \"" + pack + "\": " + error.what());
+  }
+  return value;
+}
+
+/** the property type a uniform parameter is applied with: bools and ints are int properties,
+ *  floats are float properties */
+CustomPropertyType uniformPropertyType(PackParameterType type) {
+  return type == PackParameterType::eInt || type == PackParameterType::eBool
+             ? CustomPropertyType::eInt
+             : CustomPropertyType::eFloat;
+}
+
+std::string declaredTypeName(CustomPropertyType type) {
+  switch (type) {
+  case CustomPropertyType::eInt:
+    return "int";
+  case CustomPropertyType::eFloat:
+    return "float";
+  case CustomPropertyType::eVec3:
+    return "vec3";
+  case CustomPropertyType::eVec4:
+    return "vec4";
+  default:
+    return "";
+  }
+}
+
+/** apply every uniform parameter of `config` with its effective value; `renderer` declares the
+ *  properties as specialization constants or push constant members */
 template <typename Renderer>
-void applyProperty(RenderConfig const &config, Renderer &renderer, std::string const &name,
-                   std::variant<int, float> const &value) {
-  using T = svulkan2::renderer::CustomPropertyType;
-  auto type = renderer.getCustomPropertyType(name);
-  auto pack = config.getShaderPack();
-  if (type == T::eNone) {
-    throw std::runtime_error("render config property \"" + name +
-                             "\" is not declared by shader pack \"" + pack + "\"");
-  }
-  bool isInt = std::holds_alternative<int>(value);
-  if (!propertyTypeMatches(type, isInt)) {
-    std::string declared = type == T::eInt ? "int" : (type == T::eFloat ? "float" : "a vector type");
-    throw std::runtime_error("render config property \"" + name + "\" is declared as " +
-                             declared + " by shader pack \"" + pack + "\" but set to a " +
-                             (isInt ? "int" : "float"));
-  }
-  if (isInt) {
-    renderer.setCustomProperty(name, std::get<int>(value));
-  } else {
-    renderer.setCustomProperty(name, std::get<float>(value));
-  }
-}
-
-/** apply `value` only when the pack declares it with the expected type */
-template <typename T>
-void applyDefaultIfDeclared(svulkan2::renderer::RendererBase &renderer, std::string const &name,
-                            T value) {
-  using P = svulkan2::renderer::CustomPropertyType;
-  auto type = renderer.getCustomPropertyType(name);
-  if (propertyTypeMatches(type, std::is_same_v<T, int>) && type != P::eNone) {
-    renderer.setCustomProperty(name, value);
+void applyUniformParameters(RenderConfig const &config, Renderer &renderer) {
+  auto const &manifest = *detail::getPackManifest(fs::path(config.getShaderPack()));
+  std::string const manifestPath = (fs::path(config.getShaderPack()) / "pack.json").string();
+  for (auto const &parameter : manifest.getParameters()) {
+    if (parameter.kind != PackParameterKind::eUniform) {
+      continue;
+    }
+    std::string const type = PackManifest::typeName(parameter.type);
+    CustomPropertyType const expected = uniformPropertyType(parameter.type);
+    CustomPropertyType const declared = renderer.getCustomPropertyType(parameter.name);
+    if (declared == CustomPropertyType::eNone) {
+      throw std::runtime_error(manifestPath + " declares uniform \"" + parameter.name + "\" as " +
+                               type + " but the shader declares no such property");
+    }
+    if (declared != expected) {
+      throw std::runtime_error(manifestPath + " declares uniform \"" + parameter.name + "\" as " +
+                               type + " but the shader declares it as " +
+                               declaredTypeName(declared));
+    }
+    PackValue const value = checkAgainst(manifest, config.getShaderPack(), parameter.name,
+                                         config.getParameter(parameter.name));
+    if (expected == CustomPropertyType::eInt) {
+      int const integer = std::holds_alternative<bool>(value) ? (std::get<bool>(value) ? 1 : 0)
+                                                              : std::get<int>(value);
+      renderer.setCustomProperty(parameter.name, integer);
+    } else {
+      renderer.setCustomProperty(parameter.name, std::get<float>(value));
+    }
   }
 }
 
 } // namespace
 
-RenderConfig::RenderConfig(std::string const &shaderPack) { setShaderPack(shaderPack); }
+RenderConfig::RenderConfig(std::string const &shaderPack,
+                           std::optional<std::string> const &preset) {
+  auto const [pack, kind] = resolvePack(shaderPack);
+  mShaderPack = pack;
+  mKind = kind;
+  mManifest = detail::getPackManifest(pack);
+  if (preset) {
+    // an unknown preset raises listing the pack's presets
+    for (auto const &[name, value] : mManifest->getPreset(*preset)) {
+      mParameters[name] = value;
+    }
+  }
+}
+
+std::pair<std::string, RenderConfig::Kind>
+RenderConfig::resolvePack(std::string const &shaderPack) const {
+  fs::path const path = resolveShaderPack(shaderPack);
+  // a pack without pack.json raises here, naming the directory and pointing to the docs
+  detail::getPackManifest(path);
+  return {path.string(), packKind(path)};
+}
+
+detail::PackManifest const &RenderConfig::manifest() const {
+  if (!mManifest) {
+    throw std::runtime_error("shader pack \"" + mShaderPack + "\" has no pack.json");
+  }
+  return *mManifest;
+}
 
 void RenderConfig::setShaderPack(std::string const &shaderPack) {
-  auto pack = resolveShaderPack(shaderPack);
-  mShaderPack = pack.string();
-  mKind = packKind(pack);
-}
-
-void RenderConfig::setProperty(std::string const &name, int value) { mProperties[name] = value; }
-
-void RenderConfig::setProperty(std::string const &name, float value) { mProperties[name] = value; }
-
-std::variant<int, float> RenderConfig::getProperty(std::string const &name) const {
-  auto it = mProperties.find(name);
-  if (it == mProperties.end()) {
-    throw std::runtime_error("render config has no property \"" + name + "\"");
+  auto const [pack, kind] = resolvePack(shaderPack);
+  auto manifest = detail::getPackManifest(pack);
+  // re-validate every explicit assignment against the new pack.json before keeping it
+  for (auto const &[name, assigned] : mParameters) {
+    checkAgainst(*manifest, pack, name, assigned);
   }
-  return it->second;
+  mShaderPack = pack;
+  mKind = kind;
+  mManifest = std::move(manifest);
 }
 
-void RenderConfig::setDefines(std::map<std::string, std::string> defines) {
-  mDefines = std::move(defines);
+bool RenderConfig::declaresParameter(std::string const &name) const {
+  return manifest().findParameter(name) >= 0;
+}
+
+bool RenderConfig::isVariantParameter(std::string const &name) const {
+  int const index = manifest().findParameter(name);
+  if (index < 0) {
+    throw std::runtime_error("shader pack \"" + mShaderPack + "\" declares no parameter \"" +
+                             name + "\"");
+  }
+  return manifest().getParameter(static_cast<std::size_t>(index)).kind ==
+         PackParameterKind::eVariant;
+}
+
+PackValue RenderConfig::checkParameter(std::string const &name, PackValue value) const {
+  return checkAgainst(manifest(), mShaderPack, name, std::move(value));
+}
+
+void RenderConfig::setParameter(std::string const &name, PackValue value) {
+  mParameters[name] = checkParameter(name, std::move(value));
+}
+
+PackValue RenderConfig::getParameter(std::string const &name) const {
+  auto it = mParameters.find(name);
+  if (it != mParameters.end()) {
+    return it->second;
+  }
+  int const index = manifest().findParameter(name);
+  if (index < 0) {
+    throw std::runtime_error("shader pack \"" + mShaderPack + "\" declares no parameter \"" +
+                             name + "\"");
+  }
+  return manifest().getParameter(static_cast<std::size_t>(index)).defaultValue;
+}
+
+void RenderConfig::removeParameter(std::string const &name) {
+  if (!declaresParameter(name)) {
+    throw std::runtime_error("shader pack \"" + mShaderPack + "\" declares no parameter \"" +
+                             name + "\"");
+  }
+  mParameters.erase(name);
+}
+
+std::vector<RenderConfigParameter> RenderConfig::describeParameters() const {
+  std::vector<RenderConfigParameter> result;
+  for (auto const &parameter : manifest().getParameters()) {
+    RenderConfigParameter described;
+    described.name = parameter.name;
+    described.kind = PackManifest::kindName(parameter.kind);
+    described.type = PackManifest::typeName(parameter.type);
+    described.defaultValue = parameter.defaultValue;
+    described.minimum = parameter.minimum;
+    described.maximum = parameter.maximum;
+    described.values = parameter.values;
+    described.description = parameter.description;
+    result.push_back(std::move(described));
+  }
+  return result;
+}
+
+std::vector<std::string> RenderConfig::getPresets() const { return manifest().getPresets(); }
+
+std::map<std::string, std::string> RenderConfig::getShaderDefinitions() const {
+  std::map<std::string, std::string> definitions;
+  auto const &parameters = manifest().getParameters();
+  for (std::size_t index = 0; index < parameters.size(); ++index) {
+    auto const &parameter = parameters[index];
+    if (parameter.kind != PackParameterKind::eVariant) {
+      continue;
+    }
+    PackValue const value = getParameter(parameter.name);
+    std::string definition = manifest().getDefinition(index, value);
+    if (definition.empty()) {
+      continue;
+    }
+    // an int or float variant defines its name to the value; bool and enum variants define a name
+    bool const numeric = parameter.type == PackParameterType::eInt ||
+                         parameter.type == PackParameterType::eFloat;
+    definitions[definition] = numeric ? valueText(value) : "";
+  }
+  return definitions;
 }
 
 void RenderConfig::setDenoiser(svulkan2::renderer::RTRenderer::DenoiserType denoiser) {
@@ -168,32 +339,33 @@ std::string RenderConfig::getKindName() const {
   throw std::runtime_error("corrupted render config kind");
 }
 
+bool RenderConfig::operator==(RenderConfig const &other) const {
+  return mShaderPack == other.mShaderPack && mKind == other.mKind &&
+         mParameters == other.mParameters && mDenoiser == other.mDenoiser &&
+         mMSAA == other.mMSAA && mPictureFormats == other.mPictureFormats;
+}
+
 std::string RenderConfig::toString() const {
   std::ostringstream stream;
-  stream << "RenderConfig(shader_pack=\"" << mShaderPack << "\", kind=\""
-         << getKindName() << "\", properties={";
+  stream << "RenderConfig(shader_pack=\"" << mShaderPack << "\", kind=\"" << getKindName()
+         << "\", properties={";
   bool first = true;
-  for (auto const &[name, value] : mProperties) {
+  for (auto const &[name, value] : mParameters) {
     stream << (first ? "" : ", ") << "\"" << name << "\": ";
-    if (std::holds_alternative<int>(value)) {
-      stream << std::get<int>(value);
+    if (std::holds_alternative<std::string>(value)) {
+      stream << "\"" << std::get<std::string>(value) << "\"";
+    } else if (std::holds_alternative<bool>(value)) {
+      stream << (std::get<bool>(value) ? "True" : "False");
     } else {
-      stream << std::get<float>(value);
+      stream << valueText(value);
     }
-    first = false;
-  }
-  stream << "}, defines={";
-  first = true;
-  for (auto const &[name, value] : mDefines) {
-    stream << (first ? "" : ", ") << "\"" << name << "\": \"" << value << "\"";
     first = false;
   }
   stream << "}, denoiser=\"" << denoiserToString(mDenoiser) << "\", msaa=" << mMSAA
          << ", picture_formats={";
   first = true;
   for (auto const &[name, format] : mPictureFormats) {
-    stream << (first ? "" : ", ") << "\"" << name << "\": \""
-           << vk::to_string(format) << "\"";
+    stream << (first ? "" : ", ") << "\"" << name << "\": \"" << vk::to_string(format) << "\"";
     first = false;
   }
   stream << "})";
@@ -203,7 +375,7 @@ std::string RenderConfig::toString() const {
 std::shared_ptr<svulkan2::RendererConfig> buildRendererConfig(RenderConfig const &config) {
   auto result = std::make_shared<svulkan2::RendererConfig>();
   result->shaderDir = config.getShaderPack();
-  result->shaderDefines = config.getDefines();
+  result->shaderDefines = config.getShaderDefinitions();
   result->msaa = msaaSampleCount(config.getMSAA());
   for (auto const &[name, format] : config.getPictureFormats()) {
     result->textureFormat[name] = format;
@@ -212,28 +384,20 @@ std::shared_ptr<svulkan2::RendererConfig> buildRendererConfig(RenderConfig const
 }
 
 void applyRenderConfig(RenderConfig const &config, svulkan2::renderer::RendererBase &renderer) {
-  auto pack = config.getShaderPack();
+  auto const &pack = config.getShaderPack();
   if (config.isRayTracing()) {
     if (!config.getPictureFormats().empty()) {
       throw std::runtime_error("render config property \"picture_formats\" is not supported by "
                                "ray tracing shader pack \"" +
                                pack + "\"");
     }
-    // SAPIEN defaults for keys the config leaves out; the renderer's own defaults differ
-    applyDefaultIfDeclared(renderer, "spp", 32);
-    applyDefaultIfDeclared(renderer, "maxDepth", 8);
-    applyDefaultIfDeclared(renderer, "russianRoulette", 0);
-    applyDefaultIfDeclared(renderer, "aperture", 0.f);
-    applyDefaultIfDeclared(renderer, "focusPlane", 1.f);
   } else if (config.getDenoiser() != svulkan2::renderer::RTRenderer::DenoiserType::eNONE) {
     throw std::runtime_error("render config property \"denoiser\" can only be set with a ray "
                              "tracing shader pack, but the config uses rasterization pack \"" +
                              pack + "\"");
   }
 
-  for (auto const &[name, value] : config.getProperties()) {
-    applyProperty(config, renderer, name, value);
-  }
+  applyUniformParameters(config, renderer);
 
   if (config.isRayTracing()) {
     auto rtRenderer = dynamic_cast<svulkan2::renderer::RTRenderer *>(&renderer);
@@ -255,6 +419,8 @@ createRenderer(std::shared_ptr<svulkan2::core::Context> context, RenderConfig co
   return renderer;
 }
 
+void clearPackManifestCache() { detail::clearPackManifestCache(); }
+
 void applyRenderConfig(RenderConfig const &config,
                        svulkan2::renderer::BatchRTRenderer &renderer) {
   if (config.getDenoiser() != svulkan2::renderer::RTRenderer::DenoiserType::eNONE) {
@@ -262,9 +428,7 @@ void applyRenderConfig(RenderConfig const &config,
                              "ray tracing shader pack \"" +
                              config.getShaderPack() + "\"");
   }
-  for (auto const &[name, value] : config.getProperties()) {
-    applyProperty(config, renderer, name, value);
-  }
+  applyUniformParameters(config, renderer);
 }
 
 } // namespace sapien_renderer

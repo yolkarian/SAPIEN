@@ -104,10 +104,16 @@ public:
    *  Throws when a renderer exists, i.e. the camera is not a batched camera. */
   void internalRequireNoRenderer() const;
 
-  /** runtime per-camera property setter; an unknown name or a wrong type raises once the camera
-   *  has a renderer */
+  /** runtime per-camera property override of one uniform parameter of the camera's pack; a
+   *  variant parameter, an unknown name, a wrong type and an out-of-range value raise (checked
+   *  against the pack's pack.json, so a value rejected before the camera has a renderer never
+   *  reaches it either) */
   void setProperty(std::string const &name, int property);
   void setProperty(std::string const &name, float property);
+  /** the bool overload and the C++ entry point: a bool travels as an int property */
+  void setParameter(std::string const &name, PackValue value);
+  /** runtime override when one is set, else the config's effective value; bool parameters read
+   *  as 0 or 1 */
   std::variant<int, float> getProperty(std::string const &name) const;
   void setTexture(std::string const &name, std::shared_ptr<SapienRenderTexture> texture);
   void setTextureArray(std::string const &name,
@@ -159,6 +165,7 @@ private:
   /** raise for a batched ray tracing camera: its properties belong to the group renderer */
   void checkNotBatchProperty(std::string const &name) const;
 
+
   CameraMode mMode{CameraMode::ePerspective};
   void checkMode(CameraMode mode) const;
 
@@ -180,7 +187,8 @@ private:
 
   RenderConfig mRenderConfig;
 
-  std::map<std::string, std::variant<int, float>> mProperties;
+  /** validated per-camera overrides; only uniform parameters reach this map */
+  std::map<std::string, PackValue> mProperties;
 
   std::unique_ptr<SapienRenderCameraInternal> mCamera;
   Pose mLocalPose;

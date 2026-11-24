@@ -138,12 +138,19 @@ class RenderCameraComponent(sapien.pysapien.Component):
         ...
     def set_principal_point(self, cx: float, cy: float) -> None:
         ...
-    @typing.overload
-    def set_property(self, name: str, value: int) -> None:
-        ...
-    @typing.overload
-    def set_property(self, name: str, value: float) -> None:
-        ...
+    def set_property(self, name: str, value: bool | int | float | str) -> None:
+        """
+        Runtime per-camera override of one uniform parameter of this camera's pack.
+
+        A variant parameter raises (it selects shader source: set it on the RenderConfig before
+        creating the camera), as do an unknown name, a wrong type and an out-of-range value. All
+        three are checked against the pack's pack.json, before the renderer sees the value.
+        """
+    def get_property(self, name: str) -> bool | int | float:
+        """
+        Runtime override of a property, else the config's effective value. A bool parameter reads
+        as 0 or 1.
+        """
     def set_skew(self, skew: float) -> None:
         ...
     def set_texture(self, name: str, texture: RenderTexture) -> None:
@@ -709,18 +716,23 @@ class RenderConfig:
     Per-camera render configuration replacing the process-wide render setters.
 
     `shader_pack` is a built-in pack name resolved under the shader search path (for example
-    "default", "rt", "minimal") or a directory path. It is resolved and validated immediately and
-    must contain gbuffer.vert (rasterization) or camera.rgen (ray tracing).
+    "default", "rt", "rt_batch") or a directory path. It is resolved and validated immediately: it
+    must contain gbuffer.vert (rasterization), camera.rgen (ray tracing) or batch.comp (batched ray
+    tracing) next to the pack.json that declares the pack's parameters. A pack without pack.json, or
+    with a malformed one, raises.
+
+    `preset` expands a preset of that pack.json into assignments, for example
+    ``RenderConfig("rt_batch", preset="pbr")``.
 
     Consumers copy the config: editing it afterwards does not affect cameras or windows that
     already exist.
 
-    Properties become renderer custom properties and are validated when a renderer is created:
-    ray tracing packs declare them as push constants (spp, maxDepth, aperture, focusPlane,
-    russianRoulette, russianRouletteMinBounces, exposure, toneMapper), rasterization packs as
-    specialization constants (exposure, toneMapper, ambientOcclusionStrength, ...).
+    ``cfg[name] = value`` is checked immediately against pack.json (unknown name, wrong type or out
+    of range raise naming the key and the pack) and ``cfg[name]`` returns the effective value: the
+    assignment, else the parameter's default. Use ``cfg.parameters`` to inspect the pack's
+    parameters and ``cfg.presets`` the preset names.
     """
-    def __init__(self, shader_pack: str = 'default') -> None:
+    def __init__(self, shader_pack: str = 'default', preset: str | None = None) -> None:
         ...
     def __contains__(self, arg0: str) -> bool:
         ...
@@ -728,23 +740,15 @@ class RenderConfig:
         ...
     def __eq__(self, arg0: object) -> bool:
         ...
-    def __getitem__(self, name: str) -> int | float:
+    def __getitem__(self, name: str) -> bool | int | float | str:
         ...
     def __ne__(self, arg0: object) -> bool:
         ...
     def __repr__(self) -> str:
         ...
-    def __setitem__(self, name: str, value: int | float) -> None:
+    def __setitem__(self, name: str, value: bool | int | float | str) -> None:
         ...
     def copy(self) -> RenderConfig:
-        ...
-    @property
-    def defines(self) -> dict[str, str]:
-        """
-        Shader preprocessor definitions, name -> value (a bare name uses "").
-        """
-    @defines.setter
-    def defines(self, arg0: dict[str, str]) -> None:
         ...
     @property
     def denoiser(self) -> typing.Literal['none', 'oidn', 'optix']:
@@ -771,6 +775,14 @@ class RenderConfig:
     def msaa(self, arg0: int) -> None:
         ...
     @property
+    def parameters(self) -> dict[str, dict[str, typing.Any]]:
+        """
+        Copy of the pack.json parameters, in file order: name -> dict with "kind"
+        ("uniform" or "variant"), "type" ("bool", "int", "float" or "enum"), "default", the inclusive
+        "minimum"/"maximum" of numeric parameters, the "values" of enum parameters and a
+        "description".
+        """
+    @property
     def picture_formats(self) -> dict[str, str]:
         """
         Render target name -> image format string, e.g. {'Color': 'r8g8b8a8unorm'}. Ray tracing
@@ -780,14 +792,20 @@ class RenderConfig:
     def picture_formats(self, arg0: dict[str, str]) -> None:
         ...
     @property
-    def properties(self) -> dict[str, int | float]:
+    def presets(self) -> list[str]:
         """
-        Copy of the shader properties as a dict.
+        Preset names the pack.json declares, in file order.
+        """
+    @property
+    def properties(self) -> dict[str, bool | int | float | str]:
+        """
+        Copy of the explicitly assigned parameters as a dict.
         """
     @property
     def shader_pack(self) -> str:
         """
-        Canonical shader pack directory.
+        Canonical shader pack directory. Assigning re-validates every explicit
+        assignment against the new pack.json and raises without changing anything if one is invalid.
         """
     @shader_pack.setter
     def shader_pack(self, arg0: str) -> None:
@@ -1170,9 +1188,10 @@ class RenderWindow:
         ...
     def set_render_config(self, render_config: RenderConfig) -> None:
         """
-        Replace the renderer with one built from `render_config`. Property values that the new pack
-        also declares with the same type carry over, so the viewer's pack switcher keeps its spp,
-        depth and exposure.
+        Replace the renderer with one built from `render_config`. Explicit parameter assignments the
+        new pack also declares with a compatible type carry over (an int for a float parameter
+        included); everything else takes the new pack's pack.json defaults, so the viewer's pack
+        switcher keeps its spp, depth and exposure.
         """
     def show(self) -> None:
         ...

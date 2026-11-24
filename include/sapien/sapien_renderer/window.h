@@ -154,8 +154,8 @@ public:
   }
   inline svulkan2::scene::Scene *getInternalScene() const { return mRenderScene.get(); }
 
-  /** replace the renderer with one built from `renderConfig`; properties common to both packs
-   *  carry over from the current config */
+  /** replace the renderer with one built from `renderConfig`; explicit parameter assignments
+   *  that the new pack declares with a compatible type carry over from the current config */
   void setRenderConfig(RenderConfig const &renderConfig);
   /** render config of the current renderer, including properties set through set_camera_property */
   RenderConfig getRenderConfig() const;

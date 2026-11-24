@@ -4,6 +4,36 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+Shader packs declare their parameters in `pack.json`:
+
+- **Breaking:** every shader pack directory, built-in or custom, must contain a
+  `pack.json` next to `gbuffer.vert` / `camera.rgen` / `batch.comp`. It declares the
+  parameters a `RenderConfig` may assign (`kind` `"uniform"` or `"variant"`, `type`,
+  `default`, optional `minimum`/`maximum`, `values` for enums, `define` for variants,
+  `description`) and optional `presets`. A missing or malformed `pack.json` raises
+  `RuntimeError` naming the directory.
+- **Breaking:** `RenderConfig.defines` is gone. Preprocessor definitions now come
+  from variant parameters of `pack.json`, so `cfg.defines = {"SHADOWS": ""}` becomes
+  `cfg["shadows"] = True` and `{"SHADING_PBR": ""}` becomes `cfg["shading"] = "pbr"`
+  (or `RenderConfig("rt_batch", preset="pbr")`). `cfg` values are now
+  `bool | int | float | str`.
+- `cfg[name] = value` is validated immediately against the manifest; `cfg[name]`
+  returns the effective value (assignment, else the default); `name in cfg` is true
+  only for explicit assignments; `del cfg[name]` reverts to the default. New
+  read-only `cfg.parameters` (file order) and `cfg.presets`.
+- Defaults moved into `pack.json`: the hard-coded `rt` defaults (spp 32, maxDepth 8,
+  aperture 0, focusPlane 1, russianRoulette off, exposure 1, toneMapper 2) and the
+  batched renderer's `exposure` are now manifest defaults. A pack that declares
+  different defaults renders them.
+- `camera.set_property` accepts uniform parameters only and also accepts `bool`; a
+  variant parameter raises (set it on the `RenderConfig` before creating the camera).
+  `camera.get_property` returns the runtime override or the config's effective value.
+- `sapien.render.clear_cache(shaders=True)` also drops the cached parsed manifests.
+- `RenderWindow.set_render_config` carries over only explicit assignments that the new
+  pack declares with a compatible type; the Viewer render panel is built from
+  `cfg.parameters`, so its widgets follow the pack (`spp`, `maxDepth`, `aperture`,
+  `focusPlane`, `exposure`, `toneMapper`, `ambientOcclusion*`).
+
 Batched ray tracing:
 
 - `RenderConfig("rt_batch")` (or any directory holding `batch.comp`) is a **batched**
@@ -21,11 +51,15 @@ Batched ray tracing:
   `picture_formats={"Color": "r32g32b32a32Sfloat"}`), `Albedo`, `Depth` (linear depth in metres,
   positive, `0` on a miss), `Normal` (camera space), `Position` (camera-space xyz + normalized depth),
   `Segmentation` (`uvec4`, same semantics as rasterization).
-- Shading tier is a define: `SHADING_VISIBILITY`, `SHADING_LAMBERT` (default) or `SHADING_PBR`;
-  `SHADOWS` adds hard shadow rays and `SPP` adds deterministic supersampling.
-- Shader properties of a batch pack come only from the `RenderConfig` and apply to the whole
-  group: `exposure` (default 1.0), `toneMapper`, `spp` (overrides the `SPP` define). An
-  undeclared property raises at `gpu_init()`; `camera.set_property` raises for a batch camera.
+- Shading tier is the `shading` variant parameter: `"visibility"`, `"lambert"` (default) or
+  `"pbr"`; the `shadows` bool variant adds hard shadow rays and the `spp` uniform adds
+  deterministic supersampling. There is no `SPP` preprocessor definition.
+- Uniform parameters of a batch pack come only from the `RenderConfig` and apply to the whole
+  group: `exposure` (default 1.0), `toneMapper` (default 0) and `spp` (default 1, 1..32). Variants
+  (`shading`, `shadows`, `maxShadowLights`) select shader source and are fixed when the group
+  renderer is built. A uniform the shader does not declare raises naming the parameter, its
+  declared type and the pack (for a batch pack at `gpu_init()`); `camera.set_property` raises
+  for a batch camera.
 
 Render configuration (breaking):
 

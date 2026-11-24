@@ -8,6 +8,51 @@ from sapien import internal_renderer as R
 from .plugin import Plugin
 
 
+def build_config_for_pack(pack: str, current: "sapien.render.RenderConfig"):
+    """A `RenderConfig(pack)` carrying over `current`'s explicit assignments.
+
+    Only parameters the new pack declares with a compatible type survive: the value is copied
+    when the new pack.json declares it with the same type, an int also for a float parameter
+    (stored as a float). Everything else falls back to the new pack's default.
+    """
+    config = sapien.render.RenderConfig(pack)
+    parameters = config.parameters
+    for name, value in current.properties.items():
+        declared = parameters.get(name)
+        if declared is None:
+            continue
+        try:
+            config[name] = value
+        except RuntimeError:
+            # the new pack declares the name with another type or range: keep its default
+            continue
+    return config
+
+
+class _ParameterBinding:
+    """Getter/setter pair for one pack.json parameter, so a UI widget binds by name.
+
+    The widgets read the value back every frame and write through `set_parameter`, which
+    converts to the declared type, so the panel always shows the renderer's live value.
+    """
+
+    def __init__(self, panel: "RenderOptionsWindow", name: str):
+        self._panel = panel
+        self._name = name
+
+    @property
+    def value(self):
+        value = self._panel.get_parameter(self._name)
+        if isinstance(value, str):
+            # a variant parameter never binds to a scalar widget
+            return 0
+        return value
+
+    @value.setter
+    def value(self, value):
+        self._panel.set_parameter(self._name, value)
+
+
 class RenderOptionsWindow(Plugin):
     def __init__(self):
         self.reset()
@@ -25,10 +70,15 @@ class RenderOptionsWindow(Plugin):
         return [d.name for d in self.shader_list]
 
     def set_shader(self, index):
-        """Switch the window to the pack at `index`, carrying over common properties."""
+        """Switch the window to the pack at `index`.
+
+        The new config is built from scratch, so every parameter starts at the default its
+        pack.json declares; only explicit assignments of the current config that the new pack
+        declares with a compatible type carry over.
+        """
         self.shader_dir = str(self.shader_list[index])
         self.shader_type = str(self.shader_types[index])
-        config = sapien.render.RenderConfig(self.shader_dir)
+        config = build_config_for_pack(self.shader_dir, self.window.render_config)
         self.window.set_render_config(config)
         self.viewer.render_config = self.window.render_config
         self.viewer.render_target = "Color"
@@ -63,75 +113,42 @@ class RenderOptionsWindow(Plugin):
         else:
             self.viewer.window.denoiser = "none"
 
-    @property
-    def spp(self):
-        return self.window.get_camera_property_int("spp")
+    def get_parameter(self, name):
+        """Effective value of a parameter of the current pack: its runtime value, else the
+        pack.json default."""
+        return self.window.render_config[name]
 
-    @spp.setter
-    def spp(self, v):
-        if v < 1:
-            v = 1
-        if v > 1024:
-            v = 1024
-            print("spp seems too large")
+    def set_parameter(self, name, value):
+        """Set one uniform parameter of the current pack on the window renderer.
 
-        return self.window.set_camera_property("spp", int(v))
+        The value is converted to the type pack.json declares and range-checked by the renderer,
+        so a widget can never push a value the pack rejects.
+        """
+        declared = self.window.render_config.parameters[name]
+        kind = declared["type"]
+        if kind == "bool":
+            self.window.set_camera_property(name, 1 if value else 0)
+        elif kind == "int":
+            self.window.set_camera_property(name, int(value))
+        elif kind == "float":
+            self.window.set_camera_property(name, float(value))
+        else:
+            raise RuntimeError(f"parameter '{name}' is a variant: reopen the pack to change it")
 
-    @property
-    def ray_depth(self):
-        return self.window.get_camera_property_int("maxDepth")
-
-    @ray_depth.setter
-    def ray_depth(self, v):
-        if v < 1:
-            v = 1
-        if v > 16:
-            v = 16
-            print("ray depth seems too large")
-
-        return self.window.set_camera_property("maxDepth", int(v))
-
-    @property
-    def aperture(self):
-        return self.window.get_camera_property_float("aperture")
-
-    @aperture.setter
-    def aperture(self, v):
-        return self.window.set_camera_property("aperture", float(v))
-
-    @property
-    def focal_plane(self):
-        return self.window.get_camera_property_float("focusPlane")
-
-    @focal_plane.setter
-    def focal_plane(self, v):
-        return self.window.set_camera_property("focusPlane", float(v))
-
-    @property
-    def exposure(self):
-        try:
-            return self.window.get_camera_property_float("exposure")
-        except RuntimeError:
-            self.window.set_camera_property("exposure", 1.0)
-            return 1.0
-
-    @exposure.setter
-    def exposure(self, v):
-        return self.window.set_camera_property("exposure", float(v))
-
-    @property
-    def tone_index(self):
-        try:
-            return self.viewer.window.get_camera_property_int("toneMapper")
-        except RuntimeError:
-            self.viewer.window.set_camera_property("toneMapper", 2)
-
-        return self.viewer.window.get_camera_property_int("toneMapper")
-
-    @tone_index.setter
-    def tone_index(self, index):
-        index = min(max(0, index), 2)
-        self.viewer.window.set_camera_property("toneMapper", index)
+    def _parameter_widget(self, name):
+        """A widget bound to parameter `name`, chosen from the type and range pack.json
+        declares."""
+        declared = self.window.render_config.parameters[name]
+        binding = _ParameterBinding(self, name)
+        if declared["type"] == "bool":
+            return R.UICheckbox().Label(name).Bind(binding, "value")
+        if declared["type"] == "int":
+            return R.UIInputInt().Label(name).Bind(binding, "value")
+        minimum = declared.get("minimum", 0.0)
+        maximum = declared.get("maximum")
+        if maximum is None:
+            return R.UIInputFloat().Label(name).Bind(binding, "value")
+        return R.UISliderFloat().Label(name).Min(minimum).Max(maximum).Bind(binding, "value")
 
     def _setup_shader_dir(self):
         default_shader_dir = Path(self.viewer.render_config.shader_pack)
@@ -150,6 +167,10 @@ class RenderOptionsWindow(Plugin):
 
             for f in all_shader_dir.iterdir():
                 if f.is_dir():
+                    # a pack that cannot be a window renderer (a batched pack, which renders only
+                    # through a RenderCameraGroup, or a directory without pack.json) is not listed
+                    if not (f / "pack.json").is_file():
+                        continue
                     if any("gbuffer.frag" in x.name for x in f.iterdir()):
                         self.shader_list.append(f)
                         self.shader_types.append("rast")
@@ -176,7 +197,10 @@ class RenderOptionsWindow(Plugin):
         if self.ui_window is None:
             self.ui_window = R.UIWindow().Label("Render").Pos(10, 10).Size(400, 400)
 
-            self.ui_window.append(
+            # one row per uniform parameter of the current pack, with the widget its declared
+            # type and range call for. Variant parameters select shader source and cannot change
+            # on a live renderer, so they are not editable here.
+            widgets = [
                 R.UIOptions()
                 .Label("Shader")
                 .Style("select")
@@ -191,30 +215,13 @@ class RenderOptionsWindow(Plugin):
                     .Label("Denoiser")
                     .Items(["none", "oidn", "optix"])
                     .BindIndex(self, "denoiser_index"),
-                    R.UIInputInt().Label("spp").Bind(self, "spp"),
-                    R.UIInputInt().Label("Ray Depth").Bind(self, "ray_depth"),
-                    R.UISliderFloat()
-                    .Label("Focal Plane")
-                    .Min(0.01)
-                    .Max(10)
-                    .Bind(self, "focal_plane"),
-                    R.UISliderFloat()
-                    .Label("Aperture")
-                    .Min(0)
-                    .Max(0.1)
-                    .Bind(self, "aperture"),
                 ),
-                R.UISliderFloat()
-                .Label("Exposure")
-                .Min(0)
-                .Max(30)
-                .Bind(self, "exposure"),
-                R.UIOptions()
-                .Style("select")
-                .Label("Color Management")
-                .Items(["Gamma", "sRGB", "ACES"])
-                .BindIndex(self, "tone_index"),
-            )
+            ]
+            for name, declared in self.window.render_config.parameters.items():
+                if declared["kind"] != "uniform":
+                    continue
+                widgets.append(self._parameter_widget(name))
+            self.ui_window.append(*widgets)
 
     def get_ui_windows(self):
         self.build()

@@ -1,0 +1,60 @@
+{
+  "parameters": {
+    "spp": {
+      "kind": "uniform",
+      "type": "int",
+      "default": 32,
+      "minimum": 1,
+      "description": "Samples per pixel accumulated per frame; the image converges over frames."
+    },
+    "maxDepth": {
+      "kind": "uniform",
+      "type": "int",
+      "default": 8,
+      "minimum": 0,
+      "description": "Maximum number of ray bounces of the path tracer."
+    },
+    "aperture": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "minimum": 0,
+      "description": "Lens aperture of the thin-lens depth of field; 0 is a pinhole camera."
+    },
+    "focusPlane": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 1.0,
+      "minimum": 0,
+      "description": "Distance of the in-focus plane from the camera, in metres."
+    },
+    "russianRoulette": {
+      "kind": "uniform",
+      "type": "bool",
+      "default": false,
+      "description": "Terminate low-contribution paths stochastically to save work."
+    },
+    "russianRouletteMinBounces": {
+      "kind": "uniform",
+      "type": "int",
+      "default": 2,
+      "minimum": 0,
+      "description": "Bounces every path survives before Russian roulette may stop it."
+    },
+    "exposure": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 1.0,
+      "minimum": 0,
+      "description": "Scales the radiance before tone mapping."
+    },
+    "toneMapper": {
+      "kind": "uniform",
+      "type": "int",
+      "default": 2,
+      "minimum": 0,
+      "maximum": 2,
+      "description": "Tone mapping curve: 0 gamma 2.2, 1 sRGB, 2 ACES filmic."
+    }
+  }
+}

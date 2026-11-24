@@ -174,29 +174,6 @@ struct SapienRenderCameraInternal {
   ~SapienRenderCameraInternal() { mScene->removeNode(*mCamera); }
 };
 
-namespace {
-
-/** declared type of `name` in the shader pack of `config` after the camera renderer exists */
-void validateProperty(RenderConfig const &config,
-                      svulkan2::renderer::RendererBase &renderer, std::string const &name,
-                      bool isInt) {
-  using T = svulkan2::renderer::CustomPropertyType;
-  auto type = renderer.getCustomPropertyType(name);
-  auto pack = config.getShaderPack();
-  if (type == T::eNone) {
-    throw std::runtime_error("camera property \"" + name +
-                             "\" is not declared by shader pack \"" + pack + "\"");
-  }
-  if (isInt ? type != T::eInt : type != T::eFloat) {
-    std::string declared = type == T::eInt ? "int" : (type == T::eFloat ? "float" : "a vector type");
-    throw std::runtime_error("camera property \"" + name + "\" is declared as " + declared +
-                             " by shader pack \"" + pack + "\" but set to a " +
-                             (isInt ? "int" : "float"));
-  }
-}
-
-} // namespace
-
 void SapienRenderCameraComponent::checkNotBatchProperty(std::string const &name) const {
   if (isBatchRayTracing()) {
     throw std::runtime_error(
@@ -208,27 +185,81 @@ void SapienRenderCameraComponent::checkNotBatchProperty(std::string const &name)
 }
 
 void SapienRenderCameraComponent::setProperty(std::string const &name, int property) {
-  checkNotBatchProperty(name);
-  if (mCamera) {
-    validateProperty(mCamera->mRenderConfig, *mCamera->mRenderer, name, true);
-    mCamera->mRenderer->setCustomProperty(name, property);
-  }
-  mProperties[name] = property;
+  setParameter(name, property);
 }
+
 void SapienRenderCameraComponent::setProperty(std::string const &name, float property) {
-  checkNotBatchProperty(name);
-  if (mCamera) {
-    validateProperty(mCamera->mRenderConfig, *mCamera->mRenderer, name, false);
-    mCamera->mRenderer->setCustomProperty(name, property);
-  }
-  mProperties[name] = property;
+  setParameter(name, property);
 }
+
+void SapienRenderCameraComponent::setParameter(std::string const &name, PackValue property) {
+  checkNotBatchProperty(name);
+  // the pack's pack.json owns the parameter set, the types and the ranges: validate first, so a
+  // rejected value never reaches the renderer or the overrides
+  PackValue value = mRenderConfig.checkParameter(name, std::move(property));
+  if (mRenderConfig.isVariantParameter(name)) {
+    throw std::runtime_error(
+        "camera property \"" + name +
+        "\" is a variant parameter of shader pack \"" + mRenderConfig.getShaderPack() +
+        "\": it selects shader source, so set it on the RenderConfig before creating the camera");
+  }
+  if (mCamera) {
+    bool const isInt = std::holds_alternative<int>(value) || std::holds_alternative<bool>(value);
+    int const integer = isInt ? (std::holds_alternative<bool>(value)
+                                     ? (std::get<bool>(value) ? 1 : 0)
+                                     : std::get<int>(value))
+                              : 0;
+    using T = svulkan2::renderer::CustomPropertyType;
+    T const declared = mCamera->mRenderer->getCustomPropertyType(name);
+    if (declared == T::eNone) {
+      throw std::runtime_error(
+          "camera property \"" + name + "\" is declared as a uniform by the pack.json of shader "
+          "pack \"" + mRenderConfig.getShaderPack() + "\" but the shader declares no such "
+          "property");
+    }
+    T const expected = isInt ? T::eInt : T::eFloat;
+    if (declared != expected) {
+      throw std::runtime_error(
+          "camera property \"" + name + "\" is declared as " +
+          (expected == T::eInt ? std::string("int") : std::string("float")) +
+          " by the pack.json of shader pack \"" + mRenderConfig.getShaderPack() +
+          "\" but the shader declares it as " + (declared == T::eInt ? "int" : "float"));
+    }
+    if (isInt) {
+      mCamera->mRenderer->setCustomProperty(name, integer);
+    } else {
+      mCamera->mRenderer->setCustomProperty(name, std::get<float>(value));
+    }
+  }
+  mProperties[name] = std::move(value);
+}
+
 std::variant<int, float> SapienRenderCameraComponent::getProperty(std::string const &name) const {
   auto it = mProperties.find(name);
-  if (it == mProperties.end()) {
-    throw std::runtime_error("camera has no property \"" + name + "\"");
+  if (it != mProperties.end()) {
+    // a bool override reads as its int value; variants never reach the overrides
+    if (std::holds_alternative<bool>(it->second)) {
+      return std::get<bool>(it->second) ? 1 : 0;
+    }
+    if (std::holds_alternative<float>(it->second)) {
+      return std::get<float>(it->second);
+    }
+    return std::get<int>(it->second);
   }
-  return it->second;
+  // no runtime override: report the effective value the config applies
+  PackValue const value = mRenderConfig.getParameter(name);
+  if (std::holds_alternative<bool>(value)) {
+    return std::get<bool>(value) ? 1 : 0;
+  }
+  if (std::holds_alternative<float>(value)) {
+    return std::get<float>(value);
+  }
+  if (std::holds_alternative<int>(value)) {
+    return std::get<int>(value);
+  }
+  throw std::runtime_error("camera property \"" + name +
+                           "\" is a variant parameter of shader pack \"" +
+                           mRenderConfig.getShaderPack() + "\": query it on the RenderConfig");
 }
 void SapienRenderCameraComponent::setTexture(std::string const &name,
                                              std::shared_ptr<SapienRenderTexture> texture) {
@@ -340,14 +371,11 @@ void SapienRenderCameraComponent::onAddToScene(Scene &scene) {
   mCamera->mCamera->setPerspectiveParameters(mNear, mFar, mFx, mFy, mCx, mCy, mWidth, mHeight,
                                              mSkew);
 
-  for (auto &[k, v] : mProperties) {
-    if (std::holds_alternative<int>(v)) {
-      validateProperty(mRenderConfig, *mCamera->mRenderer, k, true);
-      mCamera->mRenderer->setCustomProperty(k, std::get<int>(v));
-    } else {
-      validateProperty(mRenderConfig, *mCamera->mRenderer, k, false);
-      mCamera->mRenderer->setCustomProperty(k, std::get<float>(v));
-    }
+  // properties set before the camera had a renderer: validate and apply them now, in name order.
+  // A throw leaves the camera out of the scene, as the previous per-property validation did.
+  auto const overrides = mProperties;
+  for (auto const &[name, value] : overrides) {
+    setParameter(name, value);
   }
   system->registerComponent(
       std::static_pointer_cast<SapienRenderCameraComponent>(shared_from_this()));

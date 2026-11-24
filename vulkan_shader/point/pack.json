@@ -1,0 +1,11 @@
+{
+  "parameters": {
+    "exposure": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 1.0,
+      "minimum": 0,
+      "description": "Scales the shading result before tone mapping."
+    }
+  }
+}
