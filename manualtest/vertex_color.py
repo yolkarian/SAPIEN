@@ -13,8 +13,9 @@ def main():
     renderer = sapien.SapienRenderer()
     engine.set_renderer(renderer)
 
-    sapien.render_config.camera_shader_dir = "vertex_color"
-    sapien.render_config.viewer_shader_dir = "vertex_color"
+    render_config = sapien.render.RenderConfig("vertex_color")
+    sapien.render.set_default_render_config("camera", render_config)
+    sapien.render.set_default_render_config("viewer", render_config)
 
     scene_config = sapien.SceneConfig()
     scene = engine.create_scene(scene_config)

@@ -233,7 +233,7 @@ ground.name = "ground"
 
 
 # camera_mount = Entity()
-# camera = RenderCameraComponent(512, 512, "../vulkan_shader/ibl")
+# camera = RenderCameraComponent(512, 512, sapien.render.RenderConfig("../vulkan_shader/ibl"))
 # camera_mount.add_component(camera)
 # scene.add_entity(camera_mount)
 # camera_mount.pose = Pose([-1, 0, 0.5])
@@ -256,7 +256,10 @@ builder = create_ant_builder(scene)
 ant = builder.build()
 ant.root.pose = Pose([0, 0, 1])
 
-viewer = Viewer(resolutions=(1920, 1080), shader_dir="../vulkan_shader/ibl")
+viewer = Viewer(
+    resolutions=(1920, 1080),
+    render_config=sapien.render.RenderConfig("../vulkan_shader/ibl"),
+)
 viewer.set_scene(scene)
 viewer.set_camera_pose(sapien.Pose([-2, 0, 0.5]))
 

@@ -15,34 +15,19 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `sapien.render.can_shutdown` | `can_shutdown() -> bool` | Side-effect-free render shutdown preflight. | False while viewers/groups/systems/materials/textures remain. |
 | `sapien.render.shutdown` | `shutdown() -> None` | Wait for Vulkan work and destroy the weak RenderEngine/context. | Idempotent; raises without mutation while resources remain. |
 | `sapien.render.enable_vr` | `enable_vr() -> None` | Enable VR via Steam. Must be called before creating RenderSystem or sapien Scene. |  |
-| `sapien.render.get_camera_shader_dir` | `get_camera_shader_dir() -> str` | Get camera shader dir. |  |
 | `sapien.render.get_device_summary` | `get_device_summary() -> str` | Get device summary. |  |
 | `sapien.render.get_imgui_ini_filename` | `get_imgui_ini_filename() -> str` | Get imgui ini filename. |  |
-| `sapien.render.get_msaa` | `get_msaa() -> int` | Get msaa. |  |
-| `sapien.render.get_ray_tracing_denoiser` | `get_ray_tracing_denoiser() -> Literal['none', 'oidn', 'optix']` | Get ray tracing denoiser. |  |
-| `sapien.render.get_ray_tracing_dof_aperture` | `get_ray_tracing_dof_aperture() -> float` | Get ray tracing dof aperture. |  |
-| `sapien.render.get_ray_tracing_dof_plane` | `get_ray_tracing_dof_plane() -> float` | Get ray tracing dof plane. |  |
-| `sapien.render.get_ray_tracing_path_depth` | `get_ray_tracing_path_depth() -> int` | Get ray tracing path depth. |  |
-| `sapien.render.get_ray_tracing_samples_per_pixel` | `get_ray_tracing_samples_per_pixel() -> int` | Get ray tracing samples per pixel. |  |
-| `sapien.render.get_viewer_shader_dir` | `get_viewer_shader_dir() -> str` | Get viewer shader dir. |  |
 | `sapien.render.get_vr_action_manifest_filename` | `get_vr_action_manifest_filename() -> str` | Get vr action manifest filename. |  |
 | `sapien.render.get_vr_enabled` | `get_vr_enabled() -> bool` | Get vr enabled. |  |
 | `sapien.render.load_scene` | `load_scene(filename: str, apply_scale: bool=True) -> RenderSceneLoaderNode` | Load a scene. |  |
-| `sapien.render.set_camera_shader_dir` | `set_camera_shader_dir(dir: str) -> None` | Set camera shader dir. |  |
+| `sapien.render.set_default_render_config` | `set_default_render_config(target: str, render_config: RenderConfig) -> None` | Default config copied by new cameras (`"camera"`) or windows/VR (`"viewer"`). | Consumers created earlier keep their copy. |
+| `sapien.render.get_default_render_config` | `get_default_render_config(target: str) -> RenderConfig` | Copy of the default config. | Editing the copy does not change the default. |
 | `sapien.render.set_global_config` | `set_global_config(max_num_materials: int=128, max_num_textures: int=512, default_mipmap_levels: int=1, do_not_load_texture: bool=False) -> None` | Sets global properties for SAPIEN renderers. This function should only be called before creating any renderer-related objects. |  |
 | `sapien.render.set_imgui_ini_filename` | `set_imgui_ini_filename(filename: str) -> None` | Set imgui ini filename. |  |
 | `sapien.render.set_light_colors` | `set_light_colors(lights: list[RenderLightComponent], colors: np.ndarray[Any, np.dtype[Any]] \| list \| tuple) -> None` | Batch-set light colors `[N, 3]` finite non-negative. | Validate-then-apply, zero partial application; works in every pose mode. |
 | `sapien.render.set_light_directions` | `set_light_directions(lights: list[RenderLightComponent], directions: np.ndarray[Any, np.dtype[Any]] \| list \| tuple) -> None` | Batch-set light directions `[N, 3]` (directional lights only; SAPIEN lights shine along +x; keeps local position). | Validate-then-apply, zero partial application. |
 | `sapien.render.set_light_poses` | `set_light_poses(lights: list[RenderLightComponent], poses: np.ndarray[Any, np.dtype[Any]] \| list \| tuple) -> None` | Batch-set light local poses `[N, 7]` (xyz+wxyz; quaternions normalized). | Sealed lights need pose mode `'cpu'`. Validate-then-apply, zero partial application. |
 | `sapien.render.set_log_level` | `set_log_level(level: str) -> None` | Set log level. |  |
-| `sapien.render.set_msaa` | `set_msaa(msaa: int) -> None` | Set msaa. |  |
-| `sapien.render.set_picture_format` | `set_picture_format(name: str, format: str) -> None` | Set picture format. |  |
-| `sapien.render.set_ray_tracing_denoiser` | `set_ray_tracing_denoiser(name: Literal['none', 'oidn', 'optix']) -> None` | Set ray tracing denoiser. |  |
-| `sapien.render.set_ray_tracing_dof_aperture` | `set_ray_tracing_dof_aperture(radius: float) -> None` | Set ray tracing dof aperture. |  |
-| `sapien.render.set_ray_tracing_dof_plane` | `set_ray_tracing_dof_plane(depth: float) -> None` | Set ray tracing dof plane. |  |
-| `sapien.render.set_ray_tracing_path_depth` | `set_ray_tracing_path_depth(depth: int) -> None` | Set ray tracing path depth. |  |
-| `sapien.render.set_ray_tracing_samples_per_pixel` | `set_ray_tracing_samples_per_pixel(spp: int) -> None` | Set ray tracing samples per pixel. |  |
-| `sapien.render.set_viewer_shader_dir` | `set_viewer_shader_dir(dir: str) -> None` | Set viewer shader dir. |  |
 | `sapien.render.set_vr_action_manifest_filename` | `set_vr_action_manifest_filename(filename: str) -> None` | Set vr action manifest filename. |  |
 
 ## Class index
@@ -50,6 +35,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | Class | Bases | Use | Notes |
 |---|---|---|---|
 | `sapien.render.RenderBodyComponent` | `sapien.Component` | Render body; holds RenderShape. |  |
+| `sapien.render.RenderConfig` |  | Per-camera render configuration: shader pack, shader properties, defines, denoiser, MSAA, picture formats. `kind` is `"raster"`, `"ray_tracing"` or `"batch_ray_tracing"`. | Consumers copy it; unknown property names or wrong types raise `RuntimeError` naming key and pack. `cfg["spp"]`, `cfg.denoiser`, `cfg.defines`, `cfg.picture_formats`, `cfg.msaa`, `cfg.kind`, `cfg.is_batch_ray_tracing`, `cfg.copy()`. A `batch_ray_tracing` pack (`vulkan_shader/rt_batch`, `batch.comp`) has no per-camera renderer: only `RenderCameraGroup.take_picture()` / `get_picture_cuda(name)` render it. |
 | `sapien.render.RenderCameraComponent` | `sapien.Component` | Camera component; read image/CUDA image after take_picture. |  |
 | `sapien.render.RenderCameraGroup` |  | Batched camera group; take/read CUDA for multiple cameras at once. |  |
 | `sapien.render.RenderCubemap` |  | Environment cubemap. |  |
@@ -172,13 +158,13 @@ image width/height ratio, including portrait images.
 | `set_orthographic_parameters` | method | `set_orthographic_parameters(self, near: float, far: float, top: float) -> None<br>set_orthographic_parameters(self, near: float, far: float, left: float, right: float, bottom: float, top: float) -> None` |  |  |
 | `set_perspective_parameters` | method | `set_perspective_parameters(self, near: float, far: float, fx: float, fy: float, cx: float, cy: float, skew: float) -> None` |  |  |
 | `set_principal_point` | method | `set_principal_point(self, cx: float, cy: float) -> None` |  |  |
-| `set_property` | method | `set_property(self, name: str, value: float) -> None<br>set_property(self, name: str, value: int) -> None` |  |  |
+| `set_property` | method | `set_property(self, name: str, value: float) -> None<br>set_property(self, name: str, value: int) -> None` | Validated against the camera's pack; raises for a `batch_ray_tracing` camera, whose properties come from its `RenderConfig`. |
 | `set_skew` | method | `set_skew(self, skew: float) -> None` |  |  |
 | `set_texture` | method | `set_texture(self, name: str, texture: RenderTexture) -> None` |  |  |
 | `set_texture_array` | method | `set_texture_array(self, name: str, textures: list[RenderTexture]) -> None` |  |  |
 | `take_picture` | method | `take_picture(self) -> None` | Trigger camera/camera-group rendering. |  |
 | `width` | property | `width(self) -> int` |  |  |
-| `__init__` | method | `__init__(self, width: int, height: int, shader_dir: str='') -> None` |  |  |
+| `__init__` | method | `__init__(self, width: int, height: int, render_config: RenderConfig | None = None) -> None` |  |  |
 | `_cuda_buffer` | property | `_cuda_buffer(self) -> sapien.CudaArray` | Debug only. Get the CUDA buffer containing GPU data for this camera, including transformaion matrices, sizes, and user-defined shader fields. |  |
 | `_internal_renderer` | property | `_internal_renderer(self) -> sapien.internal_renderer.Renderer` |  |  |
 
@@ -859,7 +845,6 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 | `set_scene` | method | `set_scene(self, scene: sapien.Scene) -> None` |  | The scene must render on the window's device (the default render device); otherwise `RuntimeError`. |
 | `set_scenes` | method | `set_scenes(self, scenes: list[sapien.Scene]) -> None` | Select base scenes plus associated shared scenes once. | No render offsets are applied. Scenes must render on the window's device (the default render device); otherwise `RuntimeError`. |
 | `configure_physx_gpu_rendering` | method | `configure_physx_gpu_rendering(self, physx_system: sapien.physx.PhysxGpuSystem, transport: Literal['auto', 'direct', 'staged', 'cpu-debug']='auto') -> None` | Configure Viewer pose transport. | Auto selects same-device direct or cross-device staged raster/RT transport. |
-| `set_shader_dir` | method | `set_shader_dir(self, shader_dir: str) -> None` |  |  |
 | `shift` | property | `shift(self) -> bool` |  |  |
 | `should_close` | property | `should_close(self) -> bool` |  |  |
 | `show` | method | `show(self) -> None` |  |  |
@@ -868,7 +853,7 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 | `unset_drop_callback` | method | `unset_drop_callback(self) -> None` |  |  |
 | `unset_focus_callback` | method | `unset_focus_callback(self) -> None` |  |  |
 | `update_render` | method | `update_render(self) -> None` | Submit render-system state and the configured Viewer pose transport. | Call before `render()` after each displayed simulation state. |
-| `__init__` | method | `__init__(self, width: int, height: int, shader_dir: str) -> None` |  |  |
+| `__init__` | method | `__init__(self, width: int, height: int, render_config: RenderConfig | None = None) -> None` |  |  |
 | `_internal_renderer` | property | `_internal_renderer(self) -> sapien.internal_renderer.Renderer` |  |  |
 | `_internal_scene` | property | `_internal_scene(self) -> sapien.internal_renderer.Scene` |  |  |
 

@@ -109,10 +109,11 @@ PhysX GPU runtime in `lib/`. Programs that render first set the shader search pa
 the Python package does on import:
 
 ```cpp
+using sapien::sapien_renderer::RenderConfig;
 using sapien::sapien_renderer::SapienRendererDefault;
 SapienRendererDefault::internalSetShaderSearchPath(sdk + "/share/sapien/vulkan_shader");
-SapienRendererDefault::setViewerShaderDirectory("default");
-SapienRendererDefault::setCameraShaderDirectory("default");
+SapienRendererDefault::setDefaultRenderConfig("camera", RenderConfig("default"));
+SapienRendererDefault::setDefaultRenderConfig("viewer", RenderConfig("default"));
 ```
 
 The URDF loader and the actor and articulation builders are Python-only; C++ programs

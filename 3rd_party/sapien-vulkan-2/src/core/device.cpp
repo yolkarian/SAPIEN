@@ -91,18 +91,25 @@ Device::Device(std::shared_ptr<PhysicalDevice> physicalDevice) : mPhysicalDevice
   deviceExtensions.push_back(VK_KHR_SHADER_NON_SEMANTIC_INFO_EXTENSION_NAME);
 #endif
 
+  vk::PhysicalDeviceRayQueryFeaturesKHR rayQueryFeature;
+  rayQueryFeature.setRayQuery(true);
+
   if (mPhysicalDevice->getPickedDeviceInfo().rayTracing) {
     deviceExtensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
     deviceExtensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
     deviceExtensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
     deviceExtensions.push_back(VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME);
     deviceExtensions.push_back(VK_KHR_SHADER_CLOCK_EXTENSION_NAME);
+    // ray queries back the batched ray-tracing renderer: one compute dispatch traces every
+    // camera of a group without a ray tracing pipeline or a shader binding table.
+    deviceExtensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
     descriptorFeatures.setRuntimeDescriptorArray(true);
     descriptorFeatures.setShaderStorageBufferArrayNonUniformIndexing(true);
     descriptorFeatures.setShaderSampledImageArrayNonUniformIndexing(true);
     extendedDynamicStateFeature.setPNext(&asFeature);
     asFeature.setPNext(&rtFeature);
-    rtFeature.setPNext(&addrFeature);
+    rtFeature.setPNext(&rayQueryFeature);
+    rayQueryFeature.setPNext(&addrFeature);
     addrFeature.setPNext(&clockFeature);
     features.features.setShaderInt64(true);
   }

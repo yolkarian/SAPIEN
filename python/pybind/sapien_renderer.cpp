@@ -512,35 +512,21 @@ void init_sapien_renderer(py::module &sapien) {
           "without shutting down VR. This function is used to force shutting down VR when you "
           "know SAPIEN will be killed without a clean shutdown.")
 
-      .def("set_viewer_shader_dir", &SapienRendererDefault::setViewerShaderDirectory,
-           py::arg("dir"))
-      .def("set_camera_shader_dir", &SapienRendererDefault::setCameraShaderDirectory,
-           py::arg("dir"))
-      .def("set_ray_tracing_samples_per_pixel",
-           &SapienRendererDefault::setRayTracingSamplesPerPixel, py::arg("spp"))
-      .def("set_ray_tracing_path_depth", &SapienRendererDefault::setRayTracingPathDepth,
-           py::arg("depth"))
-      .def("set_ray_tracing_denoiser", &SapienRendererDefault::setRayTracingDenoiser,
-           py::arg("name"))
-      .def("set_ray_tracing_dof_aperture", &SapienRendererDefault::setRayTracingDoFAperture,
-           py::arg("radius"))
-      .def("set_ray_tracing_dof_plane", &SapienRendererDefault::setRayTracingDoFPlane,
-           py::arg("depth"))
-      .def("set_msaa", &SapienRendererDefault::setMSAA, py::arg("msaa"))
-      .def("set_picture_format", &SapienRendererDefault::setRenderTargetFormat, py::arg("name"),
-           py::arg("format"))
+      .def("set_default_render_config",
+           [](std::string const &target, RenderConfig const &config) {
+             SapienRendererDefault::setDefaultRenderConfig(target, config);
+           },
+           py::arg("target"), py::arg("render_config"),
+           R"doc(
+Set the process-wide default render config copied by cameras ('camera') or windows and VR
+('viewer') created without an explicit config. Consumers created earlier keep the config they
+copied.)doc")
+      .def("get_default_render_config", &SapienRendererDefault::getDefaultRenderConfig,
+           py::arg("target"),
+           "Copy of the process-wide default render config of 'camera' or 'viewer'.")
 
       .def("get_imgui_ini_filename", &SapienRendererDefault::getImguiIniFilename)
       .def("get_vr_action_manifest_filename", &SapienRendererDefault::getVRActionManifestFilename)
-      .def("get_viewer_shader_dir", &SapienRendererDefault::getViewerShaderDirectory)
-      .def("get_camera_shader_dir", &SapienRendererDefault::getCameraShaderDirectory)
-      .def("get_ray_tracing_samples_per_pixel",
-           &SapienRendererDefault::getRayTracingSamplesPerPixel)
-      .def("get_ray_tracing_path_depth", &SapienRendererDefault::getRayTracingPathDepth)
-      .def("get_ray_tracing_denoiser", &SapienRendererDefault::getRayTracingDenoiser)
-      .def("get_ray_tracing_dof_aperture", &SapienRendererDefault::getRayTracingDoFAperture)
-      .def("get_ray_tracing_dof_plane", &SapienRendererDefault::getRayTracingDoFPlane)
-      .def("get_msaa", &SapienRendererDefault::getMSAA)
 
       .def("set_log_level", &svulkan2::logger::setLogLevel, py::arg("level"))
       .def(
@@ -632,6 +618,8 @@ Args:
       py::class_<RenderShapeCylinder, RenderShapePrimitive>(m, "RenderShapeCylinder");
   auto PyRenderShapeTriangleMesh =
       py::class_<RenderShapeTriangleMesh, RenderShape>(m, "RenderShapeTriangleMesh");
+
+  auto PyRenderConfig = py::class_<RenderConfig>(m, "RenderConfig");
 
   auto PyRenderSystem = py::class_<SapienRendererSystem, System>(m, "RenderSystem");
 
@@ -807,6 +795,105 @@ Pass the output of a consumer that read the pictures (or wrote ``cuda_poses``) o
 the next take_picture() then overwrites the pictures, and update_render() reads the poses, only
 after that consumer finished.)doc");
 #endif
+
+  PyRenderConfig
+      .def(py::init<std::string const &>(), py::arg("shader_pack") = "default",
+           R"doc(
+Per-camera render configuration replacing the process-wide render setters.
+
+`shader_pack` is a built-in pack name resolved under the shader search path (for example
+"default", "rt", "minimal") or a directory path. It is resolved and validated immediately and
+must contain gbuffer.vert (rasterization) or camera.rgen (ray tracing).
+
+Consumers copy the config: editing it afterwards does not affect cameras or windows that
+already exist.
+
+Properties become renderer custom properties and are validated when a renderer is created:
+ray tracing packs declare them as push constants (spp, maxDepth, aperture, focusPlane,
+russianRoulette, russianRouletteMinBounces, exposure, toneMapper), rasterization packs as
+specialization constants (exposure, toneMapper, ambientOcclusionStrength, ...).
+)doc")
+      .def_property("shader_pack", &RenderConfig::getShaderPack, &RenderConfig::setShaderPack,
+                    "Canonical shader pack directory.")
+      .def_property_readonly("kind", &RenderConfig::getKindName, R"doc(
+What the pack renders: "raster" (gbuffer.vert), "ray_tracing" (camera.rgen, one renderer per
+camera) or "batch_ray_tracing" (batch.comp, one renderer per RenderCameraGroup). A batch pack has
+no per-camera renderer: add its cameras to one RenderCameraGroup.)doc")
+      .def_property_readonly("is_ray_tracing", &RenderConfig::isRayTracing,
+                             "True for both ray tracing kinds, including batch_ray_tracing.")
+      .def_property_readonly("is_batch_ray_tracing", &RenderConfig::isBatchRayTracing,
+                             "True when the pack renders only through a RenderCameraGroup.")
+      .def("__getitem__",
+           [](RenderConfig const &config, std::string const &name) -> py::object {
+             auto value = config.getProperty(name);
+             if (std::holds_alternative<int>(value)) {
+               return py::int_(std::get<int>(value));
+             }
+             return py::float_(std::get<float>(value));
+           },
+           py::arg("name"))
+      .def("__setitem__",
+           [](RenderConfig &config, std::string const &name, py::object const &value) {
+             if (py::isinstance<py::bool_>(value)) {
+               config.setProperty(name, value.cast<bool>() ? 1 : 0);
+             } else if (py::isinstance<py::int_>(value)) {
+               config.setProperty(name, value.cast<int>());
+             } else if (py::isinstance<py::float_>(value)) {
+               config.setProperty(name, value.cast<float>());
+             } else {
+               throw std::runtime_error("render config property \"" + name +
+                                        "\" must be an int, float or bool");
+             }
+           },
+           py::arg("name"), py::arg("value"))
+      .def("__contains__", [](RenderConfig const &config, std::string const &name) {
+        return config.hasProperty(name);
+      })
+      .def("__delitem__", &RenderConfig::removeProperty, py::arg("name"))
+      .def_property_readonly("properties", &RenderConfig::getProperties,
+                             "Copy of the shader properties as a dict.")
+      .def_property("defines", &RenderConfig::getDefines, &RenderConfig::setDefines,
+                    "Shader preprocessor definitions, name -> value (a bare name uses \"\").")
+      .def_property("denoiser", &RenderConfig::getDenoiser, &RenderConfig::setDenoiser,
+                    "Ray tracing denoiser; a rasterization pack rejects a denoiser other than "
+                    "'none' when the renderer is created.")
+      .def_property("msaa", &RenderConfig::getMSAA, &RenderConfig::setMSAA,
+                    "MSAA sample count, one of 1, 2, 4, 8.")
+      .def_property(
+          "picture_formats",
+          [](RenderConfig const &config) {
+            std::map<std::string, vk::Format> formats = config.getPictureFormats();
+            py::dict result;
+            for (auto const &[name, format] : formats) {
+              result[py::str(name)] = py::cast(format);
+            }
+            return result;
+          },
+          [](RenderConfig &config, py::dict const &formats) {
+            std::map<std::string, vk::Format> parsed;
+            for (auto const &[name, format] : formats) {
+              parsed[py::cast<std::string>(name)] = py::cast<vk::Format>(format);
+            }
+            config.setPictureFormats(parsed);
+          },
+          "Render target name -> image format string, e.g. {'Color': "
+          "'r8g8b8a8unorm'}. Ray tracing packs do not support it.")
+      .def("copy", [](RenderConfig const &config) { return RenderConfig(config); })
+      .def("__eq__",
+           [](RenderConfig const &config, py::object const &other) {
+             if (!py::isinstance<RenderConfig>(other)) {
+               return false;
+             }
+             return config == other.cast<RenderConfig const &>();
+           })
+      .def("__ne__",
+           [](RenderConfig const &config, py::object const &other) {
+             if (!py::isinstance<RenderConfig>(other)) {
+               return true;
+             }
+             return config != other.cast<RenderConfig const &>();
+           })
+      .def("__repr__", &RenderConfig::toString);
 
   PyRenderSystem
       .def(py::init([](std::shared_ptr<Device> device) {
@@ -1180,8 +1267,20 @@ version moved; an unchanged version means zero per-frame light uploads.)doc")
            "returns None if ray tracing has not been initialized");
 
   PyRenderCameraComponent
-      .def(py::init<uint32_t, uint32_t, std::string const &>(), py::arg("width"),
-           py::arg("height"), py::arg("shader_dir") = "")
+      .def(py::init([](uint32_t width, uint32_t height, py::object const &renderConfig) {
+             if (renderConfig.is_none()) {
+               return std::make_shared<SapienRenderCameraComponent>(width, height, std::nullopt);
+             }
+             return std::make_shared<SapienRenderCameraComponent>(
+                 width, height, renderConfig.cast<RenderConfig>());
+           }),
+           py::arg("width"), py::arg("height"), py::arg("render_config") = py::none(),
+           R"doc(
+Create a camera. `render_config` null copies the process-wide camera default at construction;
+the camera keeps the config it copied.)doc")
+
+      .def_property_readonly("render_config", &SapienRenderCameraComponent::getRenderConfig,
+                             "Copy of the render config this camera copied at construction.")
 
       .def_property("local_pose", &SapienRenderCameraComponent::getLocalPose,
                     &SapienRenderCameraComponent::setLocalPose)
@@ -1262,10 +1361,14 @@ version moved; an unchanged version means zero per-frame light uploads.)doc")
       .def(
           "set_property",
           py::overload_cast<const std::string &, float>(&SapienRenderCameraComponent::setProperty),
-          py::arg("name"), py::arg("value"))
+          py::arg("name"), py::arg("value"),
+          R"doc(Runtime per-camera property setter. Once the camera has a renderer, an unknown
+name or a wrong type raises naming the key and the shader pack.)doc")
       .def("set_property",
            py::overload_cast<const std::string &, int>(&SapienRenderCameraComponent::setProperty),
            py::arg("name"), py::arg("value"))
+      .def("get_property", &SapienRenderCameraComponent::getProperty, py::arg("name"),
+           "Current value of a property set on this camera.")
       .def("set_texture", &SapienRenderCameraComponent::setTexture, py::arg("name"),
            py::arg("texture"))
       .def("set_texture_array", &SapienRenderCameraComponent::setTextureArray, py::arg("name"),
@@ -1445,8 +1548,17 @@ Color, FOV, shape, and shadow near/far/half-size stay CPU real-time in both mode
            py::arg("cuda_stream") = 0);
 
   PyRenderWindow
-      .def(py::init<int, int, std::string>(), py::arg("width"), py::arg("height"),
-           py::arg("shader_dir"))
+      .def(py::init([](int width, int height, py::object const &renderConfig) {
+             if (renderConfig.is_none()) {
+               return std::make_unique<SapienRendererWindow>(width, height, std::nullopt);
+             }
+             return std::make_unique<SapienRendererWindow>(width, height,
+                                                           renderConfig.cast<RenderConfig>());
+           }),
+           py::arg("width"), py::arg("height"), py::arg("render_config") = py::none(),
+           R"doc(
+Create an onscreen render window. `render_config` null copies the process-wide viewer default
+at construction.)doc")
       .def("show", &SapienRendererWindow::show)
       .def("hide", &SapienRendererWindow::hide)
       .def_property_readonly("should_close", &SapienRendererWindow::windowCloseRequested)
@@ -1480,7 +1592,13 @@ Color, FOV, shape, and shadow near/far/half-size stay CPU real-time in both mode
       .def("set_camera_texture_array", &SapienRendererWindow::setCameraTextureArray,
            py::arg("name"), py::arg("textures"))
 
-      .def("set_shader_dir", &SapienRendererWindow::setShader, py::arg("shader_dir"))
+      .def("set_render_config", &SapienRendererWindow::setRenderConfig, py::arg("render_config"),
+           R"doc(
+Replace the renderer with one built from `render_config`. Property values that the new pack
+also declares with the same type carry over, so the viewer's pack switcher keeps its spp,
+depth and exposure.)doc")
+      .def_property_readonly("render_config", &SapienRendererWindow::getRenderConfig,
+                             "Render config of the current renderer.")
       .def("get_content_scale", &SapienRendererWindow::getContentScale)
       .def("set_content_scale", &SapienRendererWindow::setContentScale, py::arg("scale"))
       .def("get_camera_position", &SapienRendererWindow::getCameraPosition)

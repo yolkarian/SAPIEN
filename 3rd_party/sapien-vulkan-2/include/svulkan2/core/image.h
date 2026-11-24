@@ -39,9 +39,11 @@ private:
 
   std::vector<vk::ImageLayout> mCurrentLayerLayout;
 
+public:
+  /** Records blits that fill levels 1.. of one array layer from its level 0. Every level of
+   *  the layer must be in eTransferDstOptimal; all end in eShaderReadOnlyOptimal. */
   void generateMipmaps(vk::CommandBuffer cb, uint32_t arrayLayer = 0);
 
-public:
   Image(Context &context, vk::ImageType type, vk::Extent3D extent, vk::Format format,
         vk::ImageUsageFlags usageFlags, VmaMemoryUsage memoryUsage,
         vk::SampleCountFlagBits sampleCount = vk::SampleCountFlagBits::e1, uint32_t mipLevels = 1,

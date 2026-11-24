@@ -36,10 +36,10 @@ layout(set = 2, binding = 0) uniform CameraBuffer {
 void main() {
   vec2 invScreen = vec2(2.0) / gl_LaunchSizeEXT.xy;
   vec2 pixel = gl_LaunchIDEXT.xy * invScreen - 1.0;
-  uint magic = 0x9e3779b9;  // use fixed seed for consistency
-  // uint magic = uint(clockARB());
-  uint seed = tea(gl_LaunchSizeEXT.x * gl_LaunchSizeEXT.y * spp * frameCount +
-                  gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x + gl_LaunchIDEXT.x, magic);
+  // Deterministic per pixel and per render: frameSeed counts this camera's renders, so the
+  // noise pattern changes every frame even when accumulation restarts (frameCount == 0).
+  uint seed = tea(gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x + gl_LaunchIDEXT.x,
+                  0x9e3779b9u + uint(frameSeed));
 
   vec3 radiance = vec3(0.0);
   float alpha = 0.0;

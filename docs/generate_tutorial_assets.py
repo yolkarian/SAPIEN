@@ -44,6 +44,7 @@ def add_camera(
     target: list[float],
     width: int,
     height: int,
+    render_config: sapien.render.RenderConfig | None = None,
 ) -> sapien.render.RenderCameraComponent:
     """Add a free camera configured for tutorial asset rendering."""
     camera = scene.add_camera(
@@ -53,6 +54,7 @@ def add_camera(
         np.deg2rad(50.0),
         0.01,
         100.0,
+        render_config=render_config,
     )
     camera.local_pose = look_at_pose(
         np.asarray(position, dtype=np.float32),
@@ -251,11 +253,11 @@ def build_material_scene(
     shader_dir: str,
 ) -> tuple[sapien.Scene, sapien.render.RenderCameraComponent]:
     """Create the material scene used for raster/RT comparison images."""
-    sapien.render.set_camera_shader_dir(shader_dir)
+    render_config = sapien.render.RenderConfig(shader_dir)
     if shader_dir == "rt":
-        sapien.render.set_ray_tracing_samples_per_pixel(64)
-        sapien.render.set_ray_tracing_path_depth(8)
-        sapien.render.set_ray_tracing_denoiser("oidn")
+        render_config["spp"] = 64
+        render_config["maxDepth"] = 8
+        render_config.denoiser = "oidn"
 
     scene = sapien.Scene()
     floor_material = sapien.render.RenderMaterial(
@@ -297,7 +299,14 @@ def build_material_scene(
         entity = builder.build_static(name=f"material_{index}")
         entity.pose = sapien.Pose(position)
 
-    camera = add_camera(scene, [-2.6, -3.2, 1.9], [0.0, 0.0, 0.45], 800, 450)
+    camera = add_camera(
+        scene,
+        [-2.6, -3.2, 1.9],
+        [0.0, 0.0, 0.45],
+        800,
+        450,
+        render_config=render_config,
+    )
     return scene, camera
 
 
@@ -330,8 +339,6 @@ def generate_rendering_assets() -> None:
         font=label_font,
     )
     comparison.save(RENDERING_ASSETS / "rst_vs_rt.png")
-
-    sapien.render.set_camera_shader_dir("default")
 
 
 def main() -> None:

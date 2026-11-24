@@ -5,7 +5,7 @@ import sapien.pysapien
 import sapien.pysapien.internal_renderer
 import sapien.pysapien.physx
 import typing
-__all__ = ['RenderBodyComponent', 'RenderCameraComponent', 'RenderCameraGroup', 'RenderCubemap', 'RenderCudaMeshComponent', 'RenderDirectionalLightComponent', 'RenderLightComponent', 'RenderMaterial', 'RenderParallelogramLightComponent', 'RenderPointCloudComponent', 'RenderPointLightComponent', 'RenderSceneLoaderNode', 'RenderShape', 'RenderShapeBox', 'RenderShapeCapsule', 'RenderShapeCylinder', 'RenderShapePlane', 'RenderShapePrimitive', 'RenderShapeSphere', 'RenderShapeTriangleMesh', 'RenderShapeTriangleMeshPart', 'RenderSpotLightComponent', 'RenderSystem', 'RenderSystemGroup', 'RenderTexture', 'RenderTexture2D', 'RenderTexturedLightComponent', 'RenderVRDisplay', 'RenderWindow', 'SapienRenderer', 'can_shutdown', 'get_live_resources', 'shutdown', 'clear_cache', 'enable_vr', 'get_camera_shader_dir', 'get_device_summary', 'get_imgui_ini_filename', 'get_msaa', 'get_ray_tracing_denoiser', 'get_ray_tracing_dof_aperture', 'get_ray_tracing_dof_plane', 'get_ray_tracing_path_depth', 'get_ray_tracing_samples_per_pixel', 'get_viewer_shader_dir', 'get_vr_action_manifest_filename', 'get_vr_enabled', 'load_scene', 'set_camera_shader_dir', 'set_global_config', 'set_imgui_ini_filename', 'set_light_colors', 'set_light_directions', 'set_light_poses', 'set_log_level', 'set_msaa', 'set_picture_format', 'set_ray_tracing_denoiser', 'set_ray_tracing_dof_aperture', 'set_ray_tracing_dof_plane', 'set_ray_tracing_path_depth', 'set_ray_tracing_samples_per_pixel', 'set_viewer_shader_dir', 'set_vr_action_manifest_filename']
+__all__ = ['RenderBodyComponent', 'RenderConfig', 'RenderCameraComponent', 'RenderCameraGroup', 'RenderCubemap', 'RenderCudaMeshComponent', 'RenderDirectionalLightComponent', 'RenderLightComponent', 'RenderMaterial', 'RenderParallelogramLightComponent', 'RenderPointCloudComponent', 'RenderPointLightComponent', 'RenderSceneLoaderNode', 'RenderShape', 'RenderShapeBox', 'RenderShapeCapsule', 'RenderShapeCylinder', 'RenderShapePlane', 'RenderShapePrimitive', 'RenderShapeSphere', 'RenderShapeTriangleMesh', 'RenderShapeTriangleMeshPart', 'RenderSpotLightComponent', 'RenderSystem', 'RenderSystemGroup', 'RenderTexture', 'RenderTexture2D', 'RenderTexturedLightComponent', 'RenderVRDisplay', 'RenderWindow', 'SapienRenderer', 'can_shutdown', 'get_live_resources', 'shutdown', 'clear_cache', 'enable_vr', 'get_device_summary', 'get_imgui_ini_filename', 'get_vr_action_manifest_filename', 'get_vr_enabled', 'load_scene', 'set_global_config', 'set_imgui_ini_filename', 'set_light_colors', 'set_light_directions', 'set_light_poses', 'set_log_level', 'set_vr_action_manifest_filename']
 M = typing.TypeVar("M", bound=int)
 N = typing.TypeVar("N", bound=int)
 class RenderBodyComponent(sapien.pysapien.Component):
@@ -52,7 +52,11 @@ class RenderCameraComponent(sapien.pysapien.Component):
     local_pose: sapien.pysapien.Pose
     near: float
     skew: float
-    def __init__(self, width: int, height: int, shader_dir: str = '') -> None:
+    def __init__(self, width: int, height: int, render_config: RenderConfig | None = None) -> None:
+        """
+        Create a camera. `render_config` null copies the process-wide camera default at construction;
+        the camera keeps the config it copied.
+        """
         ...
     def get_extrinsic_matrix(self) -> numpy.ndarray[tuple[typing.Literal[3], typing.Literal[4]], numpy.dtype[numpy.float32]]:
         """
@@ -700,6 +704,94 @@ class RenderSpotLightComponent(RenderLightComponent):
         ...
     def set_outer_fov(self, fov: float) -> None:
         ...
+class RenderConfig:
+    """
+    Per-camera render configuration replacing the process-wide render setters.
+
+    `shader_pack` is a built-in pack name resolved under the shader search path (for example
+    "default", "rt", "minimal") or a directory path. It is resolved and validated immediately and
+    must contain gbuffer.vert (rasterization) or camera.rgen (ray tracing).
+
+    Consumers copy the config: editing it afterwards does not affect cameras or windows that
+    already exist.
+
+    Properties become renderer custom properties and are validated when a renderer is created:
+    ray tracing packs declare them as push constants (spp, maxDepth, aperture, focusPlane,
+    russianRoulette, russianRouletteMinBounces, exposure, toneMapper), rasterization packs as
+    specialization constants (exposure, toneMapper, ambientOcclusionStrength, ...).
+    """
+    def __init__(self, shader_pack: str = 'default') -> None:
+        ...
+    def __contains__(self, arg0: str) -> bool:
+        ...
+    def __delitem__(self, arg0: str) -> None:
+        ...
+    def __eq__(self, arg0: object) -> bool:
+        ...
+    def __getitem__(self, name: str) -> int | float:
+        ...
+    def __ne__(self, arg0: object) -> bool:
+        ...
+    def __repr__(self) -> str:
+        ...
+    def __setitem__(self, name: str, value: int | float) -> None:
+        ...
+    def copy(self) -> RenderConfig:
+        ...
+    @property
+    def defines(self) -> dict[str, str]:
+        """
+        Shader preprocessor definitions, name -> value (a bare name uses "").
+        """
+    @defines.setter
+    def defines(self, arg0: dict[str, str]) -> None:
+        ...
+    @property
+    def denoiser(self) -> typing.Literal['none', 'oidn', 'optix']:
+        """
+        Ray tracing denoiser; a rasterization pack rejects a denoiser other than 'none' when the
+        renderer is created.
+        """
+    @denoiser.setter
+    def denoiser(self, arg0: typing.Literal['none', 'oidn', 'optix']) -> None:
+        ...
+    @property
+    def kind(self) -> typing.Literal['raster', 'ray_tracing', 'batch_ray_tracing']: ...
+    @property
+    def is_batch_ray_tracing(self) -> bool: ...
+    @property
+    def is_ray_tracing(self) -> bool:
+        ...
+    @property
+    def msaa(self) -> int:
+        """
+        MSAA sample count, one of 1, 2, 4, 8.
+        """
+    @msaa.setter
+    def msaa(self, arg0: int) -> None:
+        ...
+    @property
+    def picture_formats(self) -> dict[str, str]:
+        """
+        Render target name -> image format string, e.g. {'Color': 'r8g8b8a8unorm'}. Ray tracing
+        packs do not support it.
+        """
+    @picture_formats.setter
+    def picture_formats(self, arg0: dict[str, str]) -> None:
+        ...
+    @property
+    def properties(self) -> dict[str, int | float]:
+        """
+        Copy of the shader properties as a dict.
+        """
+    @property
+    def shader_pack(self) -> str:
+        """
+        Canonical shader pack directory.
+        """
+    @shader_pack.setter
+    def shader_pack(self, arg0: str) -> None:
+        ...
 class RenderSystem(sapien.pysapien.System):
     ambient_light: numpy.ndarray[typing.Literal[3], numpy.dtype[numpy.float32]]
     batched_render_shared: bool
@@ -783,6 +875,14 @@ class RenderSystemGroup:
     def is_closed(self) -> bool:
         ...
     def create_camera_group(self, cameras: list[RenderCameraComponent], picture_names: list[str]) -> RenderCameraGroup:
+        """
+        Group `cameras` so that one frame renders all of them with one queue submit.
+
+        Every camera of a group must copy an equal RenderConfig and have equal width and height.
+        A group whose config is a batch_ray_tracing pack builds one group renderer instead of one
+        renderer per camera; the group then renders only through take_picture() and
+        get_picture_cuda(name). Mixing batch and non-batch cameras in one group raises.
+        """
         ...
     def gpu_init(self) -> None:
         """
@@ -991,8 +1091,11 @@ class RenderVRDisplay:
 class RenderWindow:
     cursor: bool
     denoiser: typing.Literal['none', 'oidn', 'optix']
-    def __init__(self, width: int, height: int, shader_dir: str) -> None:
-        ...
+    def __init__(self, width: int, height: int, render_config: RenderConfig | None = None) -> None:
+        """
+        Create an onscreen render window. `render_config` null copies the process-wide viewer default
+        at construction.
+        """
     def get_camera_model_matrix(self) -> numpy.ndarray[tuple[typing.Literal[4], typing.Literal[4]], numpy.dtype[numpy.float32]]:
         ...
     def get_camera_pose(self) -> sapien.pysapien.Pose:
@@ -1065,8 +1168,12 @@ class RenderWindow:
         ...
     def get_physx_gpu_pose(self, pose_index: int) -> sapien.pysapien.Pose | None:
         ...
-    def set_shader_dir(self, shader_dir: str) -> None:
-        ...
+    def set_render_config(self, render_config: RenderConfig) -> None:
+        """
+        Replace the renderer with one built from `render_config`. Property values that the new pack
+        also declares with the same type carry over, so the viewer's pack switcher keeps its spp,
+        depth and exposure.
+        """
     def show(self) -> None:
         ...
     def unset_drop_callback(self) -> None:
@@ -1169,25 +1276,9 @@ def enable_vr() -> None:
     """
     Enable VR via Steam. Must be called before creating RenderSystem or sapien Scene.
     """
-def get_camera_shader_dir() -> str:
-    ...
 def get_device_summary() -> str:
     ...
 def get_imgui_ini_filename() -> str:
-    ...
-def get_msaa() -> int:
-    ...
-def get_ray_tracing_denoiser() -> typing.Literal['none', 'oidn', 'optix']:
-    ...
-def get_ray_tracing_dof_aperture() -> float:
-    ...
-def get_ray_tracing_dof_plane() -> float:
-    ...
-def get_ray_tracing_path_depth() -> int:
-    ...
-def get_ray_tracing_samples_per_pixel() -> int:
-    ...
-def get_viewer_shader_dir() -> str:
     ...
 def get_vr_action_manifest_filename() -> str:
     ...
@@ -1195,8 +1286,16 @@ def get_vr_enabled() -> bool:
     ...
 def load_scene(filename: str, apply_scale: bool = True) -> RenderSceneLoaderNode:
     ...
-def set_camera_shader_dir(dir: str) -> None:
-    ...
+def set_default_render_config(target: str, render_config: RenderConfig) -> None:
+    """
+    Set the process-wide default render config copied by cameras ('camera') or windows and VR
+    ('viewer') created without an explicit config. Consumers created earlier keep the config they
+    copied.
+    """
+def get_default_render_config(target: str) -> RenderConfig:
+    """
+    Copy of the process-wide default render config of 'camera' or 'viewer'.
+    """
 def set_global_config(max_num_materials: int = 128, max_num_textures: int = 512, default_mipmap_levels: int = 1, do_not_load_texture: bool = False) -> None:
     """
     Sets global properties for SAPIEN renderer. This function should only be called before creating any renderer-related objects.
@@ -1246,21 +1345,5 @@ def set_light_poses(lights: list[RenderLightComponent], poses: numpy.ndarray[tup
         lights: list of RenderLightComponent
         poses: [N, 7] array of poses, one [x, y, z, qw, qx, qy, qz] row per light
     """
-def set_msaa(msaa: int) -> None:
-    ...
-def set_picture_format(name: str, format: str) -> None:
-    ...
-def set_ray_tracing_denoiser(name: typing.Literal['none', 'oidn', 'optix']) -> None:
-    ...
-def set_ray_tracing_dof_aperture(radius: float) -> None:
-    ...
-def set_ray_tracing_dof_plane(depth: float) -> None:
-    ...
-def set_ray_tracing_path_depth(depth: int) -> None:
-    ...
-def set_ray_tracing_samples_per_pixel(spp: int) -> None:
-    ...
-def set_viewer_shader_dir(dir: str) -> None:
-    ...
 def set_vr_action_manifest_filename(filename: str) -> None:
     ...

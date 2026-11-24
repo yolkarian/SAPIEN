@@ -6,7 +6,8 @@ namespace shader {
 
 class PostprocessingShaderParser {
 public:
-  std::future<void> loadFileAsync(std::string const &filepath);
+  std::future<void> loadFileAsync(std::string const &filepath,
+                                  ShaderDefines const &defines = {});
   void reflectSPV();
 
   inline std::unordered_map<uint32_t, DescriptorSetDescription> const &

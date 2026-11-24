@@ -7,10 +7,10 @@ import sapien
 from sapien import Entity, Scene
 from sapien import internal_renderer as R
 from sapien.render import (
+    RenderConfig,
     RenderSystem,
     RenderWindow,
     SapienRenderer,
-    get_viewer_shader_dir,
 )
 
 from .articulation_window import ArticulationWindow
@@ -32,7 +32,7 @@ class Viewer:
     def __init__(
         self,
         renderer: SapienRenderer = None,
-        shader_dir="",
+        render_config: Optional[RenderConfig] = None,
         resolutions=(1920, 1080),
         plugins=[
             PathWindow(),
@@ -62,16 +62,15 @@ class Viewer:
 
         self.renderer_context = renderer._internal_context
 
-        if not shader_dir:
-            self.shader_dir = get_viewer_shader_dir()
-        else:
-            self.shader_dir = shader_dir
+        if render_config is None:
+            render_config = sapien.render.get_default_render_config("viewer")
+        self.render_config = render_config
 
         resolution = np.array(resolutions).flatten()[:2]
 
         self.scenes: List[Scene] = []
 
-        self.window = RenderWindow(*resolution, self.shader_dir)
+        self.window = RenderWindow(*resolution, self.render_config)
         self.window.set_focus_callback(self.focus_change)
         self.window.set_drop_callback(self.drop)
 

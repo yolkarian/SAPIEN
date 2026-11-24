@@ -23,7 +23,7 @@ layout(location = 1) rayPayloadInEXT ShadowRay shadowRay;
 void main() {
   vec3 worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
   vec3 objectPos = gl_ObjectRayOriginEXT + gl_ObjectRayDirectionEXT * gl_HitTEXT;
-  int id = pointInstances[nonuniformEXT(gl_InstanceID)];
+  int id = pointInstances[nonuniformEXT(gl_InstanceCustomIndexEXT)];
   Point p = points[nonuniformEXT(id)].p[gl_PrimitiveID];
   vec3 normal = objectPos - p.position;
   vec3 worldShadingNormal = normalize(vec3(normal * gl_WorldToObjectEXT));

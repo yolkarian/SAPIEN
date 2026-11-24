@@ -2,6 +2,7 @@
 #include "camera_component.h"
 #include "image.h"
 #include "material.h"
+#include "render_config.h"
 #include "sapien/device.h"
 #include "sapien/math/mat.h"
 #include "sapien/scene.h"
@@ -55,7 +56,9 @@ public:
   std::unique_ptr<FPSCameraControllerDebug> mCameraController{};
 #endif
 
-  SapienRendererWindow(int width, int height, std::string const &shaderDir);
+  /** `renderConfig` null copies the process-wide viewer default */
+  SapienRendererWindow(int width, int height,
+                       std::optional<RenderConfig> const &renderConfig = std::nullopt);
   ~SapienRendererWindow();
 
   void setScene(std::shared_ptr<Scene> scene);
@@ -151,7 +154,11 @@ public:
   }
   inline svulkan2::scene::Scene *getInternalScene() const { return mRenderScene.get(); }
 
-  void setShader(std::string const &shaderDir);
+  /** replace the renderer with one built from `renderConfig`; properties common to both packs
+   *  carry over from the current config */
+  void setRenderConfig(RenderConfig const &renderConfig);
+  /** render config of the current renderer, including properties set through set_camera_property */
+  RenderConfig getRenderConfig() const;
 
   void setDropCallback(std::function<void(std::vector<std::string>)> callback);
   void unsetDropCallback();
@@ -180,7 +187,7 @@ private:
   std::string mRequestedPoseTransport{"auto"};
   std::string mPoseTransport{"cpu"};
 
-  std::string mShaderDir{};
+  RenderConfig mRenderConfig;
   std::unique_ptr<svulkan2::renderer::RendererBase> mSVulkanRenderer{};
 
   std::unique_ptr<svulkan2::renderer::GuiWindow> mWindow;

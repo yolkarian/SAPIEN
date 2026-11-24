@@ -1,9 +1,11 @@
 #pragma once
 #include "../component.h"
 #include "image.h"
+#include "render_config.h"
 #include "sapien/math/mat.h"
 #include "sapien/math/pose.h"
 #include <map>
+#include <optional>
 #include <svulkan2/core/context.h>
 #include <svulkan2/renderer/renderer_base.h>
 #include <svulkan2/scene/camera.h>
@@ -29,7 +31,9 @@ enum class CameraPoseMode { eStatic, eCpu, eCuda };
 
 class SapienRenderCameraComponent : public Component {
 public:
-  SapienRenderCameraComponent(uint32_t width, uint32_t height, std::string const &shaderDir);
+  /** `renderConfig` null copies the process-wide camera default at construction */
+  SapienRenderCameraComponent(uint32_t width, uint32_t height,
+                              std::optional<RenderConfig> const &renderConfig = std::nullopt);
 
   virtual void onAddToScene(Scene &scene) override;
   virtual void onRemoveFromScene(Scene &scene) override;
@@ -90,9 +94,21 @@ public:
   SapienRenderImageCpu getImage(std::string const &name);
   SapienRenderImageCuda getImageCuda(std::string const &name);
 
-  // TODO: make the following serializable
+  /** render config this camera copied at construction */
+  RenderConfig getRenderConfig() const { return mRenderConfig; }
+
+  /** true when this camera's config is a batched ray tracing pack: it has no per-camera
+   *  renderer and renders only through a RenderCameraGroup */
+  bool isBatchRayTracing() const { return mRenderConfig.isBatchRayTracing(); }
+  /** Assert (for the group renderer's sake) that this camera has no per-camera renderer.
+   *  Throws when a renderer exists, i.e. the camera is not a batched camera. */
+  void internalRequireNoRenderer() const;
+
+  /** runtime per-camera property setter; an unknown name or a wrong type raises once the camera
+   *  has a renderer */
   void setProperty(std::string const &name, int property);
   void setProperty(std::string const &name, float property);
+  std::variant<int, float> getProperty(std::string const &name) const;
   void setTexture(std::string const &name, std::shared_ptr<SapienRenderTexture> texture);
   void setTextureArray(std::string const &name,
                        std::vector<std::shared_ptr<SapienRenderTexture>> texture);
@@ -140,6 +156,9 @@ public:
   SapienRenderCameraComponent &operator=(SapienRenderCameraComponent const &&) = delete;
 
 private:
+  /** raise for a batched ray tracing camera: its properties belong to the group renderer */
+  void checkNotBatchProperty(std::string const &name) const;
+
   CameraMode mMode{CameraMode::ePerspective};
   void checkMode(CameraMode mode) const;
 
@@ -159,7 +178,7 @@ private:
   float mBottom{};
   float mTop{};
 
-  std::string mShaderDir;
+  RenderConfig mRenderConfig;
 
   std::map<std::string, std::variant<int, float>> mProperties;
 

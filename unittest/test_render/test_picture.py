@@ -6,7 +6,6 @@ import sapien
 
 class TestPicture(unittest.TestCase):
     def test_offscreen(self) -> None:
-        sapien.render.set_camera_shader_dir("default")
         scene = sapien.Scene()
         scene.set_timestep(1 / 100.0)  # Set the simulation frequency
 

@@ -11,6 +11,7 @@
 namespace svulkan2 {
 namespace shader {
 class RayTracingShaderPack;
+class BatchShaderPack;
 class DescriptorSetDescription;
 }; // namespace shader
 
@@ -26,14 +27,20 @@ public:
   /** the live manager; throws when none is alive */
   static std::shared_ptr<SVResourceManager> Get();
 
-  std::shared_ptr<shader::ShaderPack> CreateShaderPack(std::string const &dirname);
+  std::shared_ptr<shader::ShaderPack> CreateShaderPack(std::string const &dirname,
+                                                       ShaderDefines const &defines = {});
 
   /** pipelines of `desc` on `context`, cached per context */
   std::shared_ptr<shader::ShaderPackInstance>
   CreateShaderPackInstance(std::shared_ptr<core::Context> context,
                            shader::ShaderPackInstanceDesc const &desc);
 
-  std::shared_ptr<shader::RayTracingShaderPack> CreateRTShaderPack(std::string const &dirname);
+  std::shared_ptr<shader::RayTracingShaderPack> CreateRTShaderPack(std::string const &dirname, ShaderDefines const &defines = {});
+
+  /** batched ray-tracing pack `dirname` compiled with `defines`, cached; registers the mesh and
+   *  point vertex layouts its scene set declares, like the other pack kinds */
+  std::shared_ptr<shader::BatchShaderPack> CreateBatchShaderPack(std::string const &dirname,
+                                                                 ShaderDefines const &defines = {});
 
   std::shared_ptr<SVImage> CreateImageFromFile(std::string const &filename, uint32_t mipLevels,
                                                uint32_t desiredChannels);
@@ -174,6 +181,8 @@ private:
   std::mutex mRTShaderPackLock{};
   std::unordered_map<std::string, std::shared_ptr<shader::RayTracingShaderPack>>
       mRTShaderPackRegistry;
+  std::unordered_map<std::string, std::shared_ptr<shader::BatchShaderPack>>
+      mBatchShaderPackRegistry;
 
   std::shared_ptr<InputDataLayout> mVertexLayout{};
   std::shared_ptr<InputDataLayout> mLineVertexLayout{};

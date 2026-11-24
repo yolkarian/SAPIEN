@@ -197,9 +197,9 @@ void Image::generateMipmaps(vk::CommandBuffer cb, uint32_t arrayLayer) {
     cb.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer, vk::PipelineStageFlagBits::eTransfer,
                        {}, {}, {}, barrier);
     vk::ImageBlit blit(
-        {vk::ImageAspectFlagBits::eColor, i - 1, 0, 1},
+        {vk::ImageAspectFlagBits::eColor, i - 1, arrayLayer, 1},
         {vk::Offset3D{0, 0, 0}, vk::Offset3D{mipWidth, mipHeight, 1}},
-        {vk::ImageAspectFlagBits::eColor, i, 0, 1},
+        {vk::ImageAspectFlagBits::eColor, i, arrayLayer, 1},
         {vk::Offset3D{0, 0, 0},
          vk::Offset3D{mipWidth > 1 ? mipWidth / 2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1}});
     cb.blitImage(mImage, vk::ImageLayout::eTransferSrcOptimal, mImage,

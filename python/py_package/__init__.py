@@ -60,8 +60,8 @@ try:
     pysapien.render._internal_set_shader_search_path(
         str(files("sapien").joinpath("vulkan_shader"))
     )
-    render.set_viewer_shader_dir("default")
-    render.set_camera_shader_dir("default")
+    render.set_default_render_config("viewer", render.RenderConfig("default"))
+    render.set_default_render_config("camera", render.RenderConfig("default"))
 except RuntimeError:
     pass
 

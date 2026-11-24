@@ -8,7 +8,7 @@ import numpy as np
 from .. import pysapien as sapien
 from ..pysapien import Scene as _Scene
 from ..pysapien.physx import PhysxSceneConfig as SceneConfig
-from ..pysapien.render import RenderCameraComponent, RenderCubemap
+from ..pysapien.render import RenderCameraComponent, RenderConfig, RenderCubemap
 
 
 _DEFAULT_GROUND_TEXTURES: dict[
@@ -205,10 +205,18 @@ class Scene(_Scene):
 
     # TODO: find actor by id
     def add_camera(
-        self, name, width: int, height: int, fovy: float, near: float, far: float
+        self,
+        name,
+        width: int,
+        height: int,
+        fovy: float,
+        near: float,
+        far: float,
+        render_config: Optional[RenderConfig] = None,
     ) -> RenderCameraComponent:
+        """Add a camera entity. `render_config` null copies the camera default at creation."""
         camera_mount = sapien.Entity()
-        camera = RenderCameraComponent(width, height)
+        camera = RenderCameraComponent(width, height, render_config)
         camera.set_fovy(fovy, compute_x=True)
         camera.near = near
         camera.far = far
@@ -220,9 +228,19 @@ class Scene(_Scene):
         return camera
 
     def add_mounted_camera(
-        self, name, mount, pose, width, height, fovy, near, far
+        self,
+        name,
+        mount,
+        pose,
+        width,
+        height,
+        fovy,
+        near,
+        far,
+        render_config: Optional[RenderConfig] = None,
     ) -> RenderCameraComponent:
-        camera = RenderCameraComponent(width, height)
+        """Add a camera mounted on `mount`. `render_config` null copies the camera default."""
+        camera = RenderCameraComponent(width, height, render_config)
         camera.set_fovy(fovy, compute_x=True)
         camera.near = near
         camera.far = far

@@ -43,6 +43,11 @@ public:
   void recordUpdate(vk::CommandBuffer commandBuffer,
                     std::vector<vk::TransformMatrixKHR> const &transforms);
   void recordUpdate(vk::CommandBuffer commandBuffer);
+  /** Record the refit of every TLAS of `tlases` from its instance buffer in one build command.
+   *  Records no barrier: the caller orders the instance and BLAS writes before it and the
+   *  readers after it. Each TLAS refits into its own scratch buffer, so the builds are
+   *  independent. */
+  static void RecordUpdates(vk::CommandBuffer commandBuffer, std::vector<TLAS *> const &tlases);
 
   void enableExternalInstanceBuffer();
   bool isInstanceBufferExternal() const { return mInstanceBufferExternal; }

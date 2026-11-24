@@ -34,28 +34,27 @@ shader packs.
 
 ## Enable ray tracing
 
-Set the camera and viewer shader directories before creating cameras or the
-viewer.
+Give the camera a ray-tracing `RenderConfig`. Windows copy the viewer default,
+so set that too when the Viewer should trace rays.
 
 ```python
 import sapien
 
-sapien.render.set_camera_shader_dir("rt")
-sapien.render.set_viewer_shader_dir("rt")
-sapien.render.set_ray_tracing_samples_per_pixel(16)
-sapien.render.set_ray_tracing_path_depth(8)
-sapien.render.set_ray_tracing_denoiser("oidn")  # "none", "oidn", or "optix"
+rt_config = sapien.render.RenderConfig("rt")
+rt_config["spp"] = 16
+rt_config["maxDepth"] = 8
+rt_config.denoiser = "oidn"  # "none", "oidn", or "optix"
+sapien.render.set_default_render_config("viewer", rt_config)
 
 scene = sapien.Scene()
-camera = scene.add_camera("camera", 640, 480, 1.0, 0.01, 100.0)
+camera = scene.add_camera(
+    "camera", 640, 480, 1.0, 0.01, 100.0, render_config=rt_config
+)
 ```
 
-To return to rasterization later in the same process, reset the shader dirs:
-
-```python
-sapien.render.set_camera_shader_dir("default")
-sapien.render.set_viewer_shader_dir("default")
-```
+Rasterization and ray tracing live side by side in one process: a camera
+created with the default config still rasterizes. To switch the viewer back,
+set the viewer default to `sapien.render.RenderConfig("default")`.
 
 ## Sampling and denoising
 
@@ -63,9 +62,13 @@ Ray-traced images are noisy when the sample count is low. Increase samples per
 pixel for quality, and use a denoiser when available.
 
 ```python
-sapien.render.set_ray_tracing_samples_per_pixel(64)
-sapien.render.set_ray_tracing_path_depth(12)
-sapien.render.set_ray_tracing_denoiser("oidn")
+config = sapien.render.RenderConfig("rt")
+config["spp"] = 64
+config["maxDepth"] = 12
+config.denoiser = "oidn"
+camera = scene.add_camera(
+    "camera", 640, 480, 1.0, 0.01, 100.0, render_config=config
+)
 ```
 
 `oidn` uses the packaged Open Image Denoise integration. `optix` requires a
@@ -151,7 +154,7 @@ mounted cameras with GPU pose batch indices. Configure the RT shader before
 creating cameras, then use the same batched workflow as rasterization:
 
 ```python
-sapien.render.set_camera_shader_dir("rt")
+rt_config = sapien.render.RenderConfig("rt")
 
 # After physx_system.gpu_init(), sibling PhysX GPU bodies/links are discovered
 # automatically. Explicit pose indices remain available for custom pose buffers.
@@ -216,3 +219,106 @@ Supporting that component in batched RT would require synchronized BLAS
 updates or rebuilds, aggregation across shared `SceneGroup` scenes, and an RT
 accumulation reset after vertex changes; updating rigid TLAS instance
 transforms alone is not sufficient.
+
+## Batched ray tracing (`rt_batch`)
+
+The `rt` pack renders one camera at a time: every camera of a `RenderCameraGroup`
+owns a full renderer, and a capture submits one frame per camera. The `rt_batch`
+pack instead renders the whole camera group with one compute dispatch, writing
+the pictures straight into the buffers that `get_picture_cuda` exports.
+
+```python
+config = sapien.render.RenderConfig("rt_batch")
+config["spp"] = 1
+cameras = [scene.add_camera(f"camera{i}", 128, 128, 1.0, 0.05, 20.0,
+                            render_config=config) for i in range(1024)]
+
+group = sapien.render.RenderSystemGroup([scene.render_system])
+camera_group = group.create_camera_group(cameras, ["Color", "Depth", "Segmentation"])
+group.gpu_init()
+for _ in range(60):
+    group.update_render()
+    camera_group.take_picture()
+    color = camera_group.get_picture_cuda("Color")   # [1024, 128, 128, 4] uint8
+```
+
+A camera whose render config is a batched pack has **no per-camera renderer**:
+`camera.take_picture()`, `camera.get_picture*()`, `RenderWindow`, `Viewer` and VR
+all raise. Read pictures from the camera group instead.
+
+### Rules of a camera group
+
+- Every camera of one group must copy an **equal** `RenderConfig` and have the
+  same width and height. `create_camera_group` raises naming the mismatch.
+- A group mixes either batch or non-batch cameras, never both.
+- All cameras of one group share one resolution, because one dispatch writes
+  `[camera][height][width][channel]`. Create one camera group per resolution.
+- Different camera groups of one `RenderSystemGroup` may use different kinds,
+  for example one raster group and one `rt_batch` group.
+- Shader properties come from the config and apply to the whole group:
+  `config["exposure"]` (default 1.0), `config["toneMapper"]` (0 gamma 2.2,
+  1 sRGB, 2 ACES) and `config["spp"]` (primary-ray samples, default from the
+  `SPP` define). `camera.set_property` raises for a batch camera, and an
+  undeclared property raises at `gpu_init()` naming the key and the pack.
+- The lifecycle is unchanged: construct → `set_cuda_poses` → `create_camera_group`
+  → pose modes → `gpu_init()` → per frame `update_render()` + `take_picture()` +
+  `get_picture_cuda(name)`. CUDA-sourced poses, `'cpu'` and `'cuda'` camera pose
+  modes, and light changes after `gpu_init()` work exactly as with the `rt` pack.
+
+### Environments
+
+An *environment* is one distinct output render scene of the group, including a
+`batched_render_shared` scene group. Several cameras may share an environment.
+Each environment keeps its own top-level acceleration structure and is refit
+every frame; a ray never leaves its own environment, so environments are
+isolated exactly (not by spatial offsets).
+
+### Pictures
+
+`batch.comp` declares one storage buffer block per picture, named `Out<Name>`.
+Only requested pictures are compiled in, and the element type selects the
+format:
+
+| Block element | Picture format | `get_picture_cuda` dtype |
+|---|---|---|
+| `uint c[]` | `r8g8b8a8Unorm` | `u1` (default `Color`) |
+| `vec4 c[]` | `r32g32b32a32Sfloat` | `f4` |
+| `float c[]` | `r32Sfloat` | `f4` with one channel |
+| `uvec4 c[]` | `r32g32b32a32Uint` | `u4` |
+
+`Color` is 8-bit by default. Request a float `Color` with
+`config.picture_formats = {"Color": "r32g32b32a32Sfloat"}`; the shader must
+declare `vec4` under the matching define, and the renderer raises when the
+declared element type disagrees with the request.
+
+`Depth` is the linear depth of the first hit in metres along the camera's
+viewing axis (positive in front of the camera), and `0` where the ray hits
+nothing. `Position` carries the camera-space xyz of the hit in its first three
+channels and the rasterizer's normalized depth in its fourth; a miss leaves all
+four at zero except the depth of 1.
+`Segmentation` is the rasterizer's `uvec4` per-object segmentation id.
+
+### Shading tiers and defines
+
+The pack selects a tier with a define; the tier is fixed for the life of the
+camera group.
+
+| Define | Content |
+|---|---|
+| `SHADING_VISIBILITY` | one primary ray; albedo, depth, normal, position, segmentation |
+| `SHADING_LAMBERT` (default) | emission + albedo·(ambient + Σ light N·L) |
+| `SHADING_PBR` | diffuse + GGX specular direct light, ambient term |
+
+`SHADOWS` casts one hard shadow ray per light for the first `MAX_SHADOW_LIGHTS`
+(default 4) lights facing the surface point, in the order point, directional,
+spot, parallelogram; later lights are unshadowed. `SPP` > 1 supersamples the
+primary ray with a fixed Halton pattern: deterministic, no random numbers, no
+accumulation or denoiser. Parallelogram
+lights are sampled at their centre with a hard shadow.
+
+Set them through `config.defines`:
+
+```python
+config = sapien.render.RenderConfig("rt_batch")
+config.defines = {"SHADING_PBR": "", "SHADOWS": "", "SPP": "4"}
+```

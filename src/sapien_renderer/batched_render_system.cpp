@@ -17,6 +17,7 @@
 #include <svulkan2/renderer/renderer.h>
 #include <svulkan2/renderer/renderer_base.h>
 #include <svulkan2/renderer/rt_renderer.h>
+#include <svulkan2/renderer/batch_rt_renderer.h>
 #include <svulkan2/scene/scene_group.h>
 #include <unordered_set>
 
@@ -71,6 +72,124 @@ void createCudaTimelineSemaphore(svulkan2::core::Context &context, vk::UniqueSem
 
 } // namespace
 
+namespace detail {
+
+/** Group renderer of a batched-ray-tracing camera group: one BatchRTRenderer renders every
+ *  member camera in a single command buffer and a single queue submit. */
+class BatchCameraRenderer {
+public:
+  BatchCameraRenderer(std::shared_ptr<svulkan2::core::Context> context,
+                      std::vector<std::shared_ptr<SapienRenderCameraComponent>> const &cameras,
+                      std::vector<std::string> const &renderTargets)
+      : mContext(std::move(context)), mCameras(cameras), mRenderTargets(renderTargets) {
+    auto const &config = mCameras.front()->getRenderConfig();
+    mRenderer = std::make_unique<svulkan2::renderer::BatchRTRenderer>(
+        mContext, config.getShaderPack(), config.getDefines(),
+        static_cast<int>(mCameras.front()->getWidth()),
+        static_cast<int>(mCameras.front()->getHeight()), mRenderTargets,
+        config.getPictureFormats());
+    applyRenderConfig(config, *mRenderer);
+
+    // one environment per distinct output render scene, numbered in order of first use
+    std::vector<std::shared_ptr<svulkan2::scene::Scene>> environments;
+    std::vector<int> cameraEnvironments;
+    for (auto const &camera : mCameras) {
+      auto scene = camera->getInternalRenderScene();
+      auto it = std::find(environments.begin(), environments.end(), scene);
+      if (it == environments.end()) {
+        environments.push_back(scene);
+        cameraEnvironments.push_back(static_cast<int>(environments.size()) - 1);
+      } else {
+        cameraEnvironments.push_back(static_cast<int>(std::distance(environments.begin(), it)));
+      }
+      mCameraScenes.push_back(scene);
+    }
+
+    mRenderer->initialize(environments, static_cast<int>(mCameras.size()), cameraEnvironments);
+
+    // the renderer sorts its camera rows by environment: find each camera's row again
+    mCameraRows.resize(mCameras.size(), -1);
+    for (int row = 0; row < mRenderer->getCameraCount(); ++row) {
+      int camera = mRenderer->getCameraOfRow(row);
+      mCameraRows.at(camera) = row;
+    }
+    for (size_t camera = 0; camera < mCameras.size(); ++camera) {
+      if (mCameraRows.at(camera) < 0) {
+        throw std::runtime_error("failed to resolve the batched camera row of a camera");
+      }
+    }
+  }
+
+  int getCameraRow(SapienRenderCameraComponent const &camera) const {
+    for (size_t i = 0; i < mCameras.size(); ++i) {
+      if (mCameras.at(i).get() == &camera) {
+        return mCameraRows.at(i);
+      }
+    }
+    throw std::runtime_error("the camera is not a member of this camera group");
+  }
+
+  void uploadCpuCameraState(SapienRenderCameraComponent &camera) {
+    auto &internal = camera.getInternalCamera();
+    int row = getCameraRow(camera);
+    mRenderer->uploadCamera(row, glm::affineInverse(internal.getTransform().worldModelMatrix),
+                            internal.getProjectionMatrix());
+  }
+
+  void takePicture(vk::Semaphore wait, uint64_t waitValue, vk::Semaphore signal,
+                   uint64_t signalValue) {
+    mRenderer->render(wait, waitValue, signal, signalValue);
+  }
+
+  CudaArrayHandle getPicture(std::string const &name) {
+    svulkan2::core::Buffer &buffer = mRenderer->getPictureBuffer(name);
+    vk::Format format = mRenderer->getPictureFormat(name);
+    CudaArrayHandle array;
+    int channels = getFormatChannels(format);
+    int itemsize = getFormatChannelSize(format);
+    int width = mRenderer->getWidth();
+    int height = mRenderer->getHeight();
+    array.shape = std::vector<int>{static_cast<int>(mCameras.size()), height, width};
+    // row stride: one camera's picture; the buffers hold every camera back to back
+    array.strides = std::vector<int>{static_cast<int>(mRenderer->getPictureBytes(name)),
+                                     itemsize * channels * width, itemsize * channels};
+    if (channels != 1) {
+      array.shape.push_back(channels);
+      array.strides.push_back(itemsize);
+    }
+    array.type = getFormatTypestr(format);
+#ifdef SAPIEN_CUDA
+    array.ptr = buffer.getCudaPtr();
+    array.cudaId = buffer.getCudaDeviceId();
+#else
+    (void)buffer;
+#endif
+    return array;
+  }
+
+  std::vector<std::string> getPictureNames() const { return mRenderer->getPictureNames(); }
+  svulkan2::renderer::BatchRTRenderer &getRenderer() { return *mRenderer; }
+  void uploadSceneLightState() { mRenderer->uploadSceneLightState(); }
+  bool hasPicture(std::string const &name) const {
+    auto const &names = mRenderer->getPictureNames();
+    return std::find(names.begin(), names.end(), name) != names.end();
+  }
+
+private:
+  std::shared_ptr<svulkan2::core::Context> mContext;
+  std::vector<std::shared_ptr<SapienRenderCameraComponent>> mCameras;
+  std::vector<std::string> mRenderTargets;
+  std::vector<std::shared_ptr<svulkan2::scene::Scene>> mCameraScenes;
+  std::vector<int> mCameraRows;
+  std::unique_ptr<svulkan2::renderer::BatchRTRenderer> mRenderer;
+};
+
+} // namespace detail
+
+namespace {
+
+} // namespace
+
 BatchedCamera::BatchedCamera(std::vector<std::shared_ptr<SapienRenderCameraComponent>> cameras,
                              std::vector<std::string> renderTargets)
     : mEngine(SapienRenderEngine::Get()), mCameras(cameras) {
@@ -92,6 +211,25 @@ BatchedCamera::BatchedCamera(std::vector<std::shared_ptr<SapienRenderCameraCompo
   }
 
   mRenderTargets = renderTargets;
+
+  // One group renderer must serve every member camera, so the cameras must agree on what they
+  // render. Check the config and the resolution here, before any camera is registered.
+  auto const &baseConfig = cameras.front()->getRenderConfig();
+  for (auto const &cam : cameras) {
+    if (!(cam->getRenderConfig() == baseConfig)) {
+      throw std::runtime_error(
+          "failed to create camera group: camera \"" + cam->getName() + "\" uses render config " +
+          cam->getRenderConfig().toString() + " but camera \"" + cameras.front()->getName() +
+          "\" uses " + baseConfig.toString() +
+          "; every camera of one camera group must use an equal render config");
+    }
+    if (cam->isBatchRayTracing() != baseConfig.isBatchRayTracing()) {
+      throw std::runtime_error(
+          "failed to create camera group: camera \"" + cam->getName() +
+          "\" mixes a batched ray tracing pack with another renderer kind; every camera of one "
+          "camera group must use the same kind of pack");
+    }
+  }
 
   size_t registeredCount = 0;
   try {
@@ -170,65 +308,75 @@ void BatchedCamera::internalGpuInit() {
       }
     }
   }
-
-  // Enter grouped ownership before resource preparation. prepareResources() must
-  // never perform an implicit CPU transform upload; gpuInit() takes the one explicit
-  // CPU snapshot after resources exist. RT camera buffers become CUDA-writable only
-  // for CUDA-driven cameras; static/cpu cameras keep host-uploadable camera buffers.
-  for (auto &cam : mCameras) {
-    bool cudaDriven =
-        cam->getGpuBatchedPoseIndex() >= 0 || cam->getPoseMode() == CameraPoseMode::eCuda;
-    auto &renderer = cam->getInternalRenderer();
-    renderer.setExecutionMode(svulkan2::renderer::RenderExecutionMode::eGroupedGpu);
-    if (auto raster = dynamic_cast<svulkan2::renderer::Renderer *>(&renderer)) {
-      raster->setExternalTransformUpdatesEnabled(true);
-    } else if (auto rt = dynamic_cast<svulkan2::renderer::RTRenderer *>(&renderer)) {
-      rt->setExternalTransformUpdatesEnabled(true);
-      rt->setExternalCameraUpdatesEnabled(cudaDriven);
-    }
-  }
 #endif
 
-  // prepare pipelines/targets/records and take the one-time CPU snapshot per camera
-  for (auto &cam : mCameras) {
-    cam->gpuInit();
-  }
+  if (mCameras.front()->getRenderConfig().isBatchRayTracing()) {
+    // A batched ray tracing pack renders the whole group with one renderer instead of one per
+    // camera; there are no per-camera renderers, images or copy commands.
+    for (auto const &cam : mCameras) {
+      cam->internalRequireNoRenderer();
+    }
+    mBatchRenderer =
+        std::make_shared<detail::BatchCameraRenderer>(mContext, mCameras, mRenderTargets);
+    // one-time CPU snapshot of every camera row; the pose kernels overwrite the view matrices
+    // of CUDA-driven rows at every update_render()
+    for (auto &cam : mCameras) {
+      mBatchRenderer->uploadCpuCameraState(*cam);
+      cam->gpuInit();
+    }
+  } else {
+#ifdef SAPIEN_CUDA
+    // Enter grouped ownership before resource preparation. prepareResources() must
+    // never perform an implicit CPU transform upload; gpuInit() takes the one explicit
+    // CPU snapshot after resources exist. RT camera buffers become CUDA-writable only
+    // for CUDA-driven cameras; static/cpu cameras keep host-uploadable camera buffers.
+    for (auto &cam : mCameras) {
+      bool cudaDriven =
+          cam->getGpuBatchedPoseIndex() >= 0 || cam->getPoseMode() == CameraPoseMode::eCuda;
+      auto &renderer = cam->getInternalRenderer();
+      renderer.setExecutionMode(svulkan2::renderer::RenderExecutionMode::eGroupedGpu);
+      if (auto raster = dynamic_cast<svulkan2::renderer::Renderer *>(&renderer)) {
+        raster->setExternalTransformUpdatesEnabled(true);
+      } else if (auto rt = dynamic_cast<svulkan2::renderer::RTRenderer *>(&renderer)) {
+        rt->setExternalTransformUpdatesEnabled(true);
+        rt->setExternalCameraUpdatesEnabled(cudaDriven);
+      }
+    }
+#endif
 
-  for (uint32_t i = 0; i < mCameras.size(); ++i) {
-    auto &cam = mCameras[i];
+    // prepare pipelines/targets/records and take the one-time CPU snapshot per camera
+    for (auto &cam : mCameras) {
+      cam->gpuInit();
+    }
 
     for (auto &name : mRenderTargets) {
-      auto &image = cam->getInternalImage(name);
+      auto &image = mCameras.front()->getInternalImage(name);
       auto extent = image.getExtent();
       vk::Format format = image.getFormat();
       vk::DeviceSize imageSize =
           extent.width * extent.height * extent.depth * svulkan2::getFormatSize(format);
-      if (!mCudaImageBuffers.contains(name)) {
-        mCudaImageBuffers[name] = svulkan2::core::Buffer::Create(
-            *context, imageSize * mCameras.size(),
-            vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst,
-            VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
-        {
-          CudaArrayHandle array;
-          int channels = getFormatChannels(format);
-          int itemsize = getFormatChannelSize(format);
-          array.shape = {static_cast<int>(mCameras.size()), static_cast<int>(extent.height),
-                         static_cast<int>(extent.width)};
-          array.strides = {static_cast<int>(itemsize * channels * width * height),
-                           static_cast<int>(itemsize * channels * width),
-                           static_cast<int>(itemsize * channels)};
-          if (channels != 1) {
-            array.shape.push_back(channels);
-            array.strides.push_back(itemsize);
-          }
-          array.type = getFormatTypestr(format);
-#ifdef SAPIEN_CUDA
-          array.ptr = mCudaImageBuffers[name]->getCudaPtr();
-          array.cudaId = mCudaImageBuffers[name]->getCudaDeviceId();
-#endif
-          mCudaImageHandles[name] = array;
-        }
+      mCudaImageBuffers[name] = svulkan2::core::Buffer::Create(
+          *context, imageSize * mCameras.size(),
+          vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst,
+          VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
+      CudaArrayHandle array;
+      int channels = getFormatChannels(format);
+      int itemsize = getFormatChannelSize(format);
+      array.shape = {static_cast<int>(mCameras.size()), static_cast<int>(extent.height),
+                     static_cast<int>(extent.width)};
+      array.strides = {static_cast<int>(itemsize * channels * width * height),
+                       static_cast<int>(itemsize * channels * width),
+                       static_cast<int>(itemsize * channels)};
+      if (channels != 1) {
+        array.shape.push_back(channels);
+        array.strides.push_back(itemsize);
       }
+      array.type = getFormatTypestr(format);
+#ifdef SAPIEN_CUDA
+      array.ptr = mCudaImageBuffers[name]->getCudaPtr();
+      array.cudaId = mCudaImageBuffers[name]->getCudaDeviceId();
+#endif
+      mCudaImageHandles[name] = array;
     }
   }
 
@@ -248,7 +396,7 @@ void BatchedCamera::internalGpuInit() {
     seedPoses.insert(seedPoses.end(),
                      {pose.p.x, pose.p.y, pose.p.z, pose.q.w, pose.q.x, pose.q.y, pose.q.z});
     CameraData data;
-    data.buffer = cam->getCudaBuffer().ptr;
+    data.buffer = internalGetCameraCudaBuffer(*cam);
     data.localPose = POSE_GL_TO_ROS;
     data.poseIndex = static_cast<int>(mCudaRowCameras.size());
     rowCameraData.push_back(data);
@@ -334,9 +482,24 @@ void BatchedCamera::internalUploadDirtyCameraState() {
     // The full camera buffer uploads, including the CPU view matrices. For
     // cuda/attached cameras the CUDA patch later in the same update_render()
     // rewrites view/inverse-view, so a projection change never overrides a GPU pose.
-    cam->getInternalRenderer().uploadCpuCameraState(cam->getInternalCamera());
+    if (mBatchRenderer) {
+      mBatchRenderer->uploadCpuCameraState(*cam);
+    } else {
+      cam->getInternalRenderer().uploadCpuCameraState(cam->getInternalCamera());
+    }
     mUploadedStateVersions.at(i) = version;
   }
+}
+
+void *BatchedCamera::internalGetCameraCudaBuffer(SapienRenderCameraComponent &camera) {
+  if (mBatchRenderer) {
+#ifdef SAPIEN_CUDA
+    return mBatchRenderer->getRenderer().getCameraRowCudaPtr(mBatchRenderer->getCameraRow(camera));
+#else
+    throw std::runtime_error("CUDA-driven camera poses require a CUDA build of SAPIEN");
+#endif
+  }
+  return camera.getCudaBuffer().ptr;
 }
 
 void BatchedCamera::takePicture() {
@@ -350,6 +513,27 @@ void BatchedCamera::takePicture() {
 
   // make sure previous takePicture has finished
   internalWaitForRendersIdle();
+
+  if (mBatchRenderer) {
+    // One frame for the whole group: refit every environment's acceleration structure and
+    // dispatch over every camera in one command buffer, submitted once. The pictures are the
+    // exported buffers themselves, so nothing is copied and no per-camera record commands exist.
+#ifdef SAPIEN_CUDA
+    cudaExternalSemaphoreSignalParams streamDone{};
+    streamDone.params.fence.value = ++mConsumerValue;
+    checkCudaErrors(
+        cudaSignalExternalSemaphoresAsync(&mCudaConsumerSem, &streamDone, 1, mCudaStream));
+#endif
+    mFrameCounter++;
+    mBatchRenderer->takePicture(mConsumerSemaphore.get(), mConsumerValue, mSemaphore.get(),
+                                mFrameCounter);
+#ifdef SAPIEN_CUDA
+    cudaExternalSemaphoreWaitParams copied{};
+    copied.params.fence.value = mFrameCounter;
+    checkCudaErrors(cudaWaitExternalSemaphoresAsync(&mCudaSem, &copied, 1, mCudaStream));
+#endif
+    return;
+  }
 
   for (auto &cam : mCameras) {
     cam->getInternalRenderer().render(cam->getInternalCamera(), {}, {}, {}, {});
@@ -461,6 +645,13 @@ void BatchedCamera::setCudaPose(std::shared_ptr<SapienRenderCameraComponent> con
 CudaArrayHandle BatchedCamera::getPictureCuda(std::string const &name) {
   auto lock = lockGpuApi();
   checkGpuInitialized();
+  if (mBatchRenderer) {
+    if (!mBatchRenderer->hasPicture(name)) {
+      throw std::runtime_error("Failed to get image with name :" + name +
+                               ". Did you forget to specify it in create_camera_group?");
+    }
+    return trackView(mBatchRenderer->getPicture(name));
+  }
   if (!mCudaImageHandles.contains(name)) {
     throw std::runtime_error("Failed to get image with name :" + name +
                              ". Did you forget to specify it in create_camera_group?");
@@ -1062,7 +1253,7 @@ void BatchedRenderSystem::gpuInit() {
       }
       mMaximumPoseIndex = std::max(mMaximumPoseIndex, index);
       CameraData data;
-      data.buffer = cam->getCudaBuffer().ptr;
+      data.buffer = cb->internalGetCameraCudaBuffer(*cam);
       auto pose = cam->getLocalPose() * POSE_GL_TO_ROS;
       data.localPose = pose;
 
@@ -1377,7 +1568,12 @@ void BatchedRenderSystem::refreshAndUploadCpuState() {
 
     for (auto const &batch : mCameraBatches) {
       for (auto const &camera : batch->getCameras()) {
-        if (camera->getInternalRenderScene() == renderScene) {
+        if (camera->getInternalRenderScene() != renderScene) {
+          continue;
+        }
+        if (batch->mBatchRenderer) {
+          batch->mBatchRenderer->uploadSceneLightState();
+        } else {
           camera->getInternalRenderer().uploadCpuSceneLightState();
         }
       }

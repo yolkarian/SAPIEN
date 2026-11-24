@@ -28,9 +28,12 @@ simsense components to it.
 import sapien
 from sapien.sensor import StereoDepthSensor, StereoDepthSensorConfig
 
-# Optional: configure ray-traced camera rendering before cameras are created.
-sapien.render.set_camera_shader_dir("rt")
-sapien.render.set_ray_tracing_samples_per_pixel(8)
+# Optional: make ray-traced cameras the default before the sensor creates its
+# cameras. A camera config works the same way: pass `render_config=` to the
+# component, or set the default as below.
+depth_config = sapien.render.RenderConfig("rt")
+depth_config["spp"] = 8
+sapien.render.set_default_render_config("camera", depth_config)
 
 scene = sapien.Scene()
 scene.set_ambient_light([0.1, 0.1, 0.1])

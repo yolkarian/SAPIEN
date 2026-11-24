@@ -111,6 +111,11 @@ public:
    * E.g., some deformable mesh is modified */
   void updateRenderVersion();
 
+  /** Record the refits of this scene's deformable and point-set BLASes into `commandBuffer`
+   *  without submitting; true when anything was recorded. The caller owns submission, the
+   *  barriers, and the TLAS refit (core::TLAS::RecordUpdates). Requires built RT resources. */
+  bool recordBLASRefits(vk::CommandBuffer commandBuffer);
+
   // ray tracing
   void buildRTResources(StructDataLayout const &materialBufferLayout,
                         StructDataLayout const &textureIndexBufferLayout,
@@ -197,6 +202,10 @@ protected:
   /** when models in the scene are updated, the version changes */
   uint64_t mRenderVersion{1l};
 
+  // state of the world matrices, see updateModelMatrices()
+  uint64_t mModelMatricesVersion{0l};
+  bool mModelMatricesSettling{false};
+
   // for transform update and AS update
   std::unique_ptr<core::CommandPool> mCommandPool;
   core::CommandPool &getCommandPool();
@@ -216,6 +225,8 @@ protected:
 
   void updateDynamicBLAS();
   void updateTLAS(bool useDeviceTransforms);
+  /** record the refits of the deformable and point-set BLASes; true when any was recorded */
+  bool recordDynamicBLASUpdates(vk::CommandBuffer commandBuffer);
   void createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
                               StructDataLayout const &textureIndexBufferLayout,
                               StructDataLayout const &geometryInstanceBufferLayout);

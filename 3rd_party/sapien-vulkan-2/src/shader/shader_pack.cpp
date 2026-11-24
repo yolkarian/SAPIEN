@@ -13,7 +13,7 @@ namespace fs = std::filesystem;
 namespace svulkan2 {
 namespace shader {
 
-ShaderPack::ShaderPack(std::string const &dirname) {
+ShaderPack::ShaderPack(std::string const &dirname, ShaderDefines const &defines) {
   fs::path path(dirname);
   check_dir_required(path, "[shader pack] " + dirname + " is not a directory");
   check_file_required(path / "gbuffer.vert", "[shader pack] gbuffer.vert is required");
@@ -26,6 +26,7 @@ ShaderPack::ShaderPack(std::string const &dirname) {
   // shadow pass
   if (check_file(path / "shadow.vert")) {
     mShadowPass = std::make_shared<ShadowPassParser>();
+    mShadowPass->setDefines(defines);
     mShadowPass->setName("Shadow");
     futures.push_back(mShadowPass->loadGLSLFilesAsync((path / "shadow.vert").string(), ""));
   }
@@ -33,6 +34,7 @@ ShaderPack::ShaderPack(std::string const &dirname) {
   // point shadow pass
   if (check_file(path / "shadow_point.vert")) {
     mPointShadowPass = std::make_shared<PointShadowParser>();
+    mPointShadowPass->setDefines(defines);
     mPointShadowPass->setName("PointShadow");
 
     auto vsFile = path / "shadow_point.vert";
@@ -65,6 +67,7 @@ ShaderPack::ShaderPack(std::string const &dirname) {
 
   // first gbuffer pass
   std::shared_ptr<GbufferPassParser> firstGbufferPass = std::make_shared<GbufferPassParser>();
+  firstGbufferPass->setDefines(defines);
   {
     firstGbufferPass->setName("Gbuffer");
     mNonShadowPasses.push_back(firstGbufferPass);
@@ -81,6 +84,7 @@ ShaderPack::ShaderPack(std::string const &dirname) {
     std::string fsFile = (path / "ao.frag").string();
     if (check_file(vsFile) && check_file(fsFile)) {
       auto aoPass = std::make_shared<DeferredPassParser>();
+      aoPass->setDefines(defines);
       aoPass->setName("AO");
       mNonShadowPasses.push_back(aoPass);
       aoPass->setIndex(mNonShadowPasses.size() - 1);
@@ -93,6 +97,7 @@ ShaderPack::ShaderPack(std::string const &dirname) {
   std::string fsFile = (path / "deferred.frag").string();
   if (check_file(vsFile) && check_file(fsFile)) {
     auto deferredPass = std::make_shared<DeferredPassParser>();
+    deferredPass->setDefines(defines);
     deferredPass->setName("Deferred");
     mNonShadowPasses.push_back(deferredPass);
     deferredPass->setIndex(mNonShadowPasses.size() - 1);
@@ -103,6 +108,7 @@ ShaderPack::ShaderPack(std::string const &dirname) {
   for (int i = 1; i < numGbufferPasses; ++i) {
     std::string suffix = std::to_string(i);
     auto gbufferPass = std::make_shared<GbufferPassParser>();
+    gbufferPass->setDefines(defines);
 
     gbufferPass->setName("Gbuffer" + suffix);
     mNonShadowPasses.push_back(gbufferPass);
@@ -119,6 +125,7 @@ ShaderPack::ShaderPack(std::string const &dirname) {
   for (int i = 0; i < numPointPasses; ++i) {
     std::string suffix = i == 0 ? "" : std::to_string(i);
     auto pointPass = std::make_shared<PointPassParser>();
+    pointPass->setDefines(defines);
     if (i == 0) {
       firstPointPass = pointPass;
     }
@@ -142,6 +149,7 @@ ShaderPack::ShaderPack(std::string const &dirname) {
     std::string fsFile = (path / "line.frag").string();
     if (check_file(vsFile) && check_file(fsFile)) {
       linePass = std::make_shared<LinePassParser>();
+      linePass->setDefines(defines);
       linePass->setName("Line");
       mNonShadowPasses.push_back(linePass);
       mLinePasses.push_back(linePass);
@@ -161,6 +169,7 @@ ShaderPack::ShaderPack(std::string const &dirname) {
   for (int i = 0; i < numCompositePasses; i++) {
     fsFile = (path / ("composite" + std::to_string(i) + ".frag")).string();
     auto compositePass = std::make_shared<DeferredPassParser>();
+    compositePass->setDefines(defines);
     compositePass->setName("Composite" + std::to_string(i));
     mNonShadowPasses.push_back(compositePass);
     compositePass->setIndex(mNonShadowPasses.size() - 1);

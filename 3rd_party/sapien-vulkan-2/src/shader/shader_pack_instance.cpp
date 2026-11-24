@@ -21,7 +21,8 @@ ShaderPackInstance::ShaderPackInstance(std::shared_ptr<core::Context> context,
     throw std::runtime_error("failed to create shader pack instance: context must not be null");
   }
   // compile GLSL immediately
-  mShaderPack = resource::SVResourceManager::Get()->CreateShaderPack(mDesc.config->shaderDir);
+  mShaderPack = resource::SVResourceManager::Get()->CreateShaderPack(mDesc.config->shaderDir,
+                                                                  mDesc.config->shaderDefines);
 }
 
 static vk::UniqueDescriptorSetLayout

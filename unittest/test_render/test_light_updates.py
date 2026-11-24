@@ -56,16 +56,11 @@ class TestLightUpdates(unittest.TestCase):
             self.assertGreater(np.abs(coarse[..., :3] - restored[..., :3]).mean(), 1e-4)
 
     def test_texture_replacement_and_null_rejection(self) -> None:
-        previous = sapien.render.get_camera_shader_dir()
-        try:
-            for shader in ("default", "rt"):
-                with self.subTest(shader=shader):
-                    sapien.render.set_camera_shader_dir(shader)
-                    self._check_texture_replacement_and_null_rejection()
-        finally:
-            sapien.render.set_camera_shader_dir(previous)
+        for shader in ("default", "rt"):
+            with self.subTest(shader=shader):
+                self._check_texture_replacement_and_null_rejection(shader)
 
-    def _check_texture_replacement_and_null_rejection(self) -> None:
+    def _check_texture_replacement_and_null_rejection(self, shader: str) -> None:
         with sapien.Scene() as scene:
             scene.set_ambient_light([0, 0, 0])
             scene.add_ground(0)
@@ -80,7 +75,15 @@ class TestLightUpdates(unittest.TestCase):
             entity.add_component(light)
             entity.pose = sapien.Pose([0, 0, 5], [0.7071068, 0, 0.7071068, 0])
             scene.add_entity(entity)
-            camera = scene.add_camera("camera", 64, 64, 1.0, 0.1, 20)
+            camera = scene.add_camera(
+                "camera",
+                64,
+                64,
+                1.0,
+                0.1,
+                20,
+                render_config=sapien.render.RenderConfig(shader),
+            )
             camera.entity.pose = entity.pose
             scene.update_render()
             camera.take_picture()

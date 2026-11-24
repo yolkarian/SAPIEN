@@ -1,6 +1,7 @@
 #include "svulkan2/resource/manager.h"
 #include "svulkan2/common/image.h"
 #include "svulkan2/core/context.h"
+#include "svulkan2/shader/batch_rt.h"
 #include "svulkan2/shader/compute.h"
 #include "svulkan2/shader/rt.h"
 #include <filesystem>
@@ -51,11 +52,20 @@ SVResourceManager::SVResourceManager() {
                                         });
 }
 
+/** registry key of one variant of a shader pack; '\n' cannot occur in a path or a define */
+static std::string shaderPackKey(std::string const &dir, ShaderDefines const &defines) {
+  std::string key = dir;
+  for (auto const &[name, value] : defines) {
+    key += "\n" + name + "=" + value;
+  }
+  return key;
+}
+
 std::shared_ptr<shader::ShaderPack>
-SVResourceManager::CreateShaderPack(std::string const &dirname) {
+SVResourceManager::CreateShaderPack(std::string const &dirname, ShaderDefines const &defines) {
   std::lock_guard<std::mutex> lock(mShaderPackLock);
   auto dir = fs::canonical(dirname);
-  std::string key = dir.string();
+  std::string key = shaderPackKey(dir.string(), defines);
 
   auto it = mShaderPackRegistry.find(key);
   if (it != mShaderPackRegistry.end()) {
@@ -65,7 +75,7 @@ SVResourceManager::CreateShaderPack(std::string const &dirname) {
   if (!fs::is_directory(dir)) {
     throw std::runtime_error("invalid shader pack directory: " + dirname);
   }
-  auto shaderPack = std::make_shared<shader::ShaderPack>(dirname);
+  auto shaderPack = std::make_shared<shader::ShaderPack>(dirname, defines);
   mShaderPackRegistry[key] = shaderPack;
 
   if (shaderPack->getShaderInputLayouts()->vertexLayout) {
@@ -99,10 +109,10 @@ SVResourceManager::CreateShaderPackInstance(std::shared_ptr<core::Context> conte
 }
 
 std::shared_ptr<shader::RayTracingShaderPack>
-SVResourceManager::CreateRTShaderPack(std::string const &dirname) {
+SVResourceManager::CreateRTShaderPack(std::string const &dirname, ShaderDefines const &defines) {
   std::lock_guard<std::mutex> lock(mShaderPackLock);
   auto dir = fs::canonical(dirname);
-  std::string key = dir.string();
+  std::string key = shaderPackKey(dir.string(), defines);
 
   auto it = mRTShaderPackRegistry.find(key);
   if (it != mRTShaderPackRegistry.end()) {
@@ -112,7 +122,7 @@ SVResourceManager::CreateRTShaderPack(std::string const &dirname) {
   if (!fs::is_directory(dir)) {
     throw std::runtime_error("invalid shader pack directory: " + dirname);
   }
-  auto shaderPack = std::make_shared<shader::RayTracingShaderPack>(dirname);
+  auto shaderPack = std::make_shared<shader::RayTracingShaderPack>(dirname, defines);
   mRTShaderPackRegistry[key] = shaderPack;
 
   setVertexLayout(shaderPack->computeCompatibleInputVertexLayout());
@@ -120,6 +130,29 @@ SVResourceManager::CreateRTShaderPack(std::string const &dirname) {
     setPrimitiveVertexLayout(layout);
   }
 
+  return shaderPack;
+}
+
+std::shared_ptr<shader::BatchShaderPack>
+SVResourceManager::CreateBatchShaderPack(std::string const &dirname, ShaderDefines const &defines) {
+  std::lock_guard<std::mutex> lock(mShaderPackLock);
+  auto dir = fs::canonical(dirname);
+  std::string key = shaderPackKey(dir.string(), defines);
+
+  auto it = mBatchShaderPackRegistry.find(key);
+  if (it != mBatchShaderPackRegistry.end()) {
+    return it->second;
+  }
+
+  auto shaderPack = std::make_shared<shader::BatchShaderPack>(dir.string(), defines);
+  mBatchShaderPackRegistry[key] = shaderPack;
+
+  auto const &scene = shaderPack->getSceneDescription();
+  setVertexLayout(shader::computeVertexLayout(scene));
+  // a pack without point sets leaves the point layout to the packs that draw points
+  if (auto points = shader::computePointLayout(scene); !points->elements.empty()) {
+    setPrimitiveVertexLayout(points);
+  }
   return shaderPack;
 }
 
@@ -415,7 +448,10 @@ void SVResourceManager::clearCachedResources(bool models, bool images, bool shad
       std::lock_guard<std::mutex> instanceLock(mShaderPackInstanceLock);
       mShaderPackInstanceRegistry.clear();
     }
+    std::lock_guard<std::mutex> packLock(mShaderPackLock);
     mShaderPackRegistry.clear();
+    mRTShaderPackRegistry.clear();
+    mBatchShaderPackRegistry.clear();
   }
 }
 

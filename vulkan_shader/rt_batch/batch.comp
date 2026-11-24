@@ -1,0 +1,793 @@
+#version 460
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_scalar_block_layout : enable
+#extension GL_EXT_nonuniform_qualifier : enable
+#extension GL_GOOGLE_include_directive : enable
+
+// Batched ray tracing: one dispatch renders every camera of the group.
+//
+// Invocation: gl_GlobalInvocationID.xy is a pixel of the group's shared resolution and
+// gl_GlobalInvocationID.z is a camera row. Each camera row names its environment, whose TLAS is
+// selected from the array; a workgroup is 8x8x1, so the index is uniform within a workgroup. The
+// dispatch writes its pictures straight into the group's exported buffers, so nothing is copied
+// afterwards.
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+//
+// A batched pack is a directory holding this file. Each requested picture is declared as a
+// std430 storage buffer block named Out<Name>; the renderer reflects the blocks and the element
+// type of each selects the picture format:
+//   vec4  -> r32g32b32a32Sfloat
+//   uint  -> r8g8b8a8Unorm    (packed 8-bit colour; the default of Color)
+//   uvec4 -> r32g32b32a32Uint
+//   float -> r32Sfloat
+// Only requested pictures are compiled in: the renderer defines OUTPUT_<NAME>, and
+// <NAME>_FORMAT_<FORMAT> selects a non-default format.
+
+// Shading tier. SHADING_VISIBILITY traces the primary ray and reports albedo, depth, normal,
+// position and segmentation only. SHADING_LAMBERT (the default) adds emission, the ambient term
+// and a diffuse N.L sum over the environment's lights. SHADING_PBR adds the GGX specular lobe of
+// common/bsdf.glsl to the direct lights and to the ambient term.
+#if !defined(SHADING_VISIBILITY) && !defined(SHADING_LAMBERT) && !defined(SHADING_PBR)
+#define SHADING_LAMBERT
+#endif
+
+#if defined(SHADING_LAMBERT) || defined(SHADING_PBR)
+#define SHADING_LIGHTING 1
+#endif
+
+// Samples per pixel of the primary ray. SPP > 1 supersamples with a fixed Halton(2, 3) pattern:
+// deterministic, no random numbers and no accumulation. The push constant "spp" overrides it at
+// run time (the RenderConfig property "spp"), so SPP is only the default of a variant.
+#ifndef SPP
+#define SPP 1
+#endif
+#define BATCH_MAX_SPP 32
+
+// Hard shadow rays: the first MAX_SHADOW_LIGHTS lights that face a surface point (in light
+// order: point, directional, spot, parallelogram) get one shadow ray each per sample; later
+// lights light it unshadowed.
+#if defined(SHADOWS) && !defined(MAX_SHADOW_LIGHTS)
+#define MAX_SHADOW_LIGHTS 4
+#endif
+
+#include "../common/scene_structs.glsl"
+#include "../common/rt_geometry.glsl"
+#include "../common/rt_light.glsl"
+#include "../common/rt_point.glsl"
+#include "../common/bsdf.glsl"
+#include "../common/tonemapping.glsl"
+
+
+// Depth of a pixel whose ray hits nothing. The rasterizer clears its position buffer to zero and
+// its depth buffer to one, so Depth and Position agree with it on the background.
+const float BATCH_FAR_DEPTH = 1.0;
+
+// Row of the group camera table. The first four matrices are the camera state; a pose kernel may
+// write viewMatrix and viewMatrixInverse in place (view at byte 0, its inverse at byte 128).
+struct BatchCamera {
+  mat4 viewMatrix;
+  mat4 projectionMatrix;
+  mat4 viewMatrixInverse;
+  mat4 projectionMatrixInverse;
+  int envIndex;
+  int padding0;
+  int padding1;
+  int padding2;
+};
+
+// Per-environment tables. Instance, geometry-instance, object and point-instance rows of every
+// environment are concatenated in the group buffers, so each environment carries its offsets.
+struct BatchEnvironment {
+  int pointLightBegin;
+  int pointLightEnd;
+  int directionalLightBegin;
+  int directionalLightEnd;
+  int spotLightBegin;
+  int spotLightEnd;
+  int parallelogramLightBegin;
+  int parallelogramLightEnd;
+  int objectOffset;
+  int geometryInstanceOffset;
+  int pointInstanceOffset;
+  int environmentMap; // texture slot of this environment's cubemap, 0 when it has none
+  vec4 ambientLight;
+};
+
+layout(push_constant) uniform Constants {
+  int cameraCount; // camera rows of the group
+  int width;
+  int height;
+  float exposure;
+  int toneMapper;
+  int spp; // samples per pixel, 1..BATCH_MAX_SPP
+};
+
+// environment of the camera row this invocation renders; set first thing in main()
+int envIndex;
+
+// ---------------------------------------------------------------------------------------
+// scene set: set 1, bindings resolved by name by the renderer
+layout(set = 1, binding = 0) uniform accelerationStructureEXT tlas[];
+
+layout(set = 1, binding = 1) readonly buffer Cameras {
+  BatchCamera c[];
+} cameras;
+
+layout(set = 1, binding = 2) readonly buffer Environments {
+  BatchEnvironment e[];
+} environments;
+
+// group camera index of every camera row; cameras are sorted by environment for the dispatch
+layout(set = 1, binding = 3) readonly buffer CameraOrder {
+  int cameraOrder[];
+};
+
+layout(set = 1, binding = 4) readonly buffer GeometryInstances {
+  GeometryInstance i[];
+} geometryInstances;
+
+layout(std430, set = 1, binding = 5) readonly buffer Materials {
+  Material m;
+} materials[];
+
+layout(std430, set = 1, binding = 6) readonly buffer TextureIndices {
+  TextureIndex t[];
+} textureIndices;
+
+layout(set = 1, binding = 7) uniform sampler2D textures[];
+
+layout(set = 1, binding = 8) uniform samplerCube environmentMaps[];
+
+layout(set = 1, binding = 9) readonly buffer Objects {
+  Object o[];
+} objects;
+
+layout(std430, set = 1, binding = 10) readonly buffer Vertices {
+  Vertex v[];
+} vertices[];
+
+layout(set = 1, binding = 11) readonly buffer Indices {
+  uint i[];
+} indices[];
+
+layout(set = 1, binding = 12) readonly buffer PointLights {
+  PointLight l[];
+} pointLights;
+
+layout(set = 1, binding = 13) readonly buffer DirectionalLights {
+  DirectionalLight l[];
+} directionalLights;
+
+layout(set = 1, binding = 14) readonly buffer SpotLights {
+  SpotLight l[];
+} spotLights;
+
+layout(set = 1, binding = 15) readonly buffer ParallelogramLights {
+  ParallelogramLight l[];
+} parallelogramLights;
+
+layout(std430, set = 1, binding = 16) readonly buffer Points {
+  Point p[];
+} points[];
+
+layout(set = 1, binding = 17) readonly buffer PointInstances {
+  int pointInstances[];
+};
+
+// ---------------------------------------------------------------------------------------
+// output set: set 0, one block per requested picture. A block exists only when its
+// picture is requested, so bindings are sparse and the renderer writes exactly the
+// reflected ones
+#ifdef OUTPUT_COLOR
+layout(std430, set = 0, binding = 0) writeonly buffer OutColor {
+#ifdef COLOR_FORMAT_R32G32B32A32SFLOAT
+  vec4 c[];
+#else
+  uint c[];
+#endif
+} outColor;
+#endif
+
+#ifdef OUTPUT_ALBEDO
+layout(std430, set = 0, binding = 1) writeonly buffer OutAlbedo {
+  vec4 c[];
+} outAlbedo;
+#endif
+
+#ifdef OUTPUT_DEPTH
+layout(std430, set = 0, binding = 2) writeonly buffer OutDepth {
+  float c[];
+} outDepth;
+#endif
+
+#ifdef OUTPUT_NORMAL
+layout(std430, set = 0, binding = 3) writeonly buffer OutNormal {
+  vec4 c[];
+} outNormal;
+#endif
+
+#ifdef OUTPUT_POSITION
+layout(std430, set = 0, binding = 4) writeonly buffer OutPosition {
+  vec4 c[];
+} outPosition;
+#endif
+
+#ifdef OUTPUT_SEGMENTATION
+layout(std430, set = 0, binding = 5) writeonly buffer OutSegmentation {
+  uvec4 c[];
+} outSegmentation;
+#endif
+
+// ---------------------------------------------------------------------------------------
+
+/** Pack a tone-mapped colour the way an r8g8b8a8Unorm target stores it. */
+uint packColor8(vec4 color) {
+  uvec4 bytes = uvec4(clamp(color, 0.0, 1.0) * 255.0 + 0.5);
+  return bytes.r | (bytes.g << 8) | (bytes.b << 16) | (bytes.a << 24);
+}
+
+/** Halton(2, 3) point `index`, in (0, 1). */
+vec2 haltonSample(int index) {
+  float rx = 0.0;
+  float ry = 0.0;
+  int i = index + 1;
+  float f = 1.0;
+  while (i > 0) {
+    f /= 2.0;
+    rx += f * float(i % 2);
+    i /= 2;
+  }
+  i = index + 1;
+  f = 1.0;
+  while (i > 0) {
+    f /= 3.0;
+    ry += f * float(i % 3);
+    i /= 3;
+  }
+  return vec2(rx, ry);
+}
+
+/** one primary ray hit, in world space */
+struct Surface {
+  bool hit;
+  float t;
+  vec3 position;
+  vec3 geometricNormal;
+  vec3 normal;
+  vec3 tangent;
+  vec3 bitangent;
+  vec2 uv;
+  vec3 baseColor;
+  vec3 emission;
+  vec3 diffuseColor;
+  vec3 specularColor;
+  float roughness;
+  float metallic;
+  float transmission;
+  float eta;
+  uvec4 segmentation;
+};
+
+Surface emptySurface() {
+  Surface surface;
+  surface.hit = false;
+  surface.t = 0.0;
+  surface.position = vec3(0.0);
+  surface.geometricNormal = vec3(0.0);
+  surface.normal = vec3(0.0);
+  surface.tangent = vec3(1.0, 0.0, 0.0);
+  surface.bitangent = vec3(0.0, 1.0, 0.0);
+  surface.uv = vec2(0.0);
+  surface.baseColor = vec3(0.0);
+  surface.emission = vec3(0.0);
+  surface.diffuseColor = vec3(0.0);
+  surface.specularColor = vec3(0.0);
+  surface.roughness = 1.0;
+  surface.metallic = 0.0;
+  surface.transmission = 0.0;
+  surface.eta = 1.0;
+  surface.segmentation = uvec4(0);
+  return surface;
+}
+
+/** fill the material terms of `surface`; returns the alpha of the hit texel */
+float shadeTriangleMaterial(uint materialIndex, vec2 uv, inout Surface surface) {
+  Material material = materials[materialIndex].m;
+  TextureIndex ti = textureIndices.t[materialIndex];
+
+  vec3 baseColor = material.baseColor.rgb;
+  float alpha = material.baseColor.a;
+  if (ti.diffuse >= 0) {
+    vec4 sampled = texture(textures[nonuniformEXT(ti.diffuse)],
+                           uv * material.textureTransforms[0].zw +
+                               material.textureTransforms[0].xy);
+    baseColor *= sampled.rgb;
+    alpha *= sampled.a;
+  }
+  float metallic = material.metallic;
+  if (ti.metallic >= 0) {
+    metallic = texture(textures[nonuniformEXT(ti.metallic)],
+                       uv * material.textureTransforms[3].zw +
+                           material.textureTransforms[3].xy).x;
+  }
+  float roughness = material.roughness;
+  if (ti.roughness >= 0) {
+    roughness = texture(textures[nonuniformEXT(ti.roughness)],
+                        uv * material.textureTransforms[1].zw +
+                            material.textureTransforms[1].xy).x;
+  }
+  roughness = clamp(roughness, 0.045, 1.0);
+
+  vec3 emission = material.emission.rgb;
+  if (ti.emission >= 0) {
+    emission *= texture(textures[nonuniformEXT(ti.emission)],
+                        uv * material.textureTransforms[4].zw +
+                            material.textureTransforms[4].xy).rgb;
+  }
+  emission *= material.emission.a;
+
+  float transmission = material.transmission;
+  if (ti.transmission >= 0) {
+    transmission = texture(textures[nonuniformEXT(ti.transmission)],
+                           uv * material.textureTransforms[5].zw +
+                               material.textureTransforms[5].xy).x;
+  }
+
+  metallic = clamp(metallic, 0.0, 1.0);
+  transmission = clamp(transmission, 0.0, 1.0);
+  transmission = 1.0 - clamp(alpha, 0.0, 1.0) * (1.0 - transmission);
+  float ior = clamp(material.ior, 1.01, 4.0);
+
+  float diffuseWeight = (1.0 - metallic) * (1.0 - transmission);
+  transmission = (1.0 - metallic) * transmission;
+
+  surface.baseColor = baseColor;
+  surface.emission = emission;
+  surface.diffuseColor = baseColor * diffuseWeight;
+  surface.specularColor = (max(material.fresnel, 0.0) * 0.08) * (1.0 - metallic) +
+                          baseColor * metallic;
+  surface.roughness = roughness;
+  surface.metallic = metallic;
+  surface.transmission = transmission;
+  surface.eta = surface.geometricNormal == surface.normal || !surface.hit ? 1.0 / ior : ior;
+  return alpha;
+}
+
+/** Trace the primary ray into the dispatch's environment. Non-opaque candidates are confirmed or
+ *  ignored in this loop, exactly like the rt pack's camera.rahit: fully transparent objects and
+ *  back faces of opaque materials are ignored, and an alpha-masked texel below half opacity is
+ *  dropped, deterministically. */
+Surface traceScene(int envIndex, vec3 origin, vec3 direction, float tMin) {
+  Surface best = emptySurface();
+
+  const float tMax = 10000.0;
+  rayQueryEXT query;
+  rayQueryInitializeEXT(query, tlas[nonuniformEXT(envIndex)], gl_RayFlagsNoneEXT, 0xff, origin,
+                        tMin, direction, tMax);
+
+  while (rayQueryProceedEXT(query)) {
+    uint candidateType = rayQueryGetIntersectionTypeEXT(query, false);
+    int instanceId = rayQueryGetIntersectionInstanceIdEXT(query, false);
+    int customIndex = rayQueryGetIntersectionInstanceCustomIndexEXT(query, false);
+    int primitive = rayQueryGetIntersectionPrimitiveIndexEXT(query, false);
+    int geometry = rayQueryGetIntersectionGeometryIndexEXT(query, false);
+
+    BatchEnvironment environment = environments.e[envIndex];
+    Object object = objects.o[environment.objectOffset + instanceId];
+    if (object.transparency > 0.99) {
+      continue;
+    }
+
+    if (candidateType == gl_RayQueryCandidateIntersectionTriangleEXT) {
+      // the candidate distance is defined for triangles only
+      float candidateT = rayQueryGetIntersectionTEXT(query, false);
+      if (best.hit && candidateT >= best.t) {
+        continue;
+      }
+      int instance = environment.geometryInstanceOffset + customIndex + geometry;
+      uint geometryIndex = geometryInstances.i[instance].geometryIndex;
+      uint materialIndex = geometryInstances.i[instance].materialIndex;
+      Material material = materials[materialIndex].m;
+      bool isInside = !rayQueryGetIntersectionFrontFaceEXT(query, false);
+      // a back face of an opaque material is not a visible surface, like camera.rahit
+      if (isInside && material.transmission < 1e-4) {
+        continue;
+      }
+
+      uint v0 = indices[nonuniformEXT(geometryIndex)].i[3 * primitive + 0];
+      uint v1 = indices[nonuniformEXT(geometryIndex)].i[3 * primitive + 1];
+      uint v2 = indices[nonuniformEXT(geometryIndex)].i[3 * primitive + 2];
+      Vertex a = vertices[nonuniformEXT(geometryIndex)].v[v0];
+      Vertex b = vertices[nonuniformEXT(geometryIndex)].v[v1];
+      Vertex c = vertices[nonuniformEXT(geometryIndex)].v[v2];
+      vec3 p0 = vec3(a.x, a.y, a.z);
+      vec3 p1 = vec3(b.x, b.y, b.z);
+      vec3 p2 = vec3(c.x, c.y, c.z);
+
+      vec2 barycentrics = rayQueryGetIntersectionBarycentricsEXT(query, false);
+      float w0 = 1.0 - barycentrics.x - barycentrics.y;
+      float w1 = barycentrics.x;
+      float w2 = barycentrics.y;
+
+      vec3 geometricNormal = normalize(cross(p1 - p0, p2 - p0));
+      vec3 shadingNormal = object.shadeFlat != 0
+                               ? geometricNormal
+                               : (vec3(a.nx, a.ny, a.nz) * w0 + vec3(b.nx, b.ny, b.nz) * w1 +
+                                  vec3(c.nx, c.ny, c.nz) * w2);
+      if (dot(shadingNormal, shadingNormal) < 1e-6) {
+        shadingNormal = geometricNormal;
+      }
+      vec2 uv = vec2(a.u, a.v) * w0 + vec2(b.u, b.v) * w1 + vec2(c.u, c.v) * w2;
+      vec3 tangent = vec3(a.tx, a.ty, a.tz) * w0 + vec3(b.tx, b.ty, b.tz) * w1 +
+                     vec3(c.tx, c.ty, c.tz) * w2;
+      if (length(tangent) < 0.01) {
+        tangent = p1 - p0;
+      }
+
+      mat4x3 objectToWorld = rayQueryGetIntersectionObjectToWorldEXT(query, false);
+      mat3 normalMatrix = mat3(objectToWorld);
+      vec3 worldGeometricNormal = normalize(normalMatrix * geometricNormal);
+      vec3 worldShadingNormal = normalize(normalMatrix * shadingNormal);
+      if (isInside) {
+        worldGeometricNormal = -worldGeometricNormal;
+        worldShadingNormal = -worldShadingNormal;
+      }
+      if (dot(worldShadingNormal, worldGeometricNormal) < 0.0) {
+        worldShadingNormal = -worldShadingNormal;
+      }
+      vec3 worldTangent = normalize(normalMatrix * tangent);
+
+      Surface surface = emptySurface();
+      surface.hit = true;
+      surface.geometricNormal = worldGeometricNormal;
+      surface.normal = worldShadingNormal;
+      float alpha = shadeTriangleMaterial(materialIndex, uv, surface);
+      // alpha mask: a texel below half opacity lets the ray through, deterministically
+      if (alpha < 0.5) {
+        continue;
+      }
+
+      worldTangent -= worldShadingNormal * dot(worldShadingNormal, worldTangent);
+      if (dot(worldTangent, worldTangent) < 1e-6) {
+        vec3 axis = abs(worldShadingNormal.x) < 0.95 ? vec3(1, 0, 0) : vec3(0, 1, 0);
+        worldTangent = cross(axis, worldShadingNormal);
+      }
+      worldTangent = normalize(worldTangent);
+      vec3 worldBitangent = normalize(cross(worldShadingNormal, worldTangent));
+      TextureIndex ti = textureIndices.t[materialIndex];
+      if (ti.normal >= 0) {
+        vec3 texNormal = normalize(texture(textures[nonuniformEXT(ti.normal)],
+                                          uv * material.textureTransforms[2].zw +
+                                              material.textureTransforms[2].xy).xyz * 2.0 - 1.0);
+        vec3 shaded = mat3(worldTangent, worldBitangent, worldShadingNormal) * texNormal;
+        if (dot(shaded, worldGeometricNormal) > 0.0) {
+          worldShadingNormal = normalize(shaded);
+        }
+      }
+
+      rayQueryConfirmIntersectionEXT(query);
+
+      surface.t = candidateT;
+      surface.position = origin + direction * candidateT;
+      surface.normal = worldShadingNormal;
+      surface.tangent = worldTangent;
+      surface.bitangent = worldBitangent;
+      surface.uv = uv;
+      surface.segmentation = object.segmentation;
+      best = surface;
+    } else if (candidateType == gl_RayQueryCandidateIntersectionAABBEXT) {
+      int pointSetId = pointInstances[environment.pointInstanceOffset + customIndex];
+      Point point = points[nonuniformEXT(pointSetId)].p[primitive];
+
+      mat4x3 objectToWorld = rayQueryGetIntersectionObjectToWorldEXT(query, false);
+      vec3 objectOrigin = rayQueryGetIntersectionObjectRayOriginEXT(query, false);
+      vec3 objectDirection = rayQueryGetIntersectionObjectRayDirectionEXT(query, false);
+      vec3 oc = objectOrigin - point.position;
+      float qa = dot(objectDirection, objectDirection);
+      float qb = 2.0 * dot(oc, objectDirection);
+      float qc = dot(oc, oc) - point.scale * point.scale;
+      float discriminant = qb * qb - 4.0 * qa * qc;
+      if (discriminant < 0.0) {
+        continue;
+      }
+      // the object-space ray shares the world ray's parameter, so t compares with tMin/tMax
+      float t = (-qb - sqrt(discriminant)) / (2.0 * qa);
+      if (t < tMin || t >= (best.hit ? best.t : tMax)) {
+        continue;
+      }
+
+      vec3 objectNormal = normalize(objectOrigin + objectDirection * t - point.position);
+      vec3 worldNormal = normalize(mat3(objectToWorld) * objectNormal);
+      if (dot(worldNormal, direction) > 0.0) {
+        worldNormal = -worldNormal;
+      }
+      float transmission = 1.0 - clamp(point.color.a, 0.0, 1.0);
+
+      rayQueryGenerateIntersectionEXT(query, t);
+
+      Surface surface = emptySurface();
+      surface.hit = true;
+      surface.t = t;
+      surface.position = origin + direction * t;
+      surface.geometricNormal = worldNormal;
+      surface.normal = worldNormal;
+      surface.tangent = normalize(cross(abs(worldNormal.x) < 0.95 ? vec3(1, 0, 0)
+                                                                 : vec3(0, 1, 0),
+                                        worldNormal));
+      surface.bitangent = cross(worldNormal, surface.tangent);
+      surface.baseColor = point.color.rgb;
+      surface.diffuseColor = point.color.rgb * (1.0 - transmission);
+      surface.specularColor = vec3(0.5 * 0.08);
+      surface.roughness = 0.1;
+      surface.transmission = transmission;
+      surface.eta = 1.0;
+      surface.segmentation = object.segmentation;
+      best = surface;
+    }
+  }
+
+  return best;
+}
+
+/** 1 when `origin` reaches along `direction` without hitting anything, 0 when blocked */
+float lit(int envIndex, vec3 origin, vec3 direction, float tMax) {
+  rayQueryEXT query;
+  rayQueryInitializeEXT(query, tlas[nonuniformEXT(envIndex)],
+                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xff, origin,
+                        0.001, direction, tMax);
+  while (rayQueryProceedEXT(query)) {
+  }
+  return rayQueryGetIntersectionTypeEXT(query, true) == gl_RayQueryCommittedIntersectionNoneEXT
+             ? 1.0
+             : 0.0;
+}
+
+/** radiance leaving a hit surface towards the camera */
+vec3 shadeSurface(Surface surface, vec3 viewDirection) {
+  vec3 result = surface.emission;
+
+#ifdef SHADING_LIGHTING
+  BatchEnvironment environment = environments.e[envIndex];
+  vec3 ambient = max(environment.ambientLight.rgb, vec3(0.0));
+  result += surface.diffuseColor * ambient;
+#if defined(SHADING_PBR)
+  result += surface.specularColor * ambient;
+#endif
+
+  vec3 V = normalize(-viewDirection);
+  vec3 N = surface.normal;
+  float dotNV = clamp(dot(N, V), 1e-6, 1.0);
+  int shadowBudget = 0;
+#ifdef SHADOWS
+  shadowBudget = MAX_SHADOW_LIGHTS;
+#endif
+
+  for (int i = environment.pointLightBegin; i < environment.pointLightEnd; ++i) {
+    PointLight light = pointLights.l[i];
+    vec3 d = light.position - surface.position;
+    float d2 = max(dot(d, d), 1e-6);
+    vec3 L = normalize(d);
+    float dotNL = clamp(dot(N, L), 0.0, 1.0);
+    if (dotNL <= 0.0) {
+      continue;
+    }
+#ifdef SHADOWS
+    if (shadowBudget > 0) {
+      --shadowBudget;
+      if (lit(envIndex, surface.position, L, sqrt(d2) - 0.001) <= 0.0) {
+        continue;
+      }
+    }
+#endif
+    vec3 emission = light.rgb / d2;
+    vec3 H = normalize(V + L);
+    float dotNH = clamp(dot(N, H), 1e-6, 1.0);
+    float dotVH = clamp(dot(V, H), 1e-6, 1.0);
+    result += evalDiffuse(dotNL, dotNV, surface.diffuseColor) * emission;
+#if defined(SHADING_PBR)
+    result +=
+        evalGGXReflection(dotNL, dotNV, dotNH, dotVH, surface.roughness, surface.specularColor) *
+        emission;
+#endif
+  }
+
+  for (int i = environment.directionalLightBegin; i < environment.directionalLightEnd; ++i) {
+    DirectionalLight light = directionalLights.l[i];
+    vec3 L = normalize(-light.direction);
+    float dotNL = clamp(dot(N, L), 0.0, 1.0);
+    if (dotNL <= 0.0) {
+      continue;
+    }
+#ifdef SHADOWS
+    if (shadowBudget > 0) {
+      --shadowBudget;
+      if (lit(envIndex, surface.position, L, 1.0e6) <= 0.0) {
+        continue;
+      }
+    }
+#endif
+    vec3 H = normalize(V + L);
+    float dotNH = clamp(dot(N, H), 1e-6, 1.0);
+    float dotVH = clamp(dot(V, H), 1e-6, 1.0);
+    result += evalDiffuse(dotNL, dotNV, surface.diffuseColor) * light.rgb;
+#if defined(SHADING_PBR)
+    result +=
+        evalGGXReflection(dotNL, dotNV, dotNH, dotVH, surface.roughness, surface.specularColor) *
+        light.rgb;
+#endif
+  }
+
+  for (int i = environment.spotLightBegin; i < environment.spotLightEnd; ++i) {
+    SpotLight light = spotLights.l[i];
+    vec3 centerDirection = vec3(0.0, 0.0, -1.0) * mat3(light.viewMat);
+    vec3 d = light.position - surface.position;
+    float d2 = max(dot(d, d), 1e-6);
+    vec3 L = normalize(d);
+    float cf1 = cos(light.fovInner / 2.0) + 1e-5;
+    float cf2 = cos(light.fovOuter / 2.0);
+    float cone = clamp((dot(-L, centerDirection) - cf2) / (cf1 - cf2), 0.0, 1.0);
+    float dotNL = clamp(dot(N, L), 0.0, 1.0);
+    if (cone <= 0.0 || dotNL <= 0.0) {
+      continue;
+    }
+    vec3 texColor = vec3(1.0);
+    if (light.textureId >= 0) {
+      vec4 texcoord = light.projMat * (light.viewMat * vec4(surface.position, 1.0));
+      texcoord /= texcoord.w;
+      texColor = texture(textures[nonuniformEXT(light.textureId)],
+                         texcoord.xy * 0.5 + 0.5).rgb;
+    }
+#ifdef SHADOWS
+    if (shadowBudget > 0) {
+      --shadowBudget;
+      if (lit(envIndex, surface.position, L, sqrt(d2) - 0.001) <= 0.0) {
+        continue;
+      }
+    }
+#endif
+    vec3 emission = light.rgb * cone * texColor / d2;
+    vec3 H = normalize(V + L);
+    float dotNH = clamp(dot(N, H), 1e-6, 1.0);
+    float dotVH = clamp(dot(V, H), 1e-6, 1.0);
+    result += evalDiffuse(dotNL, dotNV, surface.diffuseColor) * emission;
+#if defined(SHADING_PBR)
+    result +=
+        evalGGXReflection(dotNL, dotNV, dotNH, dotVH, surface.roughness, surface.specularColor) *
+        emission;
+#endif
+  }
+
+  // parallelogram lights: centre point and a hard shadow, no area sampling
+  for (int i = environment.parallelogramLightBegin; i < environment.parallelogramLightEnd; ++i) {
+    ParallelogramLight light = parallelogramLights.l[i];
+    vec3 lightNormal = cross(light.edge0, light.edge1);
+    float area = length(lightNormal);
+    lightNormal = normalize(lightNormal);
+    vec3 d = light.position + 0.5 * light.edge0 + 0.5 * light.edge1 - surface.position;
+    float d2 = max(dot(d, d), 1e-6);
+    vec3 L = normalize(d);
+    float dotLnLd = dot(lightNormal, L);
+    float dotNL = clamp(dot(N, L), 0.0, 1.0);
+    if (dotLnLd <= 0.0 || dotNL <= 0.0) {
+      continue;
+    }
+#ifdef SHADOWS
+    if (shadowBudget > 0) {
+      --shadowBudget;
+      if (lit(envIndex, surface.position, L, sqrt(d2) - 0.001) <= 0.0) {
+        continue;
+      }
+    }
+#endif
+    vec3 emission = light.rgb * dotLnLd * area / d2;
+    vec3 H = normalize(V + L);
+    float dotNH = clamp(dot(N, H), 1e-6, 1.0);
+    float dotVH = clamp(dot(V, H), 1e-6, 1.0);
+    result += evalDiffuse(dotNL, dotNV, surface.diffuseColor) * emission;
+#if defined(SHADING_PBR)
+    result +=
+        evalGGXReflection(dotNL, dotNV, dotNH, dotVH, surface.roughness, surface.specularColor) *
+        emission;
+#endif
+  }
+#endif
+
+  return result;
+}
+
+void main() {
+  ivec3 id = ivec3(gl_GlobalInvocationID);
+  if (id.z >= cameraCount || id.x >= width || id.y >= height) {
+    return;
+  }
+
+  int row = id.z;
+  BatchCamera camera = cameras.c[row];
+  envIndex = camera.envIndex;
+  int outIndex = cameraOrder[row] * width * height + id.y * width + id.x;
+  vec2 invScreen = vec2(2.0) / vec2(width, height);
+
+  vec3 radiance = vec3(0.0);
+  vec3 albedo = vec3(0.0);
+  vec3 normal = vec3(0.0);
+  vec4 position = vec4(0.0, 0.0, 0.0, BATCH_FAR_DEPTH);
+  uvec4 segmentation = uvec4(0);
+  float depth = 0.0;
+  float nearest = 0.0;
+
+  int samples = spp > 0 ? clamp(spp, 1, BATCH_MAX_SPP) : SPP;
+  for (int s = 0; s < samples; ++s) {
+    // one sample reads the pixel centre, exactly like a rasterizer's pixel; more samples spread
+    // a fixed Halton(2, 3) pattern over the pixel
+    vec2 offset = samples == 1 ? vec2(0.5) : haltonSample(s);
+    vec2 d = (vec2(id.xy) + offset) * invScreen - 1.0;
+
+    vec4 nearH = camera.projectionMatrixInverse * vec4(d, 0.0, 1.0);
+    nearH.xyz /= nearH.w;
+    vec4 farH = camera.projectionMatrixInverse * vec4(d, 1.0, 1.0);
+    farH.xyz /= farH.w;
+    vec3 direction = normalize((camera.viewMatrixInverse * vec4(farH.xyz - nearH.xyz, 0.0)).xyz);
+    vec3 origin = (camera.viewMatrixInverse * vec4(nearH.xyz, 1.0)).xyz;
+    vec3 cameraCenter = camera.viewMatrixInverse[3].xyz;
+
+    Surface surface = traceScene(envIndex, origin, direction, 0.001);
+    if (!surface.hit) {
+      radiance += environments.e[envIndex].ambientLight.rgb;
+      if (environments.e[envIndex].environmentMap != 0) {
+        radiance += texture(environmentMaps[nonuniformEXT(environments.e[envIndex].environmentMap)],
+                            direction.xzy).rgb;
+      }
+      continue;
+    }
+
+    radiance += shadeSurface(surface, direction);
+
+    vec3 cameraPosition = (camera.viewMatrix * vec4(surface.position, 1.0)).xyz;
+    vec4 clip = camera.projectionMatrix * vec4(cameraPosition, 1.0);
+    float bufferDepth = clamp(clip.z / clip.w, 0.0, 1.0);
+    float distance = length(surface.position - cameraCenter);
+    if (s == 0 || distance < nearest) {
+      nearest = distance;
+      // linear depth in metres along the camera's viewing axis, positive in front
+      depth = -cameraPosition.z;
+      albedo = surface.baseColor;
+      normal = mat3(camera.viewMatrix) * surface.normal;
+      position = vec4(cameraPosition, bufferDepth);
+      segmentation = surface.segmentation;
+    }
+  }
+
+  if (samples > 1) {
+    radiance /= float(samples);
+  }
+
+#ifdef SHADING_VISIBILITY
+  radiance = albedo;
+#endif
+
+  vec3 color = sapienToneMap(radiance, exposure, toneMapper);
+
+#ifdef OUTPUT_COLOR
+#ifdef COLOR_FORMAT_R32G32B32A32SFLOAT
+  outColor.c[outIndex] = vec4(color, 1.0);
+#else
+  outColor.c[outIndex] = packColor8(vec4(color, 1.0));
+#endif
+#endif
+#ifdef OUTPUT_ALBEDO
+  outAlbedo.c[outIndex] = vec4(albedo, 1.0);
+#endif
+#ifdef OUTPUT_DEPTH
+  outDepth.c[outIndex] = depth;
+#endif
+#ifdef OUTPUT_NORMAL
+  outNormal.c[outIndex] = vec4(normal, 1.0);
+#endif
+#ifdef OUTPUT_POSITION
+  outPosition.c[outIndex] = position;
+#endif
+#ifdef OUTPUT_SEGMENTATION
+  outSegmentation.c[outIndex] = uvec4(segmentation);
+#endif
+}

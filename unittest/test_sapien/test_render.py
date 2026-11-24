@@ -54,7 +54,6 @@ class TestScene(unittest.TestCase):
         color = cam.get_picture("Color")
 
     def test_default_raster_style(self) -> None:
-        sapien.render.set_camera_shader_dir("default")
         scene = sapien.Scene()
         scene.add_ground(0.0, render_half_size=[3.0, 3.0])
 
@@ -77,7 +76,6 @@ class TestScene(unittest.TestCase):
         self.assertGreater(float(np.std(color[60:, :, :3])), 0.005)
 
     def test_texture_respects_base_color_and_alpha(self) -> None:
-        sapien.render.set_camera_shader_dir("default")
 
         for alpha in (0.5, 1.0):
             with self.subTest(alpha=alpha):
@@ -114,7 +112,6 @@ class TestScene(unittest.TestCase):
                 self.assertAlmostEqual(center[3], alpha, delta=0.05)
 
     def test_camera_multiscene_selection_has_no_offsets(self) -> None:
-        sapien.render.set_camera_shader_dir("default")
         owner_scene = sapien.Scene()
         owner_scene.set_ambient_light([0.5, 0.5, 0.5])
         camera = owner_scene.add_camera(
@@ -163,58 +160,55 @@ class TestScene(unittest.TestCase):
                 viewer.close()
 
     def test_rt_batched_shared_scene(self) -> None:
-        sapien.render.set_camera_shader_dir("rt")
-        sapien.render.set_ray_tracing_samples_per_pixel(2)
-        sapien.render.set_ray_tracing_path_depth(2)
-        sapien.render.set_ray_tracing_denoiser("none")
+        render_config = sapien.render.RenderConfig("rt")
+        render_config["spp"] = 2
+        render_config["maxDepth"] = 2
+        render_config.denoiser = "none"
 
-        try:
-            device = sapien.Device("cuda")
+        device = sapien.Device("cuda")
 
-            main_render = sapien.render.RenderSystem(device)
-            main_scene = sapien.Scene(
-                [sapien.physx.PhysxCpuSystem(), main_render]
-            )
-            camera = main_scene.add_camera(
-                "camera", 64, 64, np.deg2rad(45), 0.05, 10
-            )
-            camera.pose = sapien.Pose([-3, 0, 0])
-            camera.set_property("toneMapper", 1)
-            main_scene.update_render()
+        main_render = sapien.render.RenderSystem(device)
+        main_scene = sapien.Scene(
+            [sapien.physx.PhysxCpuSystem(), main_render]
+        )
+        camera = main_scene.add_camera(
+            "camera", 64, 64, np.deg2rad(45), 0.05, 10, render_config=render_config
+        )
+        camera.pose = sapien.Pose([-3, 0, 0])
+        camera.set_property("toneMapper", 1)
+        main_scene.update_render()
 
-            shared_render = sapien.render.RenderSystem(device)
-            shared_render.batched_render_shared = True
-            shared_scene = sapien.Scene(
-                [sapien.physx.PhysxCpuSystem(), shared_render]
-            )
-            builder = shared_scene.create_actor_builder()
-            builder.add_box_visual(
-                half_size=[0.5, 0.5, 0.5], material=[0.8, 0.1, 0.1]
-            )
-            builder.build_kinematic()
-            shared_scene.add_point_light([-2, 0, 2], [10, 10, 10])
-            shared_scene.update_render()
+        shared_render = sapien.render.RenderSystem(device)
+        shared_render.batched_render_shared = True
+        shared_scene = sapien.Scene(
+            [sapien.physx.PhysxCpuSystem(), shared_render]
+        )
+        builder = shared_scene.create_actor_builder()
+        builder.add_box_visual(
+            half_size=[0.5, 0.5, 0.5], material=[0.8, 0.1, 0.1]
+        )
+        builder.build_kinematic()
+        shared_scene.add_point_light([-2, 0, 2], [10, 10, 10])
+        shared_scene.update_render()
 
-            group = sapien.render.RenderSystemGroup(
-                [main_render, shared_render]
-            )
-            camera_group = group.create_camera_group([camera], ["Color"])
-            camera_group.set_pose_mode(camera, "cuda")
-            group.gpu_init()
-            # cuda-mode cameras expose their CUDA-owned camera buffer and a group
-            # pose row seeded from the CPU pose at gpu_init().
-            self.assertGreater(camera._cuda_buffer.shape[0], 0)
-            self.assertEqual(camera_group.get_cuda_pose_index(camera), 0)
-            camera_group.take_picture()
-            self.assertEqual(
-                camera_group.get_picture_cuda("Color").shape, [1, 64, 64, 4]
-            )
+        group = sapien.render.RenderSystemGroup(
+            [main_render, shared_render]
+        )
+        camera_group = group.create_camera_group([camera], ["Color"])
+        camera_group.set_pose_mode(camera, "cuda")
+        group.gpu_init()
+        # cuda-mode cameras expose their CUDA-owned camera buffer and a group
+        # pose row seeded from the CPU pose at gpu_init().
+        self.assertGreater(camera._cuda_buffer.shape[0], 0)
+        self.assertEqual(camera_group.get_cuda_pose_index(camera), 0)
+        camera_group.take_picture()
+        self.assertEqual(
+            camera_group.get_picture_cuda("Color").shape, [1, 64, 64, 4]
+        )
 
-            camera.take_picture()
-            color = camera.get_picture("Color")
-            self.assertGreater(float(np.max(color[..., :3])), 0.01)
-        finally:
-            sapien.render.set_camera_shader_dir("default")
+        camera.take_picture()
+        color = camera.get_picture("Color")
+        self.assertGreater(float(np.max(color[..., :3])), 0.01)
 
     def test_free_camera_only_group_owns_and_releases_camera(self) -> None:
         device = sapien.Device("cuda")
@@ -621,76 +615,73 @@ class TestScene(unittest.TestCase):
         """Static lights keep their pose but their color and shadow parameters stay
         CPU real-time; cpu-mode lights move in real time; ambient stays CPU
         real-time. Raster and RT are covered separately."""
-        sapien.render.set_camera_shader_dir(shader)
+        render_config = sapien.render.RenderConfig(shader)
         if shader == "rt":
-            sapien.render.set_ray_tracing_samples_per_pixel(4)
-            sapien.render.set_ray_tracing_path_depth(2)
-            sapien.render.set_ray_tracing_denoiser("none")
+            render_config["spp"] = 4
+            render_config["maxDepth"] = 2
+            render_config.denoiser = "none"
 
-        try:
-            device = sapien.Device("cuda")
-            render_system = sapien.render.RenderSystem(device)
-            scene = sapien.Scene([sapien.physx.PhysxCpuSystem(), render_system])
-            builder = scene.create_actor_builder()
-            builder.add_box_visual(
-                half_size=[0.5, 0.5, 0.5], material=[0.8, 0.8, 0.8]
-            )
-            builder.build_kinematic()
+        device = sapien.Device("cuda")
+        render_system = sapien.render.RenderSystem(device)
+        scene = sapien.Scene([sapien.physx.PhysxCpuSystem(), render_system])
+        builder = scene.create_actor_builder()
+        builder.add_box_visual(
+            half_size=[0.5, 0.5, 0.5], material=[0.8, 0.8, 0.8]
+        )
+        builder.build_kinematic()
 
-            light_entity = sapien.Entity()
-            static_light = sapien.render.RenderPointLightComponent()
-            static_light.set_color([0.0, 0.0, 0.0])
-            light_entity.add_component(static_light)
-            light_entity.set_pose(sapien.Pose([-2.0, 0.0, 0.0]))
-            scene.add_entity(light_entity)
+        light_entity = sapien.Entity()
+        static_light = sapien.render.RenderPointLightComponent()
+        static_light.set_color([0.0, 0.0, 0.0])
+        light_entity.add_component(static_light)
+        light_entity.set_pose(sapien.Pose([-2.0, 0.0, 0.0]))
+        scene.add_entity(light_entity)
 
-            cpu_light_entity = sapien.Entity()
-            cpu_light = sapien.render.RenderPointLightComponent()
-            cpu_light.set_pose_mode("cpu")
-            cpu_light.set_color([0.0, 0.0, 0.0])
-            cpu_light_entity.add_component(cpu_light)
-            cpu_light_entity.set_pose(sapien.Pose([-2.0, 0.0, 30.0]))
-            scene.add_entity(cpu_light_entity)
+        cpu_light_entity = sapien.Entity()
+        cpu_light = sapien.render.RenderPointLightComponent()
+        cpu_light.set_pose_mode("cpu")
+        cpu_light.set_color([0.0, 0.0, 0.0])
+        cpu_light_entity.add_component(cpu_light)
+        cpu_light_entity.set_pose(sapien.Pose([-2.0, 0.0, 30.0]))
+        scene.add_entity(cpu_light_entity)
 
-            camera = scene.add_camera(
-                "camera", 64, 64, np.deg2rad(45), 0.05, 10
-            )
-            camera.set_local_pose(sapien.Pose([-3.0, 0.0, 0.0]))
-            if shader == "rt":
-                camera.set_property("toneMapper", 1)
-            group = sapien.render.RenderSystemGroup([render_system])
-            group.create_camera_group([camera], ["Color"])
-            group.gpu_init()
+        camera = scene.add_camera(
+            "camera", 64, 64, np.deg2rad(45), 0.05, 10, render_config=render_config
+        )
+        camera.set_local_pose(sapien.Pose([-3.0, 0.0, 0.0]))
+        if shader == "rt":
+            camera.set_property("toneMapper", 1)
+        group = sapien.render.RenderSystemGroup([render_system])
+        group.create_camera_group([camera], ["Color"])
+        group.gpu_init()
 
-            def brightness() -> float:
-                group.update_render()
-                camera.take_picture()
-                image = camera.get_picture("Color")
-                return float(np.mean(image[..., :3]))
+        def brightness() -> float:
+            group.update_render()
+            camera.take_picture()
+            image = camera.get_picture("Color")
+            return float(np.mean(image[..., :3]))
 
-            dark = brightness()
+        dark = brightness()
 
-            # Static light color is CPU real-time after gpu_init().
-            static_light.set_color([20.0, 20.0, 20.0])
-            lit = brightness()
-            self.assertGreater(lit, dark + 0.05)
-            static_light.set_color([0.0, 0.0, 0.0])
-            self.assertLess(brightness(), dark + 0.02)
+        # Static light color is CPU real-time after gpu_init().
+        static_light.set_color([20.0, 20.0, 20.0])
+        lit = brightness()
+        self.assertGreater(lit, dark + 0.05)
+        static_light.set_color([0.0, 0.0, 0.0])
+        self.assertLess(brightness(), dark + 0.02)
 
-            # A cpu-mode light pose is CPU real-time: bring the far light close.
-            cpu_light.set_color([20.0, 20.0, 20.0])
-            far_lit = brightness()
-            cpu_light_entity.set_pose(sapien.Pose([-2.0, 0.0, 0.0]))
-            near_lit = brightness()
-            self.assertGreater(near_lit, far_lit + 0.05)
+        # A cpu-mode light pose is CPU real-time: bring the far light close.
+        cpu_light.set_color([20.0, 20.0, 20.0])
+        far_lit = brightness()
+        cpu_light_entity.set_pose(sapien.Pose([-2.0, 0.0, 0.0]))
+        near_lit = brightness()
+        self.assertGreater(near_lit, far_lit + 0.05)
 
-            # Ambient light stays CPU real-time.
-            cpu_light.set_color([0.0, 0.0, 0.0])
-            base = brightness()
-            scene.set_ambient_light([0.6, 0.6, 0.6])
-            self.assertGreater(brightness(), base + 0.05)
-        finally:
-            sapien.render.set_camera_shader_dir("default")
+        # Ambient light stays CPU real-time.
+        cpu_light.set_color([0.0, 0.0, 0.0])
+        base = brightness()
+        scene.set_ambient_light([0.6, 0.6, 0.6])
+        self.assertGreater(brightness(), base + 0.05)
 
     def test_raster_light_realtime_updates(self) -> None:
         self._run_light_realtime_updates("default")
@@ -1114,153 +1105,151 @@ class TestSceneGPU(unittest.TestCase):
         ]
         cudart.cudaMemcpy.restype = ctypes.c_int
 
-        sapien.render.set_camera_shader_dir("rt")
-        sapien.render.set_ray_tracing_samples_per_pixel(4)
-        sapien.render.set_ray_tracing_path_depth(2)
-        sapien.render.set_ray_tracing_denoiser("none")
+        render_config = sapien.render.RenderConfig("rt")
+        render_config["spp"] = 4
+        render_config["maxDepth"] = 2
+        render_config.denoiser = "none"
 
-        try:
-            device = sapien.Device("cuda")
-            physx = sapien.physx.PhysxGpuSystem(device)
-            physx.set_timestep(1 / 120)
+        device = sapien.Device("cuda")
+        physx = sapien.physx.PhysxGpuSystem(device)
+        physx.set_timestep(1 / 120)
 
-            main_render = sapien.render.RenderSystem(device)
-            main_scene = sapien.Scene([physx, main_render])
-            main_scene.set_ambient_light([0.5, 0.5, 0.5])
+        main_render = sapien.render.RenderSystem(device)
+        main_scene = sapien.Scene([physx, main_render])
+        main_scene.set_ambient_light([0.5, 0.5, 0.5])
 
-            rig_builder = main_scene.create_actor_builder()
-            rig_builder.initial_pose = sapien.Pose([-3, 0, 1])
-            camera_rig = rig_builder.build_kinematic()
-            camera = main_scene.add_mounted_camera(
-                "camera",
-                camera_rig,
-                sapien.Pose(),
-                64,
-                64,
-                np.deg2rad(45),
-                0.05,
-                20,
-            )
-            camera.set_property("toneMapper", 1)
+        rig_builder = main_scene.create_actor_builder()
+        rig_builder.initial_pose = sapien.Pose([-3, 0, 1])
+        camera_rig = rig_builder.build_kinematic()
+        camera = main_scene.add_mounted_camera(
+            "camera",
+            camera_rig,
+            sapien.Pose(),
+            64,
+            64,
+            np.deg2rad(45),
+            0.05,
+            20,
+            render_config=render_config,
+        )
+        camera.set_property("toneMapper", 1)
 
-            shared_render = sapien.render.RenderSystem(device)
-            shared_render.batched_render_shared = True
-            shared_scene = sapien.Scene([physx, shared_render])
-            builder = shared_scene.create_actor_builder()
-            builder.add_box_collision(half_size=[0.4, 0.4, 0.4])
-            builder.add_box_visual(
-                half_size=[0.4, 0.4, 0.4], material=[0.8, 0.05, 0.05]
-            )
-            builder.initial_pose = sapien.Pose([0, 0, 1])
-            actor = builder.build()
+        shared_render = sapien.render.RenderSystem(device)
+        shared_render.batched_render_shared = True
+        shared_scene = sapien.Scene([physx, shared_render])
+        builder = shared_scene.create_actor_builder()
+        builder.add_box_collision(half_size=[0.4, 0.4, 0.4])
+        builder.add_box_visual(
+            half_size=[0.4, 0.4, 0.4], material=[0.8, 0.05, 0.05]
+        )
+        builder.initial_pose = sapien.Pose([0, 0, 1])
+        actor = builder.build()
 
-            physx.gpu_init()
-            camera_body = camera_rig.find_component_by_type(
-                sapien.physx.PhysxRigidDynamicComponent
-            )
+        physx.gpu_init()
+        camera_body = camera_rig.find_component_by_type(
+            sapien.physx.PhysxRigidDynamicComponent
+        )
 
-            # RenderSystemGroup discovers sibling PhysX GPU pose indices for dynamic shapes and
-            # mounted cameras after gpu_init(); no manual set_gpu_pose_batch_index calls are needed.
-            group = sapien.render.RenderSystemGroup(
-                [main_render, shared_render]
-            )
-            camera_group = group.create_camera_group([camera], ["Color"])
+        # RenderSystemGroup discovers sibling PhysX GPU pose indices for dynamic shapes and
+        # mounted cameras after gpu_init(); no manual set_gpu_pose_batch_index calls are needed.
+        group = sapien.render.RenderSystemGroup(
+            [main_render, shared_render]
+        )
+        camera_group = group.create_camera_group([camera], ["Color"])
 
-            class CudaPoseView:
-                def __init__(self, shape, strides, typestr):
-                    self.__cuda_array_interface__ = {
-                        "shape": tuple(shape),
-                        "strides": tuple(strides),
-                        "typestr": typestr,
-                        "data": (physx.cuda_rigid_body_data.ptr, False),
-                        "version": 2,
-                    }
+        class CudaPoseView:
+            def __init__(self, shape, strides, typestr):
+                self.__cuda_array_interface__ = {
+                    "shape": tuple(shape),
+                    "strides": tuple(strides),
+                    "typestr": typestr,
+                    "data": (physx.cuda_rigid_body_data.ptr, False),
+                    "version": 2,
+                }
 
-            pose_buffer = physx.cuda_rigid_body_data
-            with self.assertRaisesRegex(RuntimeError, "float32"):
-                group.set_cuda_poses(
-                    sapien.CudaArray(
-                        CudaPoseView(
-                            pose_buffer.shape,
-                            [pose_buffer.shape[1] * 8, 8],
-                            "<f8",
-                        )
+        pose_buffer = physx.cuda_rigid_body_data
+        with self.assertRaisesRegex(RuntimeError, "float32"):
+            group.set_cuda_poses(
+                sapien.CudaArray(
+                    CudaPoseView(
+                        pose_buffer.shape,
+                        [pose_buffer.shape[1] * 8, 8],
+                        "<f8",
                     )
                 )
-            with self.assertRaisesRegex(RuntimeError, "at least 7 channels"):
-                group.set_cuda_poses(
-                    sapien.CudaArray(CudaPoseView([pose_buffer.shape[0], 6], [24, 4], "<f4"))
-                )
-            # Row bounds become final when gpu_init() discovers automatic PhysX
-            # body/camera bindings. A deterministic validation failure occurs before
-            # camera ownership is sealed, so the group can be corrected and retried.
+            )
+        with self.assertRaisesRegex(RuntimeError, "at least 7 channels"):
             group.set_cuda_poses(
-                sapien.CudaArray(CudaPoseView([0, 13], [52, 4], "<f4"))
+                sapien.CudaArray(CudaPoseView([pose_buffer.shape[0], 6], [24, 4], "<f4"))
             )
-            with self.assertRaisesRegex(RuntimeError, "outside the pose buffer"):
-                group.gpu_init()
-
-            group.set_cuda_poses(pose_buffer)
+        # Row bounds become final when gpu_init() discovers automatic PhysX
+        # body/camera bindings. A deterministic validation failure occurs before
+        # camera ownership is sealed, so the group can be corrected and retried.
+        group.set_cuda_poses(
+            sapien.CudaArray(CudaPoseView([0, 13], [52, 4], "<f4"))
+        )
+        with self.assertRaisesRegex(RuntimeError, "outside the pose buffer"):
             group.gpu_init()
-            with self.assertRaisesRegex(RuntimeError, "already initialized"):
-                group.set_cuda_poses(pose_buffer)
 
-            def capture(*, fetch_physics: bool = True) -> np.ndarray:
-                if fetch_physics:
-                    physx.gpu_fetch_rigid_dynamic_data()
-                group.update_render()
-                camera_group.take_picture()
-                camera.take_picture()
-                return camera.get_picture("Color").copy()
+        group.set_cuda_poses(pose_buffer)
+        group.gpu_init()
+        with self.assertRaisesRegex(RuntimeError, "already initialized"):
+            group.set_cuda_poses(pose_buffer)
 
-            def red_centroid(image: np.ndarray) -> np.ndarray:
-                mask = (image[..., 0] > image[..., 1] + 0.2) & (
-                    image[..., 0] > 0.2
-                )
-                coordinates = np.argwhere(mask)
-                self.assertGreater(coordinates.shape[0], 20)
-                return coordinates.mean(axis=0)
+        def capture(*, fetch_physics: bool = True) -> np.ndarray:
+            if fetch_physics:
+                physx.gpu_fetch_rigid_dynamic_data()
+            group.update_render()
+            camera_group.take_picture()
+            camera.take_picture()
+            return camera.get_picture("Color").copy()
 
-            before = capture()
-
-            # Move only the CUDA pose consumed by RenderSystemGroup. The CPU
-            # entity pose intentionally remains unchanged, so the image shift
-            # directly verifies the RT camera buffer update.
-            camera_pose = np.array(
-                [-3.0, 0.75, 1.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float32
+        def red_centroid(image: np.ndarray) -> np.ndarray:
+            mask = (image[..., 0] > image[..., 1] + 0.2) & (
+                image[..., 0] > 0.2
             )
-            pose_buffer = physx.cuda_rigid_body_data
-            camera_pose_ptr = (
-                pose_buffer.ptr
-                + camera_body.gpu_pose_index * pose_buffer.strides[0]
-            )
-            cuda_status = cudart.cudaMemcpy(
-                ctypes.c_void_p(camera_pose_ptr),
-                ctypes.c_void_p(camera_pose.ctypes.data),
-                camera_pose.nbytes,
-                CUDA_MEMCPY_HOST_TO_DEVICE,
-            )
-            self.assertEqual(cuda_status, 0)
+            coordinates = np.argwhere(mask)
+            self.assertGreater(coordinates.shape[0], 20)
+            return coordinates.mean(axis=0)
 
-            shifted_camera = capture(fetch_physics=False)
-            camera_image_shift = red_centroid(shifted_camera) - red_centroid(
-                before
-            )
-            self.assertGreater(abs(float(camera_image_shift[1])), 8.0)
-            self.assertLess(abs(float(camera_image_shift[0])), 3.0)
+        before = capture()
 
-            for _ in range(180):
-                physx.step()
-            after = capture()
+        # Move only the CUDA pose consumed by RenderSystemGroup. The CPU
+        # entity pose intentionally remains unchanged, so the image shift
+        # directly verifies the RT camera buffer update.
+        camera_pose = np.array(
+            [-3.0, 0.75, 1.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float32
+        )
+        pose_buffer = physx.cuda_rigid_body_data
+        camera_pose_ptr = (
+            pose_buffer.ptr
+            + camera_body.gpu_pose_index * pose_buffer.strides[0]
+        )
+        cuda_status = cudart.cudaMemcpy(
+            ctypes.c_void_p(camera_pose_ptr),
+            ctypes.c_void_p(camera_pose.ctypes.data),
+            camera_pose.nbytes,
+            CUDA_MEMCPY_HOST_TO_DEVICE,
+        )
+        self.assertEqual(cuda_status, 0)
 
-            before_center = before[32, 32]
-            after_center = after[32, 32]
-            self.assertGreater(before_center[0] - before_center[1], 0.3)
-            self.assertLess(after_center[0] - after_center[1], 0.1)
-            self.assertGreater(float(np.abs(before - after).mean()), 0.01)
-            self.assertEqual(physx._sync_poses_gpu_to_cpu_count, 0)
-        finally:
-            sapien.render.set_camera_shader_dir("default")
+        shifted_camera = capture(fetch_physics=False)
+        camera_image_shift = red_centroid(shifted_camera) - red_centroid(
+            before
+        )
+        self.assertGreater(abs(float(camera_image_shift[1])), 8.0)
+        self.assertLess(abs(float(camera_image_shift[0])), 3.0)
+
+        for _ in range(180):
+            physx.step()
+        after = capture()
+
+        before_center = before[32, 32]
+        after_center = after[32, 32]
+        self.assertGreater(before_center[0] - before_center[1], 0.3)
+        self.assertLess(after_center[0] - after_center[1], 0.1)
+        self.assertGreater(float(np.abs(before - after).mean()), 0.01)
+        self.assertEqual(physx._sync_poses_gpu_to_cpu_count, 0)
 
     def _run_free_camera_articulation_updates(self, shader: str) -> None:
         """One group update + one capture per frame must show every articulation
@@ -1277,217 +1266,222 @@ class TestSceneGPU(unittest.TestCase):
         cudart = _load_cudart()
 
         width = height = 128
-        sapien.render.set_camera_shader_dir(shader)
+        render_config = sapien.render.RenderConfig(shader)
         if shader == "rt":
-            sapien.render.set_ray_tracing_samples_per_pixel(4)
-            sapien.render.set_ray_tracing_path_depth(2)
-            sapien.render.set_ray_tracing_denoiser("none")
+            render_config["spp"] = 4
+            render_config["maxDepth"] = 2
+            render_config.denoiser = "none"
 
-        try:
-            device = sapien.Device("cuda")
-            physx = sapien.physx.PhysxGpuSystem(device)
-            physx.set_timestep(1 / 120)
-            render_system = sapien.render.RenderSystem(device)
-            scene = sapien.Scene([physx, render_system])
-            scene.set_ambient_light([0.5, 0.5, 0.5])
+        device = sapien.Device("cuda")
+        physx = sapien.physx.PhysxGpuSystem(device)
+        physx.set_timestep(1 / 120)
+        render_system = sapien.render.RenderSystem(device)
+        scene = sapien.Scene([physx, render_system])
+        scene.set_ambient_light([0.5, 0.5, 0.5])
 
-            # Three visually distinct links chained along +y. The articulation is
-            # built far below the camera frustum: any render path that falls back
-            # to stale CPU poses makes the colored links vanish from the image.
-            builder = scene.create_articulation_builder()
-            builder.set_initial_pose(sapien.Pose([0.0, -0.5, -50.0]))
-            colors = ([0.8, 0.05, 0.05], [0.05, 0.8, 0.05], [0.05, 0.05, 0.8])
-            link_builder = builder.create_link_builder()
-            link_builder.set_name("root")
-            link_builder.add_box_collision(half_size=[0.15, 0.15, 0.15])
-            link_builder.add_box_visual(half_size=[0.15, 0.15, 0.15], material=colors[0])
-            for i, color in enumerate(colors[1:], start=1):
-                child = builder.create_link_builder(link_builder)
-                child.set_name(f"link{i}")
-                child.add_box_collision(half_size=[0.15, 0.15, 0.15])
-                child.add_box_visual(half_size=[0.15, 0.15, 0.15], material=color)
-                child.set_joint_properties(
-                    "revolute",
-                    limits=[[-0.5, 0.5]],
-                    pose_in_parent=sapien.Pose([0.0, 0.5, 0.0]),
-                    pose_in_child=sapien.Pose(),
-                )
-                link_builder = child
-            articulation = builder.build()
-            root_link = articulation.get_links()[0]
-
-            # A render-only static body (no CUDA pose source): its transform is
-            # a one-time snapshot sealed at gpu_init(). Kept outside the frustum.
-            static_entity = sapien.Entity()
-            static_body = sapien.render.RenderBodyComponent()
-            static_body.attach(
-                sapien.render.RenderShapeBox(
-                    [0.1, 0.1, 0.1],
-                    sapien.render.RenderMaterial(base_color=[0.4, 0.4, 0.4, 1.0]),
-                )
+        # Three visually distinct links chained along +y. The articulation is
+        # built far below the camera frustum: any render path that falls back
+        # to stale CPU poses makes the colored links vanish from the image.
+        builder = scene.create_articulation_builder()
+        builder.set_initial_pose(sapien.Pose([0.0, -0.5, -50.0]))
+        colors = ([0.8, 0.05, 0.05], [0.05, 0.8, 0.05], [0.05, 0.05, 0.8])
+        link_builder = builder.create_link_builder()
+        link_builder.set_name("root")
+        link_builder.add_box_collision(half_size=[0.15, 0.15, 0.15])
+        link_builder.add_box_visual(half_size=[0.15, 0.15, 0.15], material=colors[0])
+        for i, color in enumerate(colors[1:], start=1):
+            child = builder.create_link_builder(link_builder)
+            child.set_name(f"link{i}")
+            child.add_box_collision(half_size=[0.15, 0.15, 0.15])
+            child.add_box_visual(half_size=[0.15, 0.15, 0.15], material=color)
+            child.set_joint_properties(
+                "revolute",
+                limits=[[-0.5, 0.5]],
+                pose_in_parent=sapien.Pose([0.0, 0.5, 0.0]),
+                pose_in_child=sapien.Pose(),
             )
-            static_entity.add_component(static_body)
-            static_entity.set_pose(sapien.Pose([0.0, 0.0, -5.0]))
-            scene.add_entity(static_entity)
+            link_builder = child
+        articulation = builder.build()
+        root_link = articulation.get_links()[0]
 
-            # Free camera configured 'cuda': no sibling PhysX body, no GPU pose batch
-            # index. Its CPU pose set before group creation seeds the CUDA pose row.
-            camera = scene.add_camera("camera", width, height, np.deg2rad(60), 0.05, 20)
-            camera.set_local_pose(sapien.Pose([-3.0, 0.0, 1.0]))
-
-            physx.gpu_init()
-
-            group = sapien.render.RenderSystemGroup([render_system])
-            group.set_cuda_poses(physx.cuda_rigid_body_data)
-            camera_group = group.create_camera_group([camera], ["Color"])
-            camera_group.set_pose_mode(camera, "cuda")
-
-            # Steady-state APIs require explicit initialization.
-            with self.assertRaisesRegex(RuntimeError, "gpu_init"):
-                group.update_render()
-            with self.assertRaisesRegex(RuntimeError, "gpu_init"):
-                camera_group.take_picture()
-
-            group.gpu_init()
-
-            # gpu_init() seals the group: no further camera groups, no CPU pose
-            # writes on member cameras, and the cuda camera has row 0.
-            with self.assertRaisesRegex(RuntimeError, "already initialized"):
-                group.create_camera_group([camera], ["Color"])
-            with self.assertRaisesRegex(RuntimeError, "pose mode is 'cuda'"):
-                camera.set_local_pose(sapien.Pose([-3.0, 0.0, 1.0]))
-            self.assertEqual(camera_group.get_cuda_pose_index(camera), 0)
-            cuda_camera_poses = camera_group.cuda_poses
-            self.assertEqual(cuda_camera_poses.shape, [1, 7])
-
-            pose_buffer = physx.cuda_rigid_body_data
-            root_row_ptr = (
-                pose_buffer.ptr + root_link.gpu_pose_index * pose_buffer.strides[0]
+        # A render-only static body (no CUDA pose source): its transform is
+        # a one-time snapshot sealed at gpu_init(). Kept outside the frustum.
+        static_entity = sapien.Entity()
+        static_body = sapien.render.RenderBodyComponent()
+        static_body.attach(
+            sapien.render.RenderShapeBox(
+                [0.1, 0.1, 0.1],
+                sapien.render.RenderMaterial(base_color=[0.4, 0.4, 0.4, 1.0]),
             )
+        )
+        static_entity.add_component(static_body)
+        static_entity.set_pose(sapien.Pose([0.0, 0.0, -5.0]))
+        scene.add_entity(static_entity)
 
-            def set_gpu_root_position(position) -> None:
-                pose = np.array([*position, 1.0, 0.0, 0.0, 0.0], dtype=np.float32)
-                status = cudart.cudaMemcpy(
-                    ctypes.c_void_p(root_row_ptr),
-                    ctypes.c_void_p(pose.ctypes.data),
-                    pose.nbytes,
-                    CUDA_MEMCPY_HOST_TO_DEVICE,
-                )
-                self.assertEqual(status, 0)
-                physx.gpu_apply_articulation_root_pose()
-                physx.gpu_update_articulation_kinematics()
-                physx.gpu_fetch_articulation_link_pose()
-                self.assertEqual(cudart.cudaDeviceSynchronize(), 0)
+        # Free camera configured 'cuda': no sibling PhysX body, no GPU pose batch
+        # index. Its CPU pose set before group creation seeds the CUDA pose row.
+        camera = scene.add_camera(
+            "camera",
+            width,
+            height,
+            np.deg2rad(60),
+            0.05,
+            20,
+            render_config=render_config,
+        )
+        camera.set_local_pose(sapien.Pose([-3.0, 0.0, 1.0]))
 
-            def capture() -> np.ndarray:
-                # The steady-state contract: one group update, one render, one
-                # CUDA readback. No CPU-side scene.update_render() involved.
-                group.update_render()
-                camera.take_picture()
-                image = camera.get_picture_cuda("Color")
-                host = np.empty((height, width, 4), dtype=np.float32)
-                status = cudart.cudaMemcpy(
-                    ctypes.c_void_p(host.ctypes.data),
-                    ctypes.c_void_p(image.ptr),
-                    host.nbytes,
-                    CUDA_MEMCPY_DEVICE_TO_HOST,
-                )
-                self.assertEqual(status, 0)
-                return host
+        physx.gpu_init()
 
-            def link_centroid_columns(image: np.ndarray, frame: int) -> np.ndarray:
-                rgb = image[..., :3]
-                columns = []
-                for channel in range(3):
-                    others = [c for c in range(3) if c != channel]
-                    mask = (
-                        (rgb[..., channel] > 0.2)
-                        & (rgb[..., channel] > rgb[..., others[0]] + 0.1)
-                        & (rgb[..., channel] > rgb[..., others[1]] + 0.1)
-                    )
-                    count = int(np.count_nonzero(mask))
-                    self.assertGreater(
-                        count,
-                        20,
-                        f"frame {frame}: link with color channel {channel} is missing",
-                    )
-                    columns.append(float(np.argwhere(mask)[:, 1].mean()))
-                return np.array(columns)
+        group = sapien.render.RenderSystemGroup([render_system])
+        group.set_cuda_poses(physx.cuda_rigid_body_data)
+        camera_group = group.create_camera_group([camera], ["Color"])
+        camera_group.set_pose_mode(camera, "cuda")
 
-            # Frame 0: links must appear at their CUDA poses, not the CPU build pose.
-            set_gpu_root_position([0.0, -0.5, 1.0])
-            columns_0 = link_centroid_columns(capture(), 0)
-
-            # Frame 1: move only the GPU body poses; every link must shift together.
-            set_gpu_root_position([0.0, -0.2, 1.0])
-            columns_1 = link_centroid_columns(capture(), 1)
-            body_shift = columns_1 - columns_0
-            for shift in body_shift:
-                self.assertGreater(abs(float(shift)), 4.0)
-                self.assertEqual(np.sign(shift), np.sign(body_shift[0]))
-
-            # Frame 2: move only the free camera through its CUDA pose row; the
-            # links must shift the opposite way in the image.
-            camera_group.set_cuda_pose(camera, sapien.Pose([-3.0, 0.3, 1.0]))
-            columns_2 = link_centroid_columns(capture(), 2)
-            camera_shift = columns_2 - columns_1
-            for shift in camera_shift:
-                self.assertGreater(abs(float(shift)), 4.0)
-                self.assertEqual(np.sign(shift), -np.sign(body_shift[0]))
-
-            # Frame 3: another GPU-only update stays stable on consecutive frames.
-            set_gpu_root_position([0.0, 0.1, 1.0])
-            columns_3 = link_centroid_columns(capture(), 3)
-            for shift in columns_3 - columns_2:
-                self.assertGreater(abs(float(shift)), 4.0)
-                self.assertEqual(np.sign(shift), np.sign(body_shift[0]))
-
-            # The camera group created once at setup stays usable for the same
-            # free camera without recreation, and its capture shows the same
-            # links at the same CUDA poses as the direct capture.
+        # Steady-state APIs require explicit initialization.
+        with self.assertRaisesRegex(RuntimeError, "gpu_init"):
             group.update_render()
+        with self.assertRaisesRegex(RuntimeError, "gpu_init"):
             camera_group.take_picture()
-            group_image = camera_group.get_picture_cuda("Color")
-            self.assertEqual(group_image.shape, [1, height, width, 4])
-            group_host = np.empty((height, width, 4), dtype=np.float32)
-            status = cudart.cudaMemcpy(
-                ctypes.c_void_p(group_host.ctypes.data),
-                ctypes.c_void_p(group_image.ptr),
-                group_host.nbytes,
-                CUDA_MEMCPY_DEVICE_TO_HOST,
-            )
-            self.assertEqual(status, 0)
-            group_columns = link_centroid_columns(group_host, 4)
-            for delta in group_columns - columns_3:
-                self.assertLess(abs(float(delta)), 2.0)
 
-            # Writing the CUDA pose row directly is equivalent to
-            # set_cuda_pose: move the camera back and expect the image
-            # to shift opposite to the frame-2 camera move.
-            raw_pose = np.array([-3.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        group.gpu_init()
+
+        # gpu_init() seals the group: no further camera groups, no CPU pose
+        # writes on member cameras, and the cuda camera has row 0.
+        with self.assertRaisesRegex(RuntimeError, "already initialized"):
+            group.create_camera_group([camera], ["Color"])
+        with self.assertRaisesRegex(RuntimeError, "pose mode is 'cuda'"):
+            camera.set_local_pose(sapien.Pose([-3.0, 0.0, 1.0]))
+        self.assertEqual(camera_group.get_cuda_pose_index(camera), 0)
+        cuda_camera_poses = camera_group.cuda_poses
+        self.assertEqual(cuda_camera_poses.shape, [1, 7])
+
+        pose_buffer = physx.cuda_rigid_body_data
+        root_row_ptr = (
+            pose_buffer.ptr + root_link.gpu_pose_index * pose_buffer.strides[0]
+        )
+
+        def set_gpu_root_position(position) -> None:
+            pose = np.array([*position, 1.0, 0.0, 0.0, 0.0], dtype=np.float32)
             status = cudart.cudaMemcpy(
-                ctypes.c_void_p(cuda_camera_poses.ptr),
-                ctypes.c_void_p(raw_pose.ctypes.data),
-                raw_pose.nbytes,
+                ctypes.c_void_p(root_row_ptr),
+                ctypes.c_void_p(pose.ctypes.data),
+                pose.nbytes,
                 CUDA_MEMCPY_HOST_TO_DEVICE,
             )
             self.assertEqual(status, 0)
-            columns_5 = link_centroid_columns(capture(), 5)
-            for shift in columns_5 - group_columns:
-                self.assertGreater(abs(float(shift)), 4.0)
-                self.assertEqual(np.sign(shift), np.sign(body_shift[0]))
+            physx.gpu_apply_articulation_root_pose()
+            physx.gpu_update_articulation_kinematics()
+            physx.gpu_fetch_articulation_link_pose()
+            self.assertEqual(cudart.cudaDeviceSynchronize(), 0)
 
-            # Static snapshots are sealed: moving a CPU-owned static body after
-            # gpu_init() is an error surfaced by the next CPU scene update.
-            static_entity.set_pose(sapien.Pose([0.0, 0.0, -6.0]))
-            with self.assertRaisesRegex(RuntimeError, "static snapshot"):
-                scene.update_render()
-            static_entity.set_pose(sapien.Pose([0.0, 0.0, -5.0]))
+        def capture() -> np.ndarray:
+            # The steady-state contract: one group update, one render, one
+            # CUDA readback. No CPU-side scene.update_render() involved.
+            group.update_render()
+            camera.take_picture()
+            image = camera.get_picture_cuda("Color")
+            host = np.empty((height, width, 4), dtype=np.float32)
+            status = cudart.cudaMemcpy(
+                ctypes.c_void_p(host.ctypes.data),
+                ctypes.c_void_p(image.ptr),
+                host.nbytes,
+                CUDA_MEMCPY_DEVICE_TO_HOST,
+            )
+            self.assertEqual(status, 0)
+            return host
+
+        def link_centroid_columns(image: np.ndarray, frame: int) -> np.ndarray:
+            rgb = image[..., :3]
+            columns = []
+            for channel in range(3):
+                others = [c for c in range(3) if c != channel]
+                mask = (
+                    (rgb[..., channel] > 0.2)
+                    & (rgb[..., channel] > rgb[..., others[0]] + 0.1)
+                    & (rgb[..., channel] > rgb[..., others[1]] + 0.1)
+                )
+                count = int(np.count_nonzero(mask))
+                self.assertGreater(
+                    count,
+                    20,
+                    f"frame {frame}: link with color channel {channel} is missing",
+                )
+                columns.append(float(np.argwhere(mask)[:, 1].mean()))
+            return np.array(columns)
+
+        # Frame 0: links must appear at their CUDA poses, not the CPU build pose.
+        set_gpu_root_position([0.0, -0.5, 1.0])
+        columns_0 = link_centroid_columns(capture(), 0)
+
+        # Frame 1: move only the GPU body poses; every link must shift together.
+        set_gpu_root_position([0.0, -0.2, 1.0])
+        columns_1 = link_centroid_columns(capture(), 1)
+        body_shift = columns_1 - columns_0
+        for shift in body_shift:
+            self.assertGreater(abs(float(shift)), 4.0)
+            self.assertEqual(np.sign(shift), np.sign(body_shift[0]))
+
+        # Frame 2: move only the free camera through its CUDA pose row; the
+        # links must shift the opposite way in the image.
+        camera_group.set_cuda_pose(camera, sapien.Pose([-3.0, 0.3, 1.0]))
+        columns_2 = link_centroid_columns(capture(), 2)
+        camera_shift = columns_2 - columns_1
+        for shift in camera_shift:
+            self.assertGreater(abs(float(shift)), 4.0)
+            self.assertEqual(np.sign(shift), -np.sign(body_shift[0]))
+
+        # Frame 3: another GPU-only update stays stable on consecutive frames.
+        set_gpu_root_position([0.0, 0.1, 1.0])
+        columns_3 = link_centroid_columns(capture(), 3)
+        for shift in columns_3 - columns_2:
+            self.assertGreater(abs(float(shift)), 4.0)
+            self.assertEqual(np.sign(shift), np.sign(body_shift[0]))
+
+        # The camera group created once at setup stays usable for the same
+        # free camera without recreation, and its capture shows the same
+        # links at the same CUDA poses as the direct capture.
+        group.update_render()
+        camera_group.take_picture()
+        group_image = camera_group.get_picture_cuda("Color")
+        self.assertEqual(group_image.shape, [1, height, width, 4])
+        group_host = np.empty((height, width, 4), dtype=np.float32)
+        status = cudart.cudaMemcpy(
+            ctypes.c_void_p(group_host.ctypes.data),
+            ctypes.c_void_p(group_image.ptr),
+            group_host.nbytes,
+            CUDA_MEMCPY_DEVICE_TO_HOST,
+        )
+        self.assertEqual(status, 0)
+        group_columns = link_centroid_columns(group_host, 4)
+        for delta in group_columns - columns_3:
+            self.assertLess(abs(float(delta)), 2.0)
+
+        # Writing the CUDA pose row directly is equivalent to
+        # set_cuda_pose: move the camera back and expect the image
+        # to shift opposite to the frame-2 camera move.
+        raw_pose = np.array([-3.0, 0.0, 1.0, 1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+        status = cudart.cudaMemcpy(
+            ctypes.c_void_p(cuda_camera_poses.ptr),
+            ctypes.c_void_p(raw_pose.ctypes.data),
+            raw_pose.nbytes,
+            CUDA_MEMCPY_HOST_TO_DEVICE,
+        )
+        self.assertEqual(status, 0)
+        columns_5 = link_centroid_columns(capture(), 5)
+        for shift in columns_5 - group_columns:
+            self.assertGreater(abs(float(shift)), 4.0)
+            self.assertEqual(np.sign(shift), np.sign(body_shift[0]))
+
+        # Static snapshots are sealed: moving a CPU-owned static body after
+        # gpu_init() is an error surfaced by the next CPU scene update.
+        static_entity.set_pose(sapien.Pose([0.0, 0.0, -6.0]))
+        with self.assertRaisesRegex(RuntimeError, "static snapshot"):
             scene.update_render()
+        static_entity.set_pose(sapien.Pose([0.0, 0.0, -5.0]))
+        scene.update_render()
 
-            self.assertEqual(physx._sync_poses_gpu_to_cpu_count, 0)
-        finally:
-            sapien.render.set_camera_shader_dir("default")
+        self.assertEqual(physx._sync_poses_gpu_to_cpu_count, 0)
 
     def test_raster_free_camera_tracks_cuda_articulation_poses(self) -> None:
         self._run_free_camera_articulation_updates("default")
@@ -1499,11 +1493,11 @@ class TestSceneGPU(unittest.TestCase):
         from sapien.utils import Viewer
 
         sapien.physx.enable_gpu()
-        sapien.render.set_viewer_shader_dir(shader)
+        render_config = sapien.render.RenderConfig(shader)
         if shader == "rt":
-            sapien.render.set_ray_tracing_samples_per_pixel(2)
-            sapien.render.set_ray_tracing_path_depth(2)
-            sapien.render.set_ray_tracing_denoiser("none")
+            render_config["spp"] = 2
+            render_config["maxDepth"] = 2
+            render_config.denoiser = "none"
 
         viewer = None
         try:
@@ -1522,7 +1516,7 @@ class TestSceneGPU(unittest.TestCase):
             initial_cpu_pose = actor.pose
             physx.gpu_init()
 
-            viewer = Viewer(resolutions=(320, 240))
+            viewer = Viewer(resolutions=(320, 240), render_config=render_config)
             viewer.configure_physx_gpu_rendering(physx, "staged")
             viewer.set_scene(scene)
             viewer.set_camera_xyz(-4.0, 0.0, 2.0)
@@ -1569,7 +1563,6 @@ class TestSceneGPU(unittest.TestCase):
         finally:
             if viewer is not None:
                 viewer.close()
-            sapien.render.set_viewer_shader_dir("default")
 
     def test_viewer_staged_raster_pose_updates(self) -> None:
         self._assert_viewer_staged_pose_updates("default")

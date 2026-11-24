@@ -335,6 +335,34 @@ void TLAS::recordUpdate(vk::CommandBuffer commandBuffer) {
   commandBuffer.buildAccelerationStructuresKHR(buildInfo, &buildRange);
 }
 
+void TLAS::RecordUpdates(vk::CommandBuffer commandBuffer, std::vector<TLAS *> const &tlases) {
+  // sized up front: every build info points at its geometry and every range pointer at its range
+  std::vector<vk::AccelerationStructureGeometryKHR> geometries(tlases.size());
+  std::vector<vk::AccelerationStructureBuildGeometryInfoKHR> infos(tlases.size());
+  std::vector<vk::AccelerationStructureBuildRangeInfoKHR> ranges(tlases.size());
+  std::vector<vk::AccelerationStructureBuildRangeInfoKHR const *> rangePointers(tlases.size());
+  for (size_t i = 0; i < tlases.size(); ++i) {
+    TLAS &tlas = *tlases[i];
+    tlas.mInstanceBufferAddress = tlas.mInstanceBuffer->getAddress();
+    geometries[i] = vk::AccelerationStructureGeometryKHR(
+        vk::GeometryTypeKHR::eInstances,
+        vk::AccelerationStructureGeometryInstancesDataKHR(VK_FALSE, tlas.mInstanceBufferAddress),
+        {});
+    infos[i] = vk::AccelerationStructureBuildGeometryInfoKHR(
+        vk::AccelerationStructureTypeKHR::eTopLevel,
+        vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace |
+            vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate,
+        vk::BuildAccelerationStructureModeKHR::eUpdate, tlas.mAS.get(), tlas.mAS.get(),
+        geometries[i], {}, tlas.mUpdateScratchBufferAddress);
+    ranges[i] = vk::AccelerationStructureBuildRangeInfoKHR(
+        static_cast<uint32_t>(tlas.mInstances.size()), 0, 0, 0);
+    rangePointers[i] = &ranges[i];
+  }
+  if (!infos.empty()) {
+    commandBuffer.buildAccelerationStructuresKHR(infos, rangePointers);
+  }
+}
+
 vk::DeviceAddress TLAS::getAddress() {
   return mContext->getDevice().getAccelerationStructureAddressKHR({mAS.get()});
 }

@@ -17,7 +17,20 @@ void Node::removeChild(Node &child) {
 
 void Node::clearChild() { mChildren = {}; }
 
-void Node::setTransform(Transform const &transform) { mTransform = transform; }
+void Node::setTransform(Transform const &transform) {
+  if (transform.position == mTransform.position && transform.rotation == mTransform.rotation &&
+      transform.scale == mTransform.scale) {
+    return;
+  }
+  mTransform = transform;
+  markTransformDirty();
+}
+
+void Node::markTransformDirty() {
+  for (Node *node = this; node && !node->mSubtreeDirty; node = node->mParent) {
+    node->mSubtreeDirty = true;
+  }
+}
 
 void Node::setPosition(glm::vec3 const &pos) {
   mTransform.position = pos;
@@ -42,6 +55,7 @@ void Node::updateGlobalModelMatrixRecursive() {
   } else {
     mTransform.worldModelMatrix = mParent->mTransform.worldModelMatrix * localMatrix;
   }
+  mSubtreeDirty = false;
   for (auto c : mChildren) {
     c->updateGlobalModelMatrixRecursive();
   }

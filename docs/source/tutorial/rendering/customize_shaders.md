@@ -25,21 +25,32 @@ To locate the installed shader directory:
 python -c 'import importlib.resources as r; print(r.files("sapien").joinpath("vulkan_shader"))'
 ```
 
-Select shader packs before creating cameras or viewers:
+Select a shader pack per consumer with `sapien.render.RenderConfig`, or change
+the process-wide defaults that new cameras and windows copy:
 
 ```python
 import sapien
 
-sapien.render.set_camera_shader_dir("default")
-sapien.render.set_viewer_shader_dir("default")
+# one camera with a config of its own
+config = sapien.render.RenderConfig("default")
+camera = scene.add_camera(
+    "camera", 640, 480, 1.0, 0.1, 100.0, render_config=config
+)
 
-# or use ray tracing
-sapien.render.set_camera_shader_dir("rt")
-sapien.render.set_viewer_shader_dir("rt")
+# ray tracing, for every camera and window created next
+rt_config = sapien.render.RenderConfig("rt")
+rt_config["spp"] = 32
+rt_config["maxDepth"] = 8
+rt_config.denoiser = "oidn"
+sapien.render.set_default_render_config("camera", rt_config)
+sapien.render.set_default_render_config("viewer", rt_config)
 ```
 
-A relative name such as `"rt"` is resolved under the installed shader search
-path. A custom directory path can also be supplied.
+A relative pack name such as `"rt"` is resolved under the installed shader
+search path. A custom directory path can also be supplied, and
+`config.shader_pack` returns the canonical directory. Consumers copy the config
+they are given: editing it afterwards does not affect cameras or windows that
+already exist.
 
 ## Shader ownership
 
@@ -69,6 +80,10 @@ and data inspection:
 camera.set_property("exposure", 1.0)
 camera.set_property("toneMapper", 2)  # 0: gamma 2.2, 1: sRGB, 2: ACES + sRGB
 ```
+
+These are the same properties a `RenderConfig` carries; set them on the config
+to fix them before the camera exists, or through `camera.set_property` at
+runtime.
 
 The viewer's Render panel exposes the same controls for both rasterization and
 ray tracing. Ray-tracing `HdrColor` and `Radiance` targets remain linear; use
@@ -187,39 +202,137 @@ All `gbuffer` passes in a shader pack should agree on the vertex layout.
 
 A ray-tracing shader pack is recognized by `camera.rgen`. The current `rt`
 pack also includes hit/miss shaders, shared GLSL headers, and
-`postprocessing.comp`. Configure ray tracing through `sapien.render`:
+`postprocessing.comp`. Configure ray tracing with a `RenderConfig`:
 
 ```python
-sapien.render.set_camera_shader_dir("rt")
-sapien.render.set_viewer_shader_dir("rt")
-sapien.render.set_ray_tracing_samples_per_pixel(32)
-sapien.render.set_ray_tracing_path_depth(8)
-sapien.render.set_ray_tracing_denoiser("oidn")
+config = sapien.render.RenderConfig("rt")
+config["spp"] = 32
+config["maxDepth"] = 8
+config.denoiser = "oidn"
+camera = scene.add_camera(
+    "camera", 640, 480, 1.0, 0.1, 100.0, render_config=config
+)
 ```
+
+When an RT pack is used and a key is absent, SAPIEN's defaults apply:
+`russianRoulette=0`, `aperture=0.0`, `focusPlane=1.0`, and no denoiser.
+`spp` and `maxDepth` come from the pack unless the config sets them.
+
+The renderer fills these optional push-constant members by name when a pack
+declares them: `frameCount` (frames accumulated since the last restart; `0`
+on the first), `frameSeed` (the camera's render counter, which never resets;
+seed random numbers with it so noise changes between frames even when
+accumulation restarts every frame), the light counts, `envmap`, and
+`ambientLight`. Other `int` and `float` members are set with
+`camera.set_property`; changing one restarts accumulation unless it is
+`exposure` or `toneMapper`. A name the pack does not declare raises
+`RuntimeError` naming the key and the pack, instead of being silently dropped.
 
 The ray-generation shader declares storage images such as `outHdrColor`,
 `outAlbedo`, `outNormal`, `outSegmentation`, `outRadiance`, and
 `outPosition`. Read them from Python by target name after `take_picture`.
 
+## Batched ray-tracing pipeline
+
+A pack containing `batch.comp` is a **batched** ray-tracing pack. `RenderConfig.kind`
+reports it as `"batch_ray_tracing"`, and such a pack has no per-camera renderer: a
+`RenderCameraGroup` builds one group renderer for all of its cameras. The built-in
+example is `vulkan_shader/rt_batch`.
+
+`batch.comp` is a compute shader with `local_size` 8x8x1, compiled at run time like
+any other pack, so `config.defines` applies:
+
+```
+gl_GlobalInvocationID.xy   pixel
+gl_GlobalInvocationID.z    camera row of the group
+```
+
+One dispatch covers every camera of the group. All cameras share one resolution;
+`width`, `height` and `cameraCount` are push-constant members the renderer
+writes. Every other `int`/`float` push-constant member is a property set
+through the camera group's `RenderConfig` (the built-in pack declares `exposure`,
+default 1.0, `toneMapper` and `spp`); a config property the pack does not declare
+raises at `gpu_init()`. Each camera row carries the index of its environment; trace with
+`GL_EXT_ray_query` against `tlas[nonuniformEXT(envIndex)]`, since neighbouring
+workgroups may belong to different environments.
+
+### Output blocks
+
+Each requested picture is declared as a `std430` storage buffer whose block name is
+`Out<Name>`. The renderer reflects the block and its element type selects the
+picture format:
+
+| Block element | Picture format |
+|---|---|
+| `vec4 c[]` | `r32g32b32a32Sfloat` |
+| `uint c[]` | `r8g8b8a8Unorm` (packed 8-bit colour; default of `Color`) |
+| `uvec4 c[]` | `r32g32b32a32Uint` |
+| `float c[]` | `r32Sfloat` |
+
+The built-in pack declares `Color`, `Albedo`, `Depth`, `Normal`, `Position` and
+`Segmentation`. Only requested pictures are compiled in: the renderer defines
+`OUTPUT_<NAME>` for each picture of the camera group, so guard every block:
+
+```glsl
+#ifdef OUTPUT_COLOR
+layout(std430, set = 0, binding = 0) writeonly buffer OutColor {
+#ifdef COLOR_FORMAT_R32G32B32A32SFLOAT
+  vec4 c[];
+#else
+  uint c[];
+#endif
+} outColor;
+#endif
+```
+
+Writing a picture nobody asked for is not possible; reading one nobody asked for
+fails to compile. `picture_formats` maps to `<NAME>_FORMAT_<FORMAT>` (upper case,
+for example `COLOR_FORMAT_R8G8B8A8UNORM`), and after compiling the reflected element
+type must equal the requested format or construction raises.
+
+### Shading tiers
+
+Select a tier with a define; the tier is fixed for the life of the camera group:
+
+- `SHADING_VISIBILITY` — primary ray only; albedo, depth, normal, position, segmentation.
+- `SHADING_LAMBERT` (default) — emission + albedo·(ambient + Σ lights N·L).
+- `SHADING_PBR` — adds the GGX specular lobe of `common/bsdf.glsl`.
+
+`SHADOWS` casts a hard shadow ray for each of the first `MAX_SHADOW_LIGHTS` (default
+4) lights facing the surface point; later lights are unshadowed. `SPP` > 1
+supersamples the primary ray with a fixed, deterministic Halton pattern; there is no
+accumulation and no denoiser. The pure BSDF functions live in
+`vulkan_shader/common/bsdf.glsl`, shared with the `rt` pack, so a custom batched pack
+and the `rt` pack shade identically when they use the same tier.
+
 ## Changing target formats
 
-Use `sapien.render.set_picture_format` before creating cameras if a target
-needs a non-default image format.
+Set `picture_formats` on the config of a camera if a target needs a
+non-default image format. The setting applies to that camera only.
 
 ```python
-sapien.render.set_picture_format("Color", "r16g16b16a16Sfloat")
+config = sapien.render.RenderConfig("default")
+config.picture_formats = {"Color": "r8g8b8a8unorm"}
+camera = scene.add_camera(
+    "camera", 640, 480, 1.0, 0.1, 100.0, render_config=config
+)
+camera.get_picture("Color").dtype  # uint8
 ```
 
-Reset it before other examples if needed:
-
-```python
-sapien.render.set_picture_format("Color", "r32g32b32a32Sfloat")
-```
+Ray-tracing packs write their targets as storage images, so `picture_formats`
+is rasterization-only and raises on an RT config.
 
 ## Tips for custom packs
 
+0. Shader files are compiled when a pack is first used and the pack is then
+   cached. After editing a file or one of its includes, call
+   `sapien.render.clear_cache(models=False, images=False, shaders=True)` and
+   create a new camera; a compile error raises `RuntimeError` with the file
+   and line. `config.defines` selects a preprocessor variant: each entry is
+   inserted as `#define NAME value` (`#define NAME` when the value is empty).
 1. Copy an existing pack from `vulkan_shader/default` or `vulkan_shader/rt`.
-2. Point both camera and viewer shader dirs to your copy.
+2. Point the camera and viewer configs to your copy:
+   `sapien.render.RenderConfig("/path/to/pack")`.
 3. Keep the required buffer and sampler names unchanged unless you also update
    the renderer code.
 4. Add new render targets with `out<Name>` in rasterization or `out<Name>`

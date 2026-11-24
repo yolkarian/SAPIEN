@@ -6,6 +6,7 @@
 #include "svulkan2/resource/render_target.h"
 #include "svulkan2/resource/storage_image.h"
 #include "svulkan2/scene/scene.h"
+#include "svulkan2/shader/glsl_compiler.h"
 #include <variant>
 
 namespace svulkan2 {
@@ -25,7 +26,8 @@ class RTRenderer : public RendererBase {
 public:
   enum class DenoiserType { eNONE, eOPTIX, eOIDN };
 
-  RTRenderer(std::shared_ptr<core::Context> context, std::string const &shaderDir);
+  RTRenderer(std::shared_ptr<core::Context> context, std::string const &shaderDir,
+             ShaderDefines const &shaderDefines = {});
 
   void resize(int width, int height) override;
   void setScene(std::shared_ptr<scene::Scene> scene) override;
@@ -57,6 +59,8 @@ public:
   }
   void disableDenoiser();
 
+  CustomPropertyType getCustomPropertyType(std::string const &name) const override;
+
   int getCustomPropertyInt(std::string const &name) const override {
     return mCustomPropertiesInt.at(name);
   }
@@ -74,16 +78,16 @@ public:
   }
 
   void setCustomProperty(std::string const &name, int p) override {
-    mCustomPropertiesInt[name] = p;
+    setProperty(mCustomPropertiesInt, name, p);
   }
   void setCustomProperty(std::string const &name, float p) override {
-    mCustomPropertiesFloat[name] = p;
+    setProperty(mCustomPropertiesFloat, name, p);
   }
   void setCustomProperty(std::string const &name, glm::vec3 p) override {
-    mCustomPropertiesVec3[name] = p;
+    setProperty(mCustomPropertiesVec3, name, p);
   }
   void setCustomProperty(std::string const &name, glm::vec4 p) override {
-    mCustomPropertiesVec4[name] = p;
+    setProperty(mCustomPropertiesVec4, name, p);
   }
 
   std::vector<std::string> getDisplayTargetNames() const override;
@@ -129,6 +133,21 @@ private:
   std::unordered_map<std::string, glm::vec3> mCustomPropertiesVec3;
   std::unordered_map<std::string, glm::vec4> mCustomPropertiesVec4;
 
+  /** Stores a property; a changed value restarts accumulation unless it only affects
+   *  postprocessing, which reads the accumulated image. */
+  template <typename T>
+  void setProperty(std::unordered_map<std::string, T> &properties, std::string const &name,
+                   T const &value) {
+    auto it = properties.find(name);
+    if (it != properties.end() && it->second == value) {
+      return;
+    }
+    properties[name] = value;
+    if (name != "exposure" && name != "toneMapper") {
+      mAccumulationDirty = true;
+    }
+  }
+
   void prepareObjects();
   void updateObjects();
 
@@ -146,6 +165,7 @@ private:
 
   std::shared_ptr<core::Context> mContext;
   std::string mShaderDir;
+  ShaderDefines mShaderDefines;
   std::shared_ptr<shader::RayTracingShaderPack> mShaderPack;
   std::shared_ptr<shader::RayTracingShaderPackInstance> mShaderPackInstance;
 
@@ -163,6 +183,8 @@ private:
 
   uint64_t mSceneRenderVersion{0l}; // check for updating matrices
   int mFrameCount = 0;
+  uint32_t mRenderCount = 0;
+  bool mAccumulationDirty = false;
 
   std::unordered_map<std::string, std::shared_ptr<resource::SVStorageImage>> mRenderImages;
   // subset of render images used in RT

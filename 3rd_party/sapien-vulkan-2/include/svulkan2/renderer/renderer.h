@@ -159,6 +159,7 @@ public:
   void setCustomCubemap(std::string const &name,
                         std::shared_ptr<resource::SVCubemap> cubemap) override;
 
+  CustomPropertyType getCustomPropertyType(std::string const &name) const override;
   int getCustomPropertyInt(std::string const &name) const override;
   float getCustomPropertyFloat(std::string const &name) const override;
   glm::vec3 getCustomPropertyVec3(std::string const &name) const override;

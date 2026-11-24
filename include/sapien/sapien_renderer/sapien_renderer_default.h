@@ -1,8 +1,9 @@
 #pragma once
+#include "render_config.h"
 #include <memory>
+#include <optional>
 #include <string>
 #include <svulkan2/common/vk.h>
-#include <svulkan2/renderer/rt_renderer.h>
 #include <unordered_map>
 
 namespace sapien {
@@ -29,26 +30,10 @@ public:
   static void enableVR();
   static bool getVREnabled();
 
-  static void setViewerShaderDirectory(std::string const &dir);
-  static void setCameraShaderDirectory(std::string const &dir);
-  static void setRayTracingSamplesPerPixel(int spp);
-  static void setRayTracingPathDepth(int depth);
-  static void setRayTracingDenoiser(svulkan2::renderer::RTRenderer::DenoiserType type);
-  static void setRayTracingDoFAperture(float radius);
-  static void setRayTracingDoFPlane(float depth);
-  static void setMSAA(int msaa);
-
-  static std::string getViewerShaderDirectory();
-  static std::string getCameraShaderDirectory();
-  static int getRayTracingSamplesPerPixel();
-  static int getRayTracingPathDepth();
-  static svulkan2::renderer::RTRenderer::DenoiserType getRayTracingDenoiser();
-  static float getRayTracingDoFAperture();
-  static float getRayTracingDoFPlane();
-  static int getMSAA();
-
-  // TODO: set render target format
-  static void setRenderTargetFormat(std::string const &name, vk::Format format);
+  /** process-wide default render configs: "camera" for cameras and "viewer" for windows and VR.
+   *  Consumers copy the default when they are created without an explicit config. */
+  static void setDefaultRenderConfig(std::string const &target, RenderConfig const &config);
+  static RenderConfig getDefaultRenderConfig(std::string const &target);
 
   static void internalSetShaderSearchPath(std::string const &dir);
   static std::string internalGetShaderSearchPath();
@@ -59,23 +44,15 @@ public:
   uint32_t maxNumMaterials = 128;
   uint32_t maxNumTextures = 512;
 
-  std::string viewerShaderDirectory{};
-  std::string cameraShaderDirectory{};
-  std::unordered_map<std::string, vk::Format> renderTargetFormats;
-  int rayTracingSamplesPerPixel{32};
-  int rayTracingPathDepth{8};
-  int rayTracingRussianRouletteMinBounces{-1};
-  svulkan2::renderer::RTRenderer::DenoiserType rayTracingDenoiserType{
-      svulkan2::renderer::RTRenderer::DenoiserType::eNONE};
-  int msaa{1};
-
-  float rayTracingDoFAperture = 0.f;
-  float rayTracingDoFPlane = 1.f;
-
   bool vrEnabled = false;
 
 private:
   std::string shaderSearchPath;
+  /** resolved on first use: a config resolves its shader pack, which needs the search path */
+  std::optional<RenderConfig> cameraRenderConfig;
+  std::optional<RenderConfig> viewerRenderConfig;
+
+  RenderConfig &getOrCreateDefault(std::string const &target);
 };
 
 } // namespace sapien_renderer

@@ -160,35 +160,15 @@ void FPSCameraControllerDebug::update() {
 }
 #endif
 
-SapienRendererWindow::SapienRendererWindow(int width, int height, std::string const &shaderDir)
-    : mShaderDir(shaderDir) {
+SapienRendererWindow::SapienRendererWindow(int width, int height,
+                                           std::optional<RenderConfig> const &renderConfig)
+    : mRenderConfig(renderConfig ? *renderConfig
+                                : SapienRendererDefault::getDefaultRenderConfig("viewer")) {
   mEngine = SapienRenderEngine::Get();
   mDevice = mEngine->getDefaultDevice();
   mContext = mEngine->getContext(mDevice);
-  auto &renderConfig = SapienRendererDefault::Get();
 
-  auto config = std::make_shared<svulkan2::RendererConfig>();
-
-  switch (renderConfig.msaa) {
-  case 1:
-    config->msaa = vk::SampleCountFlagBits::e1;
-    break;
-  case 2:
-    config->msaa = vk::SampleCountFlagBits::e2;
-    break;
-  case 4:
-    config->msaa = vk::SampleCountFlagBits::e4;
-    break;
-  case 8:
-    config->msaa = vk::SampleCountFlagBits::e8;
-    break;
-  default:
-    throw std::runtime_error("MSAA count must be one of [1, 2, 4, 8]");
-  }
-
-  config->shaderDir = mShaderDir.length() ? mShaderDir : renderConfig.viewerShaderDirectory;
-
-  mSVulkanRenderer = svulkan2::renderer::RendererBase::Create(mContext, config);
+  mSVulkanRenderer = createRenderer(mContext, mRenderConfig);
 
   mWindow = mContext->createWindow(width, height);
   mWindow->initImgui();
@@ -196,36 +176,56 @@ SapienRendererWindow::SapienRendererWindow(int width, int height, std::string co
 
   mViewportWidth = width;
   mViewportHeight = height;
-
-  if (auto rtRenderer = dynamic_cast<svulkan2::renderer::RTRenderer *>(mSVulkanRenderer.get())) {
-    rtRenderer->setCustomProperty("spp", renderConfig.rayTracingSamplesPerPixel);
-    rtRenderer->setCustomProperty("maxDepth", renderConfig.rayTracingPathDepth);
-    rtRenderer->setCustomProperty("aperture", renderConfig.rayTracingDoFAperture);
-    rtRenderer->setCustomProperty("focusPlane", renderConfig.rayTracingDoFPlane);
-    if (renderConfig.rayTracingRussianRouletteMinBounces >= 0) {
-      rtRenderer->setCustomProperty("russianRoulette", 1);
-      rtRenderer->setCustomProperty("russianRouletteMinBounces",
-                                    renderConfig.rayTracingRussianRouletteMinBounces);
-    } else {
-      rtRenderer->setCustomProperty("russianRoulette", 0);
-    }
-    rtRenderer->enableDenoiser(renderConfig.rayTracingDenoiserType, "HdrColor", "Albedo",
-                               "Normal");
-  }
 }
 
-void SapienRendererWindow::setShader(std::string const &shaderDir) {
+void SapienRendererWindow::setRenderConfig(RenderConfig const &renderConfig) {
   mRequiresRebuild = true;
   mContext->waitIdle();
 
-  auto config = std::make_shared<svulkan2::RendererConfig>();
-  config->shaderDir = shaderDir;
-  mSVulkanRenderer = svulkan2::renderer::RendererBase::Create(mContext, config);
+  auto renderer = createRenderer(mContext, renderConfig);
+  // The Viewer's render panel switches packs at runtime: keep the current values of properties
+  // that the new pack also declares with the same type, unless the new config sets them itself.
+  RenderConfig config = renderConfig;
+  for (auto const &[name, value] : mRenderConfig.getProperties()) {
+    if (config.hasProperty(name)) {
+      continue;
+    }
+    bool isInt = std::holds_alternative<int>(value);
+    auto declared = renderer->getCustomPropertyType(name);
+    if (isInt ? declared == svulkan2::renderer::CustomPropertyType::eInt
+              : declared == svulkan2::renderer::CustomPropertyType::eFloat) {
+      if (isInt) {
+        auto v = std::get<int>(value);
+        renderer->setCustomProperty(name, v);
+        config.setProperty(name, v);
+      } else {
+        auto v = std::get<float>(value);
+        renderer->setCustomProperty(name, v);
+        config.setProperty(name, v);
+      }
+    }
+  }
+
+  mSVulkanRenderer = std::move(renderer);
+  mRenderConfig = config;
   if (mRenderScene) {
     mSVulkanRenderer->setScene(mRenderScene);
+    getCamera();
   }
   mSVulkanRenderer->resize(mViewportWidth, mViewportHeight);
   rebuildPoseTransport();
+}
+
+RenderConfig SapienRendererWindow::getRenderConfig() const {
+  RenderConfig config = mRenderConfig;
+  for (auto const &[name, value] : mRenderConfig.getProperties()) {
+    if (std::holds_alternative<int>(value)) {
+      config.setProperty(name, mSVulkanRenderer->getCustomPropertyInt(name));
+    } else {
+      config.setProperty(name, mSVulkanRenderer->getCustomPropertyFloat(name));
+    }
+  }
+  return config;
 }
 
 void SapienRendererWindow::setDropCallback(
@@ -593,9 +593,17 @@ float SapienRendererWindow::getCameraPropertyFloat(std::string const &name) cons
 
 void SapienRendererWindow::setCameraProperty(std::string const &name, float property) {
   mSVulkanRenderer->setCustomProperty(name, property);
+  if (mSVulkanRenderer->getCustomPropertyType(name) ==
+      svulkan2::renderer::CustomPropertyType::eFloat) {
+    mRenderConfig.setProperty(name, property);
+  }
 }
 void SapienRendererWindow::setCameraProperty(std::string const &name, int property) {
   mSVulkanRenderer->setCustomProperty(name, property);
+  if (mSVulkanRenderer->getCustomPropertyType(name) ==
+      svulkan2::renderer::CustomPropertyType::eInt) {
+    mRenderConfig.setProperty(name, property);
+  }
 }
 
 void SapienRendererWindow::setCameraTexture(std::string const &name,

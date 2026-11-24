@@ -75,7 +75,8 @@ Renderer::Renderer(std::shared_ptr<core::Context> context, std::shared_ptr<Rende
   }
 
   // preload the shader pack to get vertex layouts
-  mShaderPack = resource::SVResourceManager::Get()->CreateShaderPack(config->shaderDir);
+  mShaderPack = resource::SVResourceManager::Get()->CreateShaderPack(config->shaderDir,
+                                                                  config->shaderDefines);
 
   // Make reflected shader defaults visible through the custom-property API.
   for (auto const &pass : mShaderPack->getNonShadowPasses()) {
@@ -103,12 +104,14 @@ Renderer::Renderer(std::shared_ptr<core::Context> context, std::shared_ptr<Rende
     mConfig->msaa = vk::SampleCountFlagBits::e1;
   }
 
+  // Scene, camera, light (uniform buffer) and input-texture (sampler) sets all come from this
+  // pool, so it must hold both descriptor types.
   vk::DescriptorPoolSize pool_sizes[] = {
-      {vk::DescriptorType::eCombinedImageSampler,
-       100}, // render targets and input textures TODO: configure instead of 100
+      {vk::DescriptorType::eCombinedImageSampler, 256},
+      {vk::DescriptorType::eUniformBuffer, 256},
   };
   auto info = vk::DescriptorPoolCreateInfo(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-                                           100, 1, pool_sizes);
+                                           256, 2, pool_sizes);
   mDescriptorPool = mContext->getDevice().createDescriptorPoolUnique(info);
 
   mObjectPool = std::make_unique<core::DynamicDescriptorPool>(
@@ -989,9 +992,23 @@ void Renderer::prepareRender(scene::Camera &camera) {
     auto spotLights = mScene->getSpotLights();
     auto texturedLights = mScene->getTexturedLights();
 
-    int numPointLights = pointLights.size();
-    int numDirectionalLights = directionalLights.size();
-    int numSpotLights = spotLights.size();
+    // The shader loops run to these counts over fixed-size arrays in SceneBuffer, and the
+    // upload truncates to those arrays (shadowed lights first): the counts must be clamped the
+    // same way or the loops read past the arrays.
+    auto sceneLayout = mShaderPack->getShaderInputLayouts()->sceneBufferLayout;
+    auto clampToShader = [&](char const *name, size_t count) {
+      if (sceneLayout) {
+        auto it = sceneLayout->elements.find(name);
+        if (it != sceneLayout->elements.end() && it->second.member &&
+            it->second.member->size > 0) {
+          count = std::min<size_t>(count, it->second.size / it->second.member->size);
+        }
+      }
+      return static_cast<int>(count);
+    };
+    int numPointLights = clampToShader("pointLights", pointLights.size());
+    int numDirectionalLights = clampToShader("directionalLights", directionalLights.size());
+    int numSpotLights = clampToShader("spotLights", spotLights.size());
 
     mPointLightShadowSizes.clear();
     mDirectionalLightShadowSizes.clear();
@@ -1775,6 +1792,26 @@ void Renderer::setCustomTexture(std::string const &name,
 void Renderer::setCustomCubemap(std::string const &name,
                                 std::shared_ptr<resource::SVCubemap> cubemap) {
   mCustomCubemaps[name] = cubemap;
+}
+
+CustomPropertyType Renderer::getCustomPropertyType(std::string const &name) const {
+  auto it = mSpecializationConstants.find(name);
+  if (it == mSpecializationConstants.end()) {
+    return CustomPropertyType::eNone;
+  }
+  if (it->second.dtype == DataType::INT()) {
+    return CustomPropertyType::eInt;
+  }
+  if (it->second.dtype == DataType::FLOAT()) {
+    return CustomPropertyType::eFloat;
+  }
+  if (it->second.dtype == DataType::FLOAT3()) {
+    return CustomPropertyType::eVec3;
+  }
+  if (it->second.dtype == DataType::FLOAT4()) {
+    return CustomPropertyType::eVec4;
+  }
+  return CustomPropertyType::eNone;
 }
 
 int Renderer::getCustomPropertyInt(std::string const &name) const {

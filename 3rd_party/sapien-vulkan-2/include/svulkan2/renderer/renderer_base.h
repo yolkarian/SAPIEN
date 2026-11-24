@@ -14,6 +14,12 @@ namespace renderer {
  *  Entered once when a render group seals its cameras; not a per-frame toggle. */
 enum class RenderExecutionMode { eCpuManaged, eGroupedGpu };
 
+/** Type a shader pack declares for a custom property. eNone means the pack does not declare it:
+ *  raster renderers reflect specialization constants, ray tracing renderers reflect the push
+ *  constant block. Callers validate user input against this instead of letting unknown names be
+ *  silently dropped. */
+enum class CustomPropertyType { eNone, eInt, eFloat, eVec3, eVec4 };
+
 class RendererBase {
 public:
   /** create the renderer of `config`'s shader directory on `context` */
@@ -71,6 +77,9 @@ public:
   virtual void
   setCustomCubemap(std::string const &name,
                    std::shared_ptr<resource::SVCubemap> cubemap) = 0;
+
+  /** declared type of `name` in the shader pack of this renderer */
+  virtual CustomPropertyType getCustomPropertyType(std::string const &name) const = 0;
 
   virtual int getCustomPropertyInt(std::string const &name) const = 0;
   virtual float getCustomPropertyFloat(std::string const &name) const = 0;

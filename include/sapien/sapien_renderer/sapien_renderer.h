@@ -8,6 +8,7 @@
 #include "loader.h"
 #include "material.h"
 #include "point_cloud_component.h"
+#include "render_config.h"
 #include "render_lifecycle.h"
 #include "render_body_component.h"
 #include "render_shape.h"

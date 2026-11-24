@@ -9,8 +9,9 @@
 
 namespace svulkan2 {
 namespace renderer {
-RTRenderer::RTRenderer(std::shared_ptr<core::Context> context, std::string const &shaderDir)
-    : mContext(std::move(context)), mShaderDir(shaderDir) {
+RTRenderer::RTRenderer(std::shared_ptr<core::Context> context, std::string const &shaderDir,
+                       ShaderDefines const &shaderDefines)
+    : mContext(std::move(context)), mShaderDir(shaderDir), mShaderDefines(shaderDefines) {
   if (!mContext) {
     throw std::runtime_error("failed to create ray tracing renderer: context must not be null");
   }
@@ -21,7 +22,7 @@ RTRenderer::RTRenderer(std::shared_ptr<core::Context> context, std::string const
     logger::error("The selected GPU does not support ray tracing");
     return;
   }
-  mShaderPack = resource::SVResourceManager::Get()->CreateRTShaderPack(shaderDir);
+  mShaderPack = resource::SVResourceManager::Get()->CreateRTShaderPack(shaderDir, mShaderDefines);
 
   mMaterialBufferLayout = mShaderPack->getMaterialBufferLayout();
   mTextureIndexBufferLayout = mShaderPack->getTextureIndexBufferLayout();
@@ -148,6 +149,7 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
         mContext,
         shader::RayTracingShaderPackInstanceDesc{
             .shaderDir = mShaderDir,
+            .defines = mShaderDefines,
             .maxMeshes = static_cast<uint32_t>(mScene->getRTVertexBuffers().size()),
             .maxMaterials = static_cast<uint32_t>(mScene->getRTMaterialBuffers().size()),
             .maxTextures = static_cast<uint32_t>(mScene->getRTTextures().size()),
@@ -191,9 +193,13 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
     }
     mFrameCount = 0;
     mSceneRenderVersion = mScene->getRenderVersion();
+  } else if (mAccumulationDirty) {
+    // a property that changes the estimate was edited: old samples no longer belong to it
+    mFrameCount = 0;
   } else {
     mFrameCount += 1;
   }
+  mAccumulationDirty = false;
 
   updatePushConstant();
 
@@ -275,6 +281,17 @@ void RTRenderer::updatePushConstant() {
       throw std::runtime_error("frameCount must be type int");
     }
     std::memcpy(mPushConstantBuffer.data() + elem.offset, &mFrameCount, elem.size);
+  }
+
+  if (layout->elements.contains("frameSeed")) {
+    auto &elem = layout->elements.at("frameSeed");
+    if (elem.dtype != DataType::INT()) {
+      throw std::runtime_error("frameSeed must be type int");
+    }
+    // Counts this renderer's renders and never resets, unlike frameCount: grouped rendering
+    // restarts accumulation every frame and would otherwise repeat one noise pattern.
+    int seed = static_cast<int>(mRenderCount++);
+    std::memcpy(mPushConstantBuffer.data() + elem.offset, &seed, elem.size);
   }
 
   if (layout->elements.contains("envmap")) {
@@ -857,6 +874,33 @@ std::vector<std::string> RTRenderer::getDisplayTargetNames() const {
     }
   }
   return names;
+}
+
+CustomPropertyType RTRenderer::getCustomPropertyType(std::string const &name) const {
+  if (!mShaderPack) {
+    return CustomPropertyType::eNone;
+  }
+  auto layout = mShaderPack->getPushConstantLayout();
+  if (!layout) {
+    return CustomPropertyType::eNone;
+  }
+  auto it = layout->elements.find(name);
+  if (it == layout->elements.end()) {
+    return CustomPropertyType::eNone;
+  }
+  if (it->second.dtype == DataType::INT()) {
+    return CustomPropertyType::eInt;
+  }
+  if (it->second.dtype == DataType::FLOAT()) {
+    return CustomPropertyType::eFloat;
+  }
+  if (it->second.dtype == DataType::FLOAT3()) {
+    return CustomPropertyType::eVec3;
+  }
+  if (it->second.dtype == DataType::FLOAT4()) {
+    return CustomPropertyType::eVec4;
+  }
+  return CustomPropertyType::eNone;
 }
 
 std::vector<std::string> RTRenderer::getRenderTargetNames() const {

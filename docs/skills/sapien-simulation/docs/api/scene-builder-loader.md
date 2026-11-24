@@ -430,7 +430,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `update_render` | method | `update_render(self) -> None` | Submit current simulation/render state. | Explicit update boundary before `render()`. |
 | `update_aabb` | method | `update_aabb(self, aabb, lower, upper)` |  |  |
 | `update_bounding_box` | method | `update_bounding_box(self, box, pose, half_size)` |  |  |
-| `__init__` | method | `__init__(self, renderer: SapienRenderer=None, shader_dir='', resolutions=(1920, 1080), plugins=[PathWindow(), ContactWindow(), SettingWindow(), TransformWindow(), RenderOptionsWindow(), ControlWindow(), SceneWindow(), EntityWindow(), ArticulationWindow()])` |  |  |
+| `__init__` | method | `__init__(self, renderer: SapienRenderer=None, render_config=None, resolutions=(1920, 1080), plugins=[PathWindow(), ContactWindow(), SettingWindow(), TransformWindow(), RenderOptionsWindow(), ControlWindow(), SceneWindow(), EntityWindow(), ArticulationWindow()])` |  |  |
 
 
 ## Compatibility wrappers (`Engine`, `SapienRenderer`)

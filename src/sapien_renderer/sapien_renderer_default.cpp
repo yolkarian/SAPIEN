@@ -24,64 +24,32 @@ bool SapienRendererDefault::getDoNotLoadTexture() { return Get().doNotLoadTextur
 uint32_t SapienRendererDefault::getMaxNumMaterials() { return Get().maxNumMaterials; }
 uint32_t SapienRendererDefault::getMaxNumTextures() { return Get().maxNumTextures; }
 
-void SapienRendererDefault::setViewerShaderDirectory(std::string const &dir) {
-  auto path = fs::path(dir);
-  if (!fs::is_directory(path)) {
-    path = fs::canonical(Get().shaderSearchPath) / dir;
-  }
-  if (!fs::is_directory(path)) {
-    throw std::runtime_error("invalid shader direcotry: " + dir);
-  }
-  Get().viewerShaderDirectory = fs::canonical(path).string();
-}
-void SapienRendererDefault::setCameraShaderDirectory(std::string const &dir) {
-  auto path = fs::path(dir);
-  if (!fs::is_directory(path)) {
-    path = fs::canonical(Get().shaderSearchPath) / dir;
-  }
-  if (!fs::is_directory(path)) {
-    throw std::runtime_error("invalid shader direcotry: " + dir);
-  }
-  Get().cameraShaderDirectory = fs::canonical(path).string();
-}
-void SapienRendererDefault::setRayTracingSamplesPerPixel(int spp) {
-  Get().rayTracingSamplesPerPixel = spp;
-}
-void SapienRendererDefault::setRayTracingPathDepth(int depth) {
-  Get().rayTracingPathDepth = depth;
-}
-void SapienRendererDefault::setRayTracingDenoiser(
-    svulkan2::renderer::RTRenderer::DenoiserType type) {
-  Get().rayTracingDenoiserType = type;
-}
-void SapienRendererDefault::setRayTracingDoFAperture(float radius) {
-  Get().rayTracingDoFAperture = radius;
-}
-void SapienRendererDefault::setRayTracingDoFPlane(float depth) {
-  Get().rayTracingDoFPlane = depth;
-}
-void SapienRendererDefault::setMSAA(int msaa) { Get().msaa = msaa; }
-
-void SapienRendererDefault::setRenderTargetFormat(std::string const &name, vk::Format format) {
-  Get().renderTargetFormats[name] = format;
+void SapienRendererDefault::setDefaultRenderConfig(std::string const &target,
+                                                   RenderConfig const &config) {
+  auto &stored = Get().getOrCreateDefault(target);
+  stored = config;
 }
 
-std::string SapienRendererDefault::getViewerShaderDirectory() {
-  return Get().viewerShaderDirectory;
+RenderConfig SapienRendererDefault::getDefaultRenderConfig(std::string const &target) {
+  return Get().getOrCreateDefault(target);
 }
-std::string SapienRendererDefault::getCameraShaderDirectory() {
-  return Get().cameraShaderDirectory;
+
+RenderConfig &SapienRendererDefault::getOrCreateDefault(std::string const &target) {
+  if (target == "camera") {
+    if (!cameraRenderConfig) {
+      cameraRenderConfig.emplace("default");
+    }
+    return *cameraRenderConfig;
+  }
+  if (target == "viewer") {
+    if (!viewerRenderConfig) {
+      viewerRenderConfig.emplace("default");
+    }
+    return *viewerRenderConfig;
+  }
+  throw std::runtime_error("render config target must be \"camera\" or \"viewer\", got \"" +
+                           target + "\"");
 }
-int SapienRendererDefault::getRayTracingSamplesPerPixel() {
-  return Get().rayTracingSamplesPerPixel;
-}
-int SapienRendererDefault::getRayTracingPathDepth() { return Get().rayTracingPathDepth; }
-svulkan2::renderer::RTRenderer::DenoiserType SapienRendererDefault::getRayTracingDenoiser() {
-  return Get().rayTracingDenoiserType;
-}
-float SapienRendererDefault::getRayTracingDoFAperture() { return Get().rayTracingDoFAperture; }
-float SapienRendererDefault::getRayTracingDoFPlane() { return Get().rayTracingDoFPlane; }
-int SapienRendererDefault::getMSAA() { return Get().msaa; }
 
 SapienRendererDefault &SapienRendererDefault::Get() {
   static SapienRendererDefault gSapienRendererDefault;

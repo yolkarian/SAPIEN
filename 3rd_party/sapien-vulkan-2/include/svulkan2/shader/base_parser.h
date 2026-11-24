@@ -114,8 +114,12 @@ protected:
   std::vector<uint32_t> mGeomSPVCode;
 
   int mIndex{-1};
+  ShaderDefines mDefines;
 
 public:
+  /** variant definitions applied to every stage; set before loading */
+  void setDefines(ShaderDefines const &defines) { mDefines = defines; }
+
   void loadGLSLFiles(std::string const &vertFile, std::string const &fragFile,
                      std::string const &geomFile = "");
 

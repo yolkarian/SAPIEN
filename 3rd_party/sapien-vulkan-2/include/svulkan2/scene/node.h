@@ -22,6 +22,14 @@ protected:
   Scene *mScene{nullptr};
   bool mRemoved{false};
 
+  // A local transform in this subtree changed since its world matrices were last computed.
+  // Set on a node implies set on all its ancestors, except for nodes attached since the last
+  // computation: scenes recompute after every topology change regardless of this flag.
+  bool mSubtreeDirty{true};
+
+  /** marks this node and its ancestors for the next Scene::updateModelMatrices() */
+  void markTransformDirty();
+
 public:
   enum Type { eNode, eObject, eCamera, eLight, eUnknown };
 
@@ -48,7 +56,9 @@ public:
   inline void markRemoved() { mRemoved = true; }
   inline bool isMarkedRemoved() { return mRemoved; };
 
+  /** Sets the local transform; world matrices follow at Scene::updateModelMatrices(). */
   void setTransform(Transform const &transform);
+  inline bool isSubtreeDirty() const { return mSubtreeDirty; }
   inline TransformWithCache const &getTransform() const { return mTransform; }
 
   void setPosition(glm::vec3 const &pos);

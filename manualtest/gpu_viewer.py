@@ -60,12 +60,13 @@ def _build_benchmark(
     sapien.Entity,
 ]:
     sapien.physx.enable_gpu()
-    sapien.render.set_viewer_shader_dir(shader)
-    sapien.render.set_camera_shader_dir(shader)
+    render_config = sapien.render.RenderConfig(shader)
     if shader == "rt":
-        sapien.render.set_ray_tracing_samples_per_pixel(2)
-        sapien.render.set_ray_tracing_path_depth(2)
-        sapien.render.set_ray_tracing_denoiser("none")
+        render_config["spp"] = 2
+        render_config["maxDepth"] = 2
+        render_config.denoiser = "none"
+    sapien.render.set_default_render_config("viewer", render_config)
+    sapien.render.set_default_render_config("camera", render_config)
 
     compute_device = sapien.Device("cuda")
     render_device = sapien.Device(render_device_alias)

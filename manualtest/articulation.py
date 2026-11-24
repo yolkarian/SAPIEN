@@ -11,8 +11,9 @@ import argparse
 from sapien.utils import Viewer
 
 
-sapien.render.set_viewer_shader_dir("../vulkan_shader/default")
-sapien.render.set_camera_shader_dir("../vulkan_shader/default")
+render_config = sapien.render.RenderConfig("../vulkan_shader/default")
+sapien.render.set_default_render_config("viewer", render_config)
+sapien.render.set_default_render_config("camera", render_config)
 
 
 def create_table(

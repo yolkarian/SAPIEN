@@ -7,11 +7,12 @@ namespace svulkan2 {
 namespace shader {
 
 std::future<void>
-PostprocessingShaderParser::loadFileAsync(std::string const &filepath) {
+PostprocessingShaderParser::loadFileAsync(std::string const &filepath,
+                                          ShaderDefines const &defines) {
   return std::async(LAUNCH_ASYNC, [=, this]() {
     logger::info("Compiling: " + filepath);
-    mSPVCode = GLSLCompiler::compileGlslFileCached(
-        vk::ShaderStageFlagBits::eCompute, filepath);
+    mSPVCode = GLSLCompiler::compileGlslFileCached(vk::ShaderStageFlagBits::eCompute, filepath,
+                                                   defines);
     logger::info("Compiled: " + filepath);
     reflectSPV();
   });

@@ -13,6 +13,12 @@ namespace sapien_renderer {
 
 class RenderShape;
 
+namespace detail {
+/** Group renderer of the cameras of one RenderCameraGroup whose config is a batched ray tracing
+ *  pack: a BatchRTRenderer, the environment scenes it renders, and the CUDA export bookkeeping.
+ *  Defined in batched_render_system.cpp. */
+class BatchCameraRenderer;
+}
 class BatchedCamera {
 public:
   /** every camera must render on the same device; the group's GPU work runs there */
@@ -73,6 +79,9 @@ public:
   /** upload dirty CPU camera state (projection and cpu-mode poses); the caller must
    *  have waited for in-flight renders */
   void internalUploadDirtyCameraState();
+  /** device pointer of `camera`'s camera data, where the CUDA pose kernels write its view
+   *  matrices: its renderer's camera buffer, or its row of the group renderer's camera table */
+  void *internalGetCameraCudaBuffer(SapienRenderCameraComponent &camera);
 
   ~BatchedCamera();
 
@@ -116,6 +125,10 @@ private:
 
   std::unique_ptr<svulkan2::core::CommandPool> mCommandPool;
   vk::UniqueCommandBuffer mCommandBuffer;
+
+  // Set when the cameras of this group use a batched ray tracing pack: one group renderer
+  // replaces the per-camera renderers, and takePicture() submits one frame instead of N.
+  std::shared_ptr<detail::BatchCameraRenderer> mBatchRenderer;
 
   CUstream_st *mCudaStream{nullptr};
 

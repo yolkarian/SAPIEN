@@ -4,6 +4,79 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+Batched ray tracing:
+
+- `RenderConfig("rt_batch")` (or any directory holding `batch.comp`) is a **batched**
+  ray-tracing pack. `RenderConfig.kind` reports `"batch_ray_tracing"`; `is_ray_tracing` stays
+  true and `is_batch_ray_tracing` is new. Such a pack has no per-camera renderer, so
+  `camera.take_picture()`, `camera.get_picture()` / `get_picture_cuda()`, `RenderWindow`,
+  `Viewer` and VR raise `RuntimeError` telling you to use a `RenderCameraGroup`.
+- One `RenderCameraGroup` builds one group renderer for its batch cameras: per frame one
+  command buffer refits every environment's acceleration structure and dispatches over all
+  cameras, submitted once, and the pictures are written straight into the CUDA-exported
+  `[camera][height][width][channel]` buffers. `take_picture()` therefore copies nothing.
+- Every camera of one camera group must copy an **equal** `RenderConfig` and have equal width
+  and height (one group per resolution); mixing batch and non-batch cameras raises.
+- Pictures of the built-in pack: `Color` (8-bit `uint8` by default, `float32` with
+  `picture_formats={"Color": "r32g32b32a32Sfloat"}`), `Albedo`, `Depth` (linear depth in metres,
+  positive, `0` on a miss), `Normal` (camera space), `Position` (camera-space xyz + normalized depth),
+  `Segmentation` (`uvec4`, same semantics as rasterization).
+- Shading tier is a define: `SHADING_VISIBILITY`, `SHADING_LAMBERT` (default) or `SHADING_PBR`;
+  `SHADOWS` adds hard shadow rays and `SPP` adds deterministic supersampling.
+- Shader properties of a batch pack come only from the `RenderConfig` and apply to the whole
+  group: `exposure` (default 1.0), `toneMapper`, `spp` (overrides the `SPP` define). An
+  undeclared property raises at `gpu_init()`; `camera.set_property` raises for a batch camera.
+
+Render configuration (breaking):
+
+- **Breaking:** the process-global render setters are gone. Replace them with
+  `sapien.render.RenderConfig` and the per-target defaults:
+
+  | Removed | Use |
+  |---|---|
+  | `set_camera_shader_dir` / `get_camera_shader_dir` | `RenderConfig(pack)`; `set_default_render_config("camera", cfg)` / `get_default_render_config("camera")` |
+  | `set_viewer_shader_dir` / `get_viewer_shader_dir` | same with `"viewer"` |
+  | `RenderCameraComponent(w, h, shader_dir)`, `RenderWindow(w, h, shader_dir)`, `Viewer(shader_dir=...)` | same constructors with `render_config=cfg` |
+  | `RenderWindow.set_shader_dir` | `RenderWindow.set_render_config(cfg)` |
+  | `set_ray_tracing_samples_per_pixel` / `..._path_depth` / `..._denoiser` / `..._dof_aperture` / `..._dof_plane` and getters | `cfg["spp"]`, `cfg["maxDepth"]`, `cfg.denoiser`, `cfg["aperture"]`, `cfg["focusPlane"]` |
+  | `set_picture_format` | `cfg.picture_formats = {name: format}` |
+  | `set_msaa` / `get_msaa` | `cfg.msaa` |
+
+  Consumers copy the config they are given, so one process can render rasterization and ray
+  tracing side by side. `camera.set_property` stays as the runtime per-camera setter.
+- **Behavior change:** an unknown property name or a wrong value type raises `RuntimeError`
+  naming the key and the shader pack, both from a config when its renderer is created and from
+  `camera.set_property` once the camera has a renderer. Unknown names used to be silently
+  dropped.
+- New C++ `sapien::sapien_renderer::RenderConfig` with
+  `createRenderer(context, config)` / `buildRendererConfig(config)`;
+  `SapienRendererDefault::setDefaultRenderConfig(target, config)` /
+  `getDefaultRenderConfig(target)` replace `setViewerShaderDirectory`,
+  `setCameraShaderDirectory` and the ray-tracing/MSAA setters.
+- New `svulkan2::renderer::RendererBase::getCustomPropertyType(name)` reports the declared type
+  of a shader-pack property (`CustomPropertyType`), which is how SAPIEN validates configs.
+
+Rendering:
+
+- **Behavior change:** ray-traced cameras (`"rt"` pack) use a new random sequence on every render.
+  Before, each accumulation restart replayed one sequence, so a `RenderSystemGroup` (which restarts
+  accumulation on every `update_render()`) showed the same noise pattern in every frame. Do not
+  expect two captures of the same state to be bit-identical in `"rt"`; the n-th render of a camera
+  is still reproducible across runs. Custom RT packs can read the counter as push constant
+  `int frameSeed`.
+- **Behavior change:** `camera.set_property(name, value)` on a ray-traced camera restarts
+  accumulation when the value changes (except `exposure` and `toneMapper`).
+- **Behavior change:** `sapien.render.clear_cache(shaders=True)` now really reloads edited shader
+  files and includes, for raster and ray-tracing packs; shader compile errors raise `RuntimeError`
+  with `file:line` of each error.
+- **Behavior change:** more lights than the raster pack stores (3 directional, 10 point, 10 spot)
+  are ignored instead of adding garbage lighting; shadowed lights are kept first.
+- **Behavior change:** HDR environment maps keep radiance above 1 in rough reflections (raster
+  image-based lighting); scenes lit by bright HDR maps render brighter than before.
+- **Behavior change:** glTF `KHR_materials_specular` now sets `RenderMaterial.specular` to
+  `0.5 * specularFactor * luminance(specularColor)`.
+
+
 C++ programs (native trainers such as PufferLib 5.0, no Python):
 
 - **New C++ SDK:** use `sapien-sdk-<version>-linux_x86_64.tar.gz` from the release, not the
@@ -15,8 +88,9 @@ C++ programs (native trainers such as PufferLib 5.0, no Python):
   `CMAKE_PREFIX_PATH=<sdk>` and link `sapien::sapien`. The libraries load each other through
   `$ORIGIN` RUNPATHs, so no `LD_LIBRARY_PATH` is needed. Rendering programs first make the calls
   the Python package makes on import: `SapienRendererDefault::internalSetShaderSearchPath(
-  "<sdk>/share/sapien/vulkan_shader")`, then `setViewerShaderDirectory("default")` and
-  `setCameraShaderDirectory("default")`.
+  "<sdk>/share/sapien/vulkan_shader")`, then
+  `SapienRendererDefault::setDefaultRenderConfig("camera", RenderConfig("default"))` and the
+  same for `"viewer"`.
 - New C++ `PhysxDefault::EnableGPU(physxGpuLibrary = "")` selects the PhysX GPU runtime through
   PhysX's own load hook; empty searches `PhysxDefault::GetPhysxGpuLibraryCandidates()`: on Linux
   `libPhysXGpu_64.so` next to `libsapien.so` (the SDK ships it), then the cache

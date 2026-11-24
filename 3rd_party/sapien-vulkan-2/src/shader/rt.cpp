@@ -67,10 +67,11 @@ summarizeResources(std::unordered_map<uint32_t, DescriptorSetDescription> const 
 }
 
 std::future<void> RayTracingStageParser::loadFileAsync(std::string const &filepath,
-                                                       vk::ShaderStageFlagBits stage) {
+                                                       vk::ShaderStageFlagBits stage,
+                                                       ShaderDefines const &defines) {
   return std::async(LAUNCH_ASYNC, [=, this]() {
     logger::info("Compiling: " + filepath);
-    mSPVCode = GLSLCompiler::compileGlslFileCached(stage, filepath);
+    mSPVCode = GLSLCompiler::compileGlslFileCached(stage, filepath, defines);
     logger::info("Compiled: " + filepath);
     reflectSPV();
   });
@@ -186,7 +187,8 @@ void RayTracingStageParser::reflectSPV() {
 
 std::string RayTracingStageParser::summary() const { return summarizeResources(mResources); }
 
-RayTracingShaderPack::RayTracingShaderPack(std::string const &shaderDir) {
+RayTracingShaderPack::RayTracingShaderPack(std::string const &shaderDir,
+                                           ShaderDefines const &defines) {
   fs::path path(shaderDir);
 
   std::vector<std::future<void>> futures;
@@ -201,7 +203,7 @@ RayTracingShaderPack::RayTracingShaderPack(std::string const &shaderDir) {
     mRaygenStageParser = std::make_unique<RayTracingStageParser>();
     allParsers.push_back(mRaygenStageParser.get());
     futures.push_back(mRaygenStageParser->loadFileAsync(raygenFile.string(),
-                                                        vk::ShaderStageFlagBits::eRaygenKHR));
+                                                        vk::ShaderStageFlagBits::eRaygenKHR, defines));
   }
 
   // miss stages
@@ -213,7 +215,7 @@ RayTracingShaderPack::RayTracingShaderPack(std::string const &shaderDir) {
     mMissGroupParsers.push_back({"camera", std::make_unique<RayTracingStageParser>()});
     allParsers.push_back(mMissGroupParsers.back().miss.get());
     futures.push_back(mMissGroupParsers.back().miss->loadFileAsync(
-        cameraRmissFile.string(), vk::ShaderStageFlagBits::eMissKHR));
+        cameraRmissFile.string(), vk::ShaderStageFlagBits::eMissKHR, defines));
   }
 
   {
@@ -224,7 +226,7 @@ RayTracingShaderPack::RayTracingShaderPack(std::string const &shaderDir) {
     mMissGroupParsers.push_back({"shadow", std::make_unique<RayTracingStageParser>()});
     allParsers.push_back(mMissGroupParsers.back().miss.get());
     futures.push_back(mMissGroupParsers.back().miss->loadFileAsync(
-        shadowRmissFile.string(), vk::ShaderStageFlagBits::eMissKHR));
+        shadowRmissFile.string(), vk::ShaderStageFlagBits::eMissKHR, defines));
   }
 
   // mesh hit
@@ -241,9 +243,9 @@ RayTracingShaderPack::RayTracingShaderPack(std::string const &shaderDir) {
     allParsers.push_back(mHitGroupParsers.back().any.get());
     allParsers.push_back(mHitGroupParsers.back().closest.get());
     futures.push_back(mHitGroupParsers.back().any->loadFileAsync(
-        camRahitFile.string(), vk::ShaderStageFlagBits::eAnyHitKHR));
+        camRahitFile.string(), vk::ShaderStageFlagBits::eAnyHitKHR, defines));
     futures.push_back(mHitGroupParsers.back().closest->loadFileAsync(
-        camRchitFile.string(), vk::ShaderStageFlagBits::eClosestHitKHR));
+        camRchitFile.string(), vk::ShaderStageFlagBits::eClosestHitKHR, defines));
   }
 
   // TODO: point rahit
@@ -262,9 +264,9 @@ RayTracingShaderPack::RayTracingShaderPack(std::string const &shaderDir) {
       allParsers.push_back(mHitGroupParsers.back().closest.get());
       allParsers.push_back(mHitGroupParsers.back().intersect.get());
       futures.push_back(mHitGroupParsers.back().intersect->loadFileAsync(
-          pointIntersectFile.string(), vk::ShaderStageFlagBits::eIntersectionKHR));
+          pointIntersectFile.string(), vk::ShaderStageFlagBits::eIntersectionKHR, defines));
       futures.push_back(mHitGroupParsers.back().closest->loadFileAsync(
-          pointRchitFile.string(), vk::ShaderStageFlagBits::eClosestHitKHR));
+          pointRchitFile.string(), vk::ShaderStageFlagBits::eClosestHitKHR, defines));
     }
   }
 
@@ -439,7 +441,7 @@ RayTracingShaderPack::RayTracingShaderPack(std::string const &shaderDir) {
   auto postprocessingFile = path / "postprocessing.comp";
   if (fs::exists(postprocessingFile)) {
     auto pp = std::make_unique<PostprocessingShaderParser>();
-    pp->loadFileAsync(postprocessingFile.string()).get();
+    pp->loadFileAsync(postprocessingFile.string(), defines).get();
     mPostprocessingParsers.push_back(std::move(pp));
   }
 }
@@ -536,161 +538,191 @@ DescriptorSetDescription const &RayTracingShaderPack::getSceneDescription() cons
   throw std::runtime_error("failed to retrieve output descriptor set");
 }
 
+std::shared_ptr<InputDataLayout> computeVertexLayout(DescriptorSetDescription const &set) {
+  auto inputLayout = std::make_shared<InputDataLayout>();
+
+  uint32_t structOffset{};
+  uint32_t location{0};
+  for (auto &[bid, binding] : set.bindings) {
+    if (binding.name == "Vertices" && binding.type == vk::DescriptorType::eStorageBuffer) {
+      if (set.buffers.at(binding.arrayIndex)->elements.size() != 1) {
+        throw std::runtime_error("Vertices buffer must contain a single "
+                                 "array of structs (Vertex)");
+      }
+      auto elem = set.buffers.at(binding.arrayIndex)->elements.begin()->second;
+      if (elem.array.size() != 1 || elem.dtype != DataType::STRUCT()) {
+        throw std::runtime_error("Vertices buffer must contain a single "
+                                 "array of structs (Vertex)");
+      }
+      auto vertex = elem.member;
+      if (!vertex->elements.contains("x") ||
+          vertex->elements.at("x").dtype != DataType::FLOAT() ||
+          vertex->elements.at("x").offset != 0 || !vertex->elements.contains("y") ||
+          vertex->elements.at("y").dtype != DataType::FLOAT() ||
+          vertex->elements.at("y").offset != 4 || !vertex->elements.contains("z") ||
+          vertex->elements.at("z").dtype != DataType::FLOAT() ||
+          vertex->elements.at("z").offset != 8) {
+        throw std::runtime_error("Vertex struct must contain float variables named "
+                                 "x, y, and z at the beginning");
+      }
+      structOffset = 12;
+      inputLayout->elements["position"] = {
+          .name = "position", .location = location++, .dtype = DataType::FLOAT3()};
+
+      if (vertex->elements.contains("nx")) {
+        if (vertex->elements.at("nx").offset != structOffset) {
+          throw std::runtime_error("Vertex struct members must follow the order of position "
+                                   "normal uv tangent bitangent color without padding");
+        }
+        if (!vertex->elements.contains("ny") || !vertex->elements.contains("nz")) {
+          throw std::runtime_error("if a Vertex struct contains float "
+                                   "nx, it must contain ny, nz");
+        }
+        if (vertex->elements.at("nx").dtype != DataType::FLOAT() ||
+            vertex->elements.at("ny").dtype != DataType::FLOAT() ||
+            vertex->elements.at("nz").dtype != DataType::FLOAT()) {
+          throw std::runtime_error("Vertex struct member nx, ny, nz must be float");
+        }
+        uint32_t offset = vertex->elements.at("nx").offset;
+        if (vertex->elements.at("ny").offset != offset + 4 ||
+            vertex->elements.at("nz").offset != offset + 8) {
+          throw std::runtime_error("Vertex struct member nx, ny, nz must be consecutive");
+        }
+        structOffset += 12;
+        inputLayout->elements["normal"] = {
+            .name = "normal", .location = location++, .dtype = DataType::FLOAT3()};
+      }
+
+      if (vertex->elements.contains("u")) {
+        if (vertex->elements.at("u").offset != structOffset) {
+          throw std::runtime_error("Vertex struct members must follow the order of position "
+                                   "normal uv tangent bitangent color without padding");
+        }
+        if (!vertex->elements.contains("v")) {
+          throw std::runtime_error("if a Vertex struct contains float u, it must contain v");
+        }
+        if (vertex->elements.at("u").dtype != DataType::FLOAT() ||
+            vertex->elements.at("v").dtype != DataType::FLOAT()) {
+          throw std::runtime_error("Vertex struct member u, v must be float");
+        }
+        uint32_t offset = vertex->elements.at("u").offset;
+        if (vertex->elements.at("v").offset != offset + 4) {
+          throw std::runtime_error("Vertex struct member must be consecutive");
+        }
+        structOffset += 8;
+        inputLayout->elements["uv"] = {
+            .name = "uv", .location = location++, .dtype = DataType::FLOAT2()};
+      }
+
+      if (vertex->elements.contains("tx")) {
+        if (vertex->elements.at("tx").offset != structOffset) {
+          throw std::runtime_error("Vertex struct members must follow the order of position "
+                                   "normal uv tangent bitangent color without padding");
+        }
+        if (!vertex->elements.contains("ty") || !vertex->elements.contains("tz")) {
+          throw std::runtime_error("if a Vertex struct contains float "
+                                   "tx, it must contain ty, tz");
+        }
+        if (vertex->elements.at("tx").dtype != DataType::FLOAT() ||
+            vertex->elements.at("ty").dtype != DataType::FLOAT() ||
+            vertex->elements.at("tz").dtype != DataType::FLOAT()) {
+          throw std::runtime_error("Vertex struct member tx, ty, tz must be float");
+        }
+        uint32_t offset = vertex->elements.at("tx").offset;
+        if (vertex->elements.at("ty").offset != offset + 4 ||
+            vertex->elements.at("tz").offset != offset + 8) {
+          throw std::runtime_error("Vertex struct member tx, ty, tz must be consecutive");
+        }
+        structOffset += 12;
+        inputLayout->elements["tangent"] = {
+            .name = "tangent", .location = location++, .dtype = DataType::FLOAT3()};
+      }
+
+      if (vertex->elements.contains("bx")) {
+        if (vertex->elements.at("bx").offset != structOffset) {
+          throw std::runtime_error("Vertex struct members must follow the order of position "
+                                   "normal uv tangent bitangent color without padding");
+        }
+        if (!vertex->elements.contains("by") || !vertex->elements.contains("bz")) {
+          throw std::runtime_error("if a Vertex struct contains float "
+                                   "bx, it must contain by, bz");
+        }
+        if (vertex->elements.at("bx").dtype != DataType::FLOAT() ||
+            vertex->elements.at("by").dtype != DataType::FLOAT() ||
+            vertex->elements.at("bz").dtype != DataType::FLOAT()) {
+          throw std::runtime_error("Vertex struct member bx, by, bz must be float");
+        }
+        uint32_t offset = vertex->elements.at("bx").offset;
+        if (vertex->elements.at("by").offset != offset + 4 ||
+            vertex->elements.at("bz").offset != offset + 8) {
+          throw std::runtime_error("Vertex struct member bx, by, bz must be consecutive");
+        }
+        structOffset += 12;
+        inputLayout->elements["bitangent"] = {
+            .name = "bitangent", .location = location++, .dtype = DataType::FLOAT3()};
+      }
+
+      if (vertex->elements.contains("r")) {
+        if (vertex->elements.at("r").offset != structOffset) {
+          throw std::runtime_error("Vertex struct members must follow the order of position "
+                                   "normal uv tangent bitangent color without padding");
+        }
+        if (!vertex->elements.contains("g") || !vertex->elements.contains("b") ||
+            !vertex->elements.contains("a")) {
+          throw std::runtime_error("if a Vertex struct contains float r, "
+                                   "it must contain g, b, a");
+        }
+        if (vertex->elements.at("r").dtype != DataType::FLOAT() ||
+            vertex->elements.at("g").dtype != DataType::FLOAT() ||
+            vertex->elements.at("b").dtype != DataType::FLOAT() ||
+            vertex->elements.at("a").dtype != DataType::FLOAT()) {
+          throw std::runtime_error("Vertex struct member r, g, b, a must be float");
+        }
+        uint32_t offset = vertex->elements.at("r").offset;
+        if (vertex->elements.at("g").offset != offset + 4 ||
+            vertex->elements.at("b").offset != offset + 8 ||
+            vertex->elements.at("a").offset != offset + 12) {
+          throw std::runtime_error("Vertex struct member r, g, b, a must be consecutive");
+        }
+        structOffset += 16;
+        inputLayout->elements["color"] = {
+            .name = "color", .location = location++, .dtype = DataType::FLOAT4()};
+      }
+    }
+  }
+  return inputLayout;
+}
+
+std::shared_ptr<InputDataLayout> computePointLayout(DescriptorSetDescription const &set) {
+  auto inputLayout = std::make_shared<InputDataLayout>();
+
+  uint32_t location{0};
+  for (auto &[bid, binding] : set.bindings) {
+    if (binding.name == "Points" && binding.type == vk::DescriptorType::eStorageBuffer) {
+      if (set.buffers.at(binding.arrayIndex)->elements.size() != 1) {
+        throw std::runtime_error(
+            "Point buffer must contain a single array of structs (Point)");
+      }
+      auto elem = set.buffers.at(binding.arrayIndex)->elements.begin()->second;
+      if (elem.array.size() != 1 || elem.dtype != DataType::STRUCT()) {
+        throw std::runtime_error(
+            "Point buffer must contain a single array of structs (Point)");
+      }
+      auto vertex = elem.member;
+
+      for (auto &e : vertex->getElementsSorted()) {
+        inputLayout->elements[e->name] = {
+            .name = e->name, .location = location++, .dtype = e->dtype};
+      }
+    }
+  }
+  return inputLayout;
+}
+
 std::shared_ptr<InputDataLayout> RayTracingShaderPack::computeCompatibleInputVertexLayout() const {
   for (auto &[sid, set] : mResources) {
     if (set.type == UniformBindingType::eRTScene) {
-      auto inputLayout = std::make_shared<InputDataLayout>();
-
-      uint32_t structOffset{};
-      uint32_t location{0};
-      for (auto &[bid, binding] : set.bindings) {
-        if (binding.name == "Vertices" && binding.type == vk::DescriptorType::eStorageBuffer) {
-          if (set.buffers.at(binding.arrayIndex)->elements.size() != 1) {
-            throw std::runtime_error("Vertices buffer must contain a single "
-                                     "array of structs (Vertex)");
-          }
-          auto elem = set.buffers.at(binding.arrayIndex)->elements.begin()->second;
-          if (elem.array.size() != 1 || elem.dtype != DataType::STRUCT()) {
-            throw std::runtime_error("Vertices buffer must contain a single "
-                                     "array of structs (Vertex)");
-          }
-          auto vertex = elem.member;
-          if (!vertex->elements.contains("x") ||
-              vertex->elements.at("x").dtype != DataType::FLOAT() ||
-              vertex->elements.at("x").offset != 0 || !vertex->elements.contains("y") ||
-              vertex->elements.at("y").dtype != DataType::FLOAT() ||
-              vertex->elements.at("y").offset != 4 || !vertex->elements.contains("z") ||
-              vertex->elements.at("z").dtype != DataType::FLOAT() ||
-              vertex->elements.at("z").offset != 8) {
-            throw std::runtime_error("Vertex struct must contain float variables named "
-                                     "x, y, and z at the beginning");
-          }
-          structOffset = 12;
-          inputLayout->elements["position"] = {
-              .name = "position", .location = location++, .dtype = DataType::FLOAT3()};
-
-          if (vertex->elements.contains("nx")) {
-            if (vertex->elements.at("nx").offset != structOffset) {
-              throw std::runtime_error("Vertex struct members must follow the order of position "
-                                       "normal uv tangent bitangent color without padding");
-            }
-            if (!vertex->elements.contains("ny") || !vertex->elements.contains("nz")) {
-              throw std::runtime_error("if a Vertex struct contains float "
-                                       "nx, it must contain ny, nz");
-            }
-            if (vertex->elements.at("nx").dtype != DataType::FLOAT() ||
-                vertex->elements.at("ny").dtype != DataType::FLOAT() ||
-                vertex->elements.at("nz").dtype != DataType::FLOAT()) {
-              throw std::runtime_error("Vertex struct member nx, ny, nz must be float");
-            }
-            uint32_t offset = vertex->elements.at("nx").offset;
-            if (vertex->elements.at("ny").offset != offset + 4 ||
-                vertex->elements.at("nz").offset != offset + 8) {
-              throw std::runtime_error("Vertex struct member nx, ny, nz must be consecutive");
-            }
-            structOffset += 12;
-            inputLayout->elements["normal"] = {
-                .name = "normal", .location = location++, .dtype = DataType::FLOAT3()};
-          }
-
-          if (vertex->elements.contains("u")) {
-            if (vertex->elements.at("u").offset != structOffset) {
-              throw std::runtime_error("Vertex struct members must follow the order of position "
-                                       "normal uv tangent bitangent color without padding");
-            }
-            if (!vertex->elements.contains("v")) {
-              throw std::runtime_error("if a Vertex struct contains float u, it must contain v");
-            }
-            if (vertex->elements.at("u").dtype != DataType::FLOAT() ||
-                vertex->elements.at("v").dtype != DataType::FLOAT()) {
-              throw std::runtime_error("Vertex struct member u, v must be float");
-            }
-            uint32_t offset = vertex->elements.at("u").offset;
-            if (vertex->elements.at("v").offset != offset + 4) {
-              throw std::runtime_error("Vertex struct member must be consecutive");
-            }
-            structOffset += 8;
-            inputLayout->elements["uv"] = {
-                .name = "uv", .location = location++, .dtype = DataType::FLOAT2()};
-          }
-
-          if (vertex->elements.contains("tx")) {
-            if (vertex->elements.at("tx").offset != structOffset) {
-              throw std::runtime_error("Vertex struct members must follow the order of position "
-                                       "normal uv tangent bitangent color without padding");
-            }
-            if (!vertex->elements.contains("ty") || !vertex->elements.contains("tz")) {
-              throw std::runtime_error("if a Vertex struct contains float "
-                                       "tx, it must contain ty, tz");
-            }
-            if (vertex->elements.at("tx").dtype != DataType::FLOAT() ||
-                vertex->elements.at("ty").dtype != DataType::FLOAT() ||
-                vertex->elements.at("tz").dtype != DataType::FLOAT()) {
-              throw std::runtime_error("Vertex struct member tx, ty, tz must be float");
-            }
-            uint32_t offset = vertex->elements.at("tx").offset;
-            if (vertex->elements.at("ty").offset != offset + 4 ||
-                vertex->elements.at("tz").offset != offset + 8) {
-              throw std::runtime_error("Vertex struct member tx, ty, tz must be consecutive");
-            }
-            structOffset += 12;
-            inputLayout->elements["tangent"] = {
-                .name = "tangent", .location = location++, .dtype = DataType::FLOAT3()};
-          }
-
-          if (vertex->elements.contains("bx")) {
-            if (vertex->elements.at("bx").offset != structOffset) {
-              throw std::runtime_error("Vertex struct members must follow the order of position "
-                                       "normal uv tangent bitangent color without padding");
-            }
-            if (!vertex->elements.contains("by") || !vertex->elements.contains("bz")) {
-              throw std::runtime_error("if a Vertex struct contains float "
-                                       "bx, it must contain by, bz");
-            }
-            if (vertex->elements.at("bx").dtype != DataType::FLOAT() ||
-                vertex->elements.at("by").dtype != DataType::FLOAT() ||
-                vertex->elements.at("bz").dtype != DataType::FLOAT()) {
-              throw std::runtime_error("Vertex struct member bx, by, bz must be float");
-            }
-            uint32_t offset = vertex->elements.at("bx").offset;
-            if (vertex->elements.at("by").offset != offset + 4 ||
-                vertex->elements.at("bz").offset != offset + 8) {
-              throw std::runtime_error("Vertex struct member bx, by, bz must be consecutive");
-            }
-            structOffset += 12;
-            inputLayout->elements["bitangent"] = {
-                .name = "bitangent", .location = location++, .dtype = DataType::FLOAT3()};
-          }
-
-          if (vertex->elements.contains("r")) {
-            if (vertex->elements.at("r").offset != structOffset) {
-              throw std::runtime_error("Vertex struct members must follow the order of position "
-                                       "normal uv tangent bitangent color without padding");
-            }
-            if (!vertex->elements.contains("g") || !vertex->elements.contains("b") ||
-                !vertex->elements.contains("a")) {
-              throw std::runtime_error("if a Vertex struct contains float r, "
-                                       "it must contain g, b, a");
-            }
-            if (vertex->elements.at("r").dtype != DataType::FLOAT() ||
-                vertex->elements.at("g").dtype != DataType::FLOAT() ||
-                vertex->elements.at("b").dtype != DataType::FLOAT() ||
-                vertex->elements.at("a").dtype != DataType::FLOAT()) {
-              throw std::runtime_error("Vertex struct member r, g, b, a must be float");
-            }
-            uint32_t offset = vertex->elements.at("r").offset;
-            if (vertex->elements.at("g").offset != offset + 4 ||
-                vertex->elements.at("b").offset != offset + 8 ||
-                vertex->elements.at("a").offset != offset + 12) {
-              throw std::runtime_error("Vertex struct member r, g, b, a must be consecutive");
-            }
-            structOffset += 16;
-            inputLayout->elements["color"] = {
-                .name = "color", .location = location++, .dtype = DataType::FLOAT4()};
-          }
-        }
-      }
-      return inputLayout;
+      return computeVertexLayout(set);
     }
   }
   throw std::runtime_error("failed to find the vertex buffer in the shader");
@@ -699,29 +731,7 @@ std::shared_ptr<InputDataLayout> RayTracingShaderPack::computeCompatibleInputVer
 std::shared_ptr<InputDataLayout> RayTracingShaderPack::computePrimitiveLayout() const {
   for (auto &[sid, set] : mResources) {
     if (set.type == UniformBindingType::eRTScene) {
-      auto inputLayout = std::make_shared<InputDataLayout>();
-
-      uint32_t location{0};
-      for (auto &[bid, binding] : set.bindings) {
-        if (binding.name == "Points" && binding.type == vk::DescriptorType::eStorageBuffer) {
-          if (set.buffers.at(binding.arrayIndex)->elements.size() != 1) {
-            throw std::runtime_error(
-                "Point buffer must contain a single array of structs (Point)");
-          }
-          auto elem = set.buffers.at(binding.arrayIndex)->elements.begin()->second;
-          if (elem.array.size() != 1 || elem.dtype != DataType::STRUCT()) {
-            throw std::runtime_error(
-                "Point buffer must contain a single array of structs (Point)");
-          }
-          auto vertex = elem.member;
-
-          for (auto &e : vertex->getElementsSorted()) {
-            inputLayout->elements[e->name] = {
-                .name = e->name, .location = location++, .dtype = e->dtype};
-          }
-        }
-      }
-      return inputLayout;
+      return computePointLayout(set);
     }
   }
   return nullptr;
@@ -736,7 +746,7 @@ RayTracingShaderPackInstance::RayTracingShaderPackInstance(std::shared_ptr<core:
     throw std::runtime_error(
         "failed to create ray tracing shader pack instance: context must not be null");
   }
-  mShaderPack = resource::SVResourceManager::Get()->CreateRTShaderPack(desc.shaderDir);
+  mShaderPack = resource::SVResourceManager::Get()->CreateRTShaderPack(desc.shaderDir, desc.defines);
 }
 
 static vk::UniqueDescriptorSetLayout

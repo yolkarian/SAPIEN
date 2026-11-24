@@ -13,11 +13,12 @@ def main():
     renderer = sapien.SapienRenderer()
     engine.set_renderer(renderer)
 
-    sapien.render.set_camera_shader_dir("../vulkan_shader/rt")
-    sapien.render.set_viewer_shader_dir("../vulkan_shader/rt")
-    sapien.render.set_ray_tracing_samples_per_pixel(32)
-    sapien.render.set_ray_tracing_path_depth(8)
-    sapien.render.set_ray_tracing_denoiser("oidn")
+    render_config = sapien.render.RenderConfig("../vulkan_shader/rt")
+    render_config["spp"] = 32
+    render_config["maxDepth"] = 8
+    render_config.denoiser = "oidn"
+    sapien.render.set_default_render_config("viewer", render_config)
+    sapien.render.set_default_render_config("camera", render_config)
 
     scene_config = sapien.SceneConfig()
     scene = engine.create_scene(scene_config)

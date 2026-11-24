@@ -76,17 +76,32 @@ obsolete. Use `camera.get_picture(name)` and `camera.get_picture_cuda(name)`.
 
 ## Rendering configuration
 
-Old examples may use `sapien.render_config`. Current rendering configuration is
-through functions in `sapien.render`:
+Rendering configuration is per consumer through `sapien.render.RenderConfig`;
+the process-wide setters of earlier versions are gone. A camera, window or
+Viewer copies the config it is given.
+
+| Removed | Use |
+|---|---|
+| `set_camera_shader_dir` / `set_viewer_shader_dir` | `RenderConfig(pack)`; `set_default_render_config("camera" / "viewer", cfg)` |
+| `RenderCameraComponent(w, h, shader_dir)`, `RenderWindow(w, h, shader_dir)`, `Viewer(shader_dir=...)` | the same constructors with `render_config=cfg` |
+| `RenderWindow.set_shader_dir` | `RenderWindow.set_render_config(cfg)` |
+| `set_ray_tracing_samples_per_pixel` / `..._path_depth` / `..._denoiser` / `..._dof_aperture` / `..._dof_plane` | `cfg["spp"]`, `cfg["maxDepth"]`, `cfg.denoiser`, `cfg["aperture"]`, `cfg["focusPlane"]` |
+| `set_picture_format(name, format)` | `cfg.picture_formats = {name: format}` |
+| `set_msaa` / `get_msaa` | `cfg.msaa` |
+| `camera.set_property(name, value)` | unchanged; it now validates the name and type |
 
 ```python
-sapien.render.set_camera_shader_dir("rt")
-sapien.render.set_viewer_shader_dir("rt")
-sapien.render.set_ray_tracing_samples_per_pixel(32)
-sapien.render.set_ray_tracing_path_depth(8)
-sapien.render.set_ray_tracing_denoiser("oidn")
-sapien.render.set_picture_format("Color", "r16g16b16a16Sfloat")
+config = sapien.render.RenderConfig("rt")
+config["spp"] = 32
+config["maxDepth"] = 8
+config.denoiser = "oidn"
+config.picture_formats = {"Color": "r16g16b16a16Sfloat"}  # rasterization only
+camera = scene.add_camera("camera", 640, 480, 1.0, 0.01, 100.0, render_config=config)
+
+sapien.render.set_default_render_config("viewer", sapien.render.RenderConfig("rt"))
 ```
+
+Old examples may use `sapien.render_config`; that module does not exist.
 
 ## Viewer rendering
 

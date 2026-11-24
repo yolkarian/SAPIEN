@@ -7,12 +7,12 @@ engine = sapien.Engine()
 renderer = sapien.SapienRenderer()
 engine.set_renderer(renderer)
 
-sapien.render.set_viewer_shader_dir("../vulkan_shader/rt")
-sapien.render.set_ray_tracing_samples_per_pixel(2)
-sapien.render.set_ray_tracing_denoiser("oidn")
-
-sapien.render.set_ray_tracing_dof_aperture(0.001)
-sapien.render.set_ray_tracing_dof_plane(2)
+render_config = sapien.render.RenderConfig("../vulkan_shader/rt")
+render_config["spp"] = 2
+render_config.denoiser = "oidn"
+render_config["aperture"] = 0.001
+render_config["focusPlane"] = 2.0
+sapien.render.set_default_render_config("viewer", render_config)
 
 scene = engine.create_scene()
 scene.add_ground(0)

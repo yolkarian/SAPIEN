@@ -25,12 +25,14 @@ class RenderOptionsWindow(Plugin):
         return [d.name for d in self.shader_list]
 
     def set_shader(self, index):
+        """Switch the window to the pack at `index`, carrying over common properties."""
         self.shader_dir = str(self.shader_list[index])
         self.shader_type = str(self.shader_types[index])
-        self.window.set_shader_dir(self.shader_dir)
+        config = sapien.render.RenderConfig(self.shader_dir)
+        self.window.set_render_config(config)
+        self.viewer.render_config = self.window.render_config
         self.viewer.render_target = "Color"
         self.shader_index = index
-        print(self.shader_index)
 
     def reset(self):
         self.ui_window = None
@@ -132,7 +134,7 @@ class RenderOptionsWindow(Plugin):
         self.viewer.window.set_camera_property("toneMapper", index)
 
     def _setup_shader_dir(self):
-        default_shader_dir = Path(self.viewer.shader_dir)
+        default_shader_dir = Path(self.viewer.render_config.shader_pack)
 
         default_type = "rast"
         for x in default_shader_dir.iterdir():

@@ -444,7 +444,15 @@ std::vector<ParallelogramLight *> Scene::getParallelogramLights() {
 
 void Scene::updateModelMatrices() {
   updateRenderVersion();
-  mRootNode->updateGlobalModelMatrixRecursive();
+  // Recomputing every node costs more than everything else in a frame of a large static
+  // scene, so skip it while no local transform and no topology changed. One more pass after
+  // the last change lets prevWorldModelMatrix catch up with worldModelMatrix.
+  bool changed = mRootNode->isSubtreeDirty() || mModelMatricesVersion != mVersion;
+  if (changed || mModelMatricesSettling) {
+    mRootNode->updateGlobalModelMatrixRecursive();
+  }
+  mModelMatricesSettling = changed;
+  mModelMatricesVersion = mVersion;
 }
 
 void Scene::uploadToDevice(core::Buffer &sceneBuffer, StructDataLayout const &sceneLayout) {
@@ -921,17 +929,7 @@ void Scene::updateTLAS(bool useDeviceTransforms) {
   }
   mASUpdateCommandBuffer->reset();
   mASUpdateCommandBuffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-
-  // update BLAS
-  for (auto &obj : mDeformableObjects) {
-    obj->getModel()->recordUpdateBLAS(*mContext, mASUpdateCommandBuffer.get());
-  }
-
-  // FIXME: update per pointset, not per point cloud
-  for (auto &obj : getPointObjects()) {
-    obj->getPointSet()->recordUpdateBLAS(*mContext, mASUpdateCommandBuffer.get());
-  }
-
+  recordDynamicBLASUpdates(mASUpdateCommandBuffer.get());
   if (useDeviceTransforms) {
     mTLAS->recordUpdate(mASUpdateCommandBuffer.get());
   } else {
@@ -959,6 +957,30 @@ void Scene::updateTLAS(bool useDeviceTransforms) {
   }
   mASUpdateCommandBuffer->end();
   mContext->getQueue().submit(mASUpdateCommandBuffer.get(), {});
+}
+
+bool Scene::recordBLASRefits(vk::CommandBuffer commandBuffer) {
+  std::lock_guard lock(mRTResourcesLock);
+  if (mRTResourcesVersion != mVersion) {
+    throw std::runtime_error("recordBLASRefits failed: scene has changed, call "
+                             "buildRTResources first");
+  }
+  bool recorded = recordDynamicBLASUpdates(commandBuffer);
+  mRTResourcesRenderVersion = mRenderVersion;
+  return recorded;
+}
+
+bool Scene::recordDynamicBLASUpdates(vk::CommandBuffer commandBuffer) {
+  for (auto &obj : mDeformableObjects) {
+    obj->getModel()->recordUpdateBLAS(*mContext, commandBuffer);
+  }
+
+  // FIXME: update per pointset, not per point cloud
+  auto pointObjects = getPointObjects();
+  for (auto &obj : pointObjects) {
+    obj->getPointSet()->recordUpdateBLAS(*mContext, commandBuffer);
+  }
+  return !mDeformableObjects.empty() || !pointObjects.empty();
 }
 
 void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,

@@ -6,16 +6,13 @@ import numpy as np
 import sapien
 from sapien import Entity, Scene
 from sapien import internal_renderer as R
-from sapien.render import (
-    RenderSystem,
-    RenderWindow,
-    SapienRenderer,
-    get_viewer_shader_dir,
-)
+from sapien.render import RenderConfig, RenderSystem, RenderWindow, SapienRenderer
 from sapien.render import RenderVRDisplay
 
 sapien.render.set_log_level("info")
-sapien.render.set_viewer_shader_dir("../vulkan_shader/vr_default")
+sapien.render.set_default_render_config(
+    "viewer", RenderConfig("../vulkan_shader/vr_default")
+)
 
 sapien.render.enable_vr()
 

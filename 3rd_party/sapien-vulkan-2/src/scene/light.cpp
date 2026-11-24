@@ -69,6 +69,7 @@ void DirectionalLight::setDirection(glm::vec3 const &dir) {
   }
   x = glm::cross(y, z);
   mTransform.rotation = glm::quat(glm::mat3(x, y, z));
+  markTransformDirty();
 }
 
 void DirectionalLight::setShadowParameters(float near, float far, float scaling, uint32_t size) {
@@ -106,6 +107,7 @@ void SpotLight::setDirection(glm::vec3 const &dir) {
   }
   x = glm::cross(y, z);
   mTransform.rotation = glm::quat(glm::mat3(x, y, z));
+  markTransformDirty();
 }
 
 glm::vec3 SpotLight::getDirection() const {

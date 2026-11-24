@@ -1,6 +1,8 @@
 #pragma once
 #include "layout.h"
+#include <map>
 #include <memory>
+#include <string>
 #include <unordered_map>
 
 namespace svulkan2 {
@@ -8,6 +10,9 @@ namespace svulkan2 {
 /** Renderer options configured by API */
 struct RendererConfig {
   std::string shaderDir;
+
+  // preprocessor definitions that select a variant of the shader pack: name -> value
+  std::map<std::string, std::string> shaderDefines;
 
   // default 1-channel texture format
   vk::Format colorFormat1{vk::Format::eR32Sfloat}; // R8Unorm, R32Sfloat

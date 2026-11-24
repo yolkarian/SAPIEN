@@ -35,6 +35,8 @@ struct SapienRenderCameraInternal {
   uint64_t mFrameCounter{0};
   std::unique_ptr<svulkan2::renderer::RendererBase> mRenderer;
   svulkan2::scene::Camera *mCamera;
+  // the config this renderer was created from; property validation reads it
+  RenderConfig mRenderConfig;
 
   // CPU image buffer
   std::unordered_map<std::string, std::vector<char>> mImageBuffers;
@@ -46,61 +48,29 @@ struct SapienRenderCameraInternal {
   std::unique_ptr<svulkan2::core::CommandPool> mCommandPool;
   vk::UniqueCommandBuffer mCommandBuffer;
 
-  SapienRenderCameraInternal(uint32_t width, uint32_t height, std::string const &shaderDir,
+  SapienRenderCameraInternal(uint32_t width, uint32_t height, RenderConfig const &renderConfig,
                              std::shared_ptr<SapienRendererSystem> renderSystem,
-                             std::shared_ptr<svulkan2::scene::Scene> scene) {
+                             std::shared_ptr<svulkan2::scene::Scene> scene)
+      : mRenderConfig(renderConfig) {
     mWidth = width;
     mHeight = height;
 
     mContext = renderSystem->getContext();
     mScene = scene;
 
-    auto &renderConfig = SapienRendererDefault::Get();
-    auto config = std::make_shared<svulkan2::RendererConfig>();
-    switch (renderConfig.msaa) {
-    case 1:
-      config->msaa = vk::SampleCountFlagBits::e1;
-      break;
-    case 2:
-      config->msaa = vk::SampleCountFlagBits::e2;
-      break;
-    case 4:
-      config->msaa = vk::SampleCountFlagBits::e4;
-      break;
-    case 8:
-      config->msaa = vk::SampleCountFlagBits::e8;
-      break;
-    default:
-      throw std::runtime_error("MSAA count must be one of [1, 2, 4, 8]");
-    }
-
-    for (auto &[name, format] : renderConfig.renderTargetFormats) {
-      config->textureFormat[name] = format;
-    }
-
-    config->shaderDir = shaderDir.length() ? shaderDir : renderConfig.cameraShaderDirectory;
-    mRenderer = svulkan2::renderer::RendererBase::Create(mContext, config);
-    mRenderer->resize(width, height);
     mCamera = &scene->addCamera();
-    mRenderer->setScene(scene);
+    mCamera->setWidth(static_cast<float>(width));
+    mCamera->setHeight(static_cast<float>(height));
     mRendererScene = scene;
     mRendererSceneVersion = scene->getVersion();
-
-    if (auto rtRenderer = dynamic_cast<svulkan2::renderer::RTRenderer *>(mRenderer.get())) {
-      rtRenderer->setCustomProperty("spp", renderConfig.rayTracingSamplesPerPixel);
-      rtRenderer->setCustomProperty("maxDepth", renderConfig.rayTracingPathDepth);
-      rtRenderer->setCustomProperty("aperture", renderConfig.rayTracingDoFAperture);
-      rtRenderer->setCustomProperty("focusPlane", renderConfig.rayTracingDoFPlane);
-      if (renderConfig.rayTracingRussianRouletteMinBounces >= 0) {
-        rtRenderer->setCustomProperty("russianRoulette", 1);
-        rtRenderer->setCustomProperty("russianRouletteMinBounces",
-                                      renderConfig.rayTracingRussianRouletteMinBounces);
-      } else {
-        rtRenderer->setCustomProperty("russianRoulette", 0);
-      }
-      rtRenderer->enableDenoiser(renderConfig.rayTracingDenoiserType, "HdrColor", "Albedo",
-                                 "Normal");
+    if (mRenderConfig.isBatchRayTracing()) {
+      // a batched pack has no per-camera renderer: the camera group that owns this camera
+      // builds one group renderer and drives it for every camera of the group
+      return;
     }
+    mRenderer = createRenderer(mContext, mRenderConfig);
+    mRenderer->resize(width, height);
+    mRenderer->setScene(scene);
   }
 
   void waitForRender() {
@@ -115,6 +85,7 @@ struct SapienRenderCameraInternal {
   }
 
   void takePicture() {
+    checkHasRenderer("take picture");
     if (!mSemaphore) {
       mSemaphore = mContext->createTimelineSemaphore(mFrameCounter);
     }
@@ -123,9 +94,28 @@ struct SapienRenderCameraInternal {
     mRenderer->render(*mCamera, {}, {}, {}, mSemaphore.get(), mFrameCounter);
   }
 
-  std::vector<std::string> getImageNames() const { return mRenderer->getRenderTargetNames(); }
+  std::vector<std::string> getImageNames() const {
+    if (mRenderConfig.isBatchRayTracing()) {
+      throw std::runtime_error(
+          "a batched ray tracing camera has no per-camera renderer: read pictures from the "
+          "RenderCameraGroup with get_picture_cuda(name)");
+    }
+    return mRenderer->getRenderTargetNames();
+  }
+
+  void checkHasRenderer(char const *operation) const {
+    if (mRenderer) {
+      return;
+    }
+    throw std::runtime_error(std::string("failed to ") + operation +
+                             ": this camera uses a batched ray tracing pack, which renders only "
+                             "through a RenderCameraGroup. Add the camera to one with "
+                             "RenderSystemGroup.create_camera_group() and read its pictures from "
+                             "there.");
+  }
 
   SapienRenderImageCpu getImage(std::string const &name) {
+    checkHasRenderer("get a picture");
     waitForRender();
     auto &image = mRenderer->getRenderImage(name);
     vk::Format format = image.getFormat();
@@ -137,6 +127,7 @@ struct SapienRenderCameraInternal {
   }
 
   SapienRenderImageCuda getImageCuda(std::string const &name) {
+    checkHasRenderer("get a CUDA picture");
 #ifdef SAPIEN_CUDA
     waitForRender();
 
@@ -174,29 +165,77 @@ struct SapienRenderCameraInternal {
 #endif
   }
 
-  svulkan2::renderer::RendererBase &getRenderer() const { return *mRenderer; }
+  svulkan2::renderer::RendererBase &getRenderer() const {
+    checkHasRenderer("access the camera renderer");
+    return *mRenderer;
+  }
   svulkan2::scene::Camera &getCamera() const { return *mCamera; }
 
   ~SapienRenderCameraInternal() { mScene->removeNode(*mCamera); }
 };
 
-void SapienRenderCameraComponent::setProperty(std::string const &name, int property) {
-  mProperties[name] = property;
-  if (mCamera) {
-    mCamera->mRenderer->setCustomProperty(name, property);
+namespace {
+
+/** declared type of `name` in the shader pack of `config` after the camera renderer exists */
+void validateProperty(RenderConfig const &config,
+                      svulkan2::renderer::RendererBase &renderer, std::string const &name,
+                      bool isInt) {
+  using T = svulkan2::renderer::CustomPropertyType;
+  auto type = renderer.getCustomPropertyType(name);
+  auto pack = config.getShaderPack();
+  if (type == T::eNone) {
+    throw std::runtime_error("camera property \"" + name +
+                             "\" is not declared by shader pack \"" + pack + "\"");
+  }
+  if (isInt ? type != T::eInt : type != T::eFloat) {
+    std::string declared = type == T::eInt ? "int" : (type == T::eFloat ? "float" : "a vector type");
+    throw std::runtime_error("camera property \"" + name + "\" is declared as " + declared +
+                             " by shader pack \"" + pack + "\" but set to a " +
+                             (isInt ? "int" : "float"));
   }
 }
-void SapienRenderCameraComponent::setProperty(std::string const &name, float property) {
-  mProperties[name] = property;
+
+} // namespace
+
+void SapienRenderCameraComponent::checkNotBatchProperty(std::string const &name) const {
+  if (isBatchRayTracing()) {
+    throw std::runtime_error(
+        "failed to set camera property \"" + name + "\": the camera uses batched ray tracing pack \"" +
+        mRenderConfig.getShaderPack() +
+        "\", whose camera group renders every camera with one renderer; set the property on the "
+        "RenderConfig before creating the camera");
+  }
+}
+
+void SapienRenderCameraComponent::setProperty(std::string const &name, int property) {
+  checkNotBatchProperty(name);
   if (mCamera) {
+    validateProperty(mCamera->mRenderConfig, *mCamera->mRenderer, name, true);
     mCamera->mRenderer->setCustomProperty(name, property);
   }
+  mProperties[name] = property;
+}
+void SapienRenderCameraComponent::setProperty(std::string const &name, float property) {
+  checkNotBatchProperty(name);
+  if (mCamera) {
+    validateProperty(mCamera->mRenderConfig, *mCamera->mRenderer, name, false);
+    mCamera->mRenderer->setCustomProperty(name, property);
+  }
+  mProperties[name] = property;
+}
+std::variant<int, float> SapienRenderCameraComponent::getProperty(std::string const &name) const {
+  auto it = mProperties.find(name);
+  if (it == mProperties.end()) {
+    throw std::runtime_error("camera has no property \"" + name + "\"");
+  }
+  return it->second;
 }
 void SapienRenderCameraComponent::setTexture(std::string const &name,
                                              std::shared_ptr<SapienRenderTexture> texture) {
   if (!mCamera) {
     throw std::runtime_error("camera texture is only available for cameras added to scene");
   }
+  mCamera->checkHasRenderer("set a camera texture");
   mCamera->mRenderer->setCustomTexture(name, texture->getTexture());
 }
 void SapienRenderCameraComponent::setTextureArray(
@@ -204,6 +243,7 @@ void SapienRenderCameraComponent::setTextureArray(
   if (!mCamera) {
     throw std::runtime_error("camera texture is only available for cameras added to scene");
   }
+  mCamera->checkHasRenderer("set a camera texture array");
 
   std::vector<std::shared_ptr<svulkan2::resource::SVTexture>> ts;
   for (auto &t : texture) {
@@ -212,16 +252,17 @@ void SapienRenderCameraComponent::setTextureArray(
   mCamera->mRenderer->setCustomTextureArray(name, ts);
 }
 
-SapienRenderCameraComponent::SapienRenderCameraComponent(uint32_t width, uint32_t height,
-                                                         std::string const &shaderDir)
-    : mWidth(width), mHeight(height) {
+SapienRenderCameraComponent::SapienRenderCameraComponent(
+    uint32_t width, uint32_t height, std::optional<RenderConfig> const &renderConfig)
+    : mWidth(width), mHeight(height),
+      mRenderConfig(renderConfig ? *renderConfig
+                                 : SapienRendererDefault::getDefaultRenderConfig("camera")) {
   mFx = mFy = height / 2.f / std::tan(std::numbers::pi_v<float> / 4.f);
   mCx = width / 2.f;
   mCy = height / 2.f;
   mNear = 0.01f;
   mFar = 10.f;
   mSkew = 0.f;
-  mShaderDir = shaderDir;
 }
 
 void SapienRenderCameraComponent::internalSetRenderScene(
@@ -239,7 +280,10 @@ void SapienRenderCameraComponent::internalSetRenderScene(
   bool resourcesChanged =
       !mGpuOwnershipSealed && mCamera->mRendererSceneVersion != scene->getVersion();
   if (mCamera->mRendererScene != scene || resourcesChanged) {
-    mCamera->mRenderer->setScene(scene);
+    // a batched ray tracing camera has no renderer: its group renderer reads this scene
+    if (mCamera->mRenderer) {
+      mCamera->mRenderer->setScene(scene);
+    }
     mCamera->mRendererScene = scene;
     mCamera->mRendererSceneVersion = scene->getVersion();
   }
@@ -291,15 +335,17 @@ void SapienRenderCameraComponent::onAddToScene(Scene &scene) {
         "the group before adding the camera again");
   }
   auto system = scene.getSapienRendererSystem();
-  mCamera = std::make_unique<SapienRenderCameraInternal>(getWidth(), getHeight(), mShaderDir,
+  mCamera = std::make_unique<SapienRenderCameraInternal>(getWidth(), getHeight(), mRenderConfig,
                                                          system, system->getScene());
   mCamera->mCamera->setPerspectiveParameters(mNear, mFar, mFx, mFy, mCx, mCy, mWidth, mHeight,
                                              mSkew);
 
   for (auto &[k, v] : mProperties) {
     if (std::holds_alternative<int>(v)) {
+      validateProperty(mRenderConfig, *mCamera->mRenderer, k, true);
       mCamera->mRenderer->setCustomProperty(k, std::get<int>(v));
     } else {
+      validateProperty(mRenderConfig, *mCamera->mRenderer, k, false);
       mCamera->mRenderer->setCustomProperty(k, std::get<float>(v));
     }
   }
@@ -405,6 +451,14 @@ void SapienRenderCameraComponent::takePicture() {
   if (!mCamera) {
     throw std::runtime_error("failed to take picture: the camera is not added to scene");
   }
+  if (isBatchRayTracing()) {
+    throw std::runtime_error(
+        "failed to take picture: this camera uses the batched ray tracing pack \"" +
+        mRenderConfig.getShaderPack() +
+        "\". Batched packs render only through a RenderCameraGroup: call "
+        "RenderCameraGroup.take_picture() and read RenderCameraGroup.get_picture_cuda(name) "
+        "instead.");
+  }
   refreshRenderScene();
   mCamera->takePicture();
   mUpdatedWithoutTakingPicture = false;
@@ -421,6 +475,13 @@ SapienRenderImageCpu SapienRenderCameraComponent::getImage(std::string const &na
   if (!mCamera) {
     throw std::runtime_error("failed to get image: the camera is not added to scene");
   }
+  if (isBatchRayTracing()) {
+    throw std::runtime_error(
+        "failed to get image: this camera uses the batched ray tracing pack \"" +
+        mRenderConfig.getShaderPack() +
+        "\", whose cameras have no per-camera renderer. Read pictures from the camera group "
+        "with RenderCameraGroup.get_picture_cuda(name).");
+  }
   if (mUpdatedWithoutTakingPicture) {
     logger::warn("getting picture without taking picture since last camera update");
   }
@@ -432,6 +493,13 @@ SapienRenderImageCuda SapienRenderCameraComponent::getImageCuda(std::string cons
 #ifdef SAPIEN_CUDA
   if (!mCamera) {
     throw std::runtime_error("failed to get image: the camera is not added to scene");
+  }
+  if (isBatchRayTracing()) {
+    throw std::runtime_error(
+        "failed to get image: this camera uses the batched ray tracing pack \"" +
+        mRenderConfig.getShaderPack() +
+        "\", whose cameras have no per-camera renderer. Read pictures from the camera group "
+        "with RenderCameraGroup.get_picture_cuda(name).");
   }
   if (mUpdatedWithoutTakingPicture) {
     logger::warn("getting picture without taking picture since last camera update");
@@ -634,7 +702,7 @@ void SapienRenderCameraComponent::internalReleaseGpuOwnership(void const *owner)
   if (mGpuOwnershipOwner != owner) {
     return;
   }
-  if (mCamera) {
+  if (mCamera && mCamera->mRenderer) {
     auto &renderer = mCamera->getRenderer();
     renderer.setExecutionMode(svulkan2::renderer::RenderExecutionMode::eCpuManaged);
     if (auto raster = dynamic_cast<svulkan2::renderer::Renderer *>(&renderer)) {
@@ -650,6 +718,18 @@ void SapienRenderCameraComponent::internalReleaseGpuOwnership(void const *owner)
 
 Pose SapienRenderCameraComponent::getLocalPose() const { return mLocalPose; }
 Pose SapienRenderCameraComponent::getGlobalPose() const { return getPose() * mLocalPose; }
+
+void SapienRenderCameraComponent::internalRequireNoRenderer() const {
+  if (!isBatchRayTracing()) {
+    throw std::runtime_error(
+        "failed to build the batched camera group: a member camera does not use a batched ray "
+        "tracing pack");
+  }
+  if (mCamera && mCamera->mRenderer) {
+    throw std::runtime_error("failed to build the batched camera group: a member camera already "
+                             "has a per-camera renderer");
+  }
+}
 
 void SapienRenderCameraComponent::internalUpdate() {
   Pose globalPose = getGlobalPose();
@@ -709,6 +789,11 @@ void SapienRenderCameraComponent::gpuInit() {
   if (!mCamera) {
     throw std::runtime_error("failed to init: the camera is not added to scene.");
   }
+  if (isBatchRayTracing()) {
+    // the camera group built one group renderer for every member camera
+    mGpuInitialized = true;
+    return;
+  }
 
   // Prepare pipelines, render targets, buffers, and recorded commands, then take
   // the one-time CPU snapshot of camera/scene/light/object frame state. No warm-up
@@ -730,6 +815,11 @@ CudaArrayHandle SapienRenderCameraComponent::getCudaBuffer() {
         "failed to access camera cuda buffer: the camera is not initialized on the GPU.");
   }
 
+  if (isBatchRayTracing()) {
+    throw std::runtime_error(
+        "a batched ray tracing camera has no per-camera CUDA camera buffer; the camera group "
+        "owns the camera table");
+  }
   svulkan2::core::Buffer *buffer{};
   if (auto r = dynamic_cast<svulkan2::renderer::Renderer *>(&mCamera->getRenderer())) {
     buffer = &r->getCameraBuffer();

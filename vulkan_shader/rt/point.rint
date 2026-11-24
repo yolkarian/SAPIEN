@@ -50,7 +50,7 @@ void main()
   vec3 origin    = gl_ObjectRayOriginEXT;
   vec3 direction = gl_ObjectRayDirectionEXT;
 
-  int id = pointInstances[nonuniformEXT(gl_InstanceID)];
+  int id = pointInstances[nonuniformEXT(gl_InstanceCustomIndexEXT)];
   Point p = points[nonuniformEXT(id)].p[gl_PrimitiveID];
   float tHit    = -1;
   tHit = hitSphere(p.position, p.scale, origin, direction);

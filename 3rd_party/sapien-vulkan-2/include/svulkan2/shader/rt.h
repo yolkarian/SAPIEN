@@ -10,9 +10,18 @@ class Context;
 
 namespace shader {
 
+/** Mesh vertex layout implied by the `Vertices` storage buffer array of a scene descriptor set
+ *  (members x y z, then optionally nx.. u v, tx.., bx.., r g b a, in that order without padding);
+ *  empty when the set declares no `Vertices`. Throws when the struct breaks that order. */
+std::shared_ptr<InputDataLayout> computeVertexLayout(DescriptorSetDescription const &set);
+/** point layout implied by the `Points` storage buffer array of a scene descriptor set; empty
+ *  when the set declares no `Points` */
+std::shared_ptr<InputDataLayout> computePointLayout(DescriptorSetDescription const &set);
+
 class RayTracingStageParser {
 public:
-  std::future<void> loadFileAsync(std::string const &filepath, vk::ShaderStageFlagBits stage);
+  std::future<void> loadFileAsync(std::string const &filepath, vk::ShaderStageFlagBits stage,
+                                  ShaderDefines const &defines = {});
   void reflectSPV();
   inline std::unordered_map<uint32_t, DescriptorSetDescription> const &getResources() const {
     return mResources;
@@ -47,7 +56,7 @@ public:
     std::unique_ptr<RayTracingStageParser> miss;
   };
 
-  RayTracingShaderPack(std::string const &shaderDir);
+  RayTracingShaderPack(std::string const &shaderDir, ShaderDefines const &defines = {});
 
   std::shared_ptr<InputDataLayout> computeCompatibleInputVertexLayout() const;
   std::shared_ptr<InputDataLayout> computePrimitiveLayout() const;
@@ -106,6 +115,7 @@ private:
 
 struct RayTracingShaderPackInstanceDesc {
   std::string shaderDir{};
+  ShaderDefines defines{};
   uint32_t maxMeshes{};
   uint32_t maxMaterials{};
   uint32_t maxTextures{};

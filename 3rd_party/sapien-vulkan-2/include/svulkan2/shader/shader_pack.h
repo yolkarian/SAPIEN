@@ -1,5 +1,6 @@
 #pragma once
 
+#include "glsl_compiler.h"
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -31,7 +32,7 @@ struct ShaderPackDescription {
 
 class ShaderPack {
 public:
-  ShaderPack(std::string const &dirname);
+  ShaderPack(std::string const &dirname, ShaderDefines const &defines = {});
 
   std::shared_ptr<ShaderConfig> getShaderInputLayouts() const { return mShaderInputLayouts; }
 

@@ -4,6 +4,7 @@
 #include "svulkan2/common/vk.h"
 #include <SPIRV/GlslangToSpv.h>
 #include <glslang/Public/ShaderLang.h>
+#include <algorithm>
 #include <mutex>
 #include <regex>
 #include <unordered_map>
@@ -13,15 +14,50 @@ namespace svulkan2 {
 static std::mutex mutex;
 static std::unordered_map<std::string, std::vector<std::uint32_t>> shaderCodeCache;
 
-std::vector<std::uint32_t> const &
-GLSLCompiler::compileGlslFileCached(vk::ShaderStageFlagBits stage, fs::path const &filepath) {
-  std::string path = fs::canonical(filepath).string();
-  std::lock_guard<std::mutex> guard(mutex);
-  if (shaderCodeCache.contains(path)) {
-    return shaderCodeCache[path];
+/** Inserts `#define` lines after the `#version` line, which must stay first, and keeps the
+ *  per-line source map aligned with the inserted lines. */
+static void insertDefines(std::string &code, std::vector<std::tuple<std::string, int>> &lineInfo,
+                          ShaderDefines const &defines) {
+  if (defines.empty()) {
+    return;
   }
+  std::string block;
+  for (auto const &[name, value] : defines) {
+    block += "#define " + name + (value.empty() ? "" : " " + value) + "\n";
+  }
+
+  size_t offset = 0;
+  size_t line = 0;
+  while (offset < code.size()) {
+    size_t end = code.find('\n', offset);
+    end = end == std::string::npos ? code.size() : end + 1;
+    size_t first = code.find_first_not_of(" \t", offset);
+    if (first != std::string::npos && code.compare(first, 8, "#version") == 0) {
+      code.insert(end, block);
+      lineInfo.insert(lineInfo.begin() + std::min(line + 1, lineInfo.size()), defines.size(),
+                      std::tuple<std::string, int>{"<defines>", 0});
+      return;
+    }
+    offset = end;
+    ++line;
+  }
+  throw std::runtime_error("failed to compile shader variant: the shader has no #version line");
+}
+
+std::vector<std::uint32_t> const &
+GLSLCompiler::compileGlslFileCached(vk::ShaderStageFlagBits stage, fs::path const &filepath,
+                                    ShaderDefines const &defines) {
   auto [code, debugInfo] = GLSLCompiler::loadGlslCodeWithDebugInfo(filepath);
-  return shaderCodeCache[path] = GLSLCompiler::compileToSpirv(stage, code, debugInfo);
+  insertDefines(code, debugInfo, defines);
+
+  // the whole expanded source is the key: exact, and stale entries cannot be returned
+  std::string key = std::to_string(static_cast<uint32_t>(stage)) + "\n" + code;
+  std::lock_guard<std::mutex> guard(mutex);
+  auto it = shaderCodeCache.find(key);
+  if (it != shaderCodeCache.end()) {
+    return it->second;
+  }
+  return shaderCodeCache[key] = GLSLCompiler::compileToSpirv(stage, code, debugInfo);
 }
 
 std::tuple<std::string, std::vector<std::tuple<std::string, int>>>
@@ -288,11 +324,11 @@ GLSLCompiler::compileToSpirv(vk::ShaderStageFlagBits shaderStage, std::string co
       static_cast<EShMessages>(EShMsgDefault | EShMsgVulkanRules | EShMsgSpvRules);
   bool result = shader.parse(&resource, 110, false, messages);
 
+  // errors mapped back to the file and line they came from, also carried by the exception
+  std::string errors;
   {
     std::string log = shader.getInfoLog();
     if (log.length()) {
-      // log::error(log);
-
       std::stringstream ss(log);
       std::string line;
       while (std::getline(ss, line, '\n')) {
@@ -304,7 +340,12 @@ GLSLCompiler::compileToSpirv(vk::ShaderStageFlagBits shaderStage, std::string co
           std::string reason = sm[4];
           if (debugInfo.size() > l) {
             auto [file, lineNumber] = debugInfo[l];
-            logger::error("ERROR: {}:{}: '{}' :  {}", file, lineNumber, var, reason);
+            std::string message = file + ":" + std::to_string(lineNumber) + ": '" + var +
+                                  "' : " + reason;
+            logger::error("ERROR: {}", message);
+            errors += "\n" + message;
+          } else {
+            errors += "\n" + line;
           }
         } else if (line.length()) {
           logger::error(line);
@@ -314,7 +355,7 @@ GLSLCompiler::compileToSpirv(vk::ShaderStageFlagBits shaderStage, std::string co
   }
 
   if (!result) {
-    throw std::runtime_error("copmileToSpirv: failed to compile shader");
+    throw std::runtime_error("failed to compile shader:" + errors);
   }
 
   glslang::TProgram program;

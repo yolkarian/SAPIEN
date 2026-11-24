@@ -1,4 +1,5 @@
 #include "sapien/sapien_renderer/vr.h"
+#include "sapien/sapien_renderer/render_config.h"
 #include "sapien/sapien_renderer/sapien_renderer_default.h"
 #include "sapien/sapien_renderer/sapien_renderer_system.h"
 #include <svulkan2/renderer/rt_renderer.h>
@@ -21,12 +22,9 @@ SapienVRDisplay::SapienVRDisplay() {
   // VR presents through the default device only.
   mDevice = mEngine->getDefaultDevice();
   mContext = mEngine->getContext(mDevice);
-  auto &renderConfig = SapienRendererDefault::Get();
-  auto config = std::make_shared<svulkan2::RendererConfig>();
-  config->shaderDir = renderConfig.viewerShaderDirectory;
-
-  mRenderers = {svulkan2::renderer::RendererBase::Create(mContext, config),
-                svulkan2::renderer::RendererBase::Create(mContext, config)};
+  // VR renders with the viewer default config
+  auto config = SapienRendererDefault::getDefaultRenderConfig("viewer");
+  mRenderers = {createRenderer(mContext, config), createRenderer(mContext, config)};
 
   mVR = std::make_shared<svulkan2::renderer::VRDisplay>(mContext);
 

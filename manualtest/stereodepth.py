@@ -107,9 +107,10 @@ def build_scene(render_system, physx_system):
 
 
 def main(model: str = "D435"):
-    sapien.render.set_camera_shader_dir("rt")
-    sapien.render.set_ray_tracing_denoiser("optix")
-    sapien.render.set_ray_tracing_samples_per_pixel(4)
+    render_config = sapien.render.RenderConfig("rt")
+    render_config.denoiser = "optix"
+    render_config["spp"] = 4
+    sapien.render.set_default_render_config("camera", render_config)
 
     render_system = RenderSystem()
     physx_system = PhysxCpuSystem()
