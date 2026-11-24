@@ -192,6 +192,10 @@ void SapienRenderBodyComponent::internalReleaseGpuPoseSource() {
     throw std::runtime_error("GPU pose source reference count is already zero");
   }
   --mGpuPoseSourceRefCount;
+  // the node kept its old transform while CUDA owned the pose
+  if (auto scene = getScene()) {
+    scene->internalMarkPoseChanged(); // the next step must update this component again
+  }
 }
 
 void SapienRenderBodyComponent::internalSealStaticPose() {
@@ -205,6 +209,9 @@ void SapienRenderBodyComponent::internalReleaseStaticPoseSeal() {
     throw std::runtime_error("static pose seal count is already zero");
   }
   --mStaticPoseSealCount;
+  if (auto scene = getScene()) {
+    scene->internalMarkPoseChanged(); // the next step must update this component again
+  }
 }
 
 SapienRenderBodyComponent::~SapienRenderBodyComponent() {

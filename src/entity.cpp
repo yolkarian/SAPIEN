@@ -19,6 +19,9 @@ std::shared_ptr<Scene> Entity::getScene() { return mScene ? mScene->shared_from_
 
 void Entity::setPose(Pose const &pose) {
   mPose = pose;
+  if (mScene) {
+    mScene->internalMarkPoseChanged();
+  }
 
   // TODO: defer the sync?
   for (auto &c : mComponents) {
@@ -106,7 +109,12 @@ void Entity::onRemoveFromScene(Scene &scene) {
 }
 
 Pose Entity::getPose() const { return mPose; }
-void Entity::internalSyncPose(Pose const &pose) { mPose = pose; }
+void Entity::internalSyncPose(Pose const &pose) {
+  mPose = pose;
+  if (mScene) {
+    mScene->internalMarkPoseChanged();
+  }
+}
 
 /** same as Scene::addEntity */
 std::shared_ptr<Entity> Entity::addToScene(Scene &scene) {

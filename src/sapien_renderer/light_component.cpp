@@ -188,6 +188,9 @@ void SapienRenderLightComponent::setLocalPose(Pose const &pose) {
         "RenderSystemGroup.gpu_init() to move it");
   }
   mLocalPose = pose;
+  if (auto scene = getScene()) {
+    scene->internalMarkPoseChanged(); // the next step must update this component again
+  }
 }
 Pose SapienRenderLightComponent::getLocalPose() const { return mLocalPose; }
 Pose SapienRenderLightComponent::getGlobalPose() const { return getPose() * mLocalPose; }
@@ -292,6 +295,9 @@ void SapienRenderLightComponent::internalReleaseGroupStateSeal() {
     throw std::runtime_error("light group state seal count is already zero");
   }
   --mGroupSealCount;
+  if (auto scene = getScene()) {
+    scene->internalMarkPoseChanged(); // the next step must update this component again
+  }
 }
 
 void SapienRenderLightComponent::markLightStateDirty() {

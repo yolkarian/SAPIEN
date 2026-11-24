@@ -1,4 +1,5 @@
 #include "sapien/sapien_renderer/sapien_renderer_system.h"
+#include "sapien/scene.h"
 #include "../logger.h"
 #include "sapien/sapien_renderer/camera_component.h"
 #include "sapien/sapien_renderer/cubemap.h"
@@ -295,65 +296,88 @@ std::shared_ptr<SapienRenderCubemap> SapienRendererSystem::getCubemap() const {
 }
 
 void SapienRendererSystem::registerComponent(std::shared_ptr<SapienRenderBodyComponent> c) {
+  mComponentsChanged = true;
   checkNotClosed();
   mRenderBodyComponents.insert(c);
 }
 
 void SapienRendererSystem::registerComponent(std::shared_ptr<SapienRenderCameraComponent> c) {
+  mComponentsChanged = true;
   checkNotClosed();
   mRenderCameraComponents.insert(c);
 }
 
 void SapienRendererSystem::registerComponent(std::shared_ptr<SapienRenderLightComponent> c) {
+  mComponentsChanged = true;
   checkNotClosed();
   mRenderLightComponents.insert(c);
 }
 
 void SapienRendererSystem::registerComponent(std::shared_ptr<PointCloudComponent> c) {
+  mComponentsChanged = true;
   checkNotClosed();
   mPointCloudComponents.insert(c);
 }
 
 void SapienRendererSystem::registerComponent(std::shared_ptr<CudaDeformableMeshComponent> c) {
+  mComponentsChanged = true;
   checkNotClosed();
   mCudaDeformableMeshComponents.insert(c);
 }
 
 void SapienRendererSystem::unregisterComponent(std::shared_ptr<SapienRenderBodyComponent> c) {
+  mComponentsChanged = true;
   mRenderBodyComponents.erase(c);
 }
 
 void SapienRendererSystem::unregisterComponent(std::shared_ptr<SapienRenderCameraComponent> c) {
+  mComponentsChanged = true;
   mRenderCameraComponents.erase(c);
 }
 
 void SapienRendererSystem::unregisterComponent(std::shared_ptr<SapienRenderLightComponent> c) {
+  mComponentsChanged = true;
   mRenderLightComponents.erase(c);
 }
 
 void SapienRendererSystem::unregisterComponent(std::shared_ptr<PointCloudComponent> c) {
+  mComponentsChanged = true;
   mPointCloudComponents.erase(c);
 }
 
 void SapienRendererSystem::unregisterComponent(std::shared_ptr<CudaDeformableMeshComponent> c) {
+  mComponentsChanged = true;
   mCudaDeformableMeshComponents.erase(c);
 }
 
 void SapienRendererSystem::step() {
   checkNotClosed();
-  for (auto c : mRenderBodyComponents) {
+  // Bodies, lights and point clouds only follow their entity poses (lights also their local
+  // pose, whose setter marks the scene), so while no pose of the scenes changed since the last
+  // step, every one of them would find nothing to do. With thousands of scenes the loops cost
+  // more than the frame: one cache miss per component.
+  uint64_t poseVersion = 0;
+  for (auto scene : mScenes) {
+    poseVersion += scene->getPoseVersion();
+  }
+  if (mComponentsChanged || poseVersion != mSteppedPoseVersion) {
+    for (auto const &c : mRenderBodyComponents) {
+      c->internalUpdate();
+    }
+    for (auto const &c : mRenderLightComponents) {
+      c->internalUpdate();
+    }
+    for (auto const &c : mPointCloudComponents) {
+      c->internalUpdate();
+    }
+    // recorded only after every update passed: a static-pose violation raises again next step
+    mSteppedPoseVersion = poseVersion;
+    mComponentsChanged = false;
+  }
+  for (auto const &c : mRenderCameraComponents) {
     c->internalUpdate();
   }
-  for (auto c : mRenderCameraComponents) {
-    c->internalUpdate();
-  }
-  for (auto c : mRenderLightComponents) {
-    c->internalUpdate();
-  }
-  for (auto c : mPointCloudComponents) {
-    c->internalUpdate();
-  }
-  for (auto c : mCudaDeformableMeshComponents) {
+  for (auto const &c : mCudaDeformableMeshComponents) {
     c->internalUpdate();
   }
   mScene->updateModelMatrices();

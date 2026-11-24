@@ -365,10 +365,42 @@ class TestIdleSceneUpdates(unittest.TestCase):
             self.assertLess(center(), 0.5 * lit)
             light.pose = sapien.Pose()
 
+            # the light's own local pose, not its entity's
+            light.local_pose = sapien.Pose(q=sapien.math.shortest_rotation([1, 0, 0], [-1, 0, 0]))
+            self.assertLess(center(), 0.5 * lit)
+            light.local_pose = sapien.Pose()
+            self.assertAlmostEqual(center(), lit, places=4)
+
             actor.set_pose(sapien.Pose([0.0, 5.0, 0.0]))
             self.assertLess(center(), 1e-3)
             box([0.0, 0.0, 0.0])  # added after idle frames
             self.assertAlmostEqual(center(), lit, places=4)
+
+    def test_physics_moves_after_idle_frames_are_rendered(self) -> None:
+        """Poses written by a physics step (not Entity.set_pose) must reach the render too."""
+        with sapien.Scene() as scene:
+            scene.set_timestep(1 / 60)
+            scene.set_ambient_light([0.0, 0.0, 0.0])
+            scene.add_directional_light([1.0, 0.0, 0.0], [1.0, 1.0, 1.0])
+            scene.add_ground(-0.5)
+            camera = scene.add_camera("camera", SIZE, SIZE, 1.0, 0.1, 20.0)
+            camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+
+            builder = scene.create_actor_builder()
+            builder.add_box_collision(half_size=[0.3, 0.3, 0.3])
+            builder.add_box_visual(half_size=[0.3, 0.3, 0.3])
+            builder.initial_pose = sapien.Pose([0.0, 0.0, 3.0])  # above the view
+            builder.build()
+
+            def center() -> float:
+                scene.update_render()
+                camera.take_picture()
+                return float(camera.get_picture("Lighting")[SIZE // 2, SIZE // 2, :3].mean())
+
+            self.assertLess(max(center() for _ in range(3)), 1e-3)
+            for _ in range(120):  # falls onto the ground, into the view
+                scene.step()
+            self.assertGreater(center(), 0.1)
 
 
 if __name__ == "__main__":

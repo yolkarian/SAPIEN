@@ -45,6 +45,12 @@ public:
 
   uint64_t getId() const { return mId; };
 
+  /** Changes whenever the pose of one of this scene's entities may have changed (Entity::setPose,
+   *  physics pose syncs) and whenever a component changes how it follows that pose. Systems
+   *  compare it between steps to skip work while nothing moved. */
+  uint64_t getPoseVersion() const { return mPoseVersion; }
+  void internalMarkPoseChanged() { ++mPoseVersion; }
+
   void clear();
 
   /** Terminal close: clears all entities, detaches every system, and marks the scene
@@ -67,6 +73,7 @@ private:
   uint64_t mNextEntityId{1};
 
   uint64_t mId{};
+  uint64_t mPoseVersion{0};
   std::unordered_map<std::string, std::shared_ptr<System>> mSystems;
   std::vector<std::shared_ptr<Entity>> mEntities;
   bool mClosed{false};

@@ -163,6 +163,9 @@ private:
 
   uint64_t mNextRenderId{1};
   uint64_t mLightStateVersion{1};
+  // pose version of the scenes at the last step that updated bodies, lights and point clouds
+  uint64_t mSteppedPoseVersion{0};
+  bool mComponentsChanged{true};
 
   std::shared_ptr<SapienRenderEngine> mEngine;
   std::shared_ptr<Device> mDevice;

@@ -99,6 +99,9 @@ void PointCloudComponent::internalReleaseStaticPoseSeal() {
     throw std::runtime_error("point-cloud static pose seal count is already zero");
   }
   --mStaticPoseSealCount;
+  if (auto scene = getScene()) {
+    scene->internalMarkPoseChanged(); // the next step must update this component again
+  }
 }
 
 CudaArrayHandle PointCloudComponent::getCudaArray() const {
