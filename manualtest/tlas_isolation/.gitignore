@@ -1,0 +1,8 @@
+# Build outputs
+.zig-cache/
+zig-out/
+zig-pkg/
+
+# SPIR-V staged next to the sources by `zig build` (see build.zig); regenerated
+# from shaders/trace.comp every build.
+src/trace.spv

@@ -1,0 +1,174 @@
+// Batched ray-query primary + shadow visibility for the TLAS isolation benchmark.
+//
+// One workgroup per (environment, 8x8 pixel tile). The shader is byte-identical
+// for isolation mode A (single TLAS + per-env spatial offset) and mode B (one
+// TLAS per env, indexed from a descriptor array); the only differences are which
+// TLAS is traced and whether the env cell offset is applied.
+//
+// accelerationStructureEXT cannot be copied into a local variable (GLSL only
+// allows uniform variables or function parameters), so the tracing work lives in
+// functions that take the handle by parameter.
+#version 460
+#extension GL_EXT_ray_query : require
+#extension GL_EXT_nonuniform_qualifier : require
+
+layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
+
+// One TLAS in mode A, N TLASes in mode B. The descriptor set is allocated with a
+// variable descriptor count.
+layout(set = 0, binding = 0) uniform accelerationStructureEXT tlas[];
+// Packed RGBA8 output, one uint32 per pixel, env-major.
+layout(set = 0, binding = 1, std430) writeonly buffer OutBuf { uint pixels[]; };
+// Interleaved vertices, vec4 each (xyz used, w = 1).
+layout(set = 0, binding = 2, std430) readonly buffer VertexBuf { vec4 verts[]; };
+// 32-bit triangle-list indices, relative to the mesh's vertex base.
+layout(set = 0, binding = 3, std430) readonly buffer IndexBuf { uint indices[]; };
+// Per mesh id: x = first index, y = first vertex.
+layout(set = 0, binding = 4, std430) readonly buffer MeshBuf { uvec2 meshes[]; };
+
+layout(push_constant) uniform PC {
+    vec4 grid;      // x = grid side, y = grid side, z = resolution, w = 1 if mode A
+    vec4 cell_half; // xyz half extent of one environment cell
+    vec4 cam;       // x = cell spacing, y = orbit radius, z = camera height, w = target height
+    vec4 light;     // xyz unit vector from the surface toward the light
+} pc;
+
+const uint MARKER_MESH = 15u;
+const uint GROUND_MESH = 12u;
+// Background, identical in both modes: linear (0.04, 0.05, 0.07) after gamma.
+const uint BG_PACKED = 0xFF000000u | (7u << 16) | (5u << 8) | 4u;
+
+// Distance along rd at which the ray leaves the axis-aligned cell of half extent
+// h, starting from ro inside it. This keeps mode A rays inside their own cell;
+// mode B applies the same clipping so both modes trace identical ray ranges.
+float exitCell(vec3 ro, vec3 rd, vec3 h) {
+    vec3 d = rd;
+    if (abs(d.x) < 1e-20) d.x = 1e-20;
+    if (abs(d.y) < 1e-20) d.y = 1e-20;
+    if (abs(d.z) < 1e-20) d.z = 1e-20;
+    vec3 tmax = max((-h - ro) / d, (h - ro) / d);
+    return max(min(min(tmax.x, tmax.y), tmax.z), 0.0);
+}
+
+// Centred square grid: environment 0 is at the negative-most corner.
+vec3 envOffset(uint env) {
+    uint side = uint(pc.grid.x);
+    uint ix = env % side;
+    uint iz = env / side;
+    vec2 cell = (vec2(float(ix), float(iz)) - (vec2(pc.grid.x, pc.grid.y) - 1.0) * 0.5) * pc.cam.x;
+    return vec3(cell.x, 0.0, cell.y);
+}
+
+vec3 palette(int meshId) {
+    const vec3 table[8] = vec3[8](
+        vec3(0.80, 0.25, 0.20),
+        vec3(0.20, 0.65, 0.30),
+        vec3(0.25, 0.40, 0.85),
+        vec3(0.85, 0.70, 0.20),
+        vec3(0.55, 0.30, 0.75),
+        vec3(0.20, 0.75, 0.75),
+        vec3(0.85, 0.45, 0.10),
+        vec3(0.60, 0.60, 0.60));
+    return table[meshId & 7];
+}
+
+uint packColor(vec3 c) {
+    vec3 outc = sqrt(clamp(c, 0.0, 1.0)); // cheap gamma
+    return 0xFF000000u |
+        (uint(outc.z * 255.0 + 0.5) << 16) |
+        (uint(outc.y * 255.0 + 0.5) << 8) |
+        uint(outc.x * 255.0 + 0.5);
+}
+
+// Primary ray query; on a hit, triangle normal plus one shadow ray toward the
+// fixed directional light. Simple N.L shading with an instance-derived albedo.
+uint shade(accelerationStructureEXT topLevel, vec3 ro, vec3 off, vec3 dir, float tMax) {
+    rayQueryEXT rq;
+    rayQueryInitializeEXT(rq, topLevel, gl_RayFlagsOpaqueEXT, 0xFF, ro, 0.0, dir, tMax);
+    while (rayQueryProceedEXT(rq)) {
+    }
+
+    if (rayQueryGetIntersectionTypeEXT(rq, true) != gl_RayQueryCommittedIntersectionTriangleEXT) {
+        return BG_PACKED;
+    }
+
+    uint meshId = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, true));
+    uint prim = rayQueryGetIntersectionPrimitiveIndexEXT(rq, true);
+    float t = rayQueryGetIntersectionTEXT(rq, true);
+
+    if (meshId == MARKER_MESH) {
+        // Isolation marker. The alpha byte is zero, which packColor never emits
+        // (it always sets 0xFF), so exactly matching this value cannot be a
+        // shading coincidence.
+        return 0x00FF00FFu;
+    }
+
+    uvec2 mi = meshes[meshId];
+    uint i0 = mi.x + 3u * prim;
+    vec3 v0 = verts[mi.y + indices[i0 + 0u]].xyz;
+    vec3 v1 = verts[mi.y + indices[i0 + 1u]].xyz;
+    vec3 v2 = verts[mi.y + indices[i0 + 2u]].xyz;
+    vec3 n = normalize(cross(v1 - v0, v2 - v0));
+    if (dot(n, dir) > 0.0) {
+        n = -n;
+    }
+
+    vec3 albedo = meshId == GROUND_MESH ? vec3(0.35, 0.36, 0.38) : palette(int(meshId));
+    vec3 pWorld = ro + dir * t;
+    vec3 pLocal = pWorld - off;
+    vec3 L = normalize(pc.light.xyz);
+    float ndl = max(dot(n, L), 0.0);
+
+    float shadow = 1.0;
+    if (ndl > 0.0) {
+        vec3 pOffset = n * 1e-3;
+        float shadowMax = min(exitCell(pLocal + pOffset, L, pc.cell_half.xyz), 1.0e4);
+        rayQueryEXT sq;
+        rayQueryInitializeEXT(sq, topLevel, gl_RayFlagsOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT, 0xFF,
+                              pWorld + pOffset, 0.0, L, shadowMax);
+        while (rayQueryProceedEXT(sq)) {
+        }
+        if (rayQueryGetIntersectionTypeEXT(sq, true) != gl_RayQueryCommittedIntersectionNoneEXT) {
+            shadow = 0.0;
+        }
+    }
+
+    return packColor(albedo * (0.12 + 0.88 * ndl * shadow));
+}
+
+void main() {
+    uint res = uint(pc.grid.z);
+    uvec2 pix = gl_GlobalInvocationID.xy;
+    if (pix.x >= res || pix.y >= res) {
+        return;
+    }
+    uint env = gl_WorkGroupID.z;
+
+    // Deterministic per-environment camera. The parameters come from the host so
+    // the CPU and GPU cannot disagree about the geometry they are reasoning about.
+    float az = 0.35 + 0.013 * float(env % 17u);
+    vec3 eye = vec3(pc.cam.y * sin(az), pc.cam.z, pc.cam.y * cos(az));
+    vec3 fwd = normalize(vec3(0.0, pc.cam.w, 0.0) - eye);
+    vec3 right = normalize(cross(fwd, vec3(0.0, 1.0, 0.0)));
+    vec3 up = cross(right, fwd);
+
+    float tanHalf = 0.57735026; // tan(30 degrees)
+    vec2 ndc = vec2(
+        2.0 * (float(pix.x) + 0.5) / float(res) - 1.0,
+        1.0 - 2.0 * (float(pix.y) + 0.5) / float(res));
+    vec3 dir = normalize(fwd + ndc.x * tanHalf * right + ndc.y * tanHalf * up);
+
+    bool modeA = pc.grid.w > 0.5;
+    vec3 off = modeA ? envOffset(env) : vec3(0.0);
+    vec3 ro = eye + off;
+    float tMax = exitCell(eye, dir, pc.cell_half.xyz);
+
+    uint packed;
+    if (modeA) {
+        packed = shade(tlas[0], ro, off, dir, tMax);
+    } else {
+        packed = shade(tlas[nonuniformEXT(env)], ro, off, dir, tMax);
+    }
+
+    pixels[env * res * res + pix.y * res + pix.x] = packed;
+}
