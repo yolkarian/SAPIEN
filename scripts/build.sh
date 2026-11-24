@@ -52,6 +52,17 @@ fi
 ( [ $DEBUG ] && echo "Debug Mode" ) || ( [ $PROFILE ] && echo "Profile Mode" )  || echo "Release Mode"
 [ -n "${JOBS}" ] && echo "CMAKE_BUILD_PARALLEL_LEVEL=${CMAKE_BUILD_PARALLEL_LEVEL}"
 
+# Unit tests of the Zig modules. The caches stay in the build directory: the container runs as
+# the caller's user, whose home directory may not exist there.
+function test_zig() {
+  echo "Testing Zig modules"
+  local cache=docker_sapien_build/zig-test-cache
+  local module
+  for module in $(find src -name '*.zig' | sort); do
+    zig test "${module}" --cache-dir "${cache}" --global-cache-dir "${cache}/global"
+  done
+}
+
 function build_sapien() {
   echo "Building SAPIEN"
   BIN=/opt/python/cp310-cp310/bin/python
@@ -176,6 +187,7 @@ print(f"{wheel.name}: no unversioned glibc floor beyond the inferred tag")
 PYCHECK
 }
 
+test_zig
 build_sapien
 package_sdk
 if [ -z "${VERSION}" ]

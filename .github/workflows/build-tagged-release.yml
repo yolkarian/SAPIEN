@@ -29,7 +29,7 @@ jobs:
   build-linux-all:
     runs-on: ubuntu-22.04
     container:
-      image: yolkarian/sapien-build-env:0.3.1
+      image: yolkarian/sapien-build-env:0.3.2
     env:
       BUILD_REF: ${{ inputs.git_ref }}
       RELEASE_TAG: ${{ inputs.release_tag }}
@@ -98,6 +98,14 @@ jobs:
         run: |
           C:/msys64/usr/bin/wget.exe https://developer.download.nvidia.com/compute/cuda/12.8.0/network_installers/cuda_12.8.0_windows_network.exe
           ./cuda_12.8.0_windows_network.exe -s cudart_12.8 nvcc_12.8 visual_studio_integration_12.8 nvtx_12.8 curand_dev_12.8
+      - name: setup Zig
+        shell: bash
+        run: |
+          # pinned like the Linux build image (docker/Dockerfile)
+          C:/msys64/usr/bin/wget.exe -q https://ziglang.org/download/0.17.1/zig-x86_64-windows-0.17.1.zip
+          echo "b03f477a1943673e02aca0f570e8030dffd536ce1f45cbc4d3326ec31159562e  zig-x86_64-windows-0.17.1.zip" | sha256sum -c -
+          unzip -q zig-x86_64-windows-0.17.1.zip -d "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-x86_64-windows-0.17.1" >> "$GITHUB_PATH"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"

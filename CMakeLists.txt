@@ -65,6 +65,7 @@ include(physx5)
 include(zlib)
 include(eigen)
 include(vulkan)
+include(zig)
 
 if (${SAPIEN_DEBUG_VIEWER})
     add_definitions(_DEBUG_VIEWER)
@@ -99,6 +100,7 @@ endif ()
 
 file(GLOB_RECURSE SAPIEN_SRC "src/*.h" "src/*.cpp" "src/*.cc")
 add_library(sapien SHARED ${SAPIEN_SRC} ${SAPIEN_CUDA_SRC})
+sapien_add_zig_module(sapien src/sapien_renderer/pack_manifest.zig)
 if (${SAPIEN_CUDA})
     # SAPIEN's own CUDA kernels. simsense has its own architecture list and is
     # currently used by the realistic depth sensor pipeline.

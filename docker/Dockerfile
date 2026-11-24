@@ -8,6 +8,15 @@ ENV CUDA_PATH=/workspace/cuda PATH="/workspace/cuda/bin:$PATH" LD_LIBRARY_PATH="
 
 RUN pipx install cmake==3.26.3 --force
 
+# Zig compiles SAPIEN's Zig modules. The version is pinned: Zig is pre-1.0 and every release
+# breaks its standard library, so an upgrade is a separate change of this line and the sources.
+ARG ZIG_VERSION=0.17.1
+ARG ZIG_SHA256=3581863e3cbcfd0fce0efc682ce7e9e93da96668a977791d356a26d2a7e9b17a
+RUN cd /opt && wget -q https://ziglang.org/download/${ZIG_VERSION}/zig-x86_64-linux-${ZIG_VERSION}.tar.xz && \
+    echo "${ZIG_SHA256}  zig-x86_64-linux-${ZIG_VERSION}.tar.xz" | sha256sum -c - && \
+    tar -xf zig-x86_64-linux-${ZIG_VERSION}.tar.xz && rm -f zig-x86_64-linux-${ZIG_VERSION}.tar.xz && \
+    ln -s /opt/zig-x86_64-linux-${ZIG_VERSION}/zig /usr/local/bin/zig
+
 RUN for py in cp39-cp39 cp310-cp310 cp311-cp311 cp312-cp312 cp313-cp313; do \
         /opt/python/${py}/bin/python -m pip install setuptools wheel; \
     done

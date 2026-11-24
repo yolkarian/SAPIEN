@@ -21,7 +21,7 @@ docker run -v `pwd`:/workspace/SAPIEN "${DOCKER_TTY_ARGS[@]}" --rm \
        -e SAPIEN_PHYSX5_DIR \
        -e SAPIEN_PHYSX5_GPU_DIR \
        -e SAPIEN_PHYSX5_VERSION \
-       yolkarian/sapien-build-env:0.3.1 bash -lc \
+       yolkarian/sapien-build-env:0.3.2 bash -lc \
        'cd /workspace/SAPIEN && ./scripts/build.sh "$@" --profile' bash "$@" || exit $?
 
 ls -l wheelhouse/*.whl dist/sapien-sdk-*.tar.gz

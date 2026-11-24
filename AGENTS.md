@@ -54,6 +54,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
 - Follow `.clang-format` for C++ changes. The configured column limit is 99.
 - Keep Python style consistent with surrounding files. This repo does not expose a stricter top-level formatter config in the checked-in docs.
 - Python should be type-annotated and well-documented with comments.
+- Zig modules (`src/**/*.zig`): format with `zig fmt`. Each module's only contract is the hand-written C header next to it (e.g. `pack_manifest.h`); errors cross it as return codes plus a message buffer, never as Zig panics or C++ exceptions, and memory is freed by the side that allocated it.
 
 ## Build And Install
 - Local and agent validation builds must use at most 4 compile jobs.
@@ -74,6 +75,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
     - `./scripts/build.sh 311 --jobs 4`
 - Local install helpers exist at `scripts/install.sh` and `scripts/install_debug.sh`, but CI does not use them. Inspect them before relying on them for validation automation.
 - `setup.py` drives the wheel build and invokes CMake for the native library.
+- Zig `0.17.1` is required and pinned: `cmake/zig.cmake` compiles each Zig module into an object linked into `libsapien`, so SDK consumers never need Zig. The build image ships it and the Windows CI installs it; native builds need it in `PATH`. Upgrading Zig is a separate change of `docker/Dockerfile`, the Windows CI step, `cmake/zig.cmake` and the sources.
 - Current PhysX baseline is `107.3-physx-5.6.1`.
 - CUDA support is controlled by `CUDA_PATH`. If it is unset, `setup.py` builds with `SAPIEN_CUDA=OFF`.
 - PhysX 5.6.1 GPU builds require a CUDA toolkit and driver stack compatible with CUDA `>= 12.8`.
@@ -91,6 +93,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
 - On drivers with repeated Vulkan-instance initialization failures, run ordinary test modules in separate processes. OOM recovery validation must keep its entire recovery sequence in one process; separate processes do not validate recovery. Run deliberate VRAM-exhaustion tests separately from builds and other workloads. `test_gpu_oom` is opt-in with `SAPIEN_TEST_GPU_OOM=1` and needs an isolated idle GPU plus a process timeout. It makes one device-memory reservation, leaves 128 MiB GPU headroom, and attempts one bounded 256 MiB PhysX heap. Use a memory-limited container and a process timeout; never exhaust memory by creating giant pinned-host heaps.
 - Python tests live under `unittest/` and use the standard library `unittest` runner.
 - C++ tests live under `test/` and require configuring CMake with `-DSAPIEN_BUILD_TEST=ON`, then building the `sapien_test` target.
+- Zig modules carry their unit tests: `zig test src/sapien_renderer/<module>.zig`. `scripts/build.sh` runs them for every module before the CMake build.
 - C++ SDK: `scripts/build.sh` packs the CMake install tree into `dist/sapien-sdk-<version>-linux_x86_64.tar.gz` and runs `scripts/test_sdk.sh` on it (CPU PhysX). On a GPU host also run `scripts/test_sdk.sh dist/sapien-sdk-*.tar.gz --gpu`. `test/sdk/` is that consumer program, built against the unpacked archive, not part of `sapien_test`. C++ programs build against the SDK, never against the wheel's files.
 - Documented runtime smoke tests:
   - `python -m sapien.example.offscreen`

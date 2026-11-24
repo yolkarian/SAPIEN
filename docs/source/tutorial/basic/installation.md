@@ -130,7 +130,7 @@ git submodule update --init --recursive
 
 ### Build in Docker
 
-The CI and helper scripts use `yolkarian/sapien-build-env:0.3.1`. This is the
+The CI and helper scripts use `yolkarian/sapien-build-env:0.3.2`. This is the
 recommended Linux build environment.
 
 ```shell
@@ -140,7 +140,7 @@ CMAKE_BUILD_PARALLEL_LEVEL=4 ./scripts/docker_build_wheels.sh 311
 If the image is not available locally, pull it first:
 
 ```shell
-docker pull yolkarian/sapien-build-env:0.3.1
+docker pull yolkarian/sapien-build-env:0.3.2
 ```
 
 `scripts/docker_build_wheels.sh` forwards `SAPIEN_PHYSX5_DIR`,
@@ -157,7 +157,11 @@ CMAKE_BUILD_PARALLEL_LEVEL=4 ./scripts/docker_build_wheels.sh 311
 ### Build without Docker
 
 Native builds should use the same PhysX and CUDA toolchain versions as the
-Docker image. SAPIEN currently targets PhysX `107.3-physx-5.6.1`.
+Docker image. SAPIEN currently targets PhysX `107.3-physx-5.6.1`. Parts of the
+renderer are written in Zig, so the build also needs
+[Zig 0.17.1](https://ziglang.org/download/#release-0.17.1) in `PATH`; CMake stops
+with an error for any other version. Programs and wheels built this way do not
+need Zig at run time.
 
 ```shell
 export CUDA_PATH=/usr/local/cuda-12.8
