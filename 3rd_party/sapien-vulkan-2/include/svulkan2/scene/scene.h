@@ -117,10 +117,24 @@ public:
   bool recordBLASRefits(vk::CommandBuffer commandBuffer);
 
   // ray tracing
+  /** one scene of BuildAccelerationStructures */
+  struct AccelerationStructureBuild {
+    Scene *scene;
+    /** the TLAS instance rows live in device memory exported to CUDA */
+    bool externalInstanceBuffer;
+  };
+  /** Build the BLASes and TLASes of several scenes together: one queue submission per batch of
+   *  structures instead of one per structure, which dominated the start-up of thousands of
+   *  scenes. Scenes whose structures are current are skipped. The per-camera ray tracing storage
+   *  buffers are not built (buildRTResources builds them). */
+  static void BuildAccelerationStructures(std::vector<AccelerationStructureBuild> const &builds);
+
   void buildRTResources(StructDataLayout const &materialBufferLayout,
                         StructDataLayout const &textureIndexBufferLayout,
                         StructDataLayout const &geometryInstanceBufferLayout,
                         bool externalInstanceBuffer = false);
+  /** refit the acceleration structures and, where buildRTResources made them, upload the ray
+   *  tracing light buffers */
   void updateRTResources(bool useDeviceTransforms = false);
   /** update BLAS/TLAS and instance transforms only; light storage buffers are
    *  untouched (grouped-GPU per-frame path) */
@@ -220,8 +234,18 @@ protected:
   vk::UniqueFence mTransformUpdateFence{};
 
   // ray tracing helpers
-  void ensureBLAS();
-  void buildTLAS(bool externalInstanceBuffer);
+  /** wait until no renderer uses the scene, then drop removed objects; requires
+   *  mRTResourcesLock */
+  void prepareRTBuildLocked();
+  /** append unbuilt BLASes of models without one, skipping models in `seen`; point sets are
+   *  built right away */
+  void createMissingBLAS(std::vector<core::BLAS *> &blases,
+                         std::unordered_set<resource::SVModel *> &seen);
+  /** a new unbuilt TLAS over the current objects */
+  core::TLAS *createTLAS(bool externalInstanceBuffer);
+  /** BuildAccelerationStructures with every scene's mRTResourcesLock held */
+  static void buildAccelerationStructuresLocked(
+      std::vector<AccelerationStructureBuild> const &builds);
 
   void updateDynamicBLAS();
   void updateTLAS(bool useDeviceTransforms);
@@ -296,6 +320,8 @@ protected:
   std::unique_ptr<core::Buffer> mRTSpotLightBuffer;
   std::unique_ptr<core::Buffer> mRTParallelogramLightBuffer;
 
+  // scene version the acceleration structures and the storage buffers were built for
+  uint64_t mRTAccelerationStructureVersion{0l};
   uint64_t mRTResourcesVersion{0l};
   uint64_t mRTResourcesRenderVersion{0l};
 

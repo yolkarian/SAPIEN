@@ -208,7 +208,7 @@ std::future<void> SVModel::loadAsync() {
   });
 }
 
-void SVModel::buildBLAS(core::Context &context, bool update) {
+core::BLAS *SVModel::createBLAS(core::Context &context, bool update) {
   std::vector<vk::AccelerationStructureGeometryKHR> geometries;
   std::vector<vk::AccelerationStructureBuildRangeInfoKHR> ranges;
   std::vector<uint32_t> maxPrimitiveCount;
@@ -218,11 +218,9 @@ void SVModel::buildBLAS(core::Context &context, bool update) {
     maxPrimitiveCount.push_back(shape->mesh->getTriangleCount());
   }
 
-  // FIXME: compaction is always disabled, it is broken on some systems
   auto &state = mDeviceStates.get(context);
-  state.blas =
-      std::make_unique<core::BLAS>(context, geometries, ranges, maxPrimitiveCount, false, update);
-  state.blas->build();
+  state.blas = std::make_unique<core::BLAS>(context, geometries, ranges, maxPrimitiveCount, update);
+  return state.blas.get();
 }
 
 void SVModel::recordUpdateBLAS(core::Context &context, vk::CommandBuffer commandBuffer) {

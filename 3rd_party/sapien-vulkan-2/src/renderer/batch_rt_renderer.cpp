@@ -208,6 +208,7 @@ void BatchRTRenderer::initialize(std::vector<std::shared_ptr<scene::Scene>> cons
 
   mEnvironments.clear();
   mEnvironmentRows.assign(environments.size(), BatchEnvironmentRow{});
+  std::vector<scene::Scene::AccelerationStructureBuild> builds;
   for (auto const &environment : environments) {
     if (!environment) {
       throw std::runtime_error("a batched ray tracing environment has no scene");
@@ -215,13 +216,13 @@ void BatchRTRenderer::initialize(std::vector<std::shared_ptr<scene::Scene>> cons
     if (environment->getContext() != mContext) {
       throw std::runtime_error("a batched ray tracing environment renders on another device");
     }
-    // BLAS per model and the TLAS; an externally owned scene gets its instance rows from CUDA
-    environment->buildRTResources(mShaderPack->getMaterialBufferLayout(),
-                                  mShaderPack->getTextureIndexBufferLayout(),
-                                  mShaderPack->getGeometryInstanceBufferLayout(),
-                                  environment->hasExternalTransformOwnership());
+    // an externally owned scene gets its instance rows from CUDA
+    builds.push_back({environment.get(), environment->hasExternalTransformOwnership()});
     mEnvironments.push_back(environment);
   }
+  // every environment's BLASes and TLAS together; the group keeps its own scene tables, so the
+  // per-camera ray tracing storage buffers are never built
+  scene::Scene::BuildAccelerationStructures(builds);
   for (int index : cameraEnvironments) {
     if (index < 0 || index >= static_cast<int>(environments.size())) {
       throw std::runtime_error("batched ray tracing camera environment out of range");

@@ -40,9 +40,11 @@ public:
   inline ModelDescription const &getDescription() const { return mDescription; }
 
   /** build this device's BLAS of every shape; called from one thread per device */
-  void buildBLAS(core::Context &context, bool update = false);
+  /** Create this device's BLAS without building it; build it with core::BLAS::build or, for
+   *  many models at once, core::BLAS::BuildAll. */
+  core::BLAS *createBLAS(core::Context &context, bool update = false);
   void recordUpdateBLAS(core::Context &context, vk::CommandBuffer commandBuffer);
-  /** this device's BLAS, nullptr before buildBLAS on that device */
+  /** this device's BLAS, nullptr before createBLAS on that device */
   core::BLAS *getBLAS(core::Context const &context);
 
   ~SVModel();

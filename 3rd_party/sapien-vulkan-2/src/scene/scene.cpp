@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <mutex>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 namespace svulkan2 {
@@ -866,18 +867,21 @@ std::shared_ptr<core::Buffer> Scene::getObjectTransformBuffer() {
   return mTransformBuffer;
 }
 
-void Scene::ensureBLAS() {
+void Scene::createMissingBLAS(std::vector<core::BLAS *> &blases,
+                              std::unordered_set<resource::SVModel *> &seen) {
   // Use the virtual getters so SceneGroup also initializes resources owned by
   // its child scenes. Child objects are built update-capable because their
   // rigid/deformable storage is private to the source scene.
   for (auto obj : getObjects()) {
-    if (!obj->getModel()->getBLAS(*mContext)) {
-      bool isLocalRigid = std::any_of(mObjects.begin(), mObjects.end(),
-                                      [obj](auto const &localObject) {
-                                        return localObject.get() == obj;
-                                      });
-      obj->getModel()->buildBLAS(*mContext, !isLocalRigid);
+    auto model = obj->getModel().get();
+    if (model->getBLAS(*mContext) || !seen.insert(model).second) {
+      continue;
     }
+    bool isLocalRigid = std::any_of(mObjects.begin(), mObjects.end(),
+                                    [obj](auto const &localObject) {
+                                      return localObject.get() == obj;
+                                    });
+    blases.push_back(model->createBLAS(*mContext, !isLocalRigid));
   }
   for (auto obj : getPointObjects()) {
     if (!obj->getPointSet()->getBLAS(*mContext)) {
@@ -886,8 +890,7 @@ void Scene::ensureBLAS() {
   }
 }
 
-void Scene::buildTLAS(bool externalInstanceBuffer) {
-  logger::info("building TLAS");
+core::TLAS *Scene::createTLAS(bool externalInstanceBuffer) {
   std::vector<vk::AccelerationStructureInstanceKHR> instances;
   uint32_t instanceIndex{0};
 
@@ -919,8 +922,59 @@ void Scene::buildTLAS(bool externalInstanceBuffer) {
     instances.push_back(inst);
   }
 
-  mTLAS = std::make_unique<core::TLAS>(*mContext, instances);
-  mTLAS->build(externalInstanceBuffer);
+  mTLAS = std::make_unique<core::TLAS>(*mContext, instances, externalInstanceBuffer);
+  return mTLAS.get();
+}
+
+void Scene::prepareRTBuildLocked() {
+  // make sure scene is not in use
+  if (mAccessFences.size()) {
+    if (mContext->getDevice().waitForFences(mAccessFences, VK_TRUE, UINT64_MAX) !=
+        vk::Result::eSuccess) {
+      throw std::runtime_error("failed to wait for scene access fence");
+    }
+  }
+  forceRemove();
+}
+
+void Scene::BuildAccelerationStructures(std::vector<AccelerationStructureBuild> const &builds) {
+  std::vector<std::unique_lock<std::mutex>> locks;
+  locks.reserve(builds.size());
+  for (auto const &build : builds) {
+    locks.emplace_back(build.scene->mRTResourcesLock);
+    build.scene->prepareRTBuildLocked();
+  }
+  buildAccelerationStructuresLocked(builds);
+}
+
+void Scene::buildAccelerationStructuresLocked(
+    std::vector<AccelerationStructureBuild> const &builds) {
+  std::vector<AccelerationStructureBuild> stale;
+  for (auto const &build : builds) {
+    if (build.scene->mRTAccelerationStructureVersion != build.scene->mVersion) {
+      stale.push_back(build);
+    }
+  }
+  if (stale.empty()) {
+    return;
+  }
+  auto &context = *stale.front().scene->mContext;
+
+  std::vector<core::BLAS *> blases;
+  std::unordered_set<resource::SVModel *> seen;
+  for (auto const &build : stale) {
+    build.scene->createMissingBLAS(blases, seen);
+  }
+  core::BLAS::BuildAll(context, blases);
+
+  std::vector<core::TLAS *> tlases;
+  for (auto const &build : stale) {
+    tlases.push_back(build.scene->createTLAS(build.externalInstanceBuffer));
+  }
+  core::TLAS::BuildAll(context, tlases);
+  for (auto const &build : stale) {
+    build.scene->mRTAccelerationStructureVersion = build.scene->mVersion;
+  }
 }
 
 void Scene::updateTLAS(bool useDeviceTransforms) {
@@ -961,9 +1015,9 @@ void Scene::updateTLAS(bool useDeviceTransforms) {
 
 bool Scene::recordBLASRefits(vk::CommandBuffer commandBuffer) {
   std::lock_guard lock(mRTResourcesLock);
-  if (mRTResourcesVersion != mVersion) {
+  if (mRTAccelerationStructureVersion != mVersion) {
     throw std::runtime_error("recordBLASRefits failed: scene has changed, call "
-                             "buildRTResources first");
+                             "BuildAccelerationStructures first");
   }
   bool recorded = recordDynamicBLASUpdates(commandBuffer);
   mRTResourcesRenderVersion = mRenderVersion;
@@ -1293,36 +1347,36 @@ void Scene::buildRTResources(StructDataLayout const &materialBufferLayout,
                              bool externalInstanceBuffer) {
 
   std::lock_guard lock(mRTResourcesLock);
+  prepareRTBuildLocked();
 
-  // make sure scene is not in use
-  if (mAccessFences.size()) {
-    if (mContext->getDevice().waitForFences(mAccessFences, VK_TRUE, UINT64_MAX) !=
-        vk::Result::eSuccess) {
-      throw std::runtime_error("failed to wait for scene access fence");
-    }
+  if (mRTAccelerationStructureVersion != mVersion) {
+    buildAccelerationStructuresLocked({{this, externalInstanceBuffer}});
+  } else if (externalInstanceBuffer && !mTLAS->isInstanceBufferExternal()) {
+    mTLAS->enableExternalInstanceBuffer();
   }
-
-  forceRemove();
-
   if (mRTResourcesVersion != mVersion) {
-    ensureBLAS();
-    buildTLAS(externalInstanceBuffer);
     createRTStorageBuffers(materialBufferLayout, textureIndexBufferLayout,
                            geometryInstanceBufferLayout);
     mRTResourcesVersion = mVersion;
-  } else if (externalInstanceBuffer && !mTLAS->isInstanceBufferExternal()) {
-    mTLAS->enableExternalInstanceBuffer();
   }
 }
 
 void Scene::updateRTResources(bool useDeviceTransforms) {
   updateRTTransforms(useDeviceTransforms);
-  uploadRTLights();
+  // the batched renderer builds only the acceleration structures and keeps its own light tables
+  bool hasStorageBuffers;
+  {
+    std::lock_guard lock(mRTResourcesLock);
+    hasStorageBuffers = mRTResourcesVersion == mVersion;
+  }
+  if (hasStorageBuffers) {
+    uploadRTLights();
+  }
 }
 
 void Scene::updateRTTransforms(bool useDeviceTransforms) {
   std::lock_guard lock(mRTResourcesLock);
-  if (mRTResourcesVersion != mVersion) {
+  if (mRTAccelerationStructureVersion != mVersion) {
     throw std::runtime_error("updateRTTransforms failed: scene has changed, "
                              "call buildRTResources first");
   }

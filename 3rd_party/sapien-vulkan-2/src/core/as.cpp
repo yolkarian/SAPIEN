@@ -5,17 +5,44 @@
 namespace svulkan2 {
 namespace core {
 
+namespace {
+
+// Scratch memory of one build submission. Builds are recorded together until their scratch
+// reaches this size; more at once would only hold more memory without saving submissions.
+constexpr vk::DeviceSize BUILD_SCRATCH_BUDGET = vk::DeviceSize(256) << 20;
+
+std::unique_ptr<Buffer> createScratchBuffer(Context &context, vk::DeviceSize size) {
+  return Buffer::Create(context, size,
+                        vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
+                            vk::BufferUsageFlagBits::eShaderDeviceAddress |
+                            vk::BufferUsageFlagBits::eStorageBuffer,
+                        VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{},
+                        false, context.getAllocator().getRTPool());
+}
+
+/** Split `count` builds into submissions by scratch size; `scratchSize(i)` prepares build `i`
+ *  and returns its scratch size, `submit(begin, end)` records and submits builds [begin, end). */
+template <typename Prepare, typename Submit>
+void forEachBuildBatch(size_t count, Prepare scratchSize, Submit submit) {
+  size_t begin = 0;
+  while (begin < count) {
+    vk::DeviceSize total = 0;
+    size_t end = begin;
+    while (end < count && (end == begin || total < BUILD_SCRATCH_BUDGET)) {
+      total += scratchSize(end++);
+    }
+    submit(begin, end);
+    begin = end;
+  }
+}
+
+} // namespace
+
 BLAS::BLAS(Context &context, std::vector<vk::AccelerationStructureGeometryKHR> const &geometries,
            std::vector<vk::AccelerationStructureBuildRangeInfoKHR> const &buildRanges,
-           std::vector<uint32_t> const &maxPrimitiveCounts, bool compaction, bool update)
+           std::vector<uint32_t> const &maxPrimitiveCounts, bool update)
     : mContext(context.shared_from_this()), mGeometries(geometries), mBuildRanges(buildRanges),
-      mCompaction(compaction), mUpdate(update) {
-  if (compaction && update) {
-    logger::error(
-        "Current implementation does not allow compaction for dynamic acceleration structures.");
-    mCompaction = false;
-  }
-
+      mUpdate(update) {
   if (maxPrimitiveCounts.empty()) {
     for (auto &range : mBuildRanges) {
       mMaxPrimitiveCounts.push_back(range.primitiveCount);
@@ -35,122 +62,69 @@ BLAS::BLAS(Context &context, std::vector<vk::AccelerationStructureGeometryKHR> c
   }
 }
 
-void BLAS::build() {
-  auto context = mContext;
-
+vk::AccelerationStructureBuildGeometryInfoKHR
+BLAS::buildInfo(vk::BuildAccelerationStructureModeKHR mode) const {
   vk::BuildAccelerationStructureFlagsKHR flags{};
-  if (mCompaction) {
-    flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowCompaction;
-  }
   if (mUpdate) {
     flags |= vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate;
   }
+  return vk::AccelerationStructureBuildGeometryInfoKHR(
+      vk::AccelerationStructureTypeKHR::eBottomLevel, flags, mode, nullptr, nullptr, mGeometries,
+      nullptr, vk::DeviceOrHostAddressKHR{});
+}
 
-  vk::AccelerationStructureBuildGeometryInfoKHR buildInfo(
-      vk::AccelerationStructureTypeKHR::eBottomLevel, flags,
-      vk::BuildAccelerationStructureModeKHR::eBuild, nullptr, vk::AccelerationStructureKHR{},
-      mGeometries, nullptr, vk::DeviceOrHostAddressKHR{});
-  vk::AccelerationStructureBuildSizesInfoKHR sizeInfo =
-      context->getDevice().getAccelerationStructureBuildSizesKHR(
-          vk::AccelerationStructureBuildTypeKHR::eDevice, buildInfo, mMaxPrimitiveCounts);
-  vk::DeviceSize size = sizeInfo.accelerationStructureSize;
-
-  auto asBuffer = core::Buffer::Create(*context, sizeInfo.accelerationStructureSize,
-                                       vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
-                                           vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                                       VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-  vk::AccelerationStructureCreateInfoKHR createInfo(
-      {}, asBuffer->getVulkanBuffer(), {}, sizeInfo.accelerationStructureSize,
-      vk::AccelerationStructureTypeKHR::eBottomLevel, {});
-  auto blas = context->getDevice().createAccelerationStructureKHRUnique(createInfo);
-
-  auto scratchBuffer = core::Buffer::Create(
-      *context, sizeInfo.buildScratchSize,
-      vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
-          vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eStorageBuffer,
-      VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, false,
-      context->getAllocator().getRTPool());
-
-  vk::DeviceAddress scratchAddress =
-      context->getDevice().getBufferAddress({scratchBuffer->getVulkanBuffer()});
-
-  auto queryPool = context->getDevice().createQueryPoolUnique(
-      vk::QueryPoolCreateInfo({}, vk::QueryType::eAccelerationStructureCompactedSizeKHR, 1));
-  auto commandPool = context->createCommandPool();
-  auto commandBuffer = commandPool->allocateCommandBuffer();
-
-  buildInfo.scratchData.setDeviceAddress(scratchAddress);
-  buildInfo.setDstAccelerationStructure(blas.get());
-
-  commandBuffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-  commandBuffer->buildAccelerationStructuresKHR(buildInfo, mBuildRanges.data());
-  commandBuffer->resetQueryPool(queryPool.get(), 0, 1);
-
-  if (mCompaction) {
-    commandBuffer->writeAccelerationStructuresPropertiesKHR(
-        blas.get(), vk::QueryType::eAccelerationStructureCompactedSizeKHR, queryPool.get(), 0);
-  }
-
-  commandBuffer->end();
-  context->getQueue().submitAndWait(commandBuffer.get());
-
+vk::DeviceSize BLAS::createStorage() {
+  auto device = mContext->getDevice();
+  // the sizes do not depend on the build mode: one query gives the update scratch size too
+  auto sizes = device.getAccelerationStructureBuildSizesKHR(
+      vk::AccelerationStructureBuildTypeKHR::eDevice, buildInfo(vk::BuildAccelerationStructureModeKHR::eBuild),
+      mMaxPrimitiveCounts);
+  mBuffer = Buffer::Create(*mContext, sizes.accelerationStructureSize,
+                           vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
+                               vk::BufferUsageFlagBits::eShaderDeviceAddress,
+                           VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+  mAS = device.createAccelerationStructureKHRUnique(vk::AccelerationStructureCreateInfoKHR(
+      {}, mBuffer->getVulkanBuffer(), {}, sizes.accelerationStructureSize,
+      vk::AccelerationStructureTypeKHR::eBottomLevel, {}));
   if (mUpdate) {
-    buildInfo.setMode(vk::BuildAccelerationStructureModeKHR::eUpdate);
-    auto updateSizeInfo = context->getDevice().getAccelerationStructureBuildSizesKHR(
-        vk::AccelerationStructureBuildTypeKHR::eDevice, buildInfo, mMaxPrimitiveCounts);
-    mUpdateScratchBuffer =
-        core::Buffer::Create(*context, updateSizeInfo.updateScratchSize,
-                             vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
-                                 vk::BufferUsageFlagBits::eShaderDeviceAddress |
-                                 vk::BufferUsageFlagBits::eStorageBuffer,
-                             VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{},
-                             false, context->getAllocator().getRTPool());
+    mUpdateScratchBuffer = createScratchBuffer(*mContext, sizes.updateScratchSize);
     mUpdateScratchBufferAddress = mUpdateScratchBuffer->getAddress();
-    logger::info("TLAS size {}, build scratch size {}, update scratch size {}",
-                 sizeInfo.accelerationStructureSize, sizeInfo.buildScratchSize,
-                 updateSizeInfo.updateScratchSize);
   }
+  return sizes.buildScratchSize;
+}
 
-  // find compact size
-  // if compact size > original size, disable compaction
-  vk::DeviceSize compactSize{0};
-  if (mCompaction) {
-    auto result = context->getDevice().getQueryPoolResults(
-        queryPool.get(), 0, 1, sizeof(vk::DeviceSize), &compactSize, sizeof(vk::DeviceSize),
-        vk::QueryResultFlagBits::eWait);
-    if (result != vk::Result::eSuccess) {
-      throw std::runtime_error("failed to get query pool result");
-    }
-    logger::info("BLAS original size {}, compact size {}", size, compactSize);
-    if (compactSize > size) {
-      logger::warn("compact size is greater than original size, aborting copmaction");
-      mCompaction = false;
-    }
-  }
+void BLAS::build() { BuildAll(*mContext, {this}); }
 
-  if (mCompaction) {
-    auto compactionCommandBuffer = commandPool->allocateCommandBuffer();
-    compactionCommandBuffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-    auto asBufferCompact =
-        core::Buffer::Create(*context, compactSize,
-                             vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
-                                 vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                             VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-    auto blasCompact = context->getDevice().createAccelerationStructureKHRUnique(
-        vk::AccelerationStructureCreateInfoKHR(
-            {}, asBufferCompact->getVulkanBuffer(), {}, compactSize,
-            vk::AccelerationStructureTypeKHR::eBottomLevel, {}));
-    vk::CopyAccelerationStructureInfoKHR copyInfo(blas.get(), blasCompact.get(),
-                                                  vk::CopyAccelerationStructureModeKHR::eCompact);
-    compactionCommandBuffer->copyAccelerationStructureKHR(copyInfo);
-    compactionCommandBuffer->end();
-    context->getQueue().submitAndWait(compactionCommandBuffer.get());
-    mBuffer = std::move(asBufferCompact);
-    mAS = std::move(blasCompact);
-  } else {
-    mBuffer = std::move(asBuffer);
-    mAS = std::move(blas);
-  }
+void BLAS::BuildAll(Context &context, std::vector<BLAS *> const &blases) {
+  auto commandPool = context.createCommandPool();
+  std::vector<std::unique_ptr<Buffer>> scratch(blases.size());
+  forEachBuildBatch(
+      blases.size(),
+      [&](size_t i) {
+        vk::DeviceSize size = blases[i]->createStorage();
+        scratch[i] = createScratchBuffer(context, size);
+        return size;
+      },
+      [&](size_t begin, size_t end) {
+        // independent structures with their own scratch: one build command, no barriers
+        std::vector<vk::AccelerationStructureBuildGeometryInfoKHR> infos;
+        std::vector<vk::AccelerationStructureBuildRangeInfoKHR const *> ranges;
+        for (size_t i = begin; i < end; ++i) {
+          auto info = blases[i]->buildInfo(vk::BuildAccelerationStructureModeKHR::eBuild);
+          info.setDstAccelerationStructure(blases[i]->mAS.get());
+          info.scratchData.setDeviceAddress(scratch[i]->getAddress());
+          infos.push_back(info);
+          ranges.push_back(blases[i]->mBuildRanges.data());
+        }
+        auto commandBuffer = commandPool->allocateCommandBuffer();
+        commandBuffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+        commandBuffer->buildAccelerationStructuresKHR(infos, ranges);
+        commandBuffer->end();
+        context.getQueue().submitAndWait(commandBuffer.get());
+        for (size_t i = begin; i < end; ++i) {
+          scratch[i].reset();
+        }
+      });
 }
 
 void BLAS::recordUpdate(
@@ -176,8 +150,10 @@ vk::DeviceAddress BLAS::getAddress() {
   return mContext->getDevice().getAccelerationStructureAddressKHR({mAS.get()});
 }
 
-TLAS::TLAS(Context &context, std::vector<vk::AccelerationStructureInstanceKHR> const &instances)
-    : mContext(context.shared_from_this()), mInstances(instances) {}
+TLAS::TLAS(Context &context, std::vector<vk::AccelerationStructureInstanceKHR> const &instances,
+           bool externalInstanceBuffer)
+    : mContext(context.shared_from_this()), mInstances(instances),
+      mInstanceBufferExternal(externalInstanceBuffer) {}
 
 void TLAS::createInstanceBuffer(bool external) {
 #ifndef SVULKAN2_CUDA_INTEROP
@@ -195,8 +171,6 @@ void TLAS::createInstanceBuffer(bool external) {
           vk::BufferUsageFlagBits::eShaderDeviceAddress |
           vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR,
       memoryUsage, VmaAllocationCreateFlags{}, external);
-  buffer->upload(mInstances);
-
   mInstanceBuffer = std::move(buffer);
   mInstanceBufferExternal = external;
 }
@@ -204,78 +178,113 @@ void TLAS::createInstanceBuffer(bool external) {
 void TLAS::enableExternalInstanceBuffer() {
   if (!mInstanceBufferExternal) {
     createInstanceBuffer(true);
+    mInstanceBuffer->upload(mInstances);
   }
 }
 
-void TLAS::build(bool externalInstanceBuffer) {
-  auto context = mContext;
-  uint32_t instanceCount = static_cast<uint32_t>(mInstances.size());
+vk::AccelerationStructureGeometryKHR TLAS::geometry() const {
+  return vk::AccelerationStructureGeometryKHR(
+      vk::GeometryTypeKHR::eInstances,
+      vk::AccelerationStructureGeometryInstancesDataKHR(VK_FALSE, mInstanceBufferAddress), {});
+}
 
-  createInstanceBuffer(externalInstanceBuffer);
-
-  auto commandPool = context->createCommandPool();
-  auto commandBuffer = commandPool->allocateCommandBuffer();
-  commandBuffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-
-  vk::MemoryBarrier barrier(vk::AccessFlagBits::eTransferWrite,
-                            vk::AccessFlagBits::eAccelerationStructureWriteKHR);
-  commandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                                 vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR, {},
-                                 barrier, nullptr, nullptr);
-
+vk::DeviceSize TLAS::createStorage() {
+  createInstanceBuffer(mInstanceBufferExternal);
   mInstanceBufferAddress = mInstanceBuffer->getAddress();
-  vk::AccelerationStructureGeometryInstancesDataKHR instancesData(VK_FALSE,
-                                                                  mInstanceBufferAddress);
-  vk::AccelerationStructureGeometryKHR tlasGeometry(vk::GeometryTypeKHR::eInstances, instancesData,
-                                                    {});
-  vk::AccelerationStructureBuildGeometryInfoKHR buildInfo(
+  auto instances = geometry();
+  vk::AccelerationStructureBuildGeometryInfoKHR info(
       vk::AccelerationStructureTypeKHR::eTopLevel,
       vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace |
           vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate,
-      vk::BuildAccelerationStructureModeKHR::eBuild, nullptr, {}, tlasGeometry, {}, {});
-
-  auto buildSizeInfo = context->getDevice().getAccelerationStructureBuildSizesKHR(
-      vk::AccelerationStructureBuildTypeKHR::eDevice, buildInfo, instanceCount);
-  auto buildScratchBuffer = core::Buffer::Create(
-      *context, buildSizeInfo.buildScratchSize,
-      vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
-          vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eStorageBuffer,
-      VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, false,
-      context->getAllocator().getRTPool());
-
-  buildInfo.setMode(vk::BuildAccelerationStructureModeKHR::eUpdate);
-  auto updateSizeInfo = context->getDevice().getAccelerationStructureBuildSizesKHR(
-      vk::AccelerationStructureBuildTypeKHR::eDevice, buildInfo, instanceCount);
-  mUpdateScratchBuffer = core::Buffer::Create(
-      *context, updateSizeInfo.updateScratchSize,
-      vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
-          vk::BufferUsageFlagBits::eShaderDeviceAddress | vk::BufferUsageFlagBits::eStorageBuffer,
-      VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, false,
-      context->getAllocator().getRTPool());
+      vk::BuildAccelerationStructureModeKHR::eBuild, nullptr, nullptr, instances, {}, {});
+  uint32_t count = static_cast<uint32_t>(mInstances.size());
+  auto device = mContext->getDevice();
+  // the sizes do not depend on the build mode: one query gives the update scratch size too
+  auto sizes = device.getAccelerationStructureBuildSizesKHR(
+      vk::AccelerationStructureBuildTypeKHR::eDevice, info, count);
+  mUpdateScratchBuffer = createScratchBuffer(*mContext, sizes.updateScratchSize);
   mUpdateScratchBufferAddress = mUpdateScratchBuffer->getAddress();
+  mBuffer = Buffer::Create(*mContext, sizes.accelerationStructureSize,
+                           vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
+                               vk::BufferUsageFlagBits::eShaderDeviceAddress,
+                           VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
+  mAS = device.createAccelerationStructureKHRUnique(vk::AccelerationStructureCreateInfoKHR(
+      {}, mBuffer->getVulkanBuffer(), {}, sizes.accelerationStructureSize,
+      vk::AccelerationStructureTypeKHR::eTopLevel, {}));
+  return sizes.buildScratchSize;
+}
 
-  logger::info("TLAS size {}, build scratch size {}, update scratch size {}",
-               buildSizeInfo.accelerationStructureSize, buildSizeInfo.buildScratchSize,
-               updateSizeInfo.updateScratchSize);
+void TLAS::build() { BuildAll(*mContext, {this}); }
 
-  mBuffer = core::Buffer::Create(*context, buildSizeInfo.accelerationStructureSize,
-                                 vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR |
-                                     vk::BufferUsageFlagBits::eShaderDeviceAddress,
-                                 VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY);
-  vk::AccelerationStructureCreateInfoKHR createInfo(
-      {}, mBuffer->getVulkanBuffer(), {}, buildSizeInfo.accelerationStructureSize,
-      vk::AccelerationStructureTypeKHR::eTopLevel, {});
-  mAS = context->getDevice().createAccelerationStructureKHRUnique(createInfo);
+void TLAS::BuildAll(Context &context, std::vector<TLAS *> const &tlases) {
+  auto commandPool = context.createCommandPool();
+  std::vector<std::unique_ptr<Buffer>> scratch(tlases.size());
+  forEachBuildBatch(
+      tlases.size(),
+      [&](size_t i) {
+        vk::DeviceSize size = tlases[i]->createStorage();
+        scratch[i] = createScratchBuffer(context, size);
+        return size;
+      },
+      [&](size_t begin, size_t end) {
+        // the instance rows of this submission go through one staging buffer
+        size_t rowSize = sizeof(vk::AccelerationStructureInstanceKHR);
+        size_t rows = 0;
+        for (size_t i = begin; i < end; ++i) {
+          rows += tlases[i]->mInstances.size();
+        }
+        auto staging = Buffer::Create(context, std::max<size_t>(rows, 1) * rowSize,
+                                      vk::BufferUsageFlagBits::eTransferSrc,
+                                      VmaMemoryUsage::VMA_MEMORY_USAGE_CPU_ONLY);
+        auto commandBuffer = commandPool->allocateCommandBuffer();
+        commandBuffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+        size_t offset = 0;
+        for (size_t i = begin; i < end; ++i) {
+          auto const &instances = tlases[i]->mInstances;
+          if (instances.empty()) {
+            continue;
+          }
+          size_t bytes = instances.size() * rowSize;
+          staging->upload(instances.data(), bytes, offset);
+          commandBuffer->copyBuffer(staging->getVulkanBuffer(),
+                                    tlases[i]->mInstanceBuffer->getVulkanBuffer(),
+                                    vk::BufferCopy(offset, 0, bytes));
+          offset += bytes;
+        }
+        vk::MemoryBarrier barrier(vk::AccessFlagBits::eTransferWrite,
+                                  vk::AccessFlagBits::eAccelerationStructureReadKHR |
+                                      vk::AccessFlagBits::eShaderRead);
+        commandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                                       vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                                       {}, barrier, nullptr, nullptr);
 
-  buildInfo.setMode(vk::BuildAccelerationStructureModeKHR::eBuild);
-  buildInfo.setSrcAccelerationStructure(nullptr);
-  buildInfo.setDstAccelerationStructure(mAS.get());
-  buildInfo.scratchData.setDeviceAddress(buildScratchBuffer->getAddress());
-
-  vk::AccelerationStructureBuildRangeInfoKHR buildRange(instanceCount, 0, 0, 0);
-  commandBuffer->buildAccelerationStructuresKHR(buildInfo, &buildRange);
-  commandBuffer->end();
-  context->getQueue().submitAndWait(commandBuffer.get());
+        // sized up front: every build info points at its geometry and every range pointer at
+        // its range
+        size_t count = end - begin;
+        std::vector<vk::AccelerationStructureGeometryKHR> geometries(count);
+        std::vector<vk::AccelerationStructureBuildGeometryInfoKHR> infos(count);
+        std::vector<vk::AccelerationStructureBuildRangeInfoKHR> ranges(count);
+        std::vector<vk::AccelerationStructureBuildRangeInfoKHR const *> rangePointers(count);
+        for (size_t j = 0; j < count; ++j) {
+          TLAS &tlas = *tlases[begin + j];
+          geometries[j] = tlas.geometry();
+          infos[j] = vk::AccelerationStructureBuildGeometryInfoKHR(
+              vk::AccelerationStructureTypeKHR::eTopLevel,
+              vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace |
+                  vk::BuildAccelerationStructureFlagBitsKHR::eAllowUpdate,
+              vk::BuildAccelerationStructureModeKHR::eBuild, nullptr, tlas.mAS.get(),
+              geometries[j], {}, scratch[begin + j]->getAddress());
+          ranges[j] = vk::AccelerationStructureBuildRangeInfoKHR(
+              static_cast<uint32_t>(tlas.mInstances.size()), 0, 0, 0);
+          rangePointers[j] = &ranges[j];
+        }
+        commandBuffer->buildAccelerationStructuresKHR(infos, rangePointers);
+        commandBuffer->end();
+        context.getQueue().submitAndWait(commandBuffer.get());
+        for (size_t i = begin; i < end; ++i) {
+          scratch[i].reset();
+        }
+      });
 }
 
 void TLAS::recordUpdate(vk::CommandBuffer commandBuffer,

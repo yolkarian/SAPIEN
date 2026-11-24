@@ -154,7 +154,7 @@ void SVPointSet::buildBLAS(core::Context &context, bool update) {
   vk::AccelerationStructureBuildRangeInfoKHR range(getVertexCount(), 0, 0, 0);
   state.blas =
       std::make_unique<core::BLAS>(context, std::vector{geom}, std::vector{range},
-                                   std::vector<uint32_t>{getVertexCapacity()}, false, update);
+                                   std::vector<uint32_t>{getVertexCapacity()}, update);
   state.blas->build();
 }
 
