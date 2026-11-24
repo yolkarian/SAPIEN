@@ -1,13 +1,14 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
+#extension GL_EXT_nonuniform_qualifier : enable
 
 #define SET_NUM 0
 #include "./camera_set.glsl"
 #undef SET_NUM
 
 #define SET_NUM 1
-#include "./object_set.glsl"
+#include "../common/scene.glsl"
 #undef SET_NUM
 
 layout(location = 0) in vec3 position;
@@ -35,21 +36,20 @@ void ensureTbn(inout vec3 tangent, inout vec3 bitangent, inout vec3 normal) {
   }
 }
 
-
 void main() {
-  outSegmentation = objectDataBuffer.segmentation;
-  mat4 modelView = cameraBuffer.viewMatrix * objectTransformBuffer.modelMatrix;
+  outSegmentation = instance.segmentation;
+  mat4 modelView = cameraBuffer.viewMatrix * transforms[instance.transformIndex];
   mat3 modelViewLinear = mat3(modelView);
   mat3 normalMatrix = transpose(inverse(modelViewLinear));
-  objectCoord = position;
-  outPositionRaw = modelView * vec4(position, 1);
-  outUV = uv;
 
   vec3 T = tangent;
   vec3 B = bitangent;
   vec3 N = normal;
   ensureTbn(T, B, N);
 
+  objectCoord = position;
+  outPositionRaw = modelView * vec4(position, 1);
+  outUV = uv;
   gl_Position = cameraBuffer.projectionMatrix * outPositionRaw;
 
   vec3 outNormal = normalize(normalMatrix * N);

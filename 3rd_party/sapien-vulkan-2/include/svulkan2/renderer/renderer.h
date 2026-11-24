@@ -1,27 +1,36 @@
 #pragma once
+#include "gpu_scene.h"
 #include "renderer_base.h"
 #include "svulkan2/core/context.h"
 #include "svulkan2/core/descriptor_pool.h"
 #include "svulkan2/resource/cubemap.h"
+#include "svulkan2/resource/material.h"
 #include "svulkan2/resource/render_target.h"
+#include "svulkan2/resource/texture.h"
 #include "svulkan2/scene/scene.h"
 #include "svulkan2/shader/shader_pack_instance.h"
 #include <map>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace svulkan2 {
 namespace core {
 class Context;
 class CommandPool;
 } // namespace core
+namespace resource {
+class SVMetallicMaterial;
+class SVTexture;
+} // namespace resource
 namespace renderer {
-
 class Renderer : public RendererBase {
   std::shared_ptr<core::Context> mContext;
   std::shared_ptr<RendererConfig> mConfig;
 
   vk::UniqueDescriptorPool mDescriptorPool;
-  std::unique_ptr<core::DynamicDescriptorPool> mObjectPool;
+  // Dedicated pool for the scene-wide GPU scene set (holds a large bindless sampler array).
+  vk::UniqueDescriptorPool mGPUScenePool;
 
   // std::unique_ptr<shader::ShaderManager> mShaderManager;
 
@@ -75,14 +84,53 @@ class Renderer : public RendererBase {
   std::unique_ptr<core::Buffer> mCameraBufferCpu;
   std::unique_ptr<core::Buffer> mCameraBuffer;
 
-  std::unique_ptr<core::Buffer> mObjectDataBuffer;
+  // ---- Scene set (common/scene.glsl): one per renderer, bound per draw ----
+  // Host-visible buffers rewritten in place from the CPU: the instances (one per drawable,
+  // mInstanceStride apart), materials[] and customObjectData[] (one per object). Growing one
+  // rebinds the set, so it only happens before recording.
+  std::unique_ptr<core::Buffer> mInstanceBuffer;
+  std::unique_ptr<core::Buffer> mMaterialBuffer;
+  std::unique_ptr<core::Buffer> mCustomDataBuffer;
+  uint32_t mInstanceCapacity{0};
+  uint32_t mMaterialCapacity{0};
+  uint32_t mCustomDataCapacity{0};
+  // sizeof(InstanceInfo) rounded up to minUniformBufferOffsetAlignment (a dynamic offset)
+  uint32_t mInstanceStride{0};
 
-  // transform buffer shared with all cameras
+  /** A drawable: a shape of a body, a line set or a point set. Planned before recording, in
+   *  this order; every pass drawing it binds the scene set at its instance and material. */
+  struct InstanceRef {
+    int32_t kind{};            // 0 = shape, 1 = line set, 2 = point set
+    int32_t objectIndex{};     // index into the matching Scene object array
+    int32_t transformIndex{};  // object's GPU transform index
+    int32_t customDataIndex{}; // -1 for line and point sets
+    std::shared_ptr<resource::SVMetallicMaterial> material; // null for line and point sets
+  };
+  std::vector<InstanceRef> mInstances;
+  std::vector<uint32_t> mObjectInstances; // instance of the first shape of each object
+  uint32_t mLineInstances{};              // instance of the first line set
+  uint32_t mPointInstances{};             // instance of the first point set
+  std::vector<uint8_t> mInstanceData;     // CPU mirror of mInstanceBuffer
+  std::vector<uint8_t> mCustomData;       // CPU mirror of mCustomDataBuffer
+  // material pointer -> index into materials[] / mMaterials.
+  std::unordered_map<resource::SVMetallicMaterial const *, uint32_t> mMaterialIndices;
+  std::vector<std::shared_ptr<resource::SVMetallicMaterial>> mMaterials;
+  // textures[] contents: slot 0 is the default texture, then the deduplicated material and
+  // per-object textures; mTextureIndices maps a texture to its slot.
+  std::vector<std::shared_ptr<resource::SVTexture>> mTextures;
+  std::unordered_map<resource::SVTexture const *, int32_t> mTextureIndices;
+  // descriptors last written to textures[] slots [0, size); later slots hold the default
+  std::vector<vk::DescriptorImageInfo> mBoundTextures;
+  // byte stride of customObjectData[]; 0 when the pack declares no custom data
+  uint32_t mCustomDataStride{0};
+  uint64_t mLastMaterialVersion{0};
+
+  vk::UniqueDescriptorSet mGPUSceneSet;
+  // transform buffer shared with all cameras (from the Scene); owned by the Scene.
   std::shared_ptr<core::Buffer> mObjectTransformBuffer;
 
   vk::UniqueDescriptorSet mSceneSet;
   vk::UniqueDescriptorSet mCameraSet;
-  std::vector<core::DescriptorSet> mObjectSet; // from mObjectPool
 
   std::vector<vk::UniqueDescriptorSet> mInputTextureSets;
 
@@ -195,9 +243,20 @@ private:
   void prepareShadowFramebuffers();
 
   void prepareSceneBuffer();
-  void prepareObjectBuffers(uint32_t numObjects);
   void prepareCameraBuffer();
   void prepareLightBuffers();
+
+  // Allocate the scene set on first use; rebind the Scene's transform table when it changed.
+  void prepareGPUScene();
+  // Grow the instance buffer to instanceCount instances and customObjectData[] to objectCount.
+  void ensureGPUBuffers(uint32_t instanceCount, uint32_t objectCount);
+  // Rebuild materials[] and textures[] from the scene; true when it rebound a descriptor.
+  bool refreshMaterialsAndTextures();
+  // Write the instances and the per-object custom data from the CPU objects.
+  void uploadInstances();
+  // Bind the scene set at set index `set` with the dynamic offsets of instance `instance`.
+  void bindSceneSet(vk::CommandBuffer commandBuffer, vk::PipelineLayout layout, uint32_t set,
+                    uint32_t instance);
 
   void prepareInputTextureDescriptorSets();
 
@@ -222,9 +281,6 @@ private:
 
   void recordShadows();
   void recordRenderPasses();
-
-  uint32_t mLineObjectIndex{};  // starting object index for line objects
-  uint32_t mPointObjectIndex{}; // starting object index for point objects
 
   bool mExternalTransformUpdates{false};
 

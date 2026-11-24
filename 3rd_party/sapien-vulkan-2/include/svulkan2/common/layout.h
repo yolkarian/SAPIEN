@@ -83,6 +83,7 @@ struct StructDataLayout {
     uint32_t size{0};
     uint32_t offset{0};
     std::vector<uint32_t> array{};
+    uint32_t arrayStride{0}; // byte stride of a runtime-sized array member, 0 otherwise
     DataType dtype{DataType::FLOAT()};
     std::shared_ptr<StructDataLayout> member;
     bool operator==(Element const &other) const;

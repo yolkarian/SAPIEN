@@ -48,9 +48,6 @@ public:
 
   Object(std::shared_ptr<resource::SVModel> model, std::string const &name = "");
 
-  void uploadToDevice(core::Buffer &objectBuffer, uint32_t offset,
-                      StructDataLayout const &objectLayout);
-
   void setSegmentation(glm::uvec4 const &segmentation);
   inline glm::uvec4 getSegmentation() const { return mSegmentation; }
   inline std::shared_ptr<resource::SVModel> getModel() const { return mModel; }
@@ -113,10 +110,6 @@ public:
   void setLineWidth(float w) { mLineWidth = w; }
   float getLineWidth() const { return mLineWidth; }
 
-  // TODO: remove this function
-  void uploadToDevice(core::Buffer &objectBuffer, uint32_t offset,
-                      StructDataLayout const &objectLayout);
-
   void setSegmentation(glm::uvec4 const &segmentation);
   inline glm::uvec4 getSegmentation() const { return mSegmentation; }
 
@@ -146,9 +139,6 @@ public:
   /** used to choose pipelines */
   inline void setShadingMode(int mode) { mShadingMode = mode; }
   inline int getShadingMode() const { return mShadingMode; }
-
-  void uploadToDevice(core::Buffer &objectBuffer, uint32_t offset,
-                      StructDataLayout const &objectLayout);
 
   void setSegmentation(glm::uvec4 const &segmentation);
   inline glm::uvec4 getSegmentation() const { return mSegmentation; }

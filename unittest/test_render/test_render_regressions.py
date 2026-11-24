@@ -206,14 +206,16 @@ class TestRayTracingSampling(RayTracingCase):
 
 
 class TestShaderReload(unittest.TestCase):
-    """Uses a private copy of the self-contained `trivial` pack (it has no includes)."""
+    """Uses a private copy of the `trivial` pack and the shared `common` shader directory."""
 
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
-        source = Path(sapien.__file__).parent / "vulkan_shader" / "trivial"
+        shader_root = Path(sapien.__file__).parent / "vulkan_shader"
         self.pack = Path(self.directory.name) / "pack"
-        shutil.copytree(source, self.pack)
+        shutil.copytree(shader_root / "trivial", self.pack)
+        # trivial now includes common/scene.glsl via "../common/..."; stage that directory too.
+        shutil.copytree(shader_root / "common", Path(self.directory.name) / "common")
         self.addCleanup(sapien.render.clear_cache, False, False, True)
 
     def _center_color(self) -> np.ndarray:
@@ -243,9 +245,9 @@ class TestShaderReload(unittest.TestCase):
 
         shader = self.pack / "gbuffer.frag"
         text = shader.read_text()
-        marker = "outColor = materialBuffer.baseColor;"
+        marker = "outColor = material.baseColor;"
         self.assertIn(marker, text)
-        shader.write_text(text.replace(marker, "outColor = materialBuffer.baseColor.gbra;"))
+        shader.write_text(text.replace(marker, "outColor = material.baseColor.gbra;"))
 
         sapien.render.clear_cache(models=False, images=False, shaders=True)
         np.testing.assert_allclose(self._center_color(), [0.0, 0.0, 1.0], atol=1e-3)

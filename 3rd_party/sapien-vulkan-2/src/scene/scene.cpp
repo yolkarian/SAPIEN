@@ -758,17 +758,16 @@ void Scene::prepareObjectTransformBuffer() {
                            vk::BufferUsageFlagBits::eTransferSrc, VMA_MEMORY_USAGE_CPU_ONLY);
   mTransformBuffer = core::Buffer::Create(
       *mContext, gpuTransformBufferSize * count,
-      vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eTransferDst |
-          vk::BufferUsageFlagBits::eStorageBuffer,
+      vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer,
       VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);
   mTransformBufferVersion = mVersion;
 }
 
 size_t Scene::getGpuTransformBufferSize() {
   if (!mGpuTransformBufferSize) {
-    mGpuTransformBufferSize =
-        std::max((uint64_t)sizeof(glm::mat4),
-                 (uint64_t)mContext->getPhysicalDeviceLimits().minUniformBufferOffsetAlignment);
+    // The transform table is read as a std430 mat4[] SSBO, whose stride is exactly one mat4.
+    // There is no UBO dynamic-offset alignment requirement anymore.
+    mGpuTransformBufferSize = sizeof(glm::mat4);
   }
   return mGpuTransformBufferSize;
 }

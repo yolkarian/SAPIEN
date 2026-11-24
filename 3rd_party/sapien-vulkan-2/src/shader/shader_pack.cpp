@@ -318,7 +318,7 @@ void ShaderPack::updateMaxLightCount() {
 
 std::shared_ptr<ShaderConfig> ShaderPack::generateShaderLayouts() const {
   DescriptorSetDescription cameraSetDesc;
-  DescriptorSetDescription objectSetDesc;
+  DescriptorSetDescription gpuSceneSetDesc;
   DescriptorSetDescription sceneSetDesc;
   DescriptorSetDescription lightSetDesc;
 
@@ -359,11 +359,11 @@ std::shared_ptr<ShaderConfig> ShaderPack::generateShaderLayouts() const {
           cameraSetDesc = cameraSetDesc.merge(desc);
         }
         break;
-      case UniformBindingType::eObject:
-        if (objectSetDesc.type == UniformBindingType::eUnknown) {
-          objectSetDesc = desc;
+      case UniformBindingType::eGPUScene:
+        if (gpuSceneSetDesc.type == UniformBindingType::eUnknown) {
+          gpuSceneSetDesc = desc;
         } else {
-          objectSetDesc = objectSetDesc.merge(desc);
+          gpuSceneSetDesc = gpuSceneSetDesc.merge(desc);
         }
         break;
       case UniformBindingType::eScene:
@@ -380,7 +380,6 @@ std::shared_ptr<ShaderConfig> ShaderPack::generateShaderLayouts() const {
           lightSetDesc = lightSetDesc.merge(desc);
         }
         break;
-      case UniformBindingType::eMaterial:
       case UniformBindingType::eTextures:
         break;
       case UniformBindingType::eNone:
@@ -391,10 +390,22 @@ std::shared_ptr<ShaderConfig> ShaderPack::generateShaderLayouts() const {
     }
   }
 
+  ASSERT(gpuSceneSetDesc.type == UniformBindingType::eGPUScene,
+         "a raster shader pack must declare the scene set from common/scene.glsl");
   layouts->cameraBufferLayout = cameraSetDesc.buffers.at(cameraSetDesc.bindings.at(0).arrayIndex);
-  layouts->objectDataBufferLayout =
-      objectSetDesc.buffers.at(objectSetDesc.bindings.at(1).arrayIndex);
   layouts->sceneBufferLayout = sceneSetDesc.buffers.at(sceneSetDesc.bindings.at(0).arrayIndex);
+
+  // The optional CustomObjectData[] block (binding 4) carries pack-specific per-object fields.
+  // Its reflected struct is what set_property/set_texture address by name.
+  auto customIt = gpuSceneSetDesc.bindings.find(4);
+  if (customIt != gpuSceneSetDesc.bindings.end()) {
+    auto blockLayout = gpuSceneSetDesc.buffers.at(customIt->second.arrayIndex);
+    auto element = blockLayout->elements.find("customObjectData");
+    if (element != blockLayout->elements.end() && element->second.member) {
+      layouts->customObjectDataLayout = element->second.member;
+      layouts->customObjectDataStride = element->second.arrayStride;
+    }
+  }
 
   if (mShadowPass) {
     layouts->lightBufferLayout = lightSetDesc.buffers.at(lightSetDesc.bindings.at(0).arrayIndex);
@@ -410,8 +421,8 @@ std::shared_ptr<ShaderConfig> ShaderPack::generateShaderLayouts() const {
   }
 
   layouts->sceneSetDescription = sceneSetDesc;
+  layouts->gpuSceneSetDescription = gpuSceneSetDesc;
   layouts->cameraSetDescription = cameraSetDesc;
-  layouts->objectSetDescription = objectSetDesc;
   layouts->lightSetDescription = lightSetDesc;
 
   return layouts;

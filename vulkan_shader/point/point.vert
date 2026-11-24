@@ -1,5 +1,6 @@
 
 #version 450
+#extension GL_EXT_nonuniform_qualifier : enable
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 
@@ -8,7 +9,7 @@
 #undef SET_NUM
 
 #define SET_NUM 1
-#include "./object_set.glsl"
+#include "../common/scene.glsl"
 #undef SET_NUM
 
 layout(location = 0) in vec3 position;
@@ -20,7 +21,7 @@ layout(location = 1) out vec4 outPosition;
 layout(location = 2) out mat4 outMat;
 
 void main() {
-  mat4 modelView = cameraBuffer.viewMatrix * objectTransformBuffer.modelMatrix;
+  mat4 modelView = cameraBuffer.viewMatrix * transforms[instance.transformIndex];
   outPosition = modelView * vec4(position, 1);
   outPosition.w = scale;
   // gl_Position = cameraBuffer.projectionMatrix * outPosition;

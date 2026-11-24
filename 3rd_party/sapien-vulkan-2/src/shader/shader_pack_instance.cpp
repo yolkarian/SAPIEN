@@ -26,30 +26,33 @@ ShaderPackInstance::ShaderPackInstance(std::shared_ptr<core::Context> context,
 }
 
 static vk::UniqueDescriptorSetLayout
-createObjectDescriptorSetLayout(vk::Device device,
-                                DescriptorSetDescription const &objectSetDescription) {
-  std::vector<vk::DescriptorSetLayoutBinding> bindings;
-  bindings.push_back({0, vk::DescriptorType::eUniformBuffer, 1,
-                      vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment});
-  bindings.push_back({1, vk::DescriptorType::eUniformBuffer, 1,
-                      vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment});
-  for (uint32_t bid = 2; bid < objectSetDescription.bindings.size(); ++bid) {
-    // TODO: verify bid is consecutive
-    auto binding = objectSetDescription.bindings.at(bid);
-    if (binding.type == vk::DescriptorType::eCombinedImageSampler) {
-      if (binding.dim == 0) {
-        bindings.push_back(
-            {bid, vk::DescriptorType::eCombinedImageSampler, 1,
-             vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment});
-      } else {
-        uint32_t arraySize = binding.arraySize;
-        bindings.push_back(
-            {bid, vk::DescriptorType::eCombinedImageSampler, arraySize,
-             vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment});
-      }
-    }
+createGPUSceneDescriptorSetLayout(vk::Device device, uint32_t maxNumTextures,
+                                   DescriptorSetDescription const &desc) {
+  // common/scene.glsl: 0 transforms[], 1 the draw's instance, 2 materials[], 3 textures[],
+  // 4 the optional customObjectData[], 5 the draw's material. Storage buffers are bound whole;
+  // the two uniform buffers are bound at the draw's dynamic offsets. textures[] has a fixed
+  // descriptor count and is not partially bound, so every slot holds a valid descriptor (slot 0
+  // and the unused slots the default texture); the renderer writes it before recording.
+  auto stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
+  std::vector<vk::DescriptorSetLayoutBinding> bindings{
+      {0, vk::DescriptorType::eStorageBuffer, 1, stages},
+      {1, vk::DescriptorType::eUniformBufferDynamic, 1, stages},
+      {2, vk::DescriptorType::eStorageBuffer, 1, stages},
+      {3, vk::DescriptorType::eCombinedImageSampler, maxNumTextures, stages},
+      {5, vk::DescriptorType::eUniformBufferDynamic, 1, stages}};
+  if (desc.bindings.contains(4)) {
+    bindings.push_back({4, vk::DescriptorType::eStorageBuffer, 1, stages});
   }
-
+  // the pack's declarations must match (a uniform buffer reflects as non-dynamic)
+  for (auto const &binding : bindings) {
+    auto it = desc.bindings.find(binding.binding);
+    auto expected = binding.descriptorType == vk::DescriptorType::eUniformBufferDynamic
+                        ? vk::DescriptorType::eUniformBuffer
+                        : binding.descriptorType;
+    ASSERT(it == desc.bindings.end() || it->second.type == expected,
+           "binding " + std::to_string(binding.binding) +
+               " of the scene set does not match common/scene.glsl");
+  }
   return device.createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo({}, bindings));
 }
 
@@ -70,15 +73,13 @@ createSceneDescriptorSetLayout(vk::Device device,
     if (sceneSetDescription.bindings.at(bindingIndex).type == vk::DescriptorType::eUniformBuffer) {
       bindings.push_back({bindingIndex, vk::DescriptorType::eUniformBuffer, 1,
                           vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment});
-      bindingFlags.push_back({});
-    } else if (sceneSetDescription.bindings.at(bindingIndex).type ==
+      } else if (sceneSetDescription.bindings.at(bindingIndex).type ==
                vk::DescriptorType::eCombinedImageSampler) {
       if (sceneSetDescription.bindings.at(bindingIndex).dim == 0) {
         bindings.push_back(
             {bindingIndex, vk::DescriptorType::eCombinedImageSampler, 1,
              vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment});
-        bindingFlags.push_back({});
-      } else {
+          } else {
         uint32_t arraySize = sceneSetDescription.bindings.at(bindingIndex).arraySize;
         bindings.push_back(
             {bindingIndex, vk::DescriptorType::eCombinedImageSampler, arraySize,
@@ -285,7 +286,8 @@ std::future<void> ShaderPackInstance::loadAsync() {
 
     // descriptor set layout
     mSceneSetLayout = createSceneDescriptorSetLayout(device, inputLayouts->sceneSetDescription);
-    mObjectSetLayout = createObjectDescriptorSetLayout(device, inputLayouts->objectSetDescription);
+    mGPUSceneSetLayout = createGPUSceneDescriptorSetLayout(
+        device, mContext->getMaxNumTextures(), inputLayouts->gpuSceneSetDescription);
     mCameraSetLayout = createCameraDescriptorSetLayout(device);
     mLightSetLayout = createLightDescriptorSetLayout(device);
     mTextureSetLayouts = createTextureDescriptorSetLayouts(device, passes);
@@ -305,14 +307,11 @@ std::future<void> ShaderPackInstance::loadAsync() {
         case UniformBindingType::eCamera:
           descriptorSetLayouts.push_back(mCameraSetLayout.get());
           break;
-        case UniformBindingType::eObject:
-          descriptorSetLayouts.push_back(mObjectSetLayout.get());
+        case UniformBindingType::eGPUScene:
+          descriptorSetLayouts.push_back(mGPUSceneSetLayout.get());
           break;
         case UniformBindingType::eScene:
           descriptorSetLayouts.push_back(mSceneSetLayout.get());
-          break;
-        case UniformBindingType::eMaterial:
-          descriptorSetLayouts.push_back(mContext->getMetallicDescriptorSetLayout());
           break;
         case UniformBindingType::eTextures:
           descriptorSetLayouts.push_back(mTextureSetLayouts[passIdx].get());
@@ -357,16 +356,15 @@ std::future<void> ShaderPackInstance::loadAsync() {
       std::vector<vk::DescriptorSetLayout> descriptorSetLayouts;
       for (auto type : shadowPass->getUniformBindingTypes()) {
         switch (type) {
-        case UniformBindingType::eObject:
-          descriptorSetLayouts.push_back(mObjectSetLayout.get());
+        case UniformBindingType::eGPUScene:
+          descriptorSetLayouts.push_back(mGPUSceneSetLayout.get());
           break;
         case UniformBindingType::eLight:
           descriptorSetLayouts.push_back(mLightSetLayout.get());
           break;
-        case UniformBindingType::eMaterial:
         case UniformBindingType::eCamera:
         case UniformBindingType::eScene:
-          throw std::runtime_error("shadow pass may only use object and light buffers");
+          throw std::runtime_error("shadow pass may only use the GPU scene and light buffers");
         default:
           throw std::runtime_error("ShaderManager::createPipelines: not "
                                    "implemented uniform binding type");
@@ -392,16 +390,16 @@ std::future<void> ShaderPackInstance::loadAsync() {
       std::vector<vk::DescriptorSetLayout> descriptorSetLayouts;
       for (auto type : pointShadowPass->getUniformBindingTypes()) {
         switch (type) {
-        case UniformBindingType::eObject:
-          descriptorSetLayouts.push_back(mObjectSetLayout.get());
+        case UniformBindingType::eGPUScene:
+          descriptorSetLayouts.push_back(mGPUSceneSetLayout.get());
           break;
         case UniformBindingType::eLight:
           descriptorSetLayouts.push_back(mLightSetLayout.get());
           break;
-        case UniformBindingType::eMaterial:
         case UniformBindingType::eCamera:
         case UniformBindingType::eScene:
-          throw std::runtime_error("pointShadow pass may only use object and light buffers");
+          throw std::runtime_error(
+              "pointShadow pass may only use the GPU scene and light buffers");
         default:
           throw std::runtime_error("ShaderManager::createPipelines: not "
                                    "implemented uniform binding type");

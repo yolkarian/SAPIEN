@@ -34,6 +34,27 @@ Shader packs declare their parameters in `pack.json`:
   `cfg.parameters`, so its widgets follow the pack (`spp`, `maxDepth`, `aperture`,
   `focusPlane`, `exposure`, `toneMapper`, `ambientOcclusion*`).
 
+Rasterization shader packs read one scene-wide descriptor set:
+
+- **Breaking:** a custom rasterization pack includes `common/scene.glsl` once per pass
+  (`#define SET_NUM n` first). Each draw binds it at its own instance and material: shaders
+  read the drawn object's `instance` (segmentation, `transformIndex`, transparency, ...) and
+  `material` (uniform buffers), and `transforms[]`, `materials[]`, the bindless `textures[]`
+  for any entry; shadow passes read `transforms[instance.transformIndex]` too. The
+  `object_set.glsl` / `material_set.glsl` sets are removed; packs written against them fail to
+  load until ported. `Material` is 256 B; a material texture index of `-1` means no texture.
+- **Breaking:** `max_num_textures` (`set_global_config`, default 512) is the number of
+  `textures[]` slots; slot 0 is the white default texture and a scene needing more distinct
+  textures raises `RuntimeError`. `max_num_materials` is only the initial size of
+  `materials[]`, which grows.
+- `render_body.set_property` writes pack-declared `CustomObjectData` fields by name;
+  `set_texture` stores a `textures[]` slot in an `int` field and `set_texture_array` in an
+  `int` array field. These textures must be 2D (1D/3D raise); an unset texture field is 0,
+  the default texture; a texture assigned after the first frame is drawn.
+- Rasterization requires `runtimeDescriptorArray` and non-uniform descriptor indexing;
+  unsupported devices raise a clear error.
+- Material edits reach `RenderCameraGroup` cameras after `gpu_init()`, as before.
+
 Batched ray tracing:
 
 - `RenderConfig("rt_batch")` (or any directory holding `batch.comp`) is a **batched**

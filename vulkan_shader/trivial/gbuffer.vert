@@ -1,6 +1,7 @@
 #version 450
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
+#extension GL_EXT_nonuniform_qualifier : enable
 
 layout(set = 0, binding = 0) uniform CameraBuffer {
   mat4 viewMatrix;
@@ -11,16 +12,9 @@ layout(set = 0, binding = 0) uniform CameraBuffer {
   float height;
 } cameraBuffer;
 
-layout(set = 1, binding = 0) uniform ObjectTransformBuffer {
-  mat4 modelMatrix;
-} objectTransformBuffer;
-
-layout(set = 1, binding = 1) uniform ObjectDataBuffer {
-  uvec4 segmentation;
-  float transparency;
-  int shadeFlat;
-} objectDataBuffer;
-
+#define SET_NUM 1
+#include "../common/scene.glsl"
+#undef SET_NUM
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;
@@ -33,8 +27,8 @@ layout(location = 1) out vec2 outUV;
 layout(location = 2) out flat uvec4 outSeg;
 
 void main() {
-  outSeg = objectDataBuffer.segmentation;
+  outSeg = instance.segmentation;
   outUV = uv;
-  outPosition = cameraBuffer.viewMatrix * (objectTransformBuffer.modelMatrix * vec4(position, 1));
+  outPosition = cameraBuffer.viewMatrix * (transforms[instance.transformIndex] * vec4(position, 1));
   gl_Position = cameraBuffer.projectionMatrix * outPosition;
 }

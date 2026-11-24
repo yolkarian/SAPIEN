@@ -74,9 +74,11 @@ public:
 
   inline DynamicDescriptorPool &getDescriptorPool() const { return *mDescriptorPool; }
 
-  inline vk::DescriptorSetLayout getMetallicDescriptorSetLayout() const {
-    return mMetallicDescriptorSetLayout.get();
-  }
+  /** Number of slots of the textures[] array of a raster scene descriptor set. */
+  inline uint32_t getMaxNumTextures() const { return mMaxNumTextures; }
+  /** Initial capacity of the materials[] table of a raster scene descriptor set. */
+  inline uint32_t getMaxNumMaterials() const { return mMaxNumMaterials; }
+
 
   std::unique_ptr<renderer::GuiWindow> createWindow(uint32_t width, uint32_t height);
   vk::UniqueSemaphore createTimelineSemaphore(uint64_t initialValue);
@@ -94,8 +96,6 @@ private:
 
   uint32_t mMaxNumMaterials;
   uint32_t mMaxNumTextures;
-
-  vk::UniqueDescriptorSetLayout mMetallicDescriptorSetLayout;
 
   Context(std::shared_ptr<Instance> instance, std::shared_ptr<PhysicalDevice> physicalDevice,
           uint32_t maxNumMaterials, uint32_t maxNumTextures);

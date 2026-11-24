@@ -81,20 +81,6 @@ void Context::createDescriptorPool() {
           vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, mMaxNumTextures},
           vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, mMaxNumMaterials},
           vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 10}});
-
-  {
-    std::vector<vk::DescriptorSetLayoutBinding> bindings;
-    bindings.push_back(vk::DescriptorSetLayoutBinding(0, vk::DescriptorType::eUniformBuffer, 1,
-                                                      vk::ShaderStageFlagBits::eFragment));
-    for (uint32_t i = 0; i < 6; ++i) {
-      // 6 textures
-      bindings.push_back(vk::DescriptorSetLayoutBinding(i + 1,
-                                                        vk::DescriptorType::eCombinedImageSampler,
-                                                        1, vk::ShaderStageFlagBits::eFragment));
-    }
-    mMetallicDescriptorSetLayout = getDevice().createDescriptorSetLayoutUnique(
-        vk::DescriptorSetLayoutCreateInfo({}, bindings.size(), bindings.data()));
-  }
 }
 
 std::unique_ptr<CommandPool> Context::createCommandPool() const {

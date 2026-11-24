@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : enable
 #extension GL_ARB_separate_shader_objects : enable
 #extension GL_ARB_shading_language_420pack : enable
 
@@ -12,7 +13,7 @@ layout(set = 0, binding = 0) uniform LightBuffer {
 } lightBuffer;
 
 #define SET_NUM 1
-#include "./object_set.glsl"
+#include "../common/scene.glsl"
 #undef SET_NUM
 
 
@@ -23,5 +24,6 @@ layout(location = 3) in vec3 tangent;
 layout(location = 4) in vec3 bitangent;
 
 void main() {
-  gl_Position = lightBuffer.projectionMatrix * lightBuffer.viewMatrix * objectTransformBuffer.modelMatrix * vec4(position, 1.f);
+  gl_Position = lightBuffer.projectionMatrix * lightBuffer.viewMatrix *
+                transforms[instance.transformIndex] * vec4(position, 1.f);
 }

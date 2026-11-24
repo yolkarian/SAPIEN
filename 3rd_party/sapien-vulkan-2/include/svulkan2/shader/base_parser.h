@@ -17,10 +17,9 @@ namespace svulkan2 {
 namespace shader {
 
 enum UniformBindingType {
-  eScene,
-  eObject,
+  eScene,    // lights, shadows, environment (SceneBuffer + ShadowBuffer + light samplers)
+  eGPUScene, // scene-wide objects, materials and bindless textures (common/scene.glsl)
   eCamera,
-  eMaterial,
   eTextures,
   eLight,
 
@@ -53,20 +52,22 @@ struct DescriptorSetDescription {
   DescriptorSetDescription merge(DescriptorSetDescription const &other) const;
 };
 
-// TODO rename
 /** Options configured by the shaders  */
 struct ShaderConfig {
   std::shared_ptr<InputDataLayout> vertexLayout;
   std::shared_ptr<InputDataLayout> primitiveVertexLayout;
-  std::shared_ptr<StructDataLayout> objectDataBufferLayout;
+  // Struct reflected from CustomObjectData[] (custom per-object fields); null when the pack
+  // does not declare any. Its elements are addressed by name from set_property/set_texture.
+  std::shared_ptr<StructDataLayout> customObjectDataLayout;
+  uint32_t customObjectDataStride{0}; // byte stride of customObjectData[]
   std::shared_ptr<StructDataLayout> sceneBufferLayout;
   std::shared_ptr<StructDataLayout> cameraBufferLayout;
   std::shared_ptr<StructDataLayout> lightBufferLayout;
   std::shared_ptr<StructDataLayout> shadowBufferLayout;
 
-  DescriptorSetDescription sceneSetDescription;
+  DescriptorSetDescription sceneSetDescription;    // lights/shadows set
+  DescriptorSetDescription gpuSceneSetDescription; // objects/materials/textures set
   DescriptorSetDescription cameraSetDescription;
-  DescriptorSetDescription objectSetDescription;
   DescriptorSetDescription lightSetDescription;
 };
 

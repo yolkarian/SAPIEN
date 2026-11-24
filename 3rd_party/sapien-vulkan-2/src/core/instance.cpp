@@ -324,11 +324,20 @@ std::vector<PhysicalDeviceInfo> Instance::summarizePhysicalDevices() const {
       queueIdx = queueIdxNoPresent;
     }
 
-    // check features
+    // check features. Rasterization packs need bindless, non-uniformly indexed textures and
+    // scene-wide storage buffers, so descriptor indexing is a hard requirement for every
+    // rendering device, not only ray tracing ones.
     device.getFeatures2(&features);
     if (features.features.independentBlend && descriptorFeatures.descriptorBindingPartiallyBound &&
-        timelineSemaphoreFeatures.timelineSemaphore) {
+        timelineSemaphoreFeatures.timelineSemaphore &&
+        descriptorFeatures.runtimeDescriptorArray &&
+        descriptorFeatures.shaderSampledImageArrayNonUniformIndexing &&
+        descriptorFeatures.shaderStorageBufferArrayNonUniformIndexing) {
       required_features = true;
+    } else {
+      logger::warn("A Vulkan device lacks a feature SAPIEN rendering requires (independentBlend, "
+                   "descriptorBindingPartiallyBound, timelineSemaphore, runtimeDescriptorArray, "
+                   "non-uniform sampled-image and storage-buffer indexing) and is not used.");
     }
 
     std::vector<const char *> all_required_extensions = {

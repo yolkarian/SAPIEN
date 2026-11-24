@@ -240,3 +240,15 @@ scene.get_or_assign_environment_id()
 # add actors/articulations, then initialize GPU buffers
 physx_system.gpu_init()
 ```
+
+## Raster shader packs (breaking)
+
+Rasterization shader packs no longer use per-object and per-material descriptor sets.
+Port a custom pack by including `common/scene.glsl` once per pass (after
+`#define SET_NUM n`) and reading the drawn object's `instance` and `material`, plus
+`transforms[]`, `materials[]` and `textures[]`; see the interface section of
+{ref}`customize_shaders`.
+Packs that include `object_set.glsl` / `material_set.glsl` fail to load; there is no
+compatibility layer. Per-object custom textures (`render_body.set_texture`) are now
+`textures[]` slots in `int` fields and must be 2D. Rendering requires a Vulkan device with
+descriptor-indexing features.

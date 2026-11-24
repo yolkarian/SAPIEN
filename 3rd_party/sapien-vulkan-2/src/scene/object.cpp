@@ -1,58 +1,11 @@
 #include "svulkan2/scene/object.h"
 #include "svulkan2/scene/scene.h"
-#include "svulkan2/common/profiler.h"
 
 namespace svulkan2 {
 namespace scene {
 
 Object::Object(std::shared_ptr<resource::SVModel> model, std::string const &name)
     : Node(name), mModel(model) {}
-
-void Object::uploadToDevice(core::Buffer &objectBuffer, uint32_t offset,
-                            StructDataLayout const &objectLayout) {
-  // FIXME: this function is deprecated, remove it
-  SVULKAN2_PROFILE_BLOCK("allocate");
-  std::vector<char> buffer(objectLayout.size);
-  SVULKAN2_PROFILE_BLOCK_END;
-
-  SVULKAN2_PROFILE_BLOCK("copy matrix");
-  std::memcpy(buffer.data() + objectLayout.elements.at("segmentation").offset, &mSegmentation[0],
-              16);
-
-  SVULKAN2_PROFILE_BLOCK_END;
-
-  SVULKAN2_PROFILE_BLOCK("check other data");
-  for (auto &[name, value] : mCustomData) {
-    if (objectLayout.elements.find(name) != objectLayout.elements.end()) {
-      auto &elem = objectLayout.elements.at(name);
-      if (elem.dtype != value.dtype) {
-        throw std::runtime_error("Upload object failed: object attribute \"" + name +
-                                 "\" does not match declared type.");
-        std::memcpy(buffer.data() + elem.offset, &value.floatValue, elem.size);
-      }
-    }
-  }
-  if (objectLayout.elements.find("transparency") != objectLayout.elements.end()) {
-    auto &elem = objectLayout.elements.at("transparency");
-    if (elem.dtype != DataType::FLOAT()) {
-      throw std::runtime_error("Upload object failed: object attribute "
-                               "\"transparency\" must be a float");
-    }
-    std::memcpy(buffer.data() + elem.offset, &mTransparency, 4);
-  }
-
-  if (objectLayout.elements.find("shadeFlat") != objectLayout.elements.end()) {
-    auto &elem = objectLayout.elements.at("shadeFlat");
-    if (elem.dtype != DataType::INT()) {
-      throw std::runtime_error("Upload object failed: object attribute "
-                               "\"shadeFlat\" must be an int");
-    }
-    int shadeFlat = mShadeFlat;
-    std::memcpy(buffer.data() + elem.offset, &shadeFlat, 4);
-  }
-  SVULKAN2_PROFILE_BLOCK_END;
-  objectBuffer.upload(buffer.data(), objectLayout.size, offset);
-}
 
 void Object::setSegmentation(glm::uvec4 const &segmentation) {
   mSegmentation = segmentation;
@@ -99,6 +52,7 @@ void Object::setCustomDataInt4(std::string const &name, glm::ivec4 x) {
 void Object::setCustomTexture(std::string const &name,
                               std::shared_ptr<resource::SVTexture> texture) {
   mCustomTexture[name] = texture;
+  mScene->updateVersion(); // the renderers re-record and assign the texture a textures[] slot
 }
 std::shared_ptr<resource::SVTexture> const
 Object::getCustomTexture(std::string const &name) const {
@@ -112,6 +66,7 @@ Object::getCustomTexture(std::string const &name) const {
 void Object::setCustomTextureArray(std::string const &name,
                                    std::vector<std::shared_ptr<resource::SVTexture>> textures) {
   mCustomTextureArray[name] = textures;
+  mScene->updateVersion();
 }
 std::vector<std::shared_ptr<resource::SVTexture>>
 Object::getCustomTextureArray(std::string const &name) const {
@@ -143,46 +98,12 @@ void Object::setCastShadow(bool castShadow) {
 LineObject::LineObject(std::shared_ptr<resource::SVLineSet> lineSet, std::string const &name)
     : Node(name), mLineSet(lineSet) {}
 
-void LineObject::uploadToDevice(core::Buffer &objectBuffer, uint32_t offset,
-                                StructDataLayout const &objectLayout) {
-  std::vector<char> buffer(objectLayout.size);
-  std::memcpy(buffer.data() + objectLayout.elements.at("segmentation").offset, &mSegmentation[0],
-              16);
-  if (objectLayout.elements.find("transparency") != objectLayout.elements.end()) {
-    auto &elem = objectLayout.elements.at("transparency");
-    if (elem.dtype != DataType::FLOAT()) {
-      throw std::runtime_error("Upload object failed: object attribute "
-                               "\"transparency\" must be a float");
-    }
-    std::memcpy(buffer.data() + elem.offset, &mTransparency, 4);
-  }
-  // objectBuffer.upload(buffer);
-
-  objectBuffer.upload(buffer.data(), objectLayout.size, offset);
-}
-
 void LineObject::setSegmentation(glm::uvec4 const &segmentation) { mSegmentation = segmentation; }
 
 void LineObject::setTransparency(float transparency) { mTransparency = transparency; }
 
 PointObject::PointObject(std::shared_ptr<resource::SVPointSet> pointSet, std::string const &name)
     : Node(name), mPointSet(pointSet), mVertexCount(pointSet->getVertexCount()) {}
-
-void PointObject::uploadToDevice(core::Buffer &objectBuffer, uint32_t offset,
-                                 StructDataLayout const &objectLayout) {
-  std::vector<char> buffer(objectLayout.size);
-  std::memcpy(buffer.data() + objectLayout.elements.at("segmentation").offset, &mSegmentation[0],
-              16);
-  if (objectLayout.elements.find("transparency") != objectLayout.elements.end()) {
-    auto &elem = objectLayout.elements.at("transparency");
-    if (elem.dtype != DataType::FLOAT()) {
-      throw std::runtime_error("Upload object failed: object attribute "
-                               "\"transparency\" must be a float");
-    }
-    std::memcpy(buffer.data() + elem.offset, &mTransparency, 4);
-  }
-  objectBuffer.upload(buffer.data(), objectLayout.size, offset);
-}
 
 void PointObject::setSegmentation(glm::uvec4 const &segmentation) { mSegmentation = segmentation; }
 

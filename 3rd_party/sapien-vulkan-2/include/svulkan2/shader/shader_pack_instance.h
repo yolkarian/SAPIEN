@@ -65,8 +65,8 @@ public:
   inline vk::DescriptorSetLayout getSceneDescriptorSetLayout() const {
     return mSceneSetLayout.get();
   }
-  inline vk::DescriptorSetLayout getObjectDescriptorSetLayout() const {
-    return mObjectSetLayout.get();
+  inline vk::DescriptorSetLayout getGPUSceneDescriptorSetLayout() const {
+    return mGPUSceneSetLayout.get();
   }
   inline vk::DescriptorSetLayout getCameraDescriptorSetLayout() const {
     return mCameraSetLayout.get();
@@ -91,7 +91,7 @@ private:
   std::shared_ptr<core::Context> mContext;
 
   vk::UniqueDescriptorSetLayout mSceneSetLayout;
-  vk::UniqueDescriptorSetLayout mObjectSetLayout;
+  vk::UniqueDescriptorSetLayout mGPUSceneSetLayout;
   vk::UniqueDescriptorSetLayout mCameraSetLayout;
   vk::UniqueDescriptorSetLayout mLightSetLayout;
   std::vector<vk::UniqueDescriptorSetLayout> mTextureSetLayouts;

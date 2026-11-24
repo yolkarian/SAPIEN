@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : enable
 
 layout(set = 0, binding = 0) uniform CameraBuffer {
   mat4 viewMatrix;
@@ -9,32 +10,9 @@ layout(set = 0, binding = 0) uniform CameraBuffer {
   float height;
 } cameraBuffer;
 
-layout(set = 1, binding = 0) uniform ObjectBuffer {
-  mat4 modelMatrix;
-  uvec4 segmentation;
-  float transparency;
-  int shadeFlat;
-} objectBuffer;
-
-layout(set = 2, binding = 0) uniform MaterialBuffer {
-  vec4 emission;
-  vec4 baseColor;
-  float fresnel;
-  float roughness;
-  float metallic;
-  float transmission;
-  float ior;
-  float transmissionRoughness;
-  int textureMask;
-  int padding1;
-} materialBuffer;
-
-layout(set = 2, binding = 1) uniform sampler2D colorTexture;
-layout(set = 2, binding = 2) uniform sampler2D roughnessTexture;
-layout(set = 2, binding = 3) uniform sampler2D normalTexture;
-layout(set = 2, binding = 4) uniform sampler2D metallicTexture;
-layout(set = 2, binding = 5) uniform sampler2D emissionTexture;
-
+#define SET_NUM 1
+#include "../common/scene.glsl"
+#undef SET_NUM
 
 struct PointLight {
   vec4 position;
@@ -52,7 +30,7 @@ struct SpotLight {
   vec4 emission;
 };
 
-layout(set = 3, binding = 0) uniform SceneBuffer {
+layout(set = 2, binding = 0) uniform SceneBuffer {
   vec4 ambientLight;
   DirectionalLight directionalLights[3];
   SpotLight spotLights[10];
@@ -70,6 +48,7 @@ layout(location = 1) out vec4 outPosition;
 layout(location = 2) out uvec4 outSegmentation;
 
 void main() {
+  // vertex colours come from the vertex attribute, not from the material
   outColor = inColor;
   outPosition = inPosition;
   outSegmentation = inSeg;

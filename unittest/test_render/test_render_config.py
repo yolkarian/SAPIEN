@@ -55,13 +55,9 @@ BUILTIN_PACKS["shadow_catcher"] = BUILTIN_PACKS["rt"]
 # a pack whose entry point and manifest make it usable as a rasterization camera
 CAMERA_PACKS = ["default", "vr_default", "point", "minimal", "trivial", "vertex_color", "rt"]
 # packs whose Color output is the shaded box; `trivial` and `minimal` have their own minimal
-# display passes (base colour and a bare lighting sum)
+# display passes (base colour and a bare lighting sum), `point` displays only the point-cloud
+# pass (black without points) and `vertex_color` only vertex colours
 SHADING_PACKS = ["default", "vr_default", "rt"]
-# Two built-in packs predate the current shading: `point` displays only the point-cloud pass, so
-# a scene without points is black, and `vertex_color` declares the 64-byte pre-batching material
-# block, which svulkan2's 160-byte check rejects when the pack is compiled. Both are still
-# checked above for their pack.json, and their shader status is unchanged by this change.
-RENDERABLE_PACKS = ["default", "vr_default", "minimal", "trivial", "point", "rt"]
 # packs no per-camera renderer exists for
 NON_CAMERA_PACKS = ["rt_batch"]
 
@@ -79,11 +75,13 @@ def build_box_scene(scene: sapien.Scene) -> None:
 
 
 def copy_trivial_pack(directory: str, manifest: dict | None = None) -> Path:
-    """A writable copy of the self-contained `trivial` pack (it has no includes), with `manifest`
-    written as its pack.json; None keeps the original `{"parameters": {}}` manifest."""
-    source = Path(sapien.__file__).parent / "vulkan_shader" / "trivial"
+    """A writable copy of the `trivial` pack with `manifest` written as its pack.json;
+    None keeps the original `{"parameters": {}}` manifest. `trivial` includes
+    `../common/scene.glsl`, so that directory is staged alongside the pack."""
+    shader_root = Path(sapien.__file__).parent / "vulkan_shader"
     pack = Path(directory) / "pack"
-    shutil.copytree(source, pack)
+    shutil.copytree(shader_root / "trivial", pack)
+    shutil.copytree(shader_root / "common", Path(directory) / "common")
     if manifest is not None:
         (pack / "pack.json").write_text(json.dumps(manifest))
     return pack
@@ -135,7 +133,7 @@ class TestPackParameters(unittest.TestCase):
     def test_every_camera_pack_renders_with_its_defaults(self) -> None:
         """pack.json and the shaders agree: a camera of every built-in camera pack renders its
         defaults instead of raising about an undeclared uniform."""
-        for pack in RENDERABLE_PACKS:
+        for pack in CAMERA_PACKS:
             with self.subTest(pack=pack):
                 config = sapien.render.RenderConfig(pack)
                 if config.is_ray_tracing:
@@ -154,21 +152,6 @@ class TestPackParameters(unittest.TestCase):
                     if pack in SHADING_PACKS:
                         center = picture[SIZE // 2, SIZE // 2, :3]
                         self.assertGreater(float(center[0]), 0.1)
-
-    def test_the_stale_material_layout_pack_still_fails_at_compile(self) -> None:
-        """`vertex_color` declares the pre-batching 64-byte material block; that shader defect
-        predates pack.json and is unchanged, so its pack.json must not mask it."""
-        with sapien.Scene() as scene:
-            with self.assertRaisesRegex(RuntimeError, "Material should be exactly 160 bytes"):
-                scene.add_camera(
-                    "camera",
-                    SIZE,
-                    SIZE,
-                    1.0,
-                    0.1,
-                    20.0,
-                    render_config=sapien.render.RenderConfig("vertex_color"),
-                )
 
     def test_a_batch_pack_has_no_per_camera_renderer(self) -> None:
         for pack in NON_CAMERA_PACKS:
@@ -388,7 +371,7 @@ class TestVariantParameters(unittest.TestCase):
         pack = copy_trivial_pack(self.directory.name, manifest)
         shader = pack / "gbuffer.frag"
         text = shader.read_text()
-        marker = "outColor = materialBuffer.baseColor;"
+        marker = "outColor = material.baseColor;"
         self.assertIn(marker, text)
         shader.write_text(
             text.replace(
@@ -443,7 +426,7 @@ class TestVariantParameters(unittest.TestCase):
         pack = copy_trivial_pack(self.directory.name, manifest)
         shader = pack / "gbuffer.frag"
         text = shader.read_text()
-        marker = "outColor = materialBuffer.baseColor;"
+        marker = "outColor = material.baseColor;"
         shader.write_text(
             text.replace(
                 marker,

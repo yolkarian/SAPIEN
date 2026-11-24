@@ -452,3 +452,61 @@ is rasterization-only and raises on an RT config.
    storage images in ray tracing, then read them with `camera.get_picture`.
 5. Validate with a tiny scene and `camera.get_picture_names()` before using the
    shader pack in a larger workload.
+
+
+## Raster shader pack interface (scene-wide descriptor set)
+
+Custom raster packs must include `common/scene.glsl` once per pass (`#define SET_NUM n`
+before the include) instead of `object_set.glsl` / `material_set.glsl`. Each draw binds the
+set at its own instance and material, so `instance` and `material` are the drawn object's
+data in every stage (uniform buffers: storage-buffer reads in a fragment shader cost up to
+10% of throughput). `materials[]` and `transforms[]` reach any entry. Shadow passes draw the
+same instances and read `transforms[instance.transformIndex]` as well.
+
+Old access -> new access:
+
+```glsl
+// old
+mat4 model = objectTransformBuffer.modelMatrix;
+outSegmentation = objectDataBuffer.segmentation;
+vec4 albedo = materialBuffer.baseColor;
+albedo *= texture(colorTexture, uv);
+
+// new
+mat4 model = transforms[instance.transformIndex];
+outSegmentation = instance.segmentation;
+vec4 albedo = material.baseColor;
+if (material.baseColorTexture >= 0)
+  albedo *= texture(textures[nonuniformEXT(material.baseColorTexture)], uv);
+```
+
+`Material` is 256 bytes: the first 160 bytes are the previous `MaterialBuffer`, followed by
+six texture indices (`-1` = none) and a reserved tail. `textures[]` has `max_num_textures`
+slots (`sapien.render.set_global_config`, default 512); slot 0 always holds the white
+default texture, and a scene that needs more distinct textures raises `RuntimeError`.
+`materials[]` grows with the scene. Line and point sets have no material.
+
+Per-object custom fields are declared with
+`#define SAPIEN_CUSTOM_OBJECT_DATA struct CustomObjectData { ... };` before the include in
+**every** pass and read as `customObjectData[instance.customDataIndex]`.
+`render_body.set_property(name, value)` writes a field by name;
+`render_body.set_texture(name, texture)` stores the texture's `textures[]` slot in an `int`
+field and `render_body.set_texture_array(name, textures)` the slots in an `int` array field.
+These textures must be 2D. An unset field is 0, so an unset texture field samples the
+default texture:
+
+```glsl
+#define SAPIEN_CUSTOM_OBJECT_DATA struct CustomObjectData { int decal; vec3 tint; };
+#define SET_NUM 1
+#include "../common/scene.glsl"
+#undef SET_NUM
+...
+CustomObjectData data = customObjectData[instance.customDataIndex];
+outColor = vec4(data.tint, 1) * texture(textures[nonuniformEXT(data.decal)], uv);
+```
+
+Device requirement: `runtimeDescriptorArray`,
+`shaderSampledImageArrayNonUniformIndexing` and
+`shaderStorageBufferArrayNonUniformIndexing` are requested unconditionally; devices without
+them are rejected with an explicit error. Custom packs therefore need the same
+`GL_EXT_nonuniform_qualifier` extension as the built-in packs.

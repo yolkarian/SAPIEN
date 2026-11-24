@@ -1,15 +1,12 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : enable
 
 #define SET_NUM 0
 #include "./camera_set.glsl"
 #undef SET_NUM
 
 #define SET_NUM 1
-#include "./object_set.glsl"
-#undef SET_NUM
-
-#define SET_NUM 2
-#include "./material_set.glsl"
+#include "../common/scene.glsl"
 #undef SET_NUM
 
 
@@ -28,6 +25,7 @@ layout(location = 5) out vec4 outCustom;
 layout(location = 6) out vec4 outEmission;
 
 void main() {
+  int textureMask = material.textureMask;
   outCustom = vec4(objectCoord, 1);
   outSegmentation = inSegmentation;
 
@@ -37,38 +35,38 @@ void main() {
   p1 /= p1.w;
   vec2 p1s = p1.xy / p1.z;
 
-  if ((materialBuffer.textureMask & 16) != 0) {
-    outEmission = texture(emissionTexture, inUV * materialBuffer.textureTransforms[4].zw + materialBuffer.textureTransforms[4].xy);
+  if ((textureMask & 16) != 0) {
+    outEmission = texture(textures[nonuniformEXT(material.emissionTexture)], inUV * material.textureTransforms[4].zw + material.textureTransforms[4].xy);
   } else {
-    outEmission = materialBuffer.emission;
+    outEmission = material.emission;
   }
 
-  outAlbedo = materialBuffer.baseColor;
-  if ((materialBuffer.textureMask & 1) != 0) {
-    outAlbedo *= texture(colorTexture, inUV * materialBuffer.textureTransforms[0].zw + materialBuffer.textureTransforms[0].xy);
+  outAlbedo = material.baseColor;
+  if ((textureMask & 1) != 0) {
+    outAlbedo *= texture(textures[nonuniformEXT(material.baseColorTexture)], inUV * material.textureTransforms[0].zw + material.textureTransforms[0].xy);
   }
 
   if (outAlbedo.a == 0) {
     discard;
   }
 
-  outSpecular.r = materialBuffer.fresnel * 0.08;
+  outSpecular.r = material.fresnel * 0.08;
 
-  if ((materialBuffer.textureMask & 2) != 0) {
-    outSpecular.g = texture(roughnessTexture, inUV * materialBuffer.textureTransforms[1].zw + materialBuffer.textureTransforms[1].xy).r;
+  if ((textureMask & 2) != 0) {
+    outSpecular.g = texture(textures[nonuniformEXT(material.roughnessTexture)], inUV * material.textureTransforms[1].zw + material.textureTransforms[1].xy).r;
   } else {
-    outSpecular.g = materialBuffer.roughness;
+    outSpecular.g = material.roughness;
   }
 
-  if ((materialBuffer.textureMask & 8) != 0) {
-    outSpecular.b = texture(metallicTexture, inUV * materialBuffer.textureTransforms[3].zw + materialBuffer.textureTransforms[3].xy).r;
+  if ((textureMask & 8) != 0) {
+    outSpecular.b = texture(textures[nonuniformEXT(material.metallicTexture)], inUV * material.textureTransforms[3].zw + material.textureTransforms[3].xy).r;
   } else {
-    outSpecular.b = materialBuffer.metallic;
+    outSpecular.b = material.metallic;
   }
 
-  if (objectDataBuffer.shadeFlat == 0) {
-    if ((materialBuffer.textureMask & 4) != 0) {
-      outNormal = vec4(normalize(inTbn * (texture(normalTexture, inUV * materialBuffer.textureTransforms[2].zw + materialBuffer.textureTransforms[2].xy).xyz * 2 - 1)), 0);
+  if (instance.shadeFlat == 0) {
+    if ((textureMask & 4) != 0) {
+      outNormal = vec4(normalize(inTbn * (texture(textures[nonuniformEXT(material.normalTexture)], inUV * material.textureTransforms[2].zw + material.textureTransforms[2].xy).xyz * 2 - 1)), 0);
     } else {
       outNormal = vec4(normalize(inTbn * vec3(0, 0, 1)), 0);
     }

@@ -69,7 +69,14 @@ Device::Device(std::shared_ptr<PhysicalDevice> physicalDevice) : mPhysicalDevice
   features.features.setWideLines(physicalDevice->getPickedDeviceInfo().features.wideLines);
   features.features.setGeometryShader(
       physicalDevice->getPickedDeviceInfo().features.geometryShader);
+  // Rasterization shader packs read objects, materials and textures from scene-wide storage
+  // buffers and a non-uniformly indexed sampler array, so every renderer needs these features,
+  // not only ray tracing (instance.cpp rejects devices without them). The renderers write
+  // their descriptors before recording, so update-after-bind is not needed.
   descriptorFeatures.setDescriptorBindingPartiallyBound(true);
+  descriptorFeatures.setRuntimeDescriptorArray(true);
+  descriptorFeatures.setShaderStorageBufferArrayNonUniformIndexing(true);
+  descriptorFeatures.setShaderSampledImageArrayNonUniformIndexing(true);
   timelineSemaphoreFeatures.setTimelineSemaphore(true);
   descriptorFeatures.setPNext(&timelineSemaphoreFeatures);
 
@@ -103,9 +110,7 @@ Device::Device(std::shared_ptr<PhysicalDevice> physicalDevice) : mPhysicalDevice
     // ray queries back the batched ray-tracing renderer: one compute dispatch traces every
     // camera of a group without a ray tracing pipeline or a shader binding table.
     deviceExtensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
-    descriptorFeatures.setRuntimeDescriptorArray(true);
-    descriptorFeatures.setShaderStorageBufferArrayNonUniformIndexing(true);
-    descriptorFeatures.setShaderSampledImageArrayNonUniformIndexing(true);
+    // Runtime/non-uniform descriptor indexing is requested unconditionally above.
     extendedDynamicStateFeature.setPNext(&asFeature);
     asFeature.setPNext(&rtFeature);
     rtFeature.setPNext(&rayQueryFeature);

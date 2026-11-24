@@ -212,26 +212,24 @@ std::shared_ptr<StructDataLayout> parseBuffer(spirv_cross::Compiler &compiler,
     auto &memberType = compiler.get_type(type.member_types[i]);
     uint32_t memberSize = compiler.get_declared_struct_member_size(type, i);
     DataType dataType = get_data_type(memberType);
+    // a runtime-sized array (e.g. customObjectData[]) has no declared size; its elements are
+    // addressed by the decorated stride, which includes the struct's trailing padding
+    bool runtimeArray = memberType.array.size() == 1 && memberType.array[0] == 0 &&
+                        memberType.array_size_literal[0];
+    uint32_t arrayStride = runtimeArray ? compiler.type_struct_member_array_stride(type, i) : 0;
 
     if (memberOffset + memberSize > layout->size) {
       layout->size = memberOffset + memberSize;
     }
 
-    if (dataType == DataType::STRUCT()) {
-      layout->elements[memberName] = {.name = memberName,
-                                      .size = memberSize,
-                                      .offset = memberOffset,
-                                      .array = {memberType.array.begin(), memberType.array.end()},
-                                      .dtype = dataType,
-                                      .member = parseBuffer(compiler, memberType)};
-    } else {
-      layout->elements[memberName] = {.name = memberName,
-                                      .size = memberSize,
-                                      .offset = memberOffset,
-                                      .array = {memberType.array.begin(), memberType.array.end()},
-                                      .dtype = dataType,
-                                      .member = nullptr};
-    }
+    layout->elements[memberName] = {
+        .name = memberName,
+        .size = memberSize,
+        .offset = memberOffset,
+        .array = {memberType.array.begin(), memberType.array.end()},
+        .arrayStride = arrayStride,
+        .dtype = dataType,
+        .member = dataType == DataType::STRUCT() ? parseBuffer(compiler, memberType) : nullptr};
   }
   return layout;
 }
@@ -296,58 +294,6 @@ static void verifyCameraBuffer(std::shared_ptr<StructDataLayout> layout) {
     ASSERT(layout->elements["height"].dtype == DataType::FLOAT(),
            "camera height should have type float");
   }
-}
-
-static void verifyMaterialBuffer(std::shared_ptr<StructDataLayout> layout) {
-  // ASSERT(layout->size == 64, "Material should be exactly 64 bytes in size");
-  ASSERT(layout->size == 160, "Material should be exactly 160 bytes in size");
-
-  // required variables
-  ASSERT(layout->elements.contains("emission"), "material requires variable emission");
-  ASSERT(layout->elements.contains("baseColor"), "material requires variable baseColor");
-  ASSERT(layout->elements.contains("fresnel"), "material requires variable fresnel");
-  ASSERT(layout->elements.contains("roughness"), "material requires variable roughness");
-  ASSERT(layout->elements.contains("metallic"), "material requires variable metallic");
-  ASSERT(layout->elements.contains("transmission"), "material requires variable transmission");
-  ASSERT(layout->elements.contains("ior"), "material requires variable ior");
-  ASSERT(layout->elements.contains("transmissionRoughness"),
-         "material requires variable transmissionRoughness");
-  ASSERT(layout->elements.contains("textureMask"), "material requires variable textureMask");
-
-  // variable  types
-  ASSERT(layout->elements["emission"].dtype == DataType::FLOAT4(),
-         "material emission should be float4");
-  ASSERT(layout->elements["baseColor"].dtype == DataType::FLOAT4(),
-         "material baseColor should be float4");
-  ASSERT(layout->elements["fresnel"].dtype == DataType::FLOAT(),
-         "material fresnel should be float");
-  ASSERT(layout->elements["roughness"].dtype == DataType::FLOAT(),
-         "material roughness should be float");
-  ASSERT(layout->elements["metallic"].dtype == DataType::FLOAT(),
-         "material metallic should be float");
-  ASSERT(layout->elements["transparency"].dtype == DataType::FLOAT(),
-         "material transparency should be float");
-  ASSERT(layout->elements["ior"].dtype == DataType::FLOAT(), "material ior should be float");
-  ASSERT(layout->elements["transmissionRoughness"].dtype == DataType::FLOAT(),
-         "material transmissionRoughness should be float");
-  ASSERT(layout->elements["textureMask"].dtype == DataType::INT(),
-         "material textureMask should be int");
-}
-
-static void verifyObjectTransformBuffer(std::shared_ptr<StructDataLayout> layout) {
-  ASSERT(layout->elements.size() == 1,
-         "ObjectTransformBuffer should only contain the field modelMatrix");
-  ASSERT(layout->elements.contains("modelMatrix"),
-         "ObjectTransformBuffer should only contain the field modelMatrix");
-  ASSERT(layout->elements["modelMatrix"].dtype == DataType::FLOAT44(),
-         "modelMatrix should be mat4");
-}
-
-static void verifyObjectDataBuffer(std::shared_ptr<StructDataLayout> layout) {
-  ASSERT(layout->elements.size() > 1, "ObjectDataBuffer requires segmentation");
-
-  ASSERT(layout->elements["segmentation"].dtype == DataType::UINT4(),
-         "object segmentation should be uint4");
 }
 
 static void verifySceneBuffer(std::shared_ptr<StructDataLayout> layout) {
@@ -592,6 +538,13 @@ DescriptorSetDescription getDescriptorSetDescription(spirv_cross::Compiler &comp
     result.type = UniformBindingType::eTextures;
     return result;
   }
+  // The scene set (common/scene.glsl) is identified by the storage buffer ObjectTransformBuffer
+  // at binding 0; the shader pack instance checks its other bindings when it builds the layout.
+  if (result.bindings[0].type == vk::DescriptorType::eStorageBuffer &&
+      result.bindings[0].name == "ObjectTransformBuffer") {
+    result.type = UniformBindingType::eGPUScene;
+    return result;
+  }
   if (result.bindings[0].type == vk::DescriptorType::eUniformBuffer) {
     auto name = result.bindings[0].name;
     if (name == "CameraBuffer") {
@@ -599,20 +552,9 @@ DescriptorSetDescription getDescriptorSetDescription(spirv_cross::Compiler &comp
       verifyCameraBuffer(result.buffers[result.bindings[0].arrayIndex]);
       return result;
     }
-    if (name == "ObjectTransformBuffer") {
-      result.type = UniformBindingType::eObject;
-      verifyObjectTransformBuffer(result.buffers[result.bindings[0].arrayIndex]);
-      verifyObjectDataBuffer(result.buffers[result.bindings.at(1).arrayIndex]);
-      return result;
-    }
     if (name == "SceneBuffer") {
       result.type = UniformBindingType::eScene;
       verifySceneBuffer(result.buffers[result.bindings[0].arrayIndex]);
-      return result;
-    }
-    if (name == "MaterialBuffer") {
-      result.type = UniformBindingType::eMaterial;
-      verifyMaterialBuffer(result.buffers[result.bindings[0].arrayIndex]);
       return result;
     }
     if (name == "LightBuffer") {

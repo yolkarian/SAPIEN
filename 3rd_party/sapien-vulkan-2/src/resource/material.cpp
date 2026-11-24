@@ -1,37 +1,16 @@
 #include "svulkan2/resource/material.h"
+#include <atomic>
 #include "svulkan2/core/buffer.h"
 #include "svulkan2/core/context.h"
-#include "svulkan2/resource/manager.h"
 
 namespace svulkan2 {
 namespace resource {
 
-static void updateDescriptorSets(
-    vk::Device device, vk::DescriptorSet descriptorSet,
-    std::vector<std::tuple<vk::DescriptorType, vk::Buffer, vk::BufferView>> const &bufferData,
-    std::vector<std::tuple<vk::ImageView, vk::Sampler>> textureData, uint32_t bindingOffset) {
-  std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
-  writeDescriptorSets.reserve(bufferData.size() + textureData.size());
-
-  std::vector<vk::DescriptorBufferInfo> bufferInfos;
-  bufferInfos.reserve(bufferData.size());
-  for (auto const &bd : bufferData) {
-    bufferInfos.push_back(vk::DescriptorBufferInfo(std::get<1>(bd), 0, VK_WHOLE_SIZE));
-    writeDescriptorSets.push_back(
-        vk::WriteDescriptorSet(descriptorSet, bindingOffset++, 0, 1, std::get<0>(bd), nullptr,
-                               &bufferInfos.back(), std::get<2>(bd) ? &std::get<2>(bd) : nullptr));
-  }
-  std::vector<vk::DescriptorImageInfo> imageInfos;
-  imageInfos.reserve(textureData.size());
-  for (auto const &tex : textureData) {
-    imageInfos.push_back(vk::DescriptorImageInfo(std::get<1>(tex), std::get<0>(tex),
-                                                 vk::ImageLayout::eShaderReadOnlyOptimal));
-    writeDescriptorSets.push_back(
-        vk::WriteDescriptorSet(descriptorSet, bindingOffset++, 0, 1,
-                               vk::DescriptorType::eCombinedImageSampler, &imageInfos.back()));
-  }
-  device.updateDescriptorSets(writeDescriptorSets, nullptr);
+namespace {
+std::atomic<uint64_t> gMaterialVersion{1};
 }
+
+uint64_t SVMetallicMaterial::getGlobalVersion() { return gMaterialVersion.load(); }
 
 SVMetallicMaterial::SVMetallicMaterial(glm::vec4 emission, glm::vec4 baseColor, float fresnel,
                                        float roughness, float metallic, float transparency,
@@ -48,19 +27,6 @@ SVMetallicMaterial::SVMetallicMaterial(glm::vec4 emission, glm::vec4 baseColor, 
 }
 
 SVMetallicMaterial::~SVMetallicMaterial() { removeFromDevice(); }
-
-SVMetallicMaterial::DeviceState const &
-SVMetallicMaterial::getDeviceState(core::Context const &context) const {
-  auto state = mDeviceStates.find(context);
-  if (!state || !state->descriptorSet) {
-    throw std::runtime_error("failed to get material: it is not uploaded to this device");
-  }
-  return *state;
-}
-
-vk::DescriptorSet SVMetallicMaterial::getDescriptorSet(core::Context const &context) const {
-  return getDeviceState(context).descriptorSet.get();
-}
 
 core::Buffer &SVMetallicMaterial::getDeviceBuffer(core::Context const &context) const {
   auto state = mDeviceStates.find(context);
@@ -80,10 +46,11 @@ std::vector<std::shared_ptr<core::Context>> SVMetallicMaterial::deviceContexts()
   return contexts;
 }
 
-// Edits reach every device that already holds the material, so renderers whose recorded
-// commands bind its buffer and descriptor set see them without re-recording.
+// Edits reach every device that already holds the material (the ray tracers bind its buffer)
+// and bump the global version that rasterizers compare to refresh their materials[] table.
 void SVMetallicMaterial::bufferChanged() {
   ++mBufferVersion;
+  ++gMaterialVersion;
   for (auto const &context : deviceContexts()) {
     uploadToDevice(*context);
   }
@@ -360,40 +327,19 @@ void SVMetallicMaterial::uploadToDevice(core::Context &context) {
     state.context = context.shared_from_this();
   }
 
-  if (!state.descriptorSet) {
-    state.descriptorSet =
-        context.getDescriptorPool().allocateSet(context.getMetallicDescriptorSetLayout());
-  }
-
   if (state.bufferVersion != mBufferVersion) {
     state.buffer->upload(mBuffer);
     state.bufferVersion = mBufferVersion;
   }
 
   if (state.textureVersion != mTextureVersion) {
-    auto manager = SVResourceManager::Get();
-    auto defaultTexture = manager->getDefaultTexture();
-
-    auto bindTexture = [&](std::shared_ptr<SVTexture> const &texture) {
-      auto t = texture ? texture : defaultTexture;
-      t->uploadToDevice(context);
-      return std::tuple<vk::ImageView, vk::Sampler>{t->getImageView(context),
-                                                    t->getSampler(context)};
-    };
-
-    std::vector<std::tuple<vk::ImageView, vk::Sampler>> textures;
-    textures.reserve(6);
-    textures.push_back(bindTexture(mBaseColorTexture));
-    textures.push_back(bindTexture(mRoughnessTexture));
-    textures.push_back(bindTexture(mNormalTexture));
-    textures.push_back(bindTexture(mMetallicTexture));
-    textures.push_back(bindTexture(mEmissionTexture));
-    textures.push_back(bindTexture(mTransmissionTexture));
-
-    updateDescriptorSets(
-        context.getDevice(), state.descriptorSet.get(),
-        {{vk::DescriptorType::eUniformBuffer, state.buffer->getVulkanBuffer(), nullptr}}, textures,
-        0);
+    // the textures live on the device too; renderers index them from their own tables
+    for (auto const &texture : {mBaseColorTexture, mRoughnessTexture, mNormalTexture,
+                                mMetallicTexture, mEmissionTexture, mTransmissionTexture}) {
+      if (texture) {
+        texture->uploadToDevice(context);
+      }
+    }
     state.textureVersion = mTextureVersion;
   }
 }

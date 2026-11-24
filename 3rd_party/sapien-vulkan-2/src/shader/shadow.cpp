@@ -33,10 +33,10 @@ void ShadowPassParser::reflectSPV() {
 
 void ShadowPassParser::validate() const {
   for (auto &desc : mDescriptorSetDescriptions) {
-    if (desc.type != UniformBindingType::eObject &&
+    if (desc.type != UniformBindingType::eGPUScene &&
         desc.type != UniformBindingType::eLight) {
       throw std::runtime_error(
-          "shadow: only object and light buffers are allowed in a shadow pass");
+          "shadow: only the GPU scene and light buffers are allowed in a shadow pass");
     }
   }
 }

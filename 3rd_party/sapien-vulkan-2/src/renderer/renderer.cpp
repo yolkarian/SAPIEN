@@ -8,7 +8,9 @@
 #include "svulkan2/shader/primitive.h"
 #include "svulkan2/shader/primitive_shadow.h"
 #include "svulkan2/shader/shadow.h"
+#include <algorithm>
 #include <array>
+#include <optional>
 #include <utility>
 
 namespace svulkan2 {
@@ -114,9 +116,16 @@ Renderer::Renderer(std::shared_ptr<core::Context> context, std::shared_ptr<Rende
                                            256, 2, pool_sizes);
   mDescriptorPool = mContext->getDevice().createDescriptorPoolUnique(info);
 
-  mObjectPool = std::make_unique<core::DynamicDescriptorPool>(
-      mContext->getDevice2(),
-      std::vector<vk::DescriptorPoolSize>{{vk::DescriptorType::eUniformBuffer, 1024}});
+  // Dedicated pool for the one scene set of this renderer (common/scene.glsl): 3 storage
+  // buffers, 2 dynamic uniform buffers and the fixed-size textures[] array.
+  vk::DescriptorPoolSize gpu_pool_sizes[] = {
+      {vk::DescriptorType::eStorageBuffer, 3},
+      {vk::DescriptorType::eUniformBufferDynamic, 2},
+      {vk::DescriptorType::eCombinedImageSampler, mContext->getMaxNumTextures()},
+  };
+  auto gpu_info = vk::DescriptorPoolCreateInfo(
+      vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet, 1, 3, gpu_pool_sizes);
+  mGPUScenePool = mContext->getDevice().createDescriptorPoolUnique(gpu_info);
 }
 
 void Renderer::setScene(std::shared_ptr<scene::Scene> scene) {
@@ -526,21 +535,20 @@ void Renderer::recordShadows() {
       mShadowCommandBuffer->setViewport(0, viewport);
       mShadowCommandBuffer->setScissor(0, scissor);
 
-      int objectSetIdx = -1;
+      auto layout = mShaderPackInstance->getShadowPassResources().layout.get();
       auto types = shadowPass->getUniformBindingTypes();
+      uint32_t sceneSet = 0;
       for (uint32_t setIdx = 0; setIdx < types.size(); ++setIdx) {
         switch (types[setIdx]) {
-        case shader::UniformBindingType::eObject:
-          objectSetIdx = setIdx;
+        case shader::UniformBindingType::eGPUScene:
+          sceneSet = setIdx; // bound per draw
           break;
         case shader::UniformBindingType::eLight:
-          mShadowCommandBuffer->bindDescriptorSets(
-              vk::PipelineBindPoint::eGraphics,
-              mShaderPackInstance->getShadowPassResources().layout.get(), setIdx,
-              mLightSets[shadowIdx].get(), nullptr);
+          mShadowCommandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout,
+                                                   setIdx, mLightSets[shadowIdx].get(), nullptr);
           break;
         default:
-          throw std::runtime_error("shadow pass may only use object and light buffer");
+          throw std::runtime_error("shadow pass may only use the GPU scene and light buffer");
         }
       }
 
@@ -548,14 +556,11 @@ void Renderer::recordShadows() {
         if (objects[objIdx]->getTransparency() >= 1 || !objects[objIdx]->getCastShadow()) {
           continue;
         }
-
-        for (auto &shape : objects[objIdx]->getModel()->getShapes()) {
-          if (objectSetIdx >= 0) {
-            mShadowCommandBuffer->bindDescriptorSets(
-                vk::PipelineBindPoint::eGraphics,
-                mShaderPackInstance->getShadowPassResources().layout.get(), objectSetIdx,
-                mObjectSet[objIdx].get(), nullptr);
-          }
+        auto const &shapes = objects[objIdx]->getModel()->getShapes();
+        for (uint32_t shapeIdx = 0; shapeIdx < shapes.size(); ++shapeIdx) {
+          auto const &shape = shapes[shapeIdx];
+          bindSceneSet(mShadowCommandBuffer.get(), layout, sceneSet,
+                       mObjectInstances[objIdx] + shapeIdx);
           mShadowCommandBuffer->bindVertexBuffers(
               0, shape->mesh->getVertexBuffer(*mContext).getVulkanBuffer(), vk::DeviceSize(0));
           mShadowCommandBuffer->bindIndexBuffer(
@@ -597,21 +602,21 @@ void Renderer::recordShadows() {
       mShadowCommandBuffer->setViewport(0, viewport);
       mShadowCommandBuffer->setScissor(0, scissor);
 
-      int objectSetIdx = -1;
+      auto layout = mShaderPackInstance->getPointShadowPassResources().layout.get();
       auto types = pointShadowPass->getUniformBindingTypes();
+      uint32_t sceneSet = 0;
       for (uint32_t setIdx = 0; setIdx < types.size(); ++setIdx) {
         switch (types[setIdx]) {
-        case shader::UniformBindingType::eObject:
-          objectSetIdx = setIdx;
+        case shader::UniformBindingType::eGPUScene:
+          sceneSet = setIdx; // bound per draw
           break;
         case shader::UniformBindingType::eLight:
-          mShadowCommandBuffer->bindDescriptorSets(
-              vk::PipelineBindPoint::eGraphics,
-              mShaderPackInstance->getPointShadowPassResources().layout.get(), setIdx,
-              mLightSets[shadowIdx].get(), nullptr);
+          mShadowCommandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout,
+                                                   setIdx, mLightSets[shadowIdx].get(), nullptr);
           break;
         default:
-          throw std::runtime_error("point shadow pass may only use object and light buffer");
+          throw std::runtime_error(
+              "point shadow pass may only use the GPU scene and light buffer");
         }
       }
 
@@ -619,12 +624,7 @@ void Renderer::recordShadows() {
         if (objects[objIdx]->getTransparency() >= 1) {
           continue;
         }
-        if (objectSetIdx >= 0) {
-          mShadowCommandBuffer->bindDescriptorSets(
-              vk::PipelineBindPoint::eGraphics,
-              mShaderPackInstance->getPointShadowPassResources().layout.get(), objectSetIdx,
-              mObjectSet[mPointObjectIndex + objIdx].get(), nullptr);
-        }
+        bindSceneSet(mShadowCommandBuffer.get(), layout, sceneSet, mPointInstances + objIdx);
         mShadowCommandBuffer->bindVertexBuffers(
             0, objects[objIdx]->getPointSet()->getVertexBuffer(*mContext).getVulkanBuffer(),
             vk::DeviceSize(0));
@@ -642,19 +642,7 @@ void Renderer::prepareObjects() {
   auto objects = mScene->getObjects();
   auto lineObjects = mScene->getLineObjects();
   auto pointObjects = mScene->getPointObjects();
-  auto size = objects.size();
-
-  if (mShaderPack->hasLinePass()) {
-    mLineObjectIndex = size;
-    size += lineObjects.size();
-  }
-  if (mShaderPack->hasPointPass()) {
-    mPointObjectIndex = size;
-    size += pointObjects.size();
-  }
-
-  prepareObjectBuffers(size);
-
+  prepareGPUScene();
   SVULKAN2_PROFILE_BLOCK_END;
 
   // load objects to CPU, if not already loaded
@@ -669,107 +657,44 @@ void Renderer::prepareObjects() {
     }
   }
 
+  // One instance per drawable, planned before recording so every pass that draws it binds the
+  // same instance: the shapes of every object, then the line sets, then the point sets.
   {
     SVULKAN2_PROFILE_BLOCK("Upload objects to GPU");
-    // upload objects to GPU, if not up-to-date
-    for (auto obj : objects) {
-      for (auto shape : obj->getModel()->getShapes()) {
-        shape->material->uploadToDevice(*mContext);
+    mInstances.clear();
+    mObjectInstances.resize(objects.size());
+    for (uint32_t objectIndex = 0; objectIndex < objects.size(); ++objectIndex) {
+      mObjectInstances[objectIndex] = mInstances.size();
+      for (auto shape : objects[objectIndex]->getModel()->getShapes()) {
         shape->mesh->uploadToDevice(*mContext);
+        mInstances.push_back(
+            {0, static_cast<int32_t>(objectIndex), objects[objectIndex]->getInternalGpuIndex(),
+             static_cast<int32_t>(objectIndex),
+             std::static_pointer_cast<resource::SVMetallicMaterial>(shape->material)});
       }
     }
+    mLineInstances = mInstances.size();
     if (mShaderPack->hasLinePass()) {
-      for (auto obj : lineObjects) {
-        obj->getLineSet()->uploadToDevice(*mContext);
+      for (uint32_t index = 0; index < lineObjects.size(); ++index) {
+        lineObjects[index]->getLineSet()->uploadToDevice(*mContext);
+        mInstances.push_back(
+            {1, static_cast<int32_t>(index), lineObjects[index]->getInternalGpuIndex(), -1, {}});
       }
     }
-    if (mShaderPack->hasPointPass()) {
-      for (auto obj : pointObjects) {
-        obj->getPointSet()->uploadToDevice(*mContext);
-      }
-    }
-  }
-
-  // update bindings for custom textures
-  {
-    auto setDesc = mShaderPack->getShaderInputLayouts()->objectSetDescription;
-    for (uint32_t bid = 1; bid < setDesc.bindings.size(); ++bid) {
-      auto binding = setDesc.bindings.at(bid);
-      if (binding.type == vk::DescriptorType::eCombinedImageSampler &&
-          binding.name.substr(0, 7) == "sampler") {
-        auto name = binding.name.substr(7);
-        if (binding.arraySize == 0) {
-          // sampler
-          std::vector<vk::DescriptorImageInfo> imageInfo;
-          for (uint32_t objId = 0; objId < objects.size(); ++objId) {
-            auto t = objects[objId]->getCustomTexture(name);
-            if (!t) {
-              if (binding.imageDim == 1) {
-                t = resource::SVResourceManager::Get()->getDefaultTexture1D();
-              } else if (binding.imageDim == 2) {
-                t = resource::SVResourceManager::Get()->getDefaultTexture();
-              } else {
-                t = resource::SVResourceManager::Get()->getDefaultTexture3D();
-              }
-            }
-
-            t->loadAsync().get();
-            t->uploadToDevice(*mContext);
-
-            imageInfo.push_back({t->getSampler(*mContext), t->getImageView(*mContext),
-                                 vk::ImageLayout::eShaderReadOnlyOptimal});
-          }
-
-          std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
-          for (uint32_t objId = 0; objId < objects.size(); ++objId) {
-            writeDescriptorSets.push_back(vk::WriteDescriptorSet(
-                mObjectSet[objId].get(), bid, 0, vk::DescriptorType::eCombinedImageSampler,
-                imageInfo[objId]));
-          }
-          mContext->getDevice().updateDescriptorSets(writeDescriptorSets, nullptr);
-        } else {
-          // sampler array
-          std::vector<std::vector<vk::DescriptorImageInfo>> imageInfo;
-          for (uint32_t objId = 0; objId < objects.size(); ++objId) {
-            auto ta = objects[objId]->getCustomTextureArray(name);
-            if (static_cast<int>(ta.size()) > binding.arraySize) {
-              ta.resize(binding.arraySize);
-            } else {
-              std::shared_ptr<resource::SVTexture> t;
-              if (binding.imageDim == 1) {
-                t = resource::SVResourceManager::Get()->getDefaultTexture1D();
-              } else if (binding.imageDim == 2) {
-                t = resource::SVResourceManager::Get()->getDefaultTexture();
-              } else {
-                t = resource::SVResourceManager::Get()->getDefaultTexture3D();
-              }
-
-              ta.resize(binding.arraySize, t);
-            }
-            for (auto t : ta) {
-              t->loadAsync().get();
-              t->uploadToDevice(*mContext);
-            }
-
-            imageInfo.emplace_back();
-            for (auto t : ta) {
-              imageInfo.back().push_back({t->getSampler(*mContext), t->getImageView(*mContext),
-                                          vk::ImageLayout::eShaderReadOnlyOptimal});
-            }
-          }
-
-          std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
-          for (uint32_t objId = 0; objId < objects.size(); ++objId) {
-            writeDescriptorSets.push_back(vk::WriteDescriptorSet(
-                mObjectSet[objId].get(), bid, 0, vk::DescriptorType::eCombinedImageSampler,
-                imageInfo[objId]));
-          }
-
-          mContext->getDevice().updateDescriptorSets(writeDescriptorSets, nullptr);
-        }
+    mPointInstances = mInstances.size();
+    if (mShaderPack->hasPointPass() || mShaderPack->getPointShadowPass()) {
+      for (uint32_t index = 0; index < pointObjects.size(); ++index) {
+        pointObjects[index]->getPointSet()->uploadToDevice(*mContext);
+        mInstances.push_back(
+            {2, static_cast<int32_t>(index), pointObjects[index]->getInternalGpuIndex(), -1, {}});
       }
     }
   }
+
+  // The command buffers recorded next bind the scene set, and updating a bound set invalidates
+  // them: every binding they read must be final now.
+  ensureGPUBuffers(mInstances.size(), objects.size());
+  refreshMaterialsAndTextures();
 }
 
 void Renderer::recordRenderPasses() {
@@ -787,8 +712,7 @@ void Renderer::recordRenderPasses() {
   uint32_t numGbufferPasses = mShaderPack->getGbufferPasses().size();
 
   std::vector<std::vector<std::shared_ptr<resource::SVShape>>> shapes(numGbufferPasses);
-
-  std::vector<std::vector<uint32_t>> shapeObjectIndex(numGbufferPasses);
+  std::vector<std::vector<uint32_t>> shapeInstances(numGbufferPasses);
 
   int transparencyShadingMode = numGbufferPasses > 1 ? 1 : 0;
 
@@ -808,7 +732,9 @@ void Renderer::recordRenderPasses() {
      * released until command buffer reset */
     mModelCache.insert(objects[objectIndex]->getModel());
 
-    for (auto shape : objects[objectIndex]->getModel()->getShapes()) {
+    auto const &objectShapes = objects[objectIndex]->getModel()->getShapes();
+    for (uint32_t shapeIndex = 0; shapeIndex < objectShapes.size(); ++shapeIndex) {
+      auto const &shape = objectShapes[shapeIndex];
       int shapeShadingMode = shadingMode;
       if (shape->material->getOpacity() == 0) {
         continue;
@@ -817,7 +743,7 @@ void Renderer::recordRenderPasses() {
         shapeShadingMode = transparencyShadingMode;
       }
       shapes[shapeShadingMode].push_back(shape);
-      shapeObjectIndex[shapeShadingMode].push_back(objectIndex);
+      shapeInstances[shapeShadingMode].push_back(mObjectInstances[objectIndex] + shapeIndex);
     }
   }
 
@@ -872,12 +798,13 @@ void Renderer::recordRenderPasses() {
     mRenderCommandBuffer->setViewport(0, viewport);
     mRenderCommandBuffer->setScissor(0, scissor);
 
-    int objectBinding = -1;
-    int materialBinding = -1;
     auto types = pass->getUniformBindingTypes();
 
     auto layout = mShaderPackInstance->getNonShadowPassResources().at(pass_index).layout.get();
 
+    // the scene set is bound per draw at the draw's instance; a pass that draws no scene
+    // geometry but reads the set sees instance 0
+    std::optional<uint32_t> sceneSet;
     for (uint32_t i = 0; i < types.size(); ++i) {
       switch (types[i]) {
       case shader::UniformBindingType::eCamera:
@@ -892,31 +819,23 @@ void Renderer::recordRenderPasses() {
         mRenderCommandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, i,
                                                  mInputTextureSets[pass_index].get(), nullptr);
         break;
-      case shader::UniformBindingType::eObject:
-        objectBinding = i;
-        break;
-      case shader::UniformBindingType::eMaterial:
-        materialBinding = i;
+      case shader::UniformBindingType::eGPUScene:
+        sceneSet = i;
         break;
       default:
         throw std::runtime_error("not implemented");
       }
     }
+    auto bindInstance = [&](uint32_t instance) {
+      if (sceneSet) {
+        bindSceneSet(mRenderCommandBuffer.get(), layout, *sceneSet, instance);
+      }
+    };
 
     if (auto gbufferPass = std::dynamic_pointer_cast<shader::GbufferPassParser>(pass)) {
       for (uint32_t i = 0; i < shapes[gbufferIndex].size(); ++i) {
         auto shape = shapes[gbufferIndex][i];
-        uint32_t objectIndex = shapeObjectIndex[gbufferIndex][i];
-        if (objectBinding >= 0) {
-          mRenderCommandBuffer->bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout,
-                                                   objectBinding, mObjectSet[objectIndex].get(),
-                                                   nullptr);
-        }
-        if (materialBinding >= 0) {
-          mRenderCommandBuffer->bindDescriptorSets(
-              vk::PipelineBindPoint::eGraphics, layout, materialBinding,
-              shape->material->getDescriptorSet(*mContext), nullptr);
-        }
+        bindInstance(shapeInstances[gbufferIndex][i]);
         mRenderCommandBuffer->bindVertexBuffers(
             0, shape->mesh->getVertexBuffer(*mContext).getVulkanBuffer(), vk::DeviceSize(0));
         mRenderCommandBuffer->bindIndexBuffer(
@@ -928,12 +847,8 @@ void Renderer::recordRenderPasses() {
     } else if (auto linePass = std::dynamic_pointer_cast<shader::LinePassParser>(pass)) {
       for (uint32_t index = 0; index < linesetObjects.size(); ++index) {
         auto &lineObj = linesetObjects[index];
-        if (objectBinding >= 0) {
-          mRenderCommandBuffer->bindDescriptorSets(
-              vk::PipelineBindPoint::eGraphics, layout, objectBinding,
-              mObjectSet[mLineObjectIndex + index].get(), nullptr);
-        }
         if (lineObj->getTransparency() < 1) {
+          bindInstance(mLineInstances + index);
           mLineSetCache.insert(lineObj->getLineSet());
           mRenderCommandBuffer->setLineWidth(lineObj->getLineWidth());
           mRenderCommandBuffer->bindVertexBuffers(
@@ -946,12 +861,8 @@ void Renderer::recordRenderPasses() {
       for (uint32_t i = 0; i < pointsets[pointIndex].size(); ++i) {
         uint32_t objectIndex = pointsets[pointIndex][i];
         auto &pointObj = pointsetObjects[objectIndex];
-        if (objectBinding >= 0) {
-          mRenderCommandBuffer->bindDescriptorSets(
-              vk::PipelineBindPoint::eGraphics, layout, objectBinding,
-              mObjectSet[mPointObjectIndex + i].get(), nullptr);
-        }
         if (pointObj->getTransparency() < 1) {
+          bindInstance(mPointInstances + objectIndex);
           mPointSetCache.insert(pointObj->getPointSet());
           mRenderCommandBuffer->bindVertexBuffers(
               0, pointObj->getPointSet()->getVertexBuffer(*mContext).getVulkanBuffer(),
@@ -961,6 +872,7 @@ void Renderer::recordRenderPasses() {
       }
       pointIndex++;
     } else {
+      bindInstance(0);
       mRenderCommandBuffer->draw(3, 1, 0, 0);
     }
     mRenderCommandBuffer->endRenderPass();
@@ -971,6 +883,14 @@ void Renderer::recordRenderPasses() {
 void Renderer::prepareRender(scene::Camera &camera) {
   if (mLastVersion != mScene->getVersion()) {
     logger::info("Scene updated");
+    mRequiresRecord = true;
+  }
+
+  // Material edits rewrite materials[] in place, in grouped mode too. A grown material table or
+  // a changed texture list rebinds the scene set, which invalidates the recorded command buffers.
+  if (!mRequiresRecord && mGPUSceneSet &&
+      mLastMaterialVersion != resource::SVMetallicMaterial::getGlobalVersion() &&
+      refreshMaterialsAndTextures()) {
     mRequiresRecord = true;
   }
 
@@ -1123,6 +1043,9 @@ void Renderer::prepareRender(scene::Camera &camera) {
       // initialization; record-time uploads would overwrite GPU-owned buffers.
       uploadGpuResources(camera);
       mContext->getQueue().waitIdle();
+    } else {
+      // the instance table follows the draws just recorded and holds no GPU-owned state
+      uploadInstances();
     }
   }
 
@@ -1190,78 +1113,12 @@ void Renderer::uploadGpuResources(scene::Camera &camera) {
   }
 
   {
-    SVULKAN2_PROFILE_BLOCK("Update objects");
-    auto bufferSize = mShaderPack->getShaderInputLayouts()->objectDataBufferLayout->getAlignedSize(
-        mContext->getPhysicalDeviceLimits().minUniformBufferOffsetAlignment);
-
-    // GPU interop can own object transforms while the normal upload path continues to refresh
-    // segmentation, transparency, custom data, camera, scene, and light buffers.
+    SVULKAN2_PROFILE_BLOCK("Update GPU scene");
+    // GPU interop can own object transforms; the instance and custom-data tables stay CPU-owned
     if (!mExternalTransformUpdates && !mScene->hasExternalTransformOwnership()) {
       mScene->uploadObjectTransforms();
     }
-
-    mObjectDataBuffer->map();
-    auto objects = mScene->getObjects();
-
-    {
-      auto layout = mShaderPack->getShaderInputLayouts()->objectDataBufferLayout;
-      int segmentationOffset = layout->elements.at("segmentation").offset;
-      int transparencyOffset = layout->elements.find("transparency") == layout->elements.end()
-                                   ? -1
-                                   : layout->elements.at("transparency").offset;
-      int shadeFlatOffset = layout->elements.find("shadeFlat") == layout->elements.end()
-                                ? -1
-                                : layout->elements.at("shadeFlat").offset;
-
-      for (uint32_t i = 0; i < objects.size(); ++i) {
-        auto segmentation = objects[i]->getSegmentation();
-        float transparency = objects[i]->getTransparency();
-        int shadeFlat = static_cast<int>(objects[i]->getShadeFlat());
-
-        assert(objects[i]->getInternalGpuIndex() == i);
-
-        mObjectDataBuffer->upload(&segmentation, 16, i * bufferSize + segmentationOffset);
-
-        if (transparencyOffset >= 0) {
-          mObjectDataBuffer->upload(&transparency, 4, i * bufferSize + transparencyOffset);
-        }
-        if (shadeFlatOffset >= 0) {
-          mObjectDataBuffer->upload(&shadeFlat, 4, i * bufferSize + shadeFlatOffset);
-        }
-
-        for (auto &[name, value] : objects[i]->getCustomData()) {
-          if (layout->elements.find(name) != layout->elements.end()) {
-            auto &elem = layout->elements.at(name);
-            if (elem.dtype != value.dtype) {
-              throw std::runtime_error("Upload object failed: object attribute \"" + name +
-                                       "\" does not match declared type.");
-            }
-            mObjectDataBuffer->upload(&value.floatValue, elem.size, i * bufferSize + elem.offset);
-          }
-        }
-      }
-    }
-
-    if (mShaderPack->hasLinePass()) {
-      auto lineObjects = mScene->getLineObjects();
-
-      for (uint32_t i = 0; i < lineObjects.size(); ++i) {
-        assert(lineObjects[i]->getInternalGpuIndex() == mLineObjectIndex + i);
-        lineObjects[i]->uploadToDevice(
-            *mObjectDataBuffer, (mLineObjectIndex + i) * bufferSize,
-            *mShaderPack->getShaderInputLayouts()->objectDataBufferLayout);
-      }
-    }
-    if (mShaderPack->hasPointPass()) {
-      auto pointObjects = mScene->getPointObjects();
-      for (uint32_t i = 0; i < pointObjects.size(); ++i) {
-        assert(pointObjects[i]->getInternalGpuIndex() == mPointObjectIndex + i);
-        pointObjects[i]->uploadToDevice(
-            *mObjectDataBuffer, (mPointObjectIndex + i) * bufferSize,
-            *mShaderPack->getShaderInputLayouts()->objectDataBufferLayout);
-      }
-    }
-    mObjectDataBuffer->unmap();
+    uploadInstances();
   }
 
   mContext->getQueue().submit(mUploadCommandBuffer.get(), {});
@@ -1575,102 +1432,282 @@ void Renderer::prepareSceneBuffer() {
   }
 } // namespace renderer
 
-void Renderer::prepareObjectBuffers(uint32_t numObjects) {
+// A host-visible buffer of the scene set, rewritten in place from the CPU.
+static std::unique_ptr<core::Buffer>
+createSceneBuffer(core::Context &context, vk::DeviceSize size, vk::BufferUsageFlags usage) {
+  return core::Buffer::Create(context, size, usage, VMA_MEMORY_USAGE_CPU_TO_GPU);
+}
 
+static void writeBufferBinding(vk::Device device, vk::DescriptorSet set, uint32_t binding,
+                               vk::DescriptorType type, core::Buffer &buffer,
+                               vk::DeviceSize range = VK_WHOLE_SIZE) {
+  vk::DescriptorBufferInfo info{buffer.getVulkanBuffer(), 0, range};
+  device.updateDescriptorSets(vk::WriteDescriptorSet(set, binding, 0, type, {}, info, {}),
+                              nullptr);
+}
+
+// The textures set_texture (int field) or set_texture_array (int array field, cut to its
+// length) assigned to a CustomObjectData field of an object.
+static std::vector<std::shared_ptr<resource::SVTexture>>
+customTextures(scene::Object const &object, std::string const &name,
+               StructDataLayout::Element const &field) {
+  if (field.array.empty()) {
+    return {object.getCustomTexture(name)};
+  }
+  auto textures = object.getCustomTextureArray(name);
+  textures.resize(std::min<size_t>(textures.size(), field.size / sizeof(int32_t)));
+  return textures;
+}
+
+void Renderer::prepareGPUScene() {
+  if (!mGPUSceneSet) {
+    auto layout = mShaderPackInstance->getGPUSceneDescriptorSetLayout();
+    mGPUSceneSet = std::move(mContext->getDevice()
+                                 .allocateDescriptorSetsUnique(vk::DescriptorSetAllocateInfo(
+                                     mGPUScenePool.get(), 1, &layout))
+                                 .front());
+    mCustomDataStride = mShaderPack->getShaderInputLayouts()->customObjectDataStride;
+    // each instance is bound at its own dynamic offset
+    auto alignment = static_cast<uint32_t>(
+        mContext->getPhysicalDeviceLimits().minUniformBufferOffsetAlignment);
+    mInstanceStride = (sizeof(InstanceInfo) + alignment - 1) / alignment * alignment;
+
+    // Every slot of the fixed-size textures[] must hold a valid descriptor. Slot 0 is the
+    // default texture for good; the other slots hold it while unused.
+    auto def = resource::SVResourceManager::Get()->getDefaultTexture();
+    def->loadAsync().get();
+    def->uploadToDevice(*mContext);
+    mBoundTextures = {{def->getSampler(*mContext), def->getImageView(*mContext),
+                       vk::ImageLayout::eShaderReadOnlyOptimal}};
+    std::vector<vk::DescriptorImageInfo> slots(mContext->getMaxNumTextures(), mBoundTextures[0]);
+    mContext->getDevice().updateDescriptorSets(
+        vk::WriteDescriptorSet(mGPUSceneSet.get(), 3, 0,
+                               vk::DescriptorType::eCombinedImageSampler, slots, {}, {}),
+        nullptr);
+    mTextures = {def};
+  }
+
+  // The transform table is the Scene's (CPU uploads or CUDA pose writes); the Scene replaces it
+  // when it grows.
   auto transformBuffer = mScene->getObjectTransformBuffer();
+  if (mObjectTransformBuffer != transformBuffer) {
+    mObjectTransformBuffer = std::move(transformBuffer);
+    writeBufferBinding(mContext->getDevice(), mGPUSceneSet.get(), 0,
+                       vk::DescriptorType::eStorageBuffer, *mObjectTransformBuffer);
+  }
+}
 
-  if (mObjectTransformBuffer == transformBuffer) {
-    // current object set and buffer bindings are still good
+void Renderer::ensureGPUBuffers(uint32_t instanceCount, uint32_t objectCount) {
+  // a buffer holds at least one element, so its binding is always valid
+  instanceCount = std::max(instanceCount, 1u);
+  if (instanceCount > mInstanceCapacity) {
+    mInstanceCapacity = std::max(instanceCount, mInstanceCapacity * 2);
+    mInstanceBuffer =
+        createSceneBuffer(*mContext, vk::DeviceSize(mInstanceStride) * mInstanceCapacity,
+                          vk::BufferUsageFlagBits::eUniformBuffer);
+    writeBufferBinding(mContext->getDevice(), mGPUSceneSet.get(), 1,
+                       vk::DescriptorType::eUniformBufferDynamic, *mInstanceBuffer,
+                       sizeof(InstanceInfo));
+  }
+  objectCount = std::max(objectCount, 1u);
+  if (mCustomDataStride && objectCount > mCustomDataCapacity) {
+    mCustomDataCapacity = std::max(objectCount, mCustomDataCapacity * 2);
+    mCustomDataBuffer =
+        createSceneBuffer(*mContext, vk::DeviceSize(mCustomDataStride) * mCustomDataCapacity,
+                          vk::BufferUsageFlagBits::eStorageBuffer);
+    writeBufferBinding(mContext->getDevice(), mGPUSceneSet.get(), 4,
+                       vk::DescriptorType::eStorageBuffer, *mCustomDataBuffer);
+  }
+}
+
+bool Renderer::refreshMaterialsAndTextures() {
+  uint64_t version = resource::SVMetallicMaterial::getGlobalVersion();
+  auto objects = mScene->getObjects();
+  mMaterials.clear();
+  mMaterialIndices.clear();
+  mTextures.resize(1); // slot 0: the default texture
+  mTextureIndices.clear();
+
+  // Register a texture in textures[] and return its slot; -1 for no texture.
+  auto textureIndex = [&](std::shared_ptr<resource::SVTexture> const &t) -> int32_t {
+    if (!t) {
+      return -1;
+    }
+    auto [it, inserted] =
+        mTextureIndices.try_emplace(t.get(), static_cast<int32_t>(mTextures.size()));
+    if (inserted) {
+      t->loadAsync().get();
+      t->uploadToDevice(*mContext);
+      mTextures.push_back(t);
+    }
+    return it->second;
+  };
+
+  std::vector<GPUMaterial> gpuMaterials;
+  for (auto obj : objects) {
+    for (auto const &shape : obj->getModel()->getShapes()) {
+      auto mat = std::static_pointer_cast<resource::SVMetallicMaterial>(shape->material);
+      if (!mMaterialIndices.try_emplace(mat.get(), static_cast<uint32_t>(gpuMaterials.size()))
+               .second) {
+        continue;
+      }
+      GPUMaterial &g = gpuMaterials.emplace_back();
+      std::memcpy(&g, &mat->getBuffer(), sizeof(resource::SVMetallicMaterial::Buffer));
+      g.baseColorTexture = textureIndex(mat->getBaseColorTexture());
+      g.roughnessTexture = textureIndex(mat->getRoughnessTexture());
+      g.normalTexture = textureIndex(mat->getNormalTexture());
+      g.metallicTexture = textureIndex(mat->getMetallicTexture());
+      g.emissionTexture = textureIndex(mat->getEmissionTexture());
+      g.transmissionTexture = textureIndex(mat->getTransmissionTexture());
+      mMaterials.push_back(mat);
+    }
+  }
+
+  // Per-object custom textures live in textures[] too: set_texture fills an int field and
+  // set_texture_array an int array field of CustomObjectData with their slots.
+  if (auto customLayout = mShaderPack->getShaderInputLayouts()->customObjectDataLayout) {
+    for (auto obj : objects) {
+      for (auto const &[name, elem] : customLayout->elements) {
+        if (elem.dtype != DataType::INT()) {
+          continue;
+        }
+        for (auto const &t : customTextures(*obj, name, elem)) {
+          if (t && t->getDescription().dim != 2) {
+            throw std::runtime_error("render body texture \"" + name +
+                                     "\" must be 2D: shaders sample per-object textures "
+                                     "from textures[] (sampler2D)");
+          }
+          textureIndex(t);
+        }
+      }
+    }
+  }
+
+  if (mTextures.size() > mContext->getMaxNumTextures()) {
+    throw std::runtime_error(
+        "the scene uses " + std::to_string(mTextures.size() - 1) + " textures, more than the " +
+        std::to_string(mContext->getMaxNumTextures() - 1) +
+        " that fit in textures[]; raise max_num_textures in sapien.render.set_global_config()");
+  }
+
+  bool rebound = false;
+  uint32_t materialCount = std::max<uint32_t>(gpuMaterials.size(), 1);
+  if (materialCount > mMaterialCapacity) {
+    mMaterialCapacity =
+        std::max({materialCount, mMaterialCapacity * 2, mContext->getMaxNumMaterials()});
+    mMaterialBuffer = createSceneBuffer(
+        *mContext, sizeof(GPUMaterial) * mMaterialCapacity,
+        vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eUniformBuffer);
+    writeBufferBinding(mContext->getDevice(), mGPUSceneSet.get(), 2,
+                       vk::DescriptorType::eStorageBuffer, *mMaterialBuffer);
+    writeBufferBinding(mContext->getDevice(), mGPUSceneSet.get(), 5,
+                       vk::DescriptorType::eUniformBufferDynamic, *mMaterialBuffer,
+                       sizeof(GPUMaterial));
+    rebound = true;
+  }
+  if (!gpuMaterials.empty()) {
+    mMaterialBuffer->upload(gpuMaterials);
+  }
+
+  // Rewrite the textures[] slots whose texture changed; slots past the list get the default.
+  std::vector<vk::DescriptorImageInfo> textures{mBoundTextures[0]};
+  for (size_t i = 1; i < mTextures.size(); ++i) {
+    textures.push_back({mTextures[i]->getSampler(*mContext),
+                        mTextures[i]->getImageView(*mContext),
+                        vk::ImageLayout::eShaderReadOnlyOptimal});
+  }
+  if (textures != mBoundTextures) {
+    auto slots = textures;
+    slots.resize(std::max(textures.size(), mBoundTextures.size()), mBoundTextures[0]);
+    mContext->getDevice().updateDescriptorSets(
+        vk::WriteDescriptorSet(mGPUSceneSet.get(), 3, 0,
+                               vk::DescriptorType::eCombinedImageSampler, slots, {}, {}),
+        nullptr);
+    mBoundTextures = std::move(textures);
+    rebound = true;
+  }
+
+  mLastMaterialVersion = version;
+  return rebound;
+}
+
+void Renderer::uploadInstances() {
+  auto objects = mScene->getObjects();
+  auto lineObjects = mScene->getLineObjects();
+  auto pointObjects = mScene->getPointObjects();
+
+  mInstanceData.assign(size_t(mInstanceStride) * mInstances.size(), 0);
+  for (size_t i = 0; i < mInstances.size(); ++i) {
+    auto const &ref = mInstances[i];
+    InstanceInfo info{};
+    info.transformIndex = ref.transformIndex;
+    info.customDataIndex = ref.customDataIndex;
+    info.materialIndex = -1;
+    if (ref.kind == 0) {
+      auto obj = objects.at(ref.objectIndex);
+      info.materialIndex = mMaterialIndices.at(ref.material.get());
+      info.segmentation = obj->getSegmentation();
+      info.transparency = obj->getTransparency();
+      info.shadeFlat = obj->getShadeFlat();
+    } else if (ref.kind == 1) {
+      auto obj = lineObjects.at(ref.objectIndex);
+      info.segmentation = obj->getSegmentation();
+      info.transparency = obj->getTransparency();
+    } else {
+      auto obj = pointObjects.at(ref.objectIndex);
+      info.segmentation = obj->getSegmentation();
+      info.transparency = obj->getTransparency();
+    }
+    std::memcpy(mInstanceData.data() + i * mInstanceStride, &info, sizeof(info));
+  }
+  if (!mInstanceData.empty()) {
+    mInstanceBuffer->upload(mInstanceData);
+  }
+
+  // Per-object custom data, one element per object: set_property values by name and
+  // textures[] slots from set_texture/set_texture_array in int fields. Unset fields stay 0,
+  // which for a texture field is the default texture.
+  auto customLayout = mShaderPack->getShaderInputLayouts()->customObjectDataLayout;
+  if (!mCustomDataStride || !customLayout || objects.empty()) {
     return;
   }
-
-  // the obejct buffer is outdated
-  auto bufferSize = mShaderPack->getShaderInputLayouts()->objectDataBufferLayout->getAlignedSize(
-      mContext->getPhysicalDeviceLimits().minUniformBufferOffsetAlignment);
-
-  mObjectTransformBuffer = transformBuffer;
-
-  size_t transformSize = mScene->getGpuTransformBufferSize();
-
-  uint32_t newSize = mObjectTransformBuffer->getSize() / transformSize;
-  assert(newSize >= numObjects);
-
-  // reallocate data buffer
-  mObjectDataBuffer = core::Buffer::CreateUniform(*mContext, bufferSize * newSize, false);
-
-  // expand or shrink sets
-  if (mObjectSet.size() < newSize) {
-    auto layout = mShaderPackInstance->getObjectDescriptorSetLayout();
-    for (uint32_t i = mObjectSet.size(); i < newSize; ++i) {
-      mObjectSet.push_back(mObjectPool->allocateSet(layout));
+  mCustomData.assign(size_t(mCustomDataStride) * objects.size(), 0);
+  for (size_t i = 0; i < objects.size(); ++i) {
+    uint8_t *dst = mCustomData.data() + i * mCustomDataStride;
+    auto const &values = objects[i]->getCustomData();
+    for (auto const &[name, elem] : customLayout->elements) {
+      if (auto it = values.find(name); it != values.end()) {
+        if (it->second.dtype != elem.dtype) {
+          throw std::runtime_error("Upload object failed: object attribute \"" + name +
+                                   "\" does not match declared type.");
+        }
+        std::memcpy(dst + elem.offset, &it->second.floatValue, elem.size);
+      } else if (elem.dtype == DataType::INT()) {
+        auto textures = customTextures(*objects[i], name, elem);
+        for (size_t k = 0; k < textures.size(); ++k) {
+          if (textures[k]) {
+            int32_t slot = mTextureIndices.at(textures[k].get());
+            std::memcpy(dst + elem.offset + k * sizeof(int32_t), &slot, sizeof(slot));
+          }
+        }
+      }
     }
-  } else {
-    mObjectSet.resize(newSize);
   }
+  mCustomDataBuffer->upload(mCustomData);
+}
 
-  std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
-  writeDescriptorSets.reserve(mObjectSet.size() * 2);
-  std::vector<std::array<vk::DescriptorBufferInfo, 2>> bufferInfos(mObjectSet.size());
-
-  for (uint32_t i = 0; i < mObjectSet.size(); ++i) {
-    auto buffer = mObjectDataBuffer->getVulkanBuffer();
-    bufferInfos[i] = {vk::DescriptorBufferInfo(transformBuffer->getVulkanBuffer(),
-                                               transformSize * i, transformSize),
-                      vk::DescriptorBufferInfo(buffer, bufferSize * i, bufferSize)};
-    // TODO: these 2 can merge into 1?
-    writeDescriptorSets.push_back(vk::WriteDescriptorSet(
-        mObjectSet[i].get(), 0, 0, vk::DescriptorType::eUniformBuffer, {}, bufferInfos[i][0], {}));
-    writeDescriptorSets.push_back(vk::WriteDescriptorSet(
-        mObjectSet[i].get(), 1, 0, vk::DescriptorType::eUniformBuffer, {}, bufferInfos[i][1], {}));
+void Renderer::bindSceneSet(vk::CommandBuffer commandBuffer, vk::PipelineLayout layout,
+                            uint32_t set, uint32_t instance) {
+  // dynamic offsets of binding 1 (the instance) and binding 5 (its material), in binding order
+  std::array<uint32_t, 2> offsets{0, 0};
+  if (instance < mInstances.size()) {
+    offsets[0] = instance * mInstanceStride;
+    if (auto const &material = mInstances[instance].material) {
+      offsets[1] = mMaterialIndices.at(material.get()) * sizeof(GPUMaterial);
+    }
   }
-  mContext->getDevice().updateDescriptorSets(writeDescriptorSets, nullptr);
-
-  // bool updated{false};
-
-  // // make sure object buffer can be created
-  // if (numObjects == 0) {
-  //   numObjects = 1;
-  // }
-
-  // // shrink
-  // if (numObjects * 2 < mObjectSet.size()) {
-  //   updated = true;
-  //   uint32_t newSize = numObjects;
-
-  //   // reallocate buffer
-  //   mObjectDataBuffer = core::Buffer::CreateUniform(bufferSize * newSize, false);
-
-  //   mObjectSet.resize(newSize);
-  // }
-  // // expand
-  // if (numObjects > mObjectSet.size()) {
-  //   updated = true;
-  //   uint32_t newSize = std::max(numObjects, 2 * static_cast<uint32_t>(mObjectSet.size()));
-
-  //   // reallocate buffer
-  //   mObjectDataBuffer = core::Buffer::CreateUniform(bufferSize * newSize, false);
-
-  //   auto layout = mShaderPackInstance->getObjectDescriptorSetLayout();
-  //   for (uint32_t i = mObjectSet.size(); i < newSize; ++i) {
-  //     mObjectSet.push_back(mObjectPool->allocateSet(layout));
-  //   }
-  // }
-
-  // if (updated) {
-  //   std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
-  //   // std::vector<vk::DescriptorBufferInfo> bufferInfos(mObjectSet.size());
-  //   std::vector<vk::DescriptorBufferInfo> bufferInfos;
-  //   bufferInfos.reserve(mObjectSet.size() * 2);
-
-  //   for (uint32_t i = 0; i < mObjectSet.size(); ++i) {
-  //     auto buffer = mObjectDataBuffer->getVulkanBuffer();
-  //     bufferInfos[i] = vk::DescriptorBufferInfo(buffer, bufferSize * i, bufferSize);
-  //     writeDescriptorSets.push_back(vk::WriteDescriptorSet(
-  //         mObjectSet[i].get(), 0, 0, vk::DescriptorType::eUniformBuffer, {}, bufferInfos[i],
-  //         {}));
-  //   }
-  //   mContext->getDevice().updateDescriptorSets(writeDescriptorSets, nullptr);
-  // }
+  commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, set,
+                                   mGPUSceneSet.get(), offsets);
 }
 
 void Renderer::prepareLightBuffers() {

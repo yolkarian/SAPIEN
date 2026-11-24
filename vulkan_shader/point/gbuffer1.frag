@@ -1,4 +1,5 @@
 #version 450
+#extension GL_EXT_nonuniform_qualifier : enable
 
 layout (constant_id = 0) const int NUM_DIRECTIONAL_LIGHTS = 3;
 layout (constant_id = 1) const int NUM_POINT_LIGHTS = 10;
@@ -13,14 +14,10 @@ layout (constant_id = 6) const int NUM_SPOT_LIGHTS = 10;
 #undef SET_NUM
 
 #define SET_NUM 1
-#include "./object_set.glsl"
+#include "../common/scene.glsl"
 #undef SET_NUM
 
 #define SET_NUM 2
-#include "./material_set.glsl"
-#undef SET_NUM
-
-#define SET_NUM 3
 #include "./scene_set.glsl"
 #undef SET_NUM
 
@@ -55,46 +52,47 @@ layout(location = 2) out uvec4 outSegmentation;
 layout(location = 3) out vec4 outPosition;
 
 void main() {
+  int textureMask = material.textureMask;
   outSegmentation = inSegmentation;
 
   vec4 emission;
   vec4 albedo;
   vec4 frm;
 
-  if ((materialBuffer.textureMask & 16) != 0) {
-    emission = texture(emissionTexture, inUV * materialBuffer.textureTransforms[4].zw + materialBuffer.textureTransforms[4].xy);
+  if ((textureMask & 16) != 0) {
+    emission = texture(textures[nonuniformEXT(material.emissionTexture)], inUV * material.textureTransforms[4].zw + material.textureTransforms[4].xy);
   } else {
-    emission = materialBuffer.emission;
+    emission = material.emission;
   }
 
-  albedo = materialBuffer.baseColor;
-  if ((materialBuffer.textureMask & 1) != 0) {
-    albedo *= texture(colorTexture, inUV * materialBuffer.textureTransforms[0].zw + materialBuffer.textureTransforms[0].xy);
+  albedo = material.baseColor;
+  if ((textureMask & 1) != 0) {
+    albedo *= texture(textures[nonuniformEXT(material.baseColorTexture)], inUV * material.textureTransforms[0].zw + material.textureTransforms[0].xy);
   }
 
-  albedo.a *=  (1.f - objectDataBuffer.transparency);
+  albedo.a *=  (1.f - instance.transparency);
 
   if (albedo.a == 0) {
     discard;
   }
 
-  frm.r = materialBuffer.fresnel * 0.08;
+  frm.r = material.fresnel * 0.08;
 
-  if ((materialBuffer.textureMask & 2) != 0) {
-    frm.g = texture(roughnessTexture, inUV * materialBuffer.textureTransforms[1].zw + materialBuffer.textureTransforms[1].xy).r;
+  if ((textureMask & 2) != 0) {
+    frm.g = texture(textures[nonuniformEXT(material.roughnessTexture)], inUV * material.textureTransforms[1].zw + material.textureTransforms[1].xy).r;
   } else {
-    frm.g = materialBuffer.roughness;
+    frm.g = material.roughness;
   }
 
-  if ((materialBuffer.textureMask & 8) != 0) {
-    frm.b = texture(metallicTexture, inUV * materialBuffer.textureTransforms[3].zw + materialBuffer.textureTransforms[3].xy).r;
+  if ((textureMask & 8) != 0) {
+    frm.b = texture(textures[nonuniformEXT(material.metallicTexture)], inUV * material.textureTransforms[3].zw + material.textureTransforms[3].xy).r;
   } else {
-    frm.b = materialBuffer.metallic;
+    frm.b = material.metallic;
   }
 
-  if (objectDataBuffer.shadeFlat == 0) {
-    if ((materialBuffer.textureMask & 4) != 0) {
-      outNormal = vec4(normalize(inTbn * (texture(normalTexture, inUV * materialBuffer.textureTransforms[2].zw + materialBuffer.textureTransforms[2].xy).xyz * 2 - 1)), 0);
+  if (instance.shadeFlat == 0) {
+    if ((textureMask & 4) != 0) {
+      outNormal = vec4(normalize(inTbn * (texture(textures[nonuniformEXT(material.normalTexture)], inUV * material.textureTransforms[2].zw + material.textureTransforms[2].xy).xyz * 2 - 1)), 0);
     } else {
       outNormal = vec4(normalize(inTbn * vec3(0, 0, 1)), 0);
     }
