@@ -83,6 +83,10 @@ public:
   /** this device's view and sampler; throw when the cubemap is not uploaded there */
   vk::ImageView getImageView(core::Context const &context) const;
   vk::Sampler getSampler(core::Context const &context) const;
+  /** this device's underlying cube image (base mip holds the environment radiance). Returns
+   *  nullptr when the cubemap is not uploaded to this device. Used to build the CPU-side
+   *  environment importance-sampling table of the RT integrator. */
+  core::Image *getDeviceCubeImage(core::Context &context);
 
   /** write this device's (prefiltered) cube image to a KTX file */
   void exportKTX(core::Context &context, std::string const &filename);

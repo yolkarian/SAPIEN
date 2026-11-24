@@ -31,7 +31,7 @@
     "russianRoulette": {
       "kind": "uniform",
       "type": "bool",
-      "default": false,
+      "default": true,
       "description": "Terminate low-contribution paths stochastically to save work."
     },
     "russianRouletteMinBounces": {

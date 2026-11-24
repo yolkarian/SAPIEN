@@ -7,6 +7,7 @@
 #include "svulkan2/resource/storage_image.h"
 #include "svulkan2/scene/scene.h"
 #include "svulkan2/shader/glsl_compiler.h"
+#include "svulkan2/renderer/rt_integrator_tables.h"
 #include <variant>
 
 namespace svulkan2 {
@@ -205,6 +206,10 @@ private:
 
   std::unique_ptr<core::Buffer> mCameraBuffer;
   std::unique_ptr<core::Buffer> mObjectBuffer;
+
+  // Importance-sampling tables for the environment map and emissive triangles, rebuilt with
+  // the scene descriptor set. Owns their GPU storage buffers.
+  IntegratorTables mIntegratorTables;
 
   std::map<std::string, std::shared_ptr<resource::SVTexture>> mCustomTextures;
   std::map<std::string, std::shared_ptr<resource::SVCubemap>> mCustomCubemaps;

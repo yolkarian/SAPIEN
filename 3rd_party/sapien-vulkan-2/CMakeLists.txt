@@ -42,6 +42,11 @@ endif()
 
 set_target_properties(svulkan2 PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 
+# The rt path tracer builds its environment/emissive alias tables in C++ (rt_integrator_tables.cpp)
+# but the pure CPU table construction is a Zig module from the parent SAPIEN tree. Compile it in
+# this directory's scope so the generated object is a source of the svulkan2 target here.
+sapien_add_zig_module(svulkan2 ../../src/sapien_renderer/alias_table.zig)
+
 target_compile_definitions(imgui PRIVATE VK_NO_PROTOTYPES)
 target_compile_definitions(svulkan2 PUBLIC VK_NO_PROTOTYPES)
 

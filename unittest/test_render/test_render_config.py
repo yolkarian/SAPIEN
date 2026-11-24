@@ -36,7 +36,19 @@ BUILTIN_PACKS = {
         "maxDepth": ("uniform", "int", 8, 0.0, None),
         "aperture": ("uniform", "float", 0.0, 0.0, None),
         "focusPlane": ("uniform", "float", 1.0, 0.0, None),
-        "russianRoulette": ("uniform", "bool", False, None, None),
+        "russianRoulette": ("uniform", "bool", True, None, None),
+        "russianRouletteMinBounces": ("uniform", "int", 2, 0.0, None),
+        "clampIndirect": ("uniform", "float", 0.0, 0.0, None),
+        "lightSampling": ("variant", "enum", "mis", None, None),
+        "exposure": ("uniform", "float", 1.0, 0.0, None),
+        "toneMapper": ("uniform", "int", 2, 0.0, 2.0),
+    },
+    "shadow_catcher": {
+        "spp": ("uniform", "int", 32, 1.0, None),
+        "maxDepth": ("uniform", "int", 8, 0.0, None),
+        "aperture": ("uniform", "float", 0.0, 0.0, None),
+        "focusPlane": ("uniform", "float", 1.0, 0.0, None),
+        "russianRoulette": ("uniform", "bool", True, None, None),
         "russianRouletteMinBounces": ("uniform", "int", 2, 0.0, None),
         "exposure": ("uniform", "float", 1.0, 0.0, None),
         "toneMapper": ("uniform", "int", 2, 0.0, 2.0),
@@ -50,7 +62,6 @@ BUILTIN_PACKS = {
         "maxShadowLights": ("variant", "int", 4, 1.0, 16.0),
     },
 }
-BUILTIN_PACKS["shadow_catcher"] = BUILTIN_PACKS["rt"]
 
 # a pack whose entry point and manifest make it usable as a rasterization camera
 CAMERA_PACKS = ["default", "vr_default", "point", "minimal", "trivial", "vertex_color", "rt"]

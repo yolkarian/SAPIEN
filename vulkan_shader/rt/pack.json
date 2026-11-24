@@ -31,7 +31,7 @@
     "russianRoulette": {
       "kind": "uniform",
       "type": "bool",
-      "default": false,
+      "default": true,
       "description": "Terminate low-contribution paths stochastically to save work."
     },
     "russianRouletteMinBounces": {
@@ -40,6 +40,25 @@
       "default": 2,
       "minimum": 0,
       "description": "Bounces every path survives before Russian roulette may stop it."
+    },
+    "clampIndirect": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "minimum": 0,
+      "description": "Clamp the peak channel of radiance contributed after the first bounce to this value to suppress fireflies; 0 disables clamping."
+    },
+    "lightSampling": {
+      "kind": "variant",
+      "type": "enum",
+      "values": ["mis", "nee", "bsdf"],
+      "default": "mis",
+      "define": {
+        "mis": "LIGHT_SAMPLING_MIS",
+        "nee": "LIGHT_SAMPLING_NEE",
+        "bsdf": "LIGHT_SAMPLING_BSDF"
+      },
+      "description": "Debugging switch for direct lighting: 'mis' (default) combines next-event estimation with BSDF sampling using the power heuristic, 'nee' uses only explicit light sampling, 'bsdf' only light seen by BSDF rays."
     },
     "exposure": {
       "kind": "uniform",

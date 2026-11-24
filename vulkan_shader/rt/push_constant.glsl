@@ -23,4 +23,10 @@ layout(push_constant) uniform Constants {
   // post processing
   float exposure;
   int toneMapper;
+
+  float clampIndirect;  // 0 disables; clamps contributions after the first bounce
+
+  // written by the renderer, not by pack.json
+  int envWidth;         // columns of the environment importance grid; 0 = no environment table
+  int emissiveCount;    // triangles in the emissive table; 0 = none
 };

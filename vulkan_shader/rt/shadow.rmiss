@@ -4,8 +4,9 @@
 #include "ray.glsl"
 #include "push_constant.glsl"
 
-layout(location = 1) rayPayloadInEXT ShadowRay shadowRay;
+layout(location = 0) rayPayloadInEXT Ray ray;
 
 void main() {
-  shadowRay.shadowed = false;
+  // the shadow ray got through: transparent occluders already scaled its transmittance
+  ray.isShadow = 0;
 }

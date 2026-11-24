@@ -4,6 +4,26 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+The `rt` path tracer samples its lights:
+
+- **Behavior change:** the environment map and emissive meshes are light-sampled and combined
+  with BSDF sampling by multiple importance sampling; environment radiance is no longer
+  clamped to 100. HDR maps and emissive meshes light the scene at full strength, and images
+  converge faster and look different. Emissive meshes are sampled at their current pose;
+  meshes with an emission texture are only found by BSDF rays.
+- **Breaking (default):** `russianRoulette` defaults to `true` in `rt` and `shadow_catcher`.
+  Set `config["russianRoulette"] = False` for the previous termination.
+- New `rt` uniform `clampIndirect` (float, default `0` = off): clamps the brightest channel of
+  every contribution after the first bounce (firefly control).
+- New `rt` variant `lightSampling` (`"mis"` default, `"nee"`, `"bsdf"`) for debugging; set it
+  on the `RenderConfig` before creating the camera (`camera.set_property` raises for it). The
+  three converge to the same image.
+- Shadow rays pass transparent and transmissive occluders with the light they let through
+  (base-colour alpha, object `transparency`, `transmission` tinted by the base colour)
+  instead of being blocked by them.
+- Building needs the Zig module `src/sapien_renderer/alias_table.zig` (linked into the
+  renderer like `pack_manifest.zig`; wheels and the SDK need no Zig at run time).
+
 Shader packs declare their parameters in `pack.json`:
 
 - **Breaking:** every shader pack directory, built-in or custom, must contain a

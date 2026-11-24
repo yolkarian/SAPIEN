@@ -47,8 +47,10 @@ vk::AccelerationStructureGeometryKHR SVMesh::getASGeometry(core::Context &contex
       vk::Format::eR32G32B32Sfloat, vertexAddress, getVertexSize(), mVertexCount,
       vk::IndexType::eUint32, indexAddress, {});
 
+  // Not opaque: any-hit handles transparency. It runs once per primitive and ray, because the
+  // rt shadow rays multiply their transmittance there.
   vk::AccelerationStructureGeometryKHR geom(vk::GeometryTypeKHR::eTriangles, trianglesData,
-                                            {}); // TODO: add opaque flag?
+                                            vk::GeometryFlagBitsKHR::eNoDuplicateAnyHitInvocation);
   return geom;
 }
 

@@ -5,6 +5,7 @@
 #include "svulkan2/core/context.h"
 #include "svulkan2/resource/manager.h"
 #include "svulkan2/shader/rt.h"
+#include <map>
 #include <utility>
 
 namespace svulkan2 {
@@ -33,7 +34,7 @@ RTRenderer::RTRenderer(std::shared_ptr<core::Context> context, std::string const
   // set default values
   mCustomPropertiesInt["spp"] = 4;
   mCustomPropertiesInt["maxDepth"] = 3;
-  mCustomPropertiesInt["russianRoulette"] = 0;
+  mCustomPropertiesInt["russianRoulette"] = 1;
   mCustomPropertiesInt["russianRouletteMinBounces"] = 2;
   mCustomPropertiesInt["toneMapper"] = 2;
   mCustomPropertiesFloat["exposure"] = 1.f;
@@ -311,6 +312,15 @@ void RTRenderer::updatePushConstant() {
     glm::vec3 ambientLight = mScene->getAmbientLight();
     std::memcpy(mPushConstantBuffer.data() + elem.offset, &ambientLight, elem.size);
   }
+
+  // integrator table sizes, written by the renderer rather than by pack.json
+  for (auto [name, value] : {std::pair<char const *, int>{"envWidth", mIntegratorTables.envWidth},
+                             {"emissiveCount", mIntegratorTables.emissiveCount}}) {
+    auto it = layout->elements.find(name);
+    if (it != layout->elements.end() && it->second.dtype == DataType::INT()) {
+      std::memcpy(mPushConstantBuffer.data() + it->second.offset, &value, sizeof(value));
+    }
+  }
 }
 
 void RTRenderer::recordRender() {
@@ -462,6 +472,8 @@ void RTRenderer::prepareOutput() {
 
 void RTRenderer::prepareScene() {
   prepareObjects();
+  // light-sampling tables of the environment and emissive meshes (scene_set.glsl)
+  mIntegratorTables.build(*mContext, *mScene, mEnvironmentMap.get());
 
   auto &set = mShaderPack->getSceneDescription();
   uint32_t asCount{0};
@@ -546,6 +558,17 @@ void RTRenderer::prepareScene() {
   vk::DescriptorImageInfo cubeMapInfo(cube->getSampler(*mContext), cube->getImageView(*mContext),
                                       vk::ImageLayout::eShaderReadOnlyOptimal);
 
+  // the light-sampling tables, and the TLAS rows for the current transforms of emissive meshes
+  auto wholeBuffer = [](core::Buffer &buffer) {
+    return vk::DescriptorBufferInfo(buffer.getVulkanBuffer(), 0, VK_WHOLE_SIZE);
+  };
+  std::map<std::string, vk::DescriptorBufferInfo> const integratorInfos{
+      {"EnvAlias", wholeBuffer(*mIntegratorTables.envAliasBuffer)},
+      {"EmissiveTriangles", wholeBuffer(*mIntegratorTables.emissiveBuffer)},
+      {"EmissiveAlias", wholeBuffer(*mIntegratorTables.emissiveAliasBuffer)},
+      {"EmissiveBase", wholeBuffer(*mIntegratorTables.emissiveBaseBuffer)},
+      {"TlasInstances", wholeBuffer(mScene->getTLAS()->getInstanceBuffer())}};
+
   for (auto &[bid, binding] : set.bindings) {
     if (binding.name == "tlas") {
       writeDescriptorSets.push_back(vk::WriteDescriptorSet(
@@ -618,9 +641,10 @@ void RTRenderer::prepareScene() {
                                                              vk::DescriptorType::eStorageBuffer,
                                                              {}, pointsetBufferInfos, {}));
       }
-    }
-
-    else {
+    } else if (auto it = integratorInfos.find(binding.name); it != integratorInfos.end()) {
+      writeDescriptorSets.push_back(vk::WriteDescriptorSet(
+          mSceneSet.get(), bid, 0, vk::DescriptorType::eStorageBuffer, {}, it->second, {}));
+    } else {
       throw std::runtime_error("unrecognized scene set binding " + binding.name);
     }
   }

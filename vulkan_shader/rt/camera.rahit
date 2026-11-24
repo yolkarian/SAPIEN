@@ -10,13 +10,11 @@
 
 layout(location = 0) rayPayloadInEXT Ray ray;
 
-layout(set = 1, binding = 1) readonly buffer GeometryInstances
-{
+layout(set = 1, binding = 1) readonly buffer GeometryInstances {
   GeometryInstance i[];
 } geometryInstances;
 
-layout(set = 1, binding = 2) readonly buffer Materials
-{
+layout(set = 1, binding = 2) readonly buffer Materials {
   Material m;
 } materials[];
 
@@ -32,17 +30,29 @@ layout(set = 1, binding = 11) readonly buffer Objects {
   Object o[];
 } objects;
 
-
 void main() {
   Object obj = objects.o[gl_InstanceID];
+  int instanceId = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT;
+  Material mat = materials[nonuniformEXT(geometryInstances.i[instanceId].materialIndex)].m;
+
+  if (ray.isShadow != 0) {
+    // A shadow ray passes the uncovered part of the surface (base-colour alpha, object
+    // transparency) and the covered part's transmission, tinted by the base colour. Triangles
+    // run any-hit once per primitive (no duplicate invocations), so the product is exact.
+    float coverage = clamp(mat.baseColor.a, 0.0, 1.0) * (1.0 - clamp(obj.transparency, 0.0, 1.0));
+    vec3 passed = mix(vec3(1.0), clamp(mat.transmission, 0.0, 1.0) * max(mat.baseColor.rgb, vec3(0.0)),
+                      coverage);
+    ray.transmittance *= passed;
+    if (max(ray.transmittance.x, max(ray.transmittance.y, ray.transmittance.z)) > 0.0) {
+      ignoreIntersectionEXT;
+    }
+    return; // fully blocked: accept the hit, which ends the ray
+  }
+
+  // path rays: fully transparent objects and back faces of non-transmissive ones are invisible
   if (obj.transparency > 0.99) {
     ignoreIntersectionEXT;
   }
-
-  // HACK: manual backface culling for bad models
-  int instanceId = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT;
-  uint materialIndex = geometryInstances.i[instanceId].materialIndex;
-  Material mat = materials[nonuniformEXT(materialIndex)].m;
   bool isInside = gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT;
   if (isInside && mat.transmission < 1e-4) {
     ignoreIntersectionEXT;

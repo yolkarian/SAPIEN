@@ -26,6 +26,15 @@ vk::Sampler SVCubemap::getSampler(core::Context const &context) const {
   return getDeviceState(context).sampler;
 }
 
+core::Image *SVCubemap::getDeviceCubeImage(core::Context &context) {
+  auto state = mDeviceStates.find(context);
+  if (!state || !state->imageView) {
+    return nullptr;
+  }
+  return state->latLongCube ? state->latLongCube.get()
+                            : (mImage ? mImage->getDeviceImage(context) : nullptr);
+}
+
 bool SVCubemap::isOnDevice(core::Context const &context) const {
   auto state = mDeviceStates.find(context);
   return state && state->imageView;

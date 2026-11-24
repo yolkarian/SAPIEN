@@ -75,6 +75,53 @@ camera = scene.add_camera(
 compatible NVIDIA RTX driver stack. If either denoiser is unavailable on your
 machine, use `"none"`.
 
+## Light transport
+
+The `rt` pack is a path tracer. At every surface it finds light in two ways:
+
+- **light sampling** (next-event estimation) picks a point on a light and casts a shadow ray
+  toward it;
+- **BSDF sampling** follows the material's scattering and adds the emission of whatever the
+  ray reaches, the environment included.
+
+Point, directional, spot (also textured) and parallelogram lights have no geometry, so only
+light sampling finds them, in every mode. The environment map and emissive meshes can be found
+both ways, and `lightSampling` selects how:
+
+| `lightSampling` | Environment and emissive meshes |
+|---|---|
+| `"mis"` (default) | both ways, combined by multiple importance sampling (power heuristic) |
+| `"nee"` | light sampling only |
+| `"bsdf"` | BSDF sampling only |
+
+The three converge to the same image; `"nee"` and `"bsdf"` exist to debug a scene.
+`lightSampling` selects shader code, so set it on the `RenderConfig` before creating the
+camera.
+
+- **Environment.** The map is sampled in proportion to its luminance over a grid of
+  equal-solid-angle cells (16 to 256 columns, following the cube resolution), built when the
+  map changes. Its radiance is no longer clamped to 100, so bright HDR maps light the scene
+  at their real strength.
+- **Emissive meshes.** Their triangles are sampled in proportion to area times emitted
+  luminance, at the mesh's current pose, so moving an emitter needs no rebuild. Meshes with
+  an emission texture are left to BSDF sampling.
+- **Shadows.** A shadow ray crossing a surface keeps the part the surface lets through: the
+  part its base-colour alpha and the object's `transparency` leave uncovered, plus the
+  covered part's `transmission`, tinted by the base colour. A sheer or transmissive occluder
+  casts a lighter, possibly coloured shadow; point clouds block light.
+- **Russian roulette** (`russianRoulette`) is on by default: after
+  `russianRouletteMinBounces` bounces, paths of low weight end at random and the survivors
+  are weighted up, which keeps the image unbiased.
+- **`clampIndirect`** (default `0`, off) limits the brightest channel of every contribution
+  after the first bounce, trading some energy for fewer fireflies.
+
+```python
+config = sapien.render.RenderConfig("rt")
+config["spp"] = 64
+config["clampIndirect"] = 10.0   # firefly clamp, 0 disables
+config["lightSampling"] = "mis"  # "mis" | "nee" | "bsdf"
+```
+
 ## Materials for ray tracing
 
 Render materials live in `sapien.render`. The parameters `base_color`,
