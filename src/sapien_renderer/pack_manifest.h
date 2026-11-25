@@ -11,13 +11,16 @@
  *                   "default": "lambert",
  *                   "define": {"lambert": "SHADING_LAMBERT", "pbr": "SHADING_PBR"}}
  *     },
- *     "presets": {"pbr": {"shading": "pbr"}}
+ *     "presets": {"pbr": {"shading": "pbr"}},
+ *     "post": ["tonemap"]
  *   }
  *
  * A uniform parameter is a renderer property (bool, int or float), applied per frame. A variant
  * parameter (bool, int, float or enum) selects shader source through a preprocessor definition:
  * a bool defines its "define" when true, an int or float defines it to the value, and an enum
  * defines the name its "define" object maps the value to ("" defines nothing).
+ * "post" lists the post-processing passes the pack runs, in order; a pass name consists of
+ * letters, digits and '_' and names the compute shader <name>.comp.
  *
  * Ownership: every string and handle returned is owned by the manifest and valid until
  * sapien_pack_manifest_destroy. Functions returning int return 0 on success; on failure they write
@@ -106,6 +109,10 @@ size_t sapien_pack_manifest_preset_entry_count(const SapienPackManifest *manifes
 /* entry `index` of `preset`: the parameter it sets and its checked value */
 void sapien_pack_manifest_preset_entry(const SapienPackManifest *manifest, size_t preset,
                                        size_t index, size_t *parameter, SapienPackValue *value);
+
+size_t sapien_pack_manifest_post_count(const SapienPackManifest *manifest);
+void sapien_pack_manifest_post_name(const SapienPackManifest *manifest, size_t index,
+                                    const char **name, size_t *name_len);
 
 #ifdef __cplusplus
 }

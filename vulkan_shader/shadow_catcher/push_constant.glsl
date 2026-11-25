@@ -19,8 +19,4 @@ layout(push_constant) uniform Constants {
 
   // increases by one on every render of this camera; decorrelates noise between frames
   int frameSeed;
-
-  // post processing
-  float exposure;
-  int toneMapper;
 };

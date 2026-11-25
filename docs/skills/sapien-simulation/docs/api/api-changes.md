@@ -4,6 +4,19 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+Ray-tracing packs post-process through `pack.json`:
+
+- **Breaking:** `postprocessing.comp` of a ray-tracing pack is no longer read. `"post"` in
+  `pack.json` lists compute passes (`<pack>/post/<name>.comp`, else the built-in
+  `vulkan_shader/post/<name>.comp`) run in order: the first reads `HdrColor`, the last
+  writes `Color`; without `"post"` the camera has no `Color` picture. `rt` and
+  `shadow_catcher` declare `"post": ["tonemap"]`; `exposure` and `toneMapper` are parameters
+  of that pass and are set as before (`cfg["exposure"]`, `camera.set_property`).
+- Custom ray-tracing packs: add `"post": ["tonemap"]` and remove `exposure`/`toneMapper`
+  from the push constants. Pass contract and an example are in
+  `docs/source/tutorial/rendering/customize_shaders.md` ("Post-processing passes").
+- `"post"` in a rasterization or `rt_batch` pack raises `RuntimeError`.
+
 The `rt` path tracer samples its lights:
 
 - **Behavior change:** the environment map and emissive meshes are light-sampled and combined

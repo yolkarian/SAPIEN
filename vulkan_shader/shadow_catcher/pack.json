@@ -56,5 +56,6 @@
       "maximum": 2,
       "description": "Tone mapping curve: 0 gamma 2.2, 1 sRGB, 2 ACES filmic."
     }
-  }
+  },
+  "post": ["tonemap"]
 }

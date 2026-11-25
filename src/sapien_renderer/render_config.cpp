@@ -68,6 +68,35 @@ RenderConfig::Kind packKind(fs::path const &pack) {
   return RenderConfig::Kind::eRayTracing;
 }
 
+/** The compute shader files of the passes `manifest` lists under "post": `<pack>/post/<name>.comp`
+ *  when the pack ships the pass, else the built-in one under the shader search path. */
+std::vector<std::string> resolvePostPasses(PackManifest const &manifest,
+                                           RenderConfig::Kind kind) {
+  auto const &names = manifest.getPostPasses();
+  std::string const pack = manifest.getDirectory().string();
+  if (!names.empty() && kind != RenderConfig::Kind::eRayTracing) {
+    throw std::runtime_error("shader pack \"" + pack +
+                             "\": \"post\" in pack.json is only supported by ray tracing "
+                             "packs (camera.rgen)");
+  }
+  std::vector<std::string> files;
+  for (auto const &name : names) {
+    fs::path file = manifest.getDirectory() / "post" / (name + ".comp");
+    if (!fs::is_regular_file(file)) {
+      fs::path const builtin = fs::path(SapienRendererDefault::internalGetShaderSearchPath()) /
+                               "post" / (name + ".comp");
+      if (!fs::is_regular_file(builtin)) {
+        throw std::runtime_error("shader pack \"" + pack + "\": post-processing pass \"" + name +
+                                 "\" was found neither at " + file.string() + " nor at " +
+                                 builtin.string());
+      }
+      file = builtin;
+    }
+    files.push_back(file.string());
+  }
+  return files;
+}
+
 vk::SampleCountFlagBits msaaSampleCount(int msaa) {
   switch (msaa) {
   case 1:
@@ -208,8 +237,10 @@ std::pair<std::string, RenderConfig::Kind>
 RenderConfig::resolvePack(std::string const &shaderPack) const {
   fs::path const path = resolveShaderPack(shaderPack);
   // a pack without pack.json raises here, naming the directory and pointing to the docs
-  detail::getPackManifest(path);
-  return {path.string(), packKind(path)};
+  auto const manifest = detail::getPackManifest(path);
+  Kind const kind = packKind(path);
+  resolvePostPasses(*manifest, kind);
+  return {path.string(), kind};
 }
 
 detail::PackManifest const &RenderConfig::manifest() const {
@@ -376,6 +407,8 @@ std::shared_ptr<svulkan2::RendererConfig> buildRendererConfig(RenderConfig const
   auto result = std::make_shared<svulkan2::RendererConfig>();
   result->shaderDir = config.getShaderPack();
   result->shaderDefines = config.getShaderDefinitions();
+  result->postPasses = resolvePostPasses(*detail::getPackManifest(config.getShaderPack()),
+                                         config.getKind());
   result->msaa = msaaSampleCount(config.getMSAA());
   for (auto const &[name, format] : config.getPictureFormats()) {
     result->textureFormat[name] = format;

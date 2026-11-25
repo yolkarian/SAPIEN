@@ -1,0 +1,27 @@
+#version 450
+
+// Post-processing pass: exposure, tone curve and display encoding.
+// inColor is linear radiance; outColor is display-referred, in [0, 1].
+
+#include "../common/tonemapping.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba32f) uniform readonly image2D inColor;
+layout(set = 0, binding = 1, rgba32f) uniform writeonly image2D outColor;
+
+layout(push_constant) uniform Parameters {
+  float exposure;
+  int toneMapper;  // 0 gamma 2.2, 1 sRGB, 2 ACES filmic
+};
+
+void main() {
+  ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+  if (any(greaterThanEqual(pixel, imageSize(outColor)))) {
+    return;
+  }
+  vec4 color = imageLoad(inColor, pixel);
+  color.rgb = sapienToneMap(color.rgb, exposure, toneMapper);
+  color.a = clamp(color.a, 0.0, 1.0);
+  imageStore(outColor, pixel, color);
+}

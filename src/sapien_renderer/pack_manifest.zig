@@ -79,6 +79,8 @@ pub const Manifest = struct {
     arena: std.heap.ArenaAllocator,
     parameters: []const Parameter,
     presets: []const Preset,
+    /// names of the post-processing passes the pack runs, in order
+    post: []const []const u8,
 
     pub fn findParameter(self: *const Manifest, name: []const u8) ?usize {
         for (self.parameters, 0..) |parameter, index| {
@@ -139,7 +141,7 @@ pub fn parse(text: []const u8, diagnostic: *Diagnostic) ParseError!*Manifest {
         else => return diagnostic.fail("pack.json is not valid JSON ({s})", .{@errorName(err)}),
     };
     if (root != .object) return diagnostic.fail("pack.json must be a JSON object", .{});
-    try expectFields(root.object, &.{ "parameters", "presets" }, "pack.json", diagnostic);
+    try expectFields(root.object, &.{ "parameters", "presets", "post" }, "pack.json", diagnostic);
 
     var parameters: std.ArrayList(Parameter) = .empty;
     if (root.object.get("parameters")) |declared| {
@@ -151,7 +153,7 @@ pub fn parse(text: []const u8, diagnostic: *Diagnostic) ParseError!*Manifest {
     }
 
     const manifest = try gpa.create(Manifest);
-    manifest.* = .{ .arena = undefined, .parameters = parameters.items, .presets = &.{} };
+    manifest.* = .{ .arena = undefined, .parameters = parameters.items, .presets = &.{}, .post = &.{} };
 
     var presets: std.ArrayList(Preset) = .empty;
     if (root.object.get("presets")) |declared| {
@@ -162,6 +164,21 @@ pub fn parse(text: []const u8, diagnostic: *Diagnostic) ParseError!*Manifest {
         }
     }
     manifest.presets = presets.items;
+
+    var post: std.ArrayList([]const u8) = .empty;
+    if (root.object.get("post")) |declared| {
+        if (declared != .array) return diagnostic.fail("pack.json: \"post\" must be an array of pass names", .{});
+        for (declared.array.items) |item| {
+            if (item != .string) return diagnostic.fail("pack.json: \"post\" must be an array of pass names", .{});
+            // a pass name becomes the file name <name>.comp
+            if (item.string.len == 0) return diagnostic.fail("pack.json: \"post\" has an empty pass name", .{});
+            for (item.string) |c| {
+                if (!std.ascii.isAlphanumeric(c) and c != '_') return diagnostic.fail("pack.json: post pass \"{s}\" may only contain letters, digits and '_'", .{item.string});
+            }
+            try post.append(gpa, item.string);
+        }
+    }
+    manifest.post = post.items;
     // from here on every allocation goes through the copy inside the manifest
     manifest.arena = arena;
     return manifest;
@@ -514,6 +531,16 @@ export fn sapien_pack_manifest_preset_entry(handle: *const anyopaque, preset: us
     value.* = entry.value.toC();
 }
 
+export fn sapien_pack_manifest_post_count(handle: *const anyopaque) usize {
+    return manifestOf(handle).post.len;
+}
+
+export fn sapien_pack_manifest_post_name(handle: *const anyopaque, index: usize, name: *[*]const u8, name_len: *usize) void {
+    const text = manifestOf(handle).post[index];
+    name.* = text.ptr;
+    name_len.* = text.len;
+}
+
 // ---------------------------------------------------------------------------------------
 // tests: zig test src/sapien_renderer/pack_manifest.zig
 
@@ -604,6 +631,24 @@ test "presets expand to checked entries" {
     try std.testing.expectEqual(@as(usize, 2), pbr.entries.len);
     try std.testing.expectEqual(@as(usize, 5), pbr.entries[0].parameter);
     try std.testing.expectEqual(@as(?usize, null), manifest.findPreset("missing"));
+}
+
+test "post lists pass names in order and rejects path-like names" {
+    var buffer: [256]u8 = undefined;
+    const manifest = try parseForTest("{\"post\": [\"bloom\", \"tonemap\"]}", &buffer);
+    defer manifest.deinit();
+    try std.testing.expectEqual(@as(usize, 2), manifest.post.len);
+    try std.testing.expectEqualStrings("bloom", manifest.post[0]);
+    try std.testing.expectEqualStrings("tonemap", manifest.post[1]);
+
+    const none = try parseForTest(example, &buffer);
+    defer none.deinit();
+    try std.testing.expectEqual(@as(usize, 0), none.post.len);
+
+    try expectParseError("{\"post\": \"tonemap\"}", "must be an array of pass names");
+    try expectParseError("{\"post\": [1]}", "must be an array of pass names");
+    try expectParseError("{\"post\": [\"../x\"]}", "may only contain letters, digits and '_'");
+    try expectParseError("{\"post\": [\"\"]}", "empty pass name");
 }
 
 test "schema errors name the offending field" {

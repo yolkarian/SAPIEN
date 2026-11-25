@@ -435,15 +435,6 @@ RayTracingShaderPack::RayTracingShaderPack(std::string const &shaderDir,
       throw std::runtime_error("cannot identify descriptor set " + std::to_string(setId));
     }
   }
-
-  // load post processing shaders
-  // TODO: handle more postprocessing files
-  auto postprocessingFile = path / "postprocessing.comp";
-  if (fs::exists(postprocessingFile)) {
-    auto pp = std::make_unique<PostprocessingShaderParser>();
-    pp->loadFileAsync(postprocessingFile.string(), defines).get();
-    mPostprocessingParsers.push_back(std::move(pp));
-  }
 }
 
 StructDataLayout const &RayTracingShaderPack::getMaterialBufferLayout() const {
@@ -884,8 +875,7 @@ void RayTracingShaderPackInstance::initPipeline() {
   if (mShaderPack->getPushConstantLayout()) {
     pushConstantRanges.push_back(vk::PushConstantRange(
         vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eMissKHR |
-            vk::ShaderStageFlagBits::eClosestHitKHR | vk::ShaderStageFlagBits::eAnyHitKHR |
-            vk::ShaderStageFlagBits::eCompute,
+            vk::ShaderStageFlagBits::eClosestHitKHR | vk::ShaderStageFlagBits::eAnyHitKHR,
         0, mShaderPack->getPushConstantLayout()->size));
   }
 
@@ -1015,39 +1005,6 @@ void RayTracingShaderPackInstance::initPipeline() {
     throw std::runtime_error("failed to create ray tracing pipeline");
   }
   mPipeline = std::move(result.value);
-
-  // post processing piepline
-  for (auto &parser : mShaderPack->getPostprocessingParsers()) {
-    if (parser->getResources().size() != 1) {
-      throw std::runtime_error("invalid postprocessing shader");
-    }
-    auto &[sid, set] = *parser->getResources().begin();
-
-    std::vector<vk::DescriptorSetLayoutBinding> bindings;
-    for (uint32_t bid = 0; bid < set.bindings.size(); ++bid) {
-      bindings.push_back(vk::DescriptorSetLayoutBinding(bid, set.bindings.at(bid).type, 1,
-                                                        vk::ShaderStageFlagBits::eCompute));
-    }
-    auto descriptorSetLayout =
-        device.createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo({}, bindings));
-    auto pipelineLayout = device.createPipelineLayoutUnique(
-        vk::PipelineLayoutCreateInfo({}, descriptorSetLayout.get(), pushConstantRanges));
-
-    auto shaderModule =
-        device.createShaderModuleUnique(vk::ShaderModuleCreateInfo({}, parser->getCode()));
-    auto shaderStageInfo = vk::PipelineShaderStageCreateInfo({}, vk::ShaderStageFlagBits::eCompute,
-                                                             shaderModule.get(), "main");
-
-    auto pipeline =
-        device
-            .createComputePipelineUnique(
-                {}, vk::ComputePipelineCreateInfo({}, shaderStageInfo, pipelineLayout.get()))
-            .value;
-
-    mPostprocessingSetLayouts.push_back(std::move(descriptorSetLayout));
-    mPostprocessingPipelineLayouts.push_back(std::move(pipelineLayout));
-    mPostprocessingPipelines.push_back(std::move(pipeline));
-  }
 }
 
 void RayTracingShaderPackInstance::initSBT() {

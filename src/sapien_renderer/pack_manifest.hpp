@@ -54,6 +54,8 @@ public:
   std::vector<std::string> const &getPresets() const { return mPresetNames; }
   /** the parameter assignments of preset `name`; raises when the preset is unknown */
   std::map<std::string, PackValue> const &getPreset(std::string const &name) const;
+  /** names of the post-processing passes, in order */
+  std::vector<std::string> const &getPostPasses() const { return mPostPasses; }
 
   /** index of the parameter called `name`, or -1 */
   int findParameter(std::string const &name) const;
@@ -77,6 +79,7 @@ private:
   std::vector<PackParameter> mParameters;
   std::vector<std::string> mPresetNames;
   std::map<std::string, std::map<std::string, PackValue>> mPresets;
+  std::vector<std::string> mPostPasses;
 };
 
 /** cached parse of `<directory>/pack.json`; `directory` must be canonical. The cache is

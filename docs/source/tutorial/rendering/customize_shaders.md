@@ -106,6 +106,9 @@ Each parameter takes:
 every entry had been written to the config. An unknown preset raises naming the
 pack and the presets it declares.
 
+`post` (ray-tracing packs) lists the [post-processing passes](#post-processing-passes)
+that turn `HdrColor` into `Color`, in order: `"post": ["tonemap"]`.
+
 Assignment is checked immediately against the manifest, so a typo or a wrong type
 fails where it is written rather than at renderer creation:
 
@@ -298,8 +301,9 @@ All `gbuffer` passes in a shader pack should agree on the vertex layout.
 ## Ray-tracing pipeline
 
 A ray-tracing shader pack is recognized by `camera.rgen`. The current `rt`
-pack also includes hit/miss shaders, shared GLSL headers, and
-`postprocessing.comp`. Configure ray tracing with a `RenderConfig`:
+pack also includes hit/miss shaders and shared GLSL headers; its `Color` comes
+from the post-processing passes of its `pack.json`. Configure ray tracing with a
+`RenderConfig`:
 
 ```python
 config = sapien.render.RenderConfig("rt")
@@ -313,9 +317,9 @@ camera = scene.add_camera(
 
 When a key is absent, the pack.json default applies: the built-in `rt` pack
 declares `spp=32`, `maxDepth=8`, `aperture=0.0`, `focusPlane=1.0`,
-`russianRoulette=False`, `russianRouletteMinBounces=2`, `exposure=1.0` and
-`toneMapper=2`. The denoiser is a separate `RenderConfig` property and defaults
-to none.
+`russianRoulette=True`, `russianRouletteMinBounces=2`, `clampIndirect=0.0`,
+`lightSampling="mis"`, `exposure=1.0` and `toneMapper=2`. The denoiser is a
+separate `RenderConfig` property and defaults to none.
 
 The renderer fills these optional push-constant members by name when a pack
 declares them: `frameCount` (frames accumulated since the last restart; `0`
@@ -323,13 +327,52 @@ on the first), `frameSeed` (the camera's render counter, which never resets;
 seed random numbers with it so noise changes between frames even when
 accumulation restarts every frame), the light counts, `envmap`, and
 `ambientLight`. Other `int` and `float` members are set with
-`camera.set_property`; changing one restarts accumulation unless it is
-`exposure` or `toneMapper`. A name the pack does not declare raises
-`RuntimeError` naming the key and the pack, instead of being silently dropped.
+`camera.set_property`; changing one restarts accumulation. A name neither the
+pack nor one of its post-processing passes declares raises `RuntimeError`
+naming the key and the pack, instead of being silently dropped.
 
 The ray-generation shader declares storage images such as `outHdrColor`,
 `outAlbedo`, `outNormal`, `outSegmentation`, `outRadiance`, and
 `outPosition`. Read them from Python by target name after `take_picture`.
+
+### Post-processing passes
+
+`"post"` in a ray-tracing pack's `pack.json` lists compute passes that run after
+ray tracing and denoising, in the listed order. The first pass reads `HdrColor`
+and the last one writes `Color`; a pack without `"post"` has no `Color`. A pass
+`name` is the file `<pack>/post/<name>.comp` if the pack ships it, else the
+built-in `vulkan_shader/post/<name>.comp`. The built-in pass is `tonemap`
+(exposure, tone curve, display encoding; parameters `exposure` and
+`toneMapper`).
+
+```glsl
+#version 450
+layout(local_size_x = 8, local_size_y = 8) in;
+layout(set = 0, binding = 0, rgba32f) uniform readonly image2D inColor;
+layout(set = 0, binding = 1, rgba32f) uniform writeonly image2D outColor;
+layout(push_constant) uniform Parameters { float gain; };
+
+void main() {
+  ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+  if (any(greaterThanEqual(pixel, imageSize(outColor)))) return;
+  vec4 color = imageLoad(inColor, pixel);
+  imageStore(outColor, pixel, vec4(color.rgb * gain, color.a));
+}
+```
+
+- `inColor` and `outColor` (both `rgba32f`, set 0) are required: the colour from
+  the previous pass and the colour for the next one.
+- Any other storage image is the renderer's image of that name, for example
+  `Albedo` or `Normal`.
+- The `int` and `float` members of the push-constant block are parameters:
+  declare them as uniform parameters in `pack.json` and set them through the
+  `RenderConfig` or `camera.set_property`. Changing one keeps the accumulated
+  samples. A name used by several passes is one parameter.
+- Dispatch covers the image rounded up to the local size, so skip pixels
+  outside it as above.
+
+Rasterization and `rt_batch` packs tone-map in their own shaders; `"post"` in
+their `pack.json` raises.
 
 ## Batched ray-tracing pipeline
 

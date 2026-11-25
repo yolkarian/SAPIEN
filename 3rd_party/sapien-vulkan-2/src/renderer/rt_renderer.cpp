@@ -11,7 +11,8 @@
 namespace svulkan2 {
 namespace renderer {
 RTRenderer::RTRenderer(std::shared_ptr<core::Context> context, std::string const &shaderDir,
-                       ShaderDefines const &shaderDefines)
+                       ShaderDefines const &shaderDefines,
+                       std::vector<std::string> const &postPasses)
     : mContext(std::move(context)), mShaderDir(shaderDir), mShaderDefines(shaderDefines) {
   if (!mContext) {
     throw std::runtime_error("failed to create ray tracing renderer: context must not be null");
@@ -36,10 +37,16 @@ RTRenderer::RTRenderer(std::shared_ptr<core::Context> context, std::string const
   mCustomPropertiesInt["maxDepth"] = 3;
   mCustomPropertiesInt["russianRoulette"] = 1;
   mCustomPropertiesInt["russianRouletteMinBounces"] = 2;
-  mCustomPropertiesInt["toneMapper"] = 2;
-  mCustomPropertiesFloat["exposure"] = 1.f;
   mCustomPropertiesFloat["aperture"] = 0.f;
   mCustomPropertiesFloat["focusPlane"] = 1.f;
+
+  mPostChain = std::make_unique<PostChain>(mContext, postPasses, mShaderDefines);
+  if (mPostChain->getPropertyType("toneMapper") == CustomPropertyType::eInt) {
+    mPostChain->setProperty("toneMapper", 2);
+  }
+  if (mPostChain->getPropertyType("exposure") == CustomPropertyType::eFloat) {
+    mPostChain->setProperty("exposure", 1.f);
+  }
 
   mSceneAccessFence =
       mContext->getDevice().createFenceUnique({vk::FenceCreateFlagBits::eSignaled});
@@ -158,7 +165,7 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
     prepareOutput();
     prepareCamera();
     prepareScene();
-    preparePostprocessing();
+    preparePostChain();
 
 #ifdef SVULKAN2_CUDA_INTEROP
     if (mDenoiser) {
@@ -357,8 +364,7 @@ void RTRenderer::recordRender() {
   mRenderCommandBuffer->pushConstants(
       mShaderPackInstance->getPipelineLayout(),
       vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eMissKHR |
-          vk::ShaderStageFlagBits::eClosestHitKHR | vk::ShaderStageFlagBits::eAnyHitKHR |
-          vk::ShaderStageFlagBits::eCompute,
+          vk::ShaderStageFlagBits::eClosestHitKHR | vk::ShaderStageFlagBits::eAnyHitKHR,
       0, pushConstantLayout->size, mPushConstantBuffer.data());
   mRenderCommandBuffer->bindPipeline(vk::PipelineBindPoint::eRayTracingKHR,
                                      mShaderPackInstance->getPipeline());
@@ -679,82 +685,39 @@ void RTRenderer::prepareCamera() {
   mContext->getDevice().updateDescriptorSets(write, {});
 }
 
-void RTRenderer::preparePostprocessing() {
-  mPostprocessImages.clear();
-  if (mWidth <= 0 || mHeight <= 0) {
+void RTRenderer::preparePostChain() {
+  if (mPostChain->empty() || mWidth <= 0 || mHeight <= 0) {
     return;
   }
-
-  auto &layouts = mShaderPackInstance->getPostprocessingSetLayouts();
-  if (layouts.size() == 0) {
-    return;
+  if (!mRenderImages.contains("HdrColor")) {
+    throw std::runtime_error("post-processing needs the ray tracing output outHdrColor");
   }
-
-  logger::info("Postprocessing passes {}", layouts.size());
-
-  // create postprocessing images
+  if (mRenderImages.contains("Color")) {
+    throw std::runtime_error("the ray tracing output outColor collides with the Color image "
+                             "written by post-processing");
+  }
+  auto color = mRenderImages["Color"] = std::make_shared<resource::SVStorageImage>(
+      mContext, "Color", mWidth, mHeight, vk::Format::eR32G32B32A32Sfloat);
+  color->createDeviceResources();
   auto pool = mContext->createCommandPool();
   auto commandBuffer = pool->allocateCommandBuffer();
   commandBuffer->begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
-  for (auto &parser : mShaderPack->getPostprocessingParsers()) {
-    for (auto &[sid, set] : parser->getResources()) {
-      for (auto &[bid, binding] : set.bindings) {
-        if (binding.type == vk::DescriptorType::eStorageImage) {
-          std::string texName = binding.name;
-          if (mRenderImages.contains(texName)) {
-            if (mRenderImages.at(texName)->getFormat() != binding.format) {
-              throw std::runtime_error("image format mismatch in a postprocessing shader");
-            }
-          } else {
-            auto image = mRenderImages[texName] = std::make_shared<resource::SVStorageImage>(
-                mContext, texName, mWidth, mHeight, binding.format);
-            image->createDeviceResources();
-            image->getImage().transitionLayout(
-                commandBuffer.get(), vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral, {},
-                vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
-                vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eComputeShader);
-          }
-          mPostprocessImages.push_back(mRenderImages.at(texName));
-        }
-      }
-    }
-  }
-
+  color->getImage().transitionLayout(
+      commandBuffer.get(), vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral, {},
+      vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
+      vk::PipelineStageFlagBits::eTopOfPipe, vk::PipelineStageFlagBits::eComputeShader);
   commandBuffer->end();
   mContext->getQueue().submitAndWait(commandBuffer.get());
 
-  mPostprocessingSets.clear(); // delete sets before deleting pool
-
-  // create descriptor sets, bind images to them
-  auto &parsers = mShaderPack->getPostprocessingParsers();
-  uint32_t storageImageCount = 0;
-  for (auto const &parser : parsers) {
-    storageImageCount += parser->getResources().begin()->second.bindings.size();
-  }
-  mPostprocessingPool = std::make_unique<core::DynamicDescriptorPool>(
-      mContext->getDevice2(),
-      std::vector<vk::DescriptorPoolSize>{
-          {vk::DescriptorType::eStorageImage, std::max(storageImageCount, 1u)}});
-
-  for (uint32_t pid = 0; pid < parsers.size(); ++pid) {
-    auto &layout = layouts.at(pid);
-    mPostprocessingSets.push_back(mPostprocessingPool->allocateSet(layout.get()));
-    auto desc = parsers.at(pid)->getResources().begin()->second;
-
-    std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
-    std::vector<vk::DescriptorImageInfo> imageInfos;
-    for (uint32_t binding = 0; binding < desc.bindings.size(); ++binding) {
-      auto texName = desc.bindings.at(binding).name;
-      imageInfos.push_back(vk::DescriptorImageInfo(
-          VK_NULL_HANDLE, mRenderImages.at(texName)->getImageView(), vk::ImageLayout::eGeneral));
-    }
-    for (uint32_t binding = 0; binding < desc.bindings.size(); ++binding) {
-      writeDescriptorSets.push_back(
-          vk::WriteDescriptorSet(mPostprocessingSets.at(pid).get(), binding, 0,
-                                 vk::DescriptorType::eStorageImage, imageInfos.at(binding)));
-    }
-    mContext->getDevice().updateDescriptorSets(writeDescriptorSets, {});
-  }
+  mPostChain->prepare(mWidth, mHeight, mRenderImages.at("HdrColor")->getImageView(),
+                      color->getImageView(), [this](std::string const &name) {
+                        auto it = mRenderImages.find(name);
+                        if (it == mRenderImages.end()) {
+                          throw std::runtime_error("a post-processing pass reads the image \"" +
+                                                   name + "\", which the renderer does not have");
+                        }
+                        return it->second->getImageView();
+                      });
 }
 
 void RTRenderer::render(scene::Camera &camera, std::vector<vk::Semaphore> const &waitSemaphores,
@@ -885,22 +848,41 @@ std::vector<std::string> RTRenderer::getDisplayTargetNames() const {
       }
     }
   }
-  for (auto &p : mShaderPack->getPostprocessingParsers()) {
-    for (auto &[id, resource] : p->getResources()) {
-      for (auto &[id, binding] : resource.bindings) {
-        if (binding.type == vk::DescriptorType::eStorageImage &&
-            std::find(names.begin(), names.end(), binding.name) == names.end()) {
-          if (binding.format == vk::Format::eR32G32B32A32Sfloat) {
-            names.push_back(binding.name);
-          }
-        }
-      }
-    }
+  if (mPostChain && !mPostChain->empty()) {
+    names.push_back("Color");
   }
   return names;
 }
 
+int RTRenderer::getCustomPropertyInt(std::string const &name) const {
+  return isPostProperty(name) ? mPostChain->getPropertyInt(name) : mCustomPropertiesInt.at(name);
+}
+
+float RTRenderer::getCustomPropertyFloat(std::string const &name) const {
+  return isPostProperty(name) ? mPostChain->getPropertyFloat(name)
+                              : mCustomPropertiesFloat.at(name);
+}
+
+void RTRenderer::setCustomProperty(std::string const &name, int p) {
+  if (isPostProperty(name)) {
+    mPostChain->setProperty(name, p);
+  } else {
+    setProperty(mCustomPropertiesInt, name, p);
+  }
+}
+
+void RTRenderer::setCustomProperty(std::string const &name, float p) {
+  if (isPostProperty(name)) {
+    mPostChain->setProperty(name, p);
+  } else {
+    setProperty(mCustomPropertiesFloat, name, p);
+  }
+}
+
 CustomPropertyType RTRenderer::getCustomPropertyType(std::string const &name) const {
+  if (isPostProperty(name)) {
+    return mPostChain->getPropertyType(name);
+  }
   if (!mShaderPack) {
     return CustomPropertyType::eNone;
   }
@@ -935,17 +917,8 @@ std::vector<std::string> RTRenderer::getRenderTargetNames() const {
       names.push_back(texName);
     }
   }
-  for (auto &p : mShaderPack->getPostprocessingParsers()) {
-    for (auto &[id, resource] : p->getResources()) {
-      for (auto &[id, binding] : resource.bindings) {
-        if (binding.type == vk::DescriptorType::eStorageImage &&
-            std::find(names.begin(), names.end(), binding.name) == names.end()) {
-          if (binding.format == vk::Format::eR32G32B32A32Sfloat) {
-            names.push_back(binding.name);
-          }
-        }
-      }
-    }
+  if (mPostChain && !mPostChain->empty()) {
+    names.push_back("Color");
   }
   return names;
 }
@@ -1005,44 +978,14 @@ void RTRenderer::recordPostprocess() {
   mPostprocessCommandBuffer->reset();
   mPostprocessCommandBuffer->begin(vk::CommandBufferBeginInfo({}, {}));
 
-  for (auto image : mPostprocessImages) {
-    // TODO: find a better access flag
-    image->getImage().transitionLayout(
-        mPostprocessCommandBuffer.get(), vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
-        vk::AccessFlagBits::eMemoryWrite,
-        vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
-        vk::PipelineStageFlagBits::eRayTracingShaderKHR | vk::PipelineStageFlagBits::eTransfer,
-        vk::PipelineStageFlagBits::eComputeShader);
-  }
-
-  auto pushConstantLayout = mShaderPack->getPushConstantLayout();
-
-  auto const &pipelines = mShaderPackInstance->getPostprocessingPipelines();
-  for (uint32_t i = 0; i < pipelines.size(); ++i) {
-    mPostprocessCommandBuffer->pushConstants(
-        mShaderPackInstance->getPostprocessingPipelineLayouts().at(i).get(),
-        vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eMissKHR |
-            vk::ShaderStageFlagBits::eClosestHitKHR | vk::ShaderStageFlagBits::eAnyHitKHR |
-            vk::ShaderStageFlagBits::eCompute,
-        0, pushConstantLayout->size, mPushConstantBuffer.data());
-    mPostprocessCommandBuffer->bindPipeline(
-        vk::PipelineBindPoint::eCompute,
-        mShaderPackInstance->getPostprocessingPipelines().at(i).get());
-    mPostprocessCommandBuffer->bindDescriptorSets(
-        vk::PipelineBindPoint::eCompute,
-        mShaderPackInstance->getPostprocessingPipelineLayouts().at(i).get(), 0,
-        mPostprocessingSets.at(i).get(), {});
-    mPostprocessCommandBuffer->dispatch(mWidth, mHeight, 1);
-
-    if (i + 1 < pipelines.size()) {
-      vk::MemoryBarrier barrier(vk::AccessFlagBits::eShaderWrite,
-                                vk::AccessFlagBits::eShaderRead |
-                                    vk::AccessFlagBits::eShaderWrite);
-      mPostprocessCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
-                                                 vk::PipelineStageFlagBits::eComputeShader, {},
-                                                 barrier, {}, {});
-    }
-  }
+  // the ray tracing pass and the denoiser wrote the images the chain reads
+  vk::MemoryBarrier barrier(vk::AccessFlagBits::eMemoryWrite, vk::AccessFlagBits::eShaderRead |
+                                                                  vk::AccessFlagBits::eShaderWrite);
+  mPostprocessCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eRayTracingShaderKHR |
+                                                 vk::PipelineStageFlagBits::eTransfer,
+                                             vk::PipelineStageFlagBits::eComputeShader, {},
+                                             barrier, {}, {});
+  mPostChain->record(mPostprocessCommandBuffer.get());
   mPostprocessCommandBuffer->end();
 }
 

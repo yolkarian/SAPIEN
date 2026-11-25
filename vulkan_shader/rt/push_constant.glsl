@@ -20,10 +20,6 @@ layout(push_constant) uniform Constants {
   // increases by one on every render of this camera; decorrelates noise between frames
   int frameSeed;
 
-  // post processing
-  float exposure;
-  int toneMapper;
-
   float clampIndirect;  // 0 disables; clamps contributions after the first bounce
 
   // written by the renderer, not by pack.json

@@ -7,6 +7,7 @@
 #include "svulkan2/resource/storage_image.h"
 #include "svulkan2/scene/scene.h"
 #include "svulkan2/shader/glsl_compiler.h"
+#include "svulkan2/renderer/post_chain.h"
 #include "svulkan2/renderer/rt_integrator_tables.h"
 #include <variant>
 
@@ -27,8 +28,11 @@ class RTRenderer : public RendererBase {
 public:
   enum class DenoiserType { eNONE, eOPTIX, eOIDN };
 
+  /** `postPasses`: the compute shader files of the post-processing chain (PostChain), in
+   *  order. It reads `HdrColor` and writes `Color`; without passes there is no `Color`. */
   RTRenderer(std::shared_ptr<core::Context> context, std::string const &shaderDir,
-             ShaderDefines const &shaderDefines = {});
+             ShaderDefines const &shaderDefines = {},
+             std::vector<std::string> const &postPasses = {});
 
   void resize(int width, int height) override;
   void setScene(std::shared_ptr<scene::Scene> scene) override;
@@ -62,13 +66,8 @@ public:
 
   CustomPropertyType getCustomPropertyType(std::string const &name) const override;
 
-  int getCustomPropertyInt(std::string const &name) const override {
-    return mCustomPropertiesInt.at(name);
-  }
-
-  float getCustomPropertyFloat(std::string const &name) const override {
-    return mCustomPropertiesFloat.at(name);
-  }
+  int getCustomPropertyInt(std::string const &name) const override;
+  float getCustomPropertyFloat(std::string const &name) const override;
 
   glm::vec3 getCustomPropertyVec3(std::string const &name) const override {
     return mCustomPropertiesVec3.at(name);
@@ -78,12 +77,8 @@ public:
     return mCustomPropertiesVec4.at(name);
   }
 
-  void setCustomProperty(std::string const &name, int p) override {
-    setProperty(mCustomPropertiesInt, name, p);
-  }
-  void setCustomProperty(std::string const &name, float p) override {
-    setProperty(mCustomPropertiesFloat, name, p);
-  }
+  void setCustomProperty(std::string const &name, int p) override;
+  void setCustomProperty(std::string const &name, float p) override;
   void setCustomProperty(std::string const &name, glm::vec3 p) override {
     setProperty(mCustomPropertiesVec3, name, p);
   }
@@ -134,8 +129,7 @@ private:
   std::unordered_map<std::string, glm::vec3> mCustomPropertiesVec3;
   std::unordered_map<std::string, glm::vec4> mCustomPropertiesVec4;
 
-  /** Stores a property; a changed value restarts accumulation unless it only affects
-   *  postprocessing, which reads the accumulated image. */
+  /** Stores a property of the ray tracing shaders; a changed value restarts accumulation. */
   template <typename T>
   void setProperty(std::unordered_map<std::string, T> &properties, std::string const &name,
                    T const &value) {
@@ -144,9 +138,12 @@ private:
       return;
     }
     properties[name] = value;
-    if (name != "exposure" && name != "toneMapper") {
-      mAccumulationDirty = true;
-    }
+    mAccumulationDirty = true;
+  }
+  /** whether `name` is a property of the post-processing chain, which reads the accumulated
+   *  image: changing it keeps the accumulation */
+  bool isPostProperty(std::string const &name) const {
+    return mPostChain && mPostChain->getPropertyType(name) != CustomPropertyType::eNone;
   }
 
   void prepareObjects();
@@ -155,7 +152,7 @@ private:
   void prepareOutput();
   void prepareScene();
   void prepareCamera();
-  void preparePostprocessing();
+  void preparePostChain();
 
   void recordRender();
   void recordPostprocess();
@@ -190,8 +187,6 @@ private:
   std::unordered_map<std::string, std::shared_ptr<resource::SVStorageImage>> mRenderImages;
   // subset of render images used in RT
   std::vector<std::shared_ptr<resource::SVStorageImage>> mRTImages;
-  // subset of render images used in postprocess
-  std::vector<std::shared_ptr<resource::SVStorageImage>> mPostprocessImages;
 
   std::unique_ptr<core::DynamicDescriptorPool> mOutputPool;
   std::unique_ptr<core::DynamicDescriptorPool> mCameraPool;
@@ -201,8 +196,7 @@ private:
   core::DescriptorSet mOutputSet;
   core::DescriptorSet mCameraSet;
 
-  std::unique_ptr<core::DynamicDescriptorPool> mPostprocessingPool;
-  std::vector<core::DescriptorSet> mPostprocessingSets;
+  std::unique_ptr<PostChain> mPostChain;
 
   std::unique_ptr<core::Buffer> mCameraBuffer;
   std::unique_ptr<core::Buffer> mObjectBuffer;

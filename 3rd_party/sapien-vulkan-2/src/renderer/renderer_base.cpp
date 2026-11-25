@@ -16,7 +16,7 @@ std::unique_ptr<RendererBase> RendererBase::Create(std::shared_ptr<core::Context
   }
   if (fs::exists((fs::path(config->shaderDir) / "camera.rgen"))) {
     return std::make_unique<RTRenderer>(std::move(context), config->shaderDir,
-                                        config->shaderDefines);
+                                        config->shaderDefines, config->postPasses);
   }
   throw std::runtime_error("Shader directory must contain gbuffer.vert for "
                            "rasterization or camera.rgen for ray tracing");

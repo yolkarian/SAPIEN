@@ -116,6 +116,14 @@ PackManifest::PackManifest(fs::path directory, SapienPackManifest *handle)
     }
     mPresetNames.push_back(std::move(name));
   }
+
+  std::size_t const passes = sapien_pack_manifest_post_count(mHandle);
+  for (std::size_t pass = 0; pass < passes; ++pass) {
+    char const *text{};
+    std::size_t length{};
+    sapien_pack_manifest_post_name(mHandle, pass, &text, &length);
+    mPostPasses.push_back(toString(text, length));
+  }
 }
 
 PackManifest::~PackManifest() { sapien_pack_manifest_destroy(mHandle); }

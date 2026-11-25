@@ -4,6 +4,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 namespace svulkan2 {
 
@@ -13,6 +14,9 @@ struct RendererConfig {
 
   // preprocessor definitions that select a variant of the shader pack: name -> value
   std::map<std::string, std::string> shaderDefines;
+
+  // compute shader files of the post-processing chain (renderer::PostChain), in order
+  std::vector<std::string> postPasses;
 
   // default 1-channel texture format
   vk::Format colorFormat1{vk::Format::eR32Sfloat}; // R8Unorm, R32Sfloat
