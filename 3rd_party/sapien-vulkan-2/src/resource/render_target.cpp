@@ -7,9 +7,9 @@ namespace resource {
 
 SVRenderTarget::SVRenderTarget(std::shared_ptr<core::Context> context, std::string const &name,
                                uint32_t width, uint32_t height, vk::Format format,
-                               vk::SampleCountFlagBits sampleCount)
+                               vk::SampleCountFlagBits sampleCount, bool storage)
     : mContext(std::move(context)), mName(name), mFormat(format), mWidth(width), mHeight(height),
-      mSampleCount(sampleCount) {
+      mSampleCount(sampleCount), mStorage(storage) {
   if (!mContext) {
     throw std::runtime_error("failed to create render target: invalid context");
   }
@@ -51,6 +51,9 @@ void SVRenderTarget::createDeviceResources() {
       mFormat == vk::Format::eR32Sfloat || mFormat == vk::Format::eR16Sfloat) {
     usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eColorAttachment |
             vk::ImageUsageFlagBits::eTransferSrc;
+    if (mStorage) {
+      usage |= vk::ImageUsageFlagBits::eStorage;
+    }
   } else if (mFormat == vk::Format::eD32Sfloat) {
     usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eDepthStencilAttachment |
             vk::ImageUsageFlagBits::eTransferSrc;

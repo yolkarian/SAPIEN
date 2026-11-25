@@ -74,10 +74,10 @@ std::vector<std::string> resolvePostPasses(PackManifest const &manifest,
                                            RenderConfig::Kind kind) {
   auto const &names = manifest.getPostPasses();
   std::string const pack = manifest.getDirectory().string();
-  if (!names.empty() && kind != RenderConfig::Kind::eRayTracing) {
+  if (!names.empty() && kind == RenderConfig::Kind::eBatchRayTracing) {
     throw std::runtime_error("shader pack \"" + pack +
-                             "\": \"post\" in pack.json is only supported by ray tracing "
-                             "packs (camera.rgen)");
+                             "\": \"post\" in pack.json is not supported by batched ray "
+                             "tracing packs (batch.comp)");
   }
   std::vector<std::string> files;
   for (auto const &name : names) {

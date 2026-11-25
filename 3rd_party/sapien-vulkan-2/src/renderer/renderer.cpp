@@ -80,6 +80,14 @@ Renderer::Renderer(std::shared_ptr<core::Context> context, std::shared_ptr<Rende
   mShaderPack = resource::SVResourceManager::Get()->CreateShaderPack(config->shaderDir,
                                                                   config->shaderDefines);
 
+  mPostChain = std::make_unique<PostChain>(mContext, config->postPasses, config->shaderDefines);
+  if (mPostChain->getPropertyType("toneMapper") == CustomPropertyType::eInt) {
+    mPostChain->setProperty("toneMapper", 2);
+  }
+  if (mPostChain->getPropertyType("exposure") == CustomPropertyType::eFloat) {
+    mPostChain->setProperty("exposure", 1.f);
+  }
+
   // Make reflected shader defaults visible through the custom-property API.
   for (auto const &pass : mShaderPack->getNonShadowPasses()) {
     std::shared_ptr<SpecializationConstantLayout> layout;
@@ -149,7 +157,8 @@ void Renderer::prepareRenderTargets(uint32_t width, uint32_t height) {
     float scale = 1.f; // renderTargetScales[name];
     mRenderTargets[name] = std::make_shared<resource::SVRenderTarget>(
         mContext, name, static_cast<uint32_t>(width * scale),
-        static_cast<uint32_t>(height * scale), format);
+        static_cast<uint32_t>(height * scale), format, vk::SampleCountFlagBits::e1,
+        hasPostChain() && name == kRasterPostSource);
     mRenderTargets[name]->createDeviceResources();
   }
 
@@ -166,6 +175,29 @@ void Renderer::prepareRenderTargets(uint32_t width, uint32_t height) {
   }
 
   mRenderTargetFinalLayouts = mShaderPackInstance->getRenderTargetFinalLayouts();
+
+  if (hasPostChain()) {
+    if (mConfig->msaa != vk::SampleCountFlagBits::e1) {
+      throw std::runtime_error("post-processing passes are not supported with MSAA");
+    }
+    auto source = mRenderTargets.find(kRasterPostSource);
+    if (source == mRenderTargets.end() ||
+        source->second->getFormat() != vk::Format::eR32G32B32A32Sfloat) {
+      throw std::runtime_error(std::string("post-processing needs the render target ") +
+                               kRasterPostSource + " in the format r32g32b32a32sfloat");
+    }
+    auto result = mRenderTargets[kRasterPostResult] = std::make_shared<resource::SVRenderTarget>(
+        mContext, kRasterPostResult, width, height, vk::Format::eR32G32B32A32Sfloat,
+        vk::SampleCountFlagBits::e1, true);
+    result->createDeviceResources();
+    mRenderTargetFinalLayouts[kRasterPostResult] = vk::ImageLayout::eShaderReadOnlyOptimal;
+    mPostChain->prepare(width, height, source->second->getImageView(), result->getImageView(),
+                        [](std::string const &name) -> vk::ImageView {
+                          throw std::runtime_error(
+                              "a post-processing pass of a rasterization pack reads the image \"" +
+                              name + "\": only inColor and outColor are available");
+                        });
+  }
 }
 
 void Renderer::prepareShadowRenderTargets() {
@@ -765,10 +797,18 @@ void Renderer::recordRenderPasses() {
   uint32_t gbufferIndex = 0;
   uint32_t pointIndex = 0;
   auto passes = mShaderPack->getNonShadowPasses();
+  bool postRecorded = !hasPostChain();
   for (uint32_t pass_index = 0; pass_index < passes.size(); ++pass_index) {
     SVULKAN2_PROFILE_BLOCK("Record render pass" + std::to_string(pass_index));
 
     auto pass = passes[pass_index];
+    if (!postRecorded) {
+      auto inputs = pass->getInputTextureNames();
+      if (std::find(inputs.begin(), inputs.end(), kRasterPostResult) != inputs.end()) {
+        recordPostChain();
+        postRecorded = true;
+      }
+    }
 
     float scale = 1.f; // TODO: fix
     // float scale = pass->getResolutionScale();
@@ -876,6 +916,11 @@ void Renderer::recordRenderPasses() {
       mRenderCommandBuffer->draw(3, 1, 0, 0);
     }
     mRenderCommandBuffer->endRenderPass();
+  }
+  if (!postRecorded) {
+    throw std::runtime_error(std::string("the shader pack lists post-processing passes but no "
+                                         "pass samples their result, sampler") +
+                             kRasterPostResult);
   }
   mRenderCommandBuffer->end();
 }
@@ -1831,7 +1876,38 @@ void Renderer::setCustomCubemap(std::string const &name,
   mCustomCubemaps[name] = cubemap;
 }
 
+void Renderer::recordPostChain() {
+  auto commandBuffer = mRenderCommandBuffer.get();
+  auto &source = mRenderTargets.at(kRasterPostSource)->getImage();
+  auto &result = mRenderTargets.at(kRasterPostResult)->getImage();
+  // the pass sampling the result counts as a reader of the source (shader_pack_instance.cpp),
+  // so the source is read-only here; the result is rewritten every frame
+  source.transitionLayout(commandBuffer, vk::ImageLayout::eShaderReadOnlyOptimal,
+                          vk::ImageLayout::eGeneral, vk::AccessFlagBits::eColorAttachmentWrite,
+                          vk::AccessFlagBits::eShaderRead,
+                          vk::PipelineStageFlagBits::eColorAttachmentOutput,
+                          vk::PipelineStageFlagBits::eComputeShader);
+  result.transitionLayout(commandBuffer, vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral,
+                          vk::AccessFlagBits::eShaderRead, vk::AccessFlagBits::eShaderWrite,
+                          vk::PipelineStageFlagBits::eFragmentShader,
+                          vk::PipelineStageFlagBits::eComputeShader);
+  mPostChain->record(commandBuffer);
+  source.transitionLayout(commandBuffer, vk::ImageLayout::eGeneral,
+                          vk::ImageLayout::eShaderReadOnlyOptimal, vk::AccessFlagBits::eShaderRead,
+                          vk::AccessFlagBits::eShaderRead,
+                          vk::PipelineStageFlagBits::eComputeShader,
+                          vk::PipelineStageFlagBits::eFragmentShader);
+  result.transitionLayout(commandBuffer, vk::ImageLayout::eGeneral,
+                          vk::ImageLayout::eShaderReadOnlyOptimal,
+                          vk::AccessFlagBits::eShaderWrite, vk::AccessFlagBits::eShaderRead,
+                          vk::PipelineStageFlagBits::eComputeShader,
+                          vk::PipelineStageFlagBits::eFragmentShader);
+}
+
 CustomPropertyType Renderer::getCustomPropertyType(std::string const &name) const {
+  if (isPostProperty(name)) {
+    return mPostChain->getPropertyType(name);
+  }
   auto it = mSpecializationConstants.find(name);
   if (it == mSpecializationConstants.end()) {
     return CustomPropertyType::eNone;
@@ -1852,6 +1928,9 @@ CustomPropertyType Renderer::getCustomPropertyType(std::string const &name) cons
 }
 
 int Renderer::getCustomPropertyInt(std::string const &name) const {
+  if (isPostProperty(name)) {
+    return mPostChain->getPropertyInt(name);
+  }
   if (mSpecializationConstants.contains(name)) {
     auto c = mSpecializationConstants.at(name);
     if (c.dtype == DataType::INT()) {
@@ -1864,6 +1943,9 @@ int Renderer::getCustomPropertyInt(std::string const &name) const {
 }
 
 float Renderer::getCustomPropertyFloat(std::string const &name) const {
+  if (isPostProperty(name)) {
+    return mPostChain->getPropertyFloat(name);
+  }
   if (mSpecializationConstants.contains(name)) {
     auto c = mSpecializationConstants.at(name);
     if (c.dtype == DataType::FLOAT()) {
@@ -1899,11 +1981,21 @@ glm::vec4 Renderer::getCustomPropertyVec4(std::string const &name) const {
 }
 
 void Renderer::setCustomProperty(std::string const &name, int p) {
-  setSpecializationConstant(name, p);
+  if (!isPostProperty(name)) {
+    setSpecializationConstant(name, p);
+  } else if (mPostChain->getPropertyInt(name) != p) {
+    mPostChain->setProperty(name, p);
+    mRequiresRecord = true;
+  }
 }
 
 void Renderer::setCustomProperty(std::string const &name, float p) {
-  setSpecializationConstant(name, p);
+  if (!isPostProperty(name)) {
+    setSpecializationConstant(name, p);
+  } else if (mPostChain->getPropertyFloat(name) != p) {
+    mPostChain->setProperty(name, p);
+    mRequiresRecord = true;
+  }
 }
 
 void Renderer::setCustomProperty(std::string const &name, glm::vec3 p) {

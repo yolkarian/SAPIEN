@@ -1,5 +1,6 @@
 #pragma once
 #include "gpu_scene.h"
+#include "post_chain.h"
 #include "renderer_base.h"
 #include "svulkan2/core/context.h"
 #include "svulkan2/core/descriptor_pool.h"
@@ -140,6 +141,16 @@ class Renderer : public RendererBase {
   bool mRequiresRecord{false};
   uint64_t mLastVersion{0};
   std::shared_ptr<scene::Scene> mScene;
+
+  // Post-processing of kRasterPostSource into kRasterPostResult (common/config.h); recorded
+  // before the first pass that samples the result. Its properties are push constants, so a
+  // change only re-records.
+  std::unique_ptr<PostChain> mPostChain;
+  bool hasPostChain() const { return mPostChain && !mPostChain->empty(); }
+  bool isPostProperty(std::string const &name) const {
+    return mPostChain && mPostChain->getPropertyType(name) != CustomPropertyType::eNone;
+  }
+  void recordPostChain();
 
 #ifdef SVULKAN2_CUDA_INTEROP
   std::map<std::string, std::shared_ptr<core::Buffer>> mTransferBuffers;

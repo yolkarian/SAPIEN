@@ -17,16 +17,19 @@ class SVRenderTarget {
   uint32_t mWidth{};
   uint32_t mHeight{};
   vk::SampleCountFlagBits mSampleCount{vk::SampleCountFlagBits::e1};
+  bool mStorage{false};
 
   std::shared_ptr<core::Image> mImage{};
   vk::UniqueImageView mImageView;
   vk::Sampler mSampler;
 
 public:
-  /** a color or depth target created on `context` by createDeviceResources */
+  /** a color or depth target created on `context` by createDeviceResources; `storage` also
+   *  lets compute shaders bind a color target as a storage image */
   SVRenderTarget(std::shared_ptr<core::Context> context, std::string const &name, uint32_t width,
                  uint32_t height, vk::Format format,
-                 vk::SampleCountFlagBits sampleCount = vk::SampleCountFlagBits::e1);
+                 vk::SampleCountFlagBits sampleCount = vk::SampleCountFlagBits::e1,
+                 bool storage = false);
 
   /** a target wrapping an existing image and view of `context` */
   SVRenderTarget(std::shared_ptr<core::Context> context, std::string const &name, uint32_t width,

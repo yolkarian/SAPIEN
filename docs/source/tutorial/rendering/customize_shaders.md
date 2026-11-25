@@ -106,8 +106,8 @@ Each parameter takes:
 every entry had been written to the config. An unknown preset raises naming the
 pack and the presets it declares.
 
-`post` (ray-tracing packs) lists the [post-processing passes](#post-processing-passes)
-that turn `HdrColor` into `Color`, in order: `"post": ["tonemap"]`.
+`post` lists the [post-processing passes](#post-processing-passes) of a
+rasterization or ray-tracing pack, in order: `"post": ["tonemap"]`.
 
 Assignment is checked immediately against the manifest, so a typo or a wrong type
 fails where it is written rather than at renderer creation:
@@ -239,7 +239,7 @@ passes. The default pack currently contains files such as:
 - `gbuffer1.vert` and `gbuffer1.frag` for transparent geometry;
 - `shadow.vert` for shadow maps;
 - `deferred.vert` and `deferred.frag` for deferred lighting;
-- `composite.vert` and `composite0.frag` for post-processing and display
+- `composite.vert` and `composite0.frag` for tone mapping and the display
   targets;
 - `point.*` and `line.*` for point and line rendering.
 
@@ -335,15 +335,29 @@ The ray-generation shader declares storage images such as `outHdrColor`,
 `outAlbedo`, `outNormal`, `outSegmentation`, `outRadiance`, and
 `outPosition`. Read them from Python by target name after `take_picture`.
 
-### Post-processing passes
+## Post-processing passes
 
-`"post"` in a ray-tracing pack's `pack.json` lists compute passes that run after
-ray tracing and denoising, in the listed order. The first pass reads `HdrColor`
-and the last one writes `Color`; a pack without `"post"` has no `Color`. A pass
-`name` is the file `<pack>/post/<name>.comp` if the pack ships it, else the
-built-in `vulkan_shader/post/<name>.comp`. The built-in pass is `tonemap`
-(exposure, tone curve, display encoding; parameters `exposure` and
-`toneMapper`).
+`"post"` in `pack.json` lists compute passes that run in the listed order, each
+reading the colour the previous one wrote. A pass `name` is the file
+`<pack>/post/<name>.comp` if the pack ships it, else the built-in
+`vulkan_shader/post/<name>.comp`. The built-in pass is `tonemap` (exposure, tone
+curve, display encoding; parameters `exposure` and `toneMapper`).
+
+| Pack | First pass reads | Last pass writes |
+|---|---|---|
+| ray tracing | `HdrColor`, after denoising | `Color`; without `"post"` there is no `Color` |
+| rasterization | the render target `Lighting` (must be `r32g32b32a32sfloat`) | `PostColor`, which a later pass samples as `samplerPostColor` |
+
+A rasterization pack runs its chain right before the first pass that samples
+`samplerPostColor`; listing passes without such a pass raises, and so does MSAA.
+The built-in rasterization packs list no passes and tone-map in
+`composite0.frag`: the compute passes between two render passes cost a fixed
+amount per camera, which is negligible for a few large images but lowered the
+throughput of `default` by 17-19% with 1024 cameras of 64x64 or 128x128 pixels
+on an RTX 5090. To post-process a copy of `default`, list the passes in its
+`pack.json`, and in `composite0.frag` sample `samplerPostColor` instead of
+`samplerLighting` and drop the `sapienToneMap` call and the `exposure` and
+`toneMapper` constants. `"post"` in an `rt_batch` pack raises.
 
 ```glsl
 #version 450
@@ -362,17 +376,15 @@ void main() {
 
 - `inColor` and `outColor` (both `rgba32f`, set 0) are required: the colour from
   the previous pass and the colour for the next one.
-- Any other storage image is the renderer's image of that name, for example
-  `Albedo` or `Normal`.
+- In a ray-tracing pack any other storage image is the renderer's image of that
+  name, for example `Albedo` or `Normal`; a rasterization pack has none.
 - The `int` and `float` members of the push-constant block are parameters:
   declare them as uniform parameters in `pack.json` and set them through the
-  `RenderConfig` or `camera.set_property`. Changing one keeps the accumulated
-  samples. A name used by several passes is one parameter.
+  `RenderConfig` or `camera.set_property`. Changing one keeps the samples a
+  ray-tracing camera accumulated and does not rebuild rasterization pipelines.
+  A name used by several passes is one parameter.
 - Dispatch covers the image rounded up to the local size, so skip pixels
   outside it as above.
-
-Rasterization and `rt_batch` packs tone-map in their own shaders; `"post"` in
-their `pack.json` raises.
 
 ## Batched ray-tracing pipeline
 

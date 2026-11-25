@@ -8,6 +8,11 @@
 
 namespace svulkan2 {
 
+/** Post-processing of a rasterization pack: the chain reads the render target kRasterPostSource
+ *  and writes kRasterPostResult, which a later pass samples as `samplerPostColor`. */
+inline constexpr char const *kRasterPostSource = "Lighting";
+inline constexpr char const *kRasterPostResult = "PostColor";
+
 /** Renderer options configured by API */
 struct RendererConfig {
   std::string shaderDir;

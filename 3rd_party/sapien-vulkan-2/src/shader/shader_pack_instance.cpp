@@ -510,6 +510,11 @@ optable_t ShaderPackInstance::generateTextureOperationTable() const {
       if (operationTable.find(name) != operationTable.end()) {
         operationTable.at(name)[passIdx] = RenderTargetOperation::eRead;
       }
+      // the post-processing chain runs right before the pass that samples its result, and
+      // reads its source there
+      if (name == kRasterPostResult && operationTable.contains(kRasterPostSource)) {
+        operationTable.at(kRasterPostSource)[passIdx] = RenderTargetOperation::eRead;
+      }
     }
     for (auto &name : pass->getColorRenderTargetNames()) {
       operationTable.at(name)[passIdx] = RenderTargetOperation::eColorWrite;
