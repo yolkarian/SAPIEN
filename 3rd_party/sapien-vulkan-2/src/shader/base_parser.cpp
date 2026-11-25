@@ -217,6 +217,12 @@ std::shared_ptr<StructDataLayout> parseBuffer(spirv_cross::Compiler &compiler,
     bool runtimeArray = memberType.array.size() == 1 && memberType.array[0] == 0 &&
                         memberType.array_size_literal[0];
     uint32_t arrayStride = runtimeArray ? compiler.type_struct_member_array_stride(type, i) : 0;
+    // a dimension sized by a specialization constant holds that constant's id, which differs
+    // between shader modules: record it as 0 (unknown) so passes compare equal
+    std::vector<uint32_t> array;
+    for (size_t d = 0; d < memberType.array.size(); ++d) {
+      array.push_back(memberType.array_size_literal[d] ? memberType.array[d] : 0);
+    }
 
     if (memberOffset + memberSize > layout->size) {
       layout->size = memberOffset + memberSize;
@@ -226,7 +232,7 @@ std::shared_ptr<StructDataLayout> parseBuffer(spirv_cross::Compiler &compiler,
         .name = memberName,
         .size = memberSize,
         .offset = memberOffset,
-        .array = {memberType.array.begin(), memberType.array.end()},
+        .array = std::move(array),
         .arrayStride = arrayStride,
         .dtype = dataType,
         .member = dataType == DataType::STRUCT() ? parseBuffer(compiler, memberType) : nullptr};
@@ -300,53 +306,6 @@ static void verifySceneBuffer(std::shared_ptr<StructDataLayout> layout) {
   ASSERT(layout->elements.contains("ambientLight"), "scene buffer requires variable ambientLight");
   ASSERT(layout->elements["ambientLight"].dtype == DataType::FLOAT4(),
          "scene ambientLight should be float4");
-
-  if (layout->elements.contains("directionalLights")) {
-    ASSERT(layout->elements["directionalLights"].dtype == DataType::STRUCT(),
-           "scene directionalLights should be struct");
-
-    ASSERT(layout->elements["directionalLights"].member->elements.size() == 2 &&
-               layout->elements["directionalLights"].member->elements.contains("direction") &&
-               layout->elements["directionalLights"].member->elements["direction"].offset == 0 &&
-               layout->elements["directionalLights"].member->elements["direction"].dtype ==
-                   DataType::FLOAT4() &&
-               layout->elements["directionalLights"].member->elements.contains("emission") &&
-               layout->elements["directionalLights"].member->elements["emission"].dtype ==
-                   DataType::FLOAT4(),
-           "scene buffer directional light must be an array of {vec4 direction; vec4 emission;}");
-  }
-
-  if (layout->elements.contains("spotLights")) {
-    ASSERT(layout->elements["spotLights"].dtype == DataType::STRUCT(),
-           "scene spotLights should be struct");
-    ASSERT(layout->elements["spotLights"].member->elements.size() == 3 &&
-               layout->elements["spotLights"].member->elements.contains("position") &&
-               layout->elements["spotLights"].member->elements["position"].offset == 0 &&
-               layout->elements["spotLights"].member->elements["position"].dtype ==
-                   DataType::FLOAT4() &&
-               layout->elements["spotLights"].member->elements.contains("direction") &&
-               layout->elements["spotLights"].member->elements["direction"].offset == 16 &&
-               layout->elements["spotLights"].member->elements["direction"].dtype ==
-                   DataType::FLOAT4() &&
-               layout->elements["spotLights"].member->elements.contains("emission") &&
-               layout->elements["spotLights"].member->elements["emission"].dtype ==
-                   DataType::FLOAT4(),
-           "scene buffer spot lights must be an array of {vec4 direction; vec4 emission;}");
-  }
-
-  if (layout->elements.contains("pointLights")) {
-    ASSERT(layout->elements["spotLights"].dtype == DataType::STRUCT(),
-           "scene pointLights should be struct");
-    ASSERT(layout->elements["pointLights"].member->elements.size() == 2 &&
-               layout->elements["pointLights"].member->elements.contains("position") &&
-               layout->elements["pointLights"].member->elements["position"].offset == 0 &&
-               layout->elements["pointLights"].member->elements["position"].dtype ==
-                   DataType::FLOAT4() &&
-               layout->elements["pointLights"].member->elements.contains("emission") &&
-               layout->elements["pointLights"].member->elements["emission"].dtype ==
-                   DataType::FLOAT4(),
-           "scene buffer point lights must be an array of {vec4 position; vec4 emission;}");
-  }
 }
 
 static void verifyLightBuffer(std::shared_ptr<StructDataLayout> layout) {

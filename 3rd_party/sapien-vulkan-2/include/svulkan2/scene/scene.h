@@ -91,7 +91,6 @@ public:
   Scene(Scene &&other) = delete;
   Scene &operator=(Scene &&other) = delete;
 
-  void uploadToDevice(core::Buffer &sceneBuffer, StructDataLayout const &sceneLayout);
   void uploadShadowToDevice(core::Buffer &shadowBuffer,
                             std::vector<std::unique_ptr<core::Buffer>> &lightBuffers,
                             StructDataLayout const &shadowLayout);

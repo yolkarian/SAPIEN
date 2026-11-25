@@ -70,25 +70,24 @@ createSceneDescriptorSetLayout(vk::Device device,
   std::vector<vk::DescriptorBindingFlags> bindingFlags;
   for (uint32_t bindingIndex = 0; bindingIndex < sceneSetDescription.bindings.size();
        ++bindingIndex) {
-    if (sceneSetDescription.bindings.at(bindingIndex).type == vk::DescriptorType::eUniformBuffer) {
-      bindings.push_back({bindingIndex, vk::DescriptorType::eUniformBuffer, 1,
-                          vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment});
-      } else if (sceneSetDescription.bindings.at(bindingIndex).type ==
-               vk::DescriptorType::eCombinedImageSampler) {
-      if (sceneSetDescription.bindings.at(bindingIndex).dim == 0) {
+    auto const &binding = sceneSetDescription.bindings.at(bindingIndex);
+    auto stages = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment;
+    // one flags entry per binding: Vulkan reads bindingFlags in step with bindings
+    vk::DescriptorBindingFlags flags{};
+    if (binding.type == vk::DescriptorType::eUniformBuffer) {
+      bindings.push_back({bindingIndex, binding.type, 1, stages});
+    } else if (binding.type == vk::DescriptorType::eCombinedImageSampler) {
+      if (binding.dim == 0) {
+        bindings.push_back({bindingIndex, vk::DescriptorType::eCombinedImageSampler, 1, stages});
+      } else {
         bindings.push_back(
-            {bindingIndex, vk::DescriptorType::eCombinedImageSampler, 1,
-             vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment});
-          } else {
-        uint32_t arraySize = sceneSetDescription.bindings.at(bindingIndex).arraySize;
-        bindings.push_back(
-            {bindingIndex, vk::DescriptorType::eCombinedImageSampler, arraySize,
-             vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment});
-        bindingFlags.push_back(vk::DescriptorBindingFlagBits::ePartiallyBound);
+            {bindingIndex, vk::DescriptorType::eCombinedImageSampler, binding.arraySize, stages});
+        flags = vk::DescriptorBindingFlagBits::ePartiallyBound;
       }
     } else {
       throw std::runtime_error("invalid scene descriptor set");
     }
+    bindingFlags.push_back(flags);
   }
   vk::DescriptorSetLayoutBindingFlagsCreateInfo flagInfo(bindingFlags);
   vk::DescriptorSetLayoutCreateInfo layoutInfo({}, bindings);

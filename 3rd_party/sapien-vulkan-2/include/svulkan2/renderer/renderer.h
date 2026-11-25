@@ -82,6 +82,19 @@ class Renderer : public RendererBase {
 
   std::unique_ptr<core::Buffer> mSceneBuffer;
 
+  // The scene set's lights (common/light_data.glsl), repacked on every upload into host-visible
+  // uniform buffers. Their sizes follow the light counts, which are specialization constants:
+  // a change of count rebuilds the pipelines and reallocates the buffers.
+  scene::LightTable mLights;
+  struct LightBufferBinding {
+    int binding{-1}; // in the scene set; -1 when the pack declares no such buffer
+    std::unique_ptr<core::Buffer> buffer;
+    size_t capacity{}; // in lights
+  };
+  LightBufferBinding mPointLightBuffer;
+  LightBufferBinding mDirectionalLightBuffer;
+  LightBufferBinding mSpotLightBuffer;
+
   std::unique_ptr<core::Buffer> mCameraBufferCpu;
   std::unique_ptr<core::Buffer> mCameraBuffer;
 
@@ -261,6 +274,10 @@ private:
   void prepareGPUScene();
   // Grow the instance buffer to instanceCount instances and customObjectData[] to objectCount.
   void ensureGPUBuffers(uint32_t instanceCount, uint32_t objectCount);
+  // Pack the scene's lights into mLights; textured light i samples texture slot i.
+  void packLights();
+  // Pack the lights and allocate and bind light buffers that hold them (in prepareSceneBuffer).
+  void allocateLightBuffers();
   // Rebuild materials[] and textures[] from the scene; true when it rebound a descriptor.
   bool refreshMaterialsAndTextures();
   // Write the instances and the per-object custom data from the CPU objects.

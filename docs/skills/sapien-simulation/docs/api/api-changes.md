@@ -4,6 +4,21 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+Rasterization lights have no fixed limit:
+
+- **Behavior change:** the built-in raster packs draw every light of the scene instead of at
+  most 3 directional, 10 point and 10 spot lights (`minimal`: 10 point). The bound is the
+  device's uniform-buffer range (on NVIDIA 2047 point or directional, 371 spot and textured
+  lights); beyond it the camera raises `RuntimeError`. Shadow casters and textured lights
+  remain bounded by the pack's shadow maps. In `minimal`, textured lights now sample their
+  shadow map.
+- **Breaking (custom raster packs):** lights are the uniform buffers `PointLights`,
+  `DirectionalLights` and `SpotLights` of the scene set (records of
+  `common/light_data.glsl`, formerly `common/rt_light.glsl`), sized by the specialization
+  constants `NUM_POINT_LIGHTS`, `NUM_DIRECTIONAL_LIGHTS`, `NUM_SPOT_LIGHTS`; `SceneBuffer` keeps
+  only `ambientLight`; textured lights follow the spot lights. Copy `default/scene_set.glsl`
+  and use `common/raster_lighting.glsl` (`sapienAddDirectLighting`).
+
 Shader packs post-process through `pack.json`:
 
 - **Breaking:** `"post"` in `pack.json` lists compute passes (`<pack>/post/<name>.comp`, else
@@ -160,8 +175,8 @@ Rendering:
 - **Behavior change:** `sapien.render.clear_cache(shaders=True)` now really reloads edited shader
   files and includes, for raster and ray-tracing packs; shader compile errors raise `RuntimeError`
   with `file:line` of each error.
-- **Behavior change:** more lights than the raster pack stores (3 directional, 10 point, 10 spot)
-  are ignored instead of adding garbage lighting; shadowed lights are kept first.
+- **Behavior change:** more lights than the raster pack stored no longer add garbage lighting;
+  see "Rasterization lights have no fixed limit" above for the current behavior.
 - **Behavior change:** HDR environment maps keep radiance above 1 in rough reflections (raster
   image-based lighting); scenes lit by bright HDR maps render brighter than before.
 - **Behavior change:** glTF `KHR_materials_specular` now sets `RenderMaterial.specular` to

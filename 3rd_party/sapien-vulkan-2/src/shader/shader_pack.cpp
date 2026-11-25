@@ -181,32 +181,14 @@ ShaderPack::ShaderPack(std::string const &dirname, ShaderDefines const &defines)
   // GLSL compiler ends
 
   mShaderInputLayouts = generateShaderLayouts();
-  updateMaxLightCount();
+  validateShadowArrays();
 }
 
-void ShaderPack::updateMaxLightCount() {
+// The lights are runtime-sized storage buffers; only the shadow-map arrays have sizes, which
+// the ShadowBuffer and the shadow samplers must agree on.
+void ShaderPack::validateShadowArrays() {
   {
     auto set = mShaderInputLayouts->sceneSetDescription;
-
-    {
-      // process scene buffer
-      if (mShaderInputLayouts->sceneBufferLayout->elements.contains("pointLights")) {
-        mMaxPointLightCount =
-            mShaderInputLayouts->sceneBufferLayout->elements.at("pointLights").array.at(0);
-      }
-      if (mShaderInputLayouts->sceneBufferLayout->elements.contains("directionalLights")) {
-        mMaxDirectionalLightCount =
-            mShaderInputLayouts->sceneBufferLayout->elements.at("directionalLights").array.at(0);
-      }
-      if (mShaderInputLayouts->sceneBufferLayout->elements.contains("spotLights")) {
-        mMaxSpotLightCount =
-            mShaderInputLayouts->sceneBufferLayout->elements.at("spotLights").array.at(0);
-      }
-      if (mShaderInputLayouts->sceneBufferLayout->elements.contains("texturedLights")) {
-        mMaxTexturedLightCount =
-            mShaderInputLayouts->sceneBufferLayout->elements.at("texturedLights").array.at(0);
-      }
-    }
 
     {
       // process shadow buffer
@@ -233,23 +215,6 @@ void ShaderPack::updateMaxLightCount() {
         if (shadowBuffer->elements.contains("texturedLightBuffers")) {
           mMaxTexturedShadowCount = shadowBuffer->elements.at("texturedLightBuffers").array.at(0);
         }
-      }
-
-      if (mMaxPointShadowCount > mMaxPointLightCount) {
-        throw std::runtime_error(
-            "ShadowBuffer pointLightBuffers size must not exceed SceneBuffer pointLights");
-      }
-      if (mMaxDirectionalShadowCount > mMaxDirectionalLightCount) {
-        throw std::runtime_error("ShadowBuffer directionalLightBuffers size must not exceed "
-                                 "SceneBuffer directionalLights");
-      }
-      if (mMaxSpotShadowCount > mMaxSpotLightCount) {
-        throw std::runtime_error(
-            "ShadowBuffer spotLightBuffers size must not exceed SceneBuffer spotLights");
-      }
-      if (mMaxTexturedShadowCount > mMaxTexturedLightCount) {
-        throw std::runtime_error(
-            "ShadowBuffer texturedLightBuffers size must not exceed SceneBuffer texturedLights");
       }
     }
 

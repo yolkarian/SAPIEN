@@ -62,23 +62,6 @@ void notifySceneVersionChanged(Scene *source, bool renderOnly) {
 }
 } // namespace detail
 
-struct PointLightData {
-  glm::vec4 position;
-  glm::vec4 color;
-};
-
-struct DirectionalLightData {
-  glm::vec3 direction;
-  float softness;
-  glm::vec4 color;
-};
-
-struct SpotLightData {
-  glm::vec4 position;
-  glm::vec4 direction;
-  glm::vec4 color;
-};
-
 struct LightBufferData {
   glm::mat4 viewMatrix;
   glm::mat4 viewMatrixInverse;
@@ -454,103 +437,6 @@ void Scene::updateModelMatrices() {
   }
   mModelMatricesSettling = changed;
   mModelMatricesVersion = mVersion;
-}
-
-void Scene::uploadToDevice(core::Buffer &sceneBuffer, StructDataLayout const &sceneLayout) {
-  auto pointLights = getPointLights();
-  auto directionalLights = getDirectionalLights();
-  auto spotLights = getSpotLights();
-  auto texturedLights = getTexturedLights();
-
-  // Raster shaders bind shadow maps before unshadowed lights. Keep the light
-  // buffers in the same stable order so mixed shadow settings address the
-  // matching light and shadow map.
-  auto shadowsFirst = [](auto const *light) { return light->isShadowEnabled(); };
-  std::stable_partition(pointLights.begin(), pointLights.end(), shadowsFirst);
-  std::stable_partition(directionalLights.begin(), directionalLights.end(), shadowsFirst);
-  std::stable_partition(spotLights.begin(), spotLights.end(), shadowsFirst);
-  std::stable_partition(texturedLights.begin(), texturedLights.end(), shadowsFirst);
-
-  std::vector<PointLightData> pointLightData;
-  std::vector<DirectionalLightData> directionalLightData;
-  std::vector<SpotLightData> spotLightData;
-  std::vector<SpotLightData> texturedLightData;
-  pointLightData.reserve(pointLights.size());
-  directionalLightData.reserve(directionalLights.size());
-  spotLightData.reserve(spotLights.size());
-  texturedLightData.reserve(texturedLights.size());
-  for (auto light : pointLights) {
-    pointLightData.push_back(
-        {.position = light->getTransform().worldModelMatrix * glm::vec4(0, 0, 0, 1),
-         .color = glm::vec4(light->getColor(), 0)});
-  }
-
-  for (auto light : directionalLights) {
-    directionalLightData.push_back(
-        {.direction = glm::vec3(light->getTransform().worldModelMatrix * glm::vec4(0, 0, -1, 0)),
-         .softness = light->getSoftness(),
-         .color = glm::vec4(light->getColor(), 0)});
-  }
-
-  for (auto light : spotLights) {
-    spotLightData.push_back({.position = glm::vec4(light->getPosition(), 1),
-                             .direction = glm::vec4(light->getDirection(), light->getFov()),
-                             .color = glm::vec4(light->getColor(), light->getFovSmall())});
-  }
-
-  for (auto light : texturedLights) {
-    texturedLightData.push_back({.position = glm::vec4(light->getPosition(), 1),
-                                 .direction = glm::vec4(light->getDirection(), light->getFov()),
-                                 .color = glm::vec4(light->getColor(), light->getFovSmall())});
-  }
-
-  ScopedBufferMapping sceneMapping(sceneBuffer);
-  sceneBuffer.upload(&mAmbientLight, 16, sceneLayout.elements.at("ambientLight").offset);
-  // Use the aggregated (virtual getter) counts so a SceneGroup uploads member-scene
-  // lights; the base member vectors are empty for groups.
-  uint32_t numPointLights = pointLights.size();
-  uint32_t numDirectionalLights = directionalLights.size();
-  uint32_t numSpotLights = spotLights.size();
-  uint32_t numTexturedLights = texturedLights.size();
-  uint32_t maxNumPointLights = sceneLayout.elements.at("pointLights").size /
-                               sceneLayout.elements.at("pointLights").member->size;
-  uint32_t maxNumDirectionalLights = sceneLayout.elements.at("directionalLights").size /
-                                     sceneLayout.elements.at("directionalLights").member->size;
-  uint32_t maxNumSpotLights = sceneLayout.elements.at("spotLights").size /
-                              sceneLayout.elements.at("spotLights").member->size;
-  uint32_t maxNumTexturedLights = sceneLayout.elements.at("texturedLights").size /
-                                  sceneLayout.elements.at("texturedLights").member->size;
-
-  if (maxNumPointLights < numPointLights) {
-    logger::warn("The scene contains more point lights than the maximum number of "
-                 "point lights in the shader. Truncated.");
-    numPointLights = maxNumPointLights;
-  }
-  if (maxNumDirectionalLights < numDirectionalLights) {
-    logger::warn("The scene contains more directional lights than the maximum number of "
-                 "directional lights in the shader. Truncated.");
-    numDirectionalLights = maxNumDirectionalLights;
-  }
-  if (maxNumSpotLights < numSpotLights) {
-    logger::warn("The scene contains more spot lights than the maximum number of "
-                 "spot lights in the shader. Truncated.");
-    numSpotLights = maxNumSpotLights;
-  }
-  if (maxNumTexturedLights < numTexturedLights) {
-    logger::warn("The scene contains more textured lights than the maximum number of "
-                 "textured lights in the shader. Truncated.");
-    numTexturedLights = maxNumTexturedLights;
-  }
-
-  sceneBuffer.upload(pointLightData.data(), numPointLights * sizeof(PointLightData),
-                     sceneLayout.elements.at("pointLights").offset);
-  sceneBuffer.upload(directionalLightData.data(),
-                     numDirectionalLights * sizeof(DirectionalLightData),
-                     sceneLayout.elements.at("directionalLights").offset);
-  sceneBuffer.upload(spotLightData.data(), numSpotLights * sizeof(SpotLightData),
-                     sceneLayout.elements.at("spotLights").offset);
-  sceneBuffer.upload(texturedLightData.data(), numTexturedLights * sizeof(SpotLightData),
-                     sceneLayout.elements.at("texturedLights").offset);
 }
 
 void Scene::uploadShadowToDevice(core::Buffer &shadowBuffer,

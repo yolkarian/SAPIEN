@@ -61,9 +61,10 @@ class RayTracingCase(unittest.TestCase):
 
 
 class TestRasterLightCapacity(unittest.TestCase):
-    def test_lights_beyond_shader_capacity_add_no_phantom_light(self) -> None:
-        """The default pack holds 10 point lights. An 11th made the lighting loop read the
-        textured-light slot as a point light whose colour is that light's direction."""
+    def test_black_lights_add_no_phantom_light(self) -> None:
+        """When the default pack held 10 point lights, an 11th made the lighting loop read the
+        textured-light slot as a point light whose colour is that light's direction. Black
+        lights, textured or not, must add nothing."""
         with sapien.Scene() as scene:
             scene.set_ambient_light([0.0, 0.0, 0.0])
             scene.add_ground(0.0)

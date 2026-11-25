@@ -264,19 +264,32 @@ and `get_color_rgba` helpers. `get_picture_cuda` returns a
 ## Common uniform sets
 
 The default rasterization shader pack uses include files that define the current
-uniform-buffer names and binding layout:
+descriptor-set names and binding layout:
 
 - `camera_set.glsl` defines `CameraBuffer` / `cameraBuffer` with
   `viewMatrix`, `projectionMatrix`, inverse matrices, width, and height.
-- `object_set.glsl` defines `ObjectTransformBuffer` /
-  `objectTransformBuffer` and `ObjectDataBuffer` / `objectDataBuffer`.
-  Object data includes `segmentation`, `transparency`, and `shadeFlat`.
-- `material_set.glsl` defines `MaterialBuffer` / `materialBuffer` and
-  texture samplers for base color, roughness, normal, metallic, emission, and
-  transmission maps.
-- `scene_set.glsl` defines `SceneBuffer` / `sceneBuffer`,
-  `ShadowBuffer` / `shadowBuffer`, shadow-map samplers, the environment
-  sampler, and the BRDF lookup texture.
+- `common/scene.glsl` defines the scene-wide set of objects, materials and
+  textures; see [Raster shader pack interface](#raster-shader-pack-interface-scene-wide-descriptor-set).
+- `scene_set.glsl` defines the lights and shadows: `SceneBuffer` / `sceneBuffer`
+  (`ambientLight`), the uniform buffers `PointLights`, `DirectionalLights` and
+  `SpotLights` (records of `common/light_data.glsl`, shared with the ray-tracing
+  packs), `ShadowBuffer` / `shadowBuffer`, the shadow-map samplers, the
+  environment sampler and the BRDF lookup texture.
+
+The renderer sets the light counts as specialization constants:
+`NUM_POINT_LIGHTS`, `NUM_DIRECTIONAL_LIGHTS` and `NUM_SPOT_LIGHTS` size the
+light arrays (each holds one entry more, so none is empty) and bound the
+lighting loops, and a change of count rebuilds the pipelines. There is no fixed
+limit on the number of lights of a kind; a scene whose lights of one kind
+exceed the device's uniform-buffer range (65536 bytes on NVIDIA: 2047 point or
+directional, or 371 spot and textured lights) raises `RuntimeError`. Within
+each kind the lights that cast shadows come first and use the shadow map of the
+same index; their number is `NUM_POINT_LIGHT_SHADOWS`,
+`NUM_DIRECTIONAL_LIGHT_SHADOWS` or `NUM_SPOT_LIGHT_SHADOWS`, bounded by the
+shadow-map arrays of the pack. The `NUM_TEXTURED_LIGHT_SHADOWS` textured lights
+follow the `NUM_SPOT_LIGHTS` spot lights in `SpotLights`.
+`common/raster_lighting.glsl` sums the direct light of all of them
+(`sapienAddDirectLighting`) for the passes of the built-in packs.
 
 When writing a custom shader pack, keep these names and layouts compatible with
 the renderer code or copy and modify the provided include files.

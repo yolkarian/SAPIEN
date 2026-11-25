@@ -1,19 +1,7 @@
-struct PointLight {
-  vec4 position;
-  vec4 emission;
-};
+#ifndef SAPIEN_LIGHTS_GLSL
+#define SAPIEN_LIGHTS_GLSL
 
-struct DirectionalLight {
-  vec4 direction;
-  vec4 emission;
-};
-
-struct SpotLight {
-  vec4 position;
-  vec4 direction;
-  vec4 emission;
-};
-
+// BRDF terms of the rasterization packs' direct lighting (common/raster_lighting.glsl)
 
 float diffuse(float NoL) {
   return NoL / 3.141592653589793f;
@@ -135,3 +123,5 @@ vec3 computeSpotLight2(float fov, vec3 centerDir, vec3 emission, vec3 l, vec3 no
   color += emission * ggx(NoL, NoV, NoH, VoH, roughness, fresnel) / d / d;
   return color;
 }
+
+#endif

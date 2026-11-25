@@ -22,15 +22,10 @@ layout(set = 0, binding = 0) uniform CameraBuffer {
 #include "../common/scene.glsl"
 #undef SET_NUM
 
-#include "../common/lights.glsl"
-#include "../common/shadow.glsl"
+#include "../common/light_data.glsl"
 
 layout(set = 2, binding = 0) uniform SceneBuffer {
   vec4 ambientLight;
-  PointLight pointLights[10];
-  DirectionalLight directionalLights[3];
-  SpotLight spotLights[10];
-  SpotLight texturedLights[1];
 } sceneBuffer;
 
 struct LightBuffer {
@@ -56,10 +51,18 @@ layout(set = 2, binding = 5) uniform sampler2D samplerTexturedLightDepths[1];
 layout(set = 2, binding = 6) uniform sampler2D samplerTexturedLightTextures[1];
 layout(set = 2, binding = 7) uniform samplerCube samplerEnvironment;
 layout(set = 2, binding = 8) uniform sampler2D samplerBRDFLUT;
+// sized by the light counts, see default/scene_set.glsl
+layout(set = 2, binding = 9) uniform PointLights {
+  PointLight l[NUM_POINT_LIGHTS + 1];
+} pointLights;
+layout(set = 2, binding = 10) uniform DirectionalLights {
+  DirectionalLight l[NUM_DIRECTIONAL_LIGHTS + 1];
+} directionalLights;
+layout(set = 2, binding = 11) uniform SpotLights {
+  SpotLight l[NUM_SPOT_LIGHTS + NUM_TEXTURED_LIGHT_SHADOWS + 1];
+} spotLights;
 
-vec4 world2camera(vec4 pos) {
-  return cameraBuffer.viewMatrix * pos;
-}
+#include "../common/raster_lighting.glsl"
 
 vec3 getBackgroundColor(vec3 texcoord) {
   texcoord = texcoord.xzy;
@@ -155,126 +158,8 @@ void main() {
 
   vec3 color = emission.rgb;
 
-  // point light
-  for (int i = 0; i < NUM_POINT_LIGHT_SHADOWS; ++i) {
-    vec3 pos = world2camera(vec4(sceneBuffer.pointLights[i].position.xyz, 1.f)).xyz;
-    mat4 shadowProj = shadowBuffer.pointLightBuffers[6 * i].projectionMatrix;
-
-    vec3 l = pos - csPosition.xyz;
-    vec3 wsl = vec3(cameraBuffer.viewMatrixInverse * vec4(l, 0));
-
-    vec3 v = abs(wsl);
-    vec4 p = shadowProj * vec4(0, 0, -max(max(v.x, v.y), v.z), 1);
-    float pixelDepth = p.z / p.w;
-    float shadowDepth = texture(samplerPointLightDepths[i], wsl).x;
-
-    float visibility = step(pixelDepth - shadowDepth, 0);
-    color += visibility * computePointLight(
-        sceneBuffer.pointLights[i].emission.rgb,
-        l, normal, camDir, diffuseAlbedo, roughness, fresnel);
-  }
-
-  for (int i = NUM_POINT_LIGHT_SHADOWS; i < NUM_POINT_LIGHTS; i++) {
-    vec3 pos = world2camera(vec4(sceneBuffer.pointLights[i].position.xyz, 1.f)).xyz;
-    vec3 l = pos - csPosition.xyz;
-    color += computePointLight(
-        sceneBuffer.pointLights[i].emission.rgb,
-        l, normal, camDir, diffuseAlbedo, roughness, fresnel);
-  }
-
-  // directional light
-  for (int i = 0; i < NUM_DIRECTIONAL_LIGHT_SHADOWS; ++i) {
-    mat4 shadowView = shadowBuffer.directionalLightBuffers[i].viewMatrix;
-    mat4 shadowProj = shadowBuffer.directionalLightBuffers[i].projectionMatrix;
-
-    vec3 lightDir = mat3(cameraBuffer.viewMatrix) * sceneBuffer.directionalLights[i].direction.xyz;
-
-    vec4 ssPosition = shadowView * cameraBuffer.viewMatrixInverse * vec4((csPosition.xyz), 1);
-    vec4 shadowMapCoord = shadowProj * ssPosition;
-    shadowMapCoord /= shadowMapCoord.w;
-    shadowMapCoord.xy = shadowMapCoord.xy * 0.5 + 0.5;
-
-    float resolution = textureSize(samplerDirectionalLightDepths[i], 0).x;
-    float visibility = ShadowMapPCF(
-        samplerDirectionalLightDepths[i], shadowMapCoord.xyz, resolution, 1 / resolution, 1);
-
-    color += visibility * computeDirectionalLight(
-        lightDir,
-        sceneBuffer.directionalLights[i].emission.rgb,
-        normal, camDir, diffuseAlbedo, roughness, fresnel);
-  }
-
-  for (int i = NUM_DIRECTIONAL_LIGHT_SHADOWS; i < NUM_DIRECTIONAL_LIGHTS; ++i) {
-    color += computeDirectionalLight(
-        mat3(cameraBuffer.viewMatrix) * sceneBuffer.directionalLights[i].direction.xyz,
-        sceneBuffer.directionalLights[i].emission.rgb,
-        normal, camDir, diffuseAlbedo, roughness, fresnel);
-  }
-
-  // spot light
-  for (int i = 0; i < NUM_SPOT_LIGHT_SHADOWS; ++i) {
-    mat4 shadowView = shadowBuffer.spotLightBuffers[i].viewMatrix;
-    mat4 shadowProj = shadowBuffer.spotLightBuffers[i].projectionMatrix;
-
-    vec3 pos = world2camera(vec4(sceneBuffer.spotLights[i].position.xyz, 1.f)).xyz;
-    vec3 centerDir = mat3(cameraBuffer.viewMatrix) * sceneBuffer.spotLights[i].direction.xyz;
-    vec3 l = pos - csPosition.xyz;
-
-    vec4 ssPosition = shadowView * cameraBuffer.viewMatrixInverse * vec4((csPosition.xyz), 1);
-    vec4 shadowMapCoord = shadowProj * ssPosition;
-    shadowMapCoord /= shadowMapCoord.w;
-    shadowMapCoord.xy = shadowMapCoord.xy * 0.5 + 0.5;
-
-    float resolution = textureSize(samplerSpotLightDepths[i], 0).x;
-    float visibility = ShadowMapPCF(
-        samplerSpotLightDepths[i], shadowMapCoord.xyz, resolution, 1 / resolution, 1);
-
-    color += visibility * computeSpotLight(
-        sceneBuffer.spotLights[i].emission.a,
-        sceneBuffer.spotLights[i].direction.a,
-        centerDir,
-        sceneBuffer.spotLights[i].emission.rgb,
-        l, normal, camDir, diffuseAlbedo, roughness, fresnel);
-  }
-
-  for (int i = NUM_SPOT_LIGHT_SHADOWS; i < NUM_SPOT_LIGHTS; ++i) {
-    vec3 pos = world2camera(vec4(sceneBuffer.spotLights[i].position.xyz, 1.f)).xyz;
-    vec3 l = pos - csPosition.xyz;
-    vec3 centerDir = mat3(cameraBuffer.viewMatrix) * sceneBuffer.spotLights[i].direction.xyz;
-    color += computeSpotLight(
-        sceneBuffer.spotLights[i].emission.a,
-        sceneBuffer.spotLights[i].direction.a,
-        centerDir,
-        sceneBuffer.spotLights[i].emission.rgb,
-        l, normal, camDir, diffuseAlbedo, roughness, fresnel);
-  }
-
-  for (int i = 0; i < NUM_TEXTURED_LIGHT_SHADOWS; ++i) {
-    mat4 shadowView = shadowBuffer.texturedLightBuffers[i].viewMatrix;
-    mat4 shadowProj = shadowBuffer.texturedLightBuffers[i].projectionMatrix;
-
-    vec3 pos = world2camera(vec4(sceneBuffer.texturedLights[i].position.xyz, 1.f)).xyz;
-    vec3 centerDir = mat3(cameraBuffer.viewMatrix) * sceneBuffer.texturedLights[i].direction.xyz;
-    vec3 l = pos - csPosition.xyz;
-
-    float bias = 0;
-
-    vec4 ssPosition = shadowView * cameraBuffer.viewMatrixInverse * vec4((csPosition.xyz), 1);
-    ssPosition.z += bias;
-    vec4 shadowMapCoord = shadowProj * ssPosition;
-    shadowMapCoord /= shadowMapCoord.w;
-    shadowMapCoord.xy = shadowMapCoord.xy * 0.5 + 0.5;
-
-    float resolution = textureSize(samplerTexturedLightDepths[i], 0).x;
-    float visibility = texture(samplerTexturedLightTextures[i], shadowMapCoord.xy).x;
-
-    color += visibility * computeSpotLight(
-        sceneBuffer.texturedLights[i].emission.a,
-        sceneBuffer.texturedLights[i].direction.a,
-        centerDir,
-        sceneBuffer.texturedLights[i].emission.rgb,
-        l, normal, camDir, diffuseAlbedo, roughness, fresnel);
-  }
+  sapienAddDirectLighting(color, csPosition.xyz, normal, camDir, diffuseAlbedo, roughness,
+                          fresnel, true);
 
   vec3 wnormal = mat3(cameraBuffer.viewMatrixInverse) * normal;
   color += diffuseIBL(diffuseAlbedo, wnormal);

@@ -14,28 +14,9 @@ layout(set = 0, binding = 0) uniform CameraBuffer {
 #include "../common/scene.glsl"
 #undef SET_NUM
 
-struct PointLight {
-  vec4 position;
-  vec4 emission;
-};
-
-struct DirectionalLight {
-  vec4 direction;
-  vec4 emission;
-};
-
-struct SpotLight {
-  vec4 position;
-  vec4 direction;
-  vec4 emission;
-};
-
+// declared for the renderer, unused by this unlit pack
 layout(set = 2, binding = 0) uniform SceneBuffer {
   vec4 ambientLight;
-  DirectionalLight directionalLights[3];
-  SpotLight spotLights[10];
-  PointLight pointLights[10];
-  SpotLight texturedLights[1];
 } sceneBuffer;
 
 layout(location = 0) in vec4 inPosition;

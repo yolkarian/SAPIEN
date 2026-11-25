@@ -1,3 +1,6 @@
+#ifndef SAPIEN_SHADOW_GLSL
+#define SAPIEN_SHADOW_GLSL
+
 vec3 project(mat4 proj, vec3 point) {
   vec4 v = proj * vec4(point, 1);
   return v.xyz / v.w;
@@ -35,3 +38,5 @@ float ShadowMapPCF(
   }
   return visibility / float(PCF_SAMPLE_COUNT);
 }
+
+#endif

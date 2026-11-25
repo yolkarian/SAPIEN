@@ -115,10 +115,10 @@ Renderer::Renderer(std::shared_ptr<core::Context> context, std::shared_ptr<Rende
   }
 
   // Scene, camera, light (uniform buffer) and input-texture (sampler) sets all come from this
-  // pool, so it must hold both descriptor types.
+  // pool, so it must hold both descriptor types. A scene set holds 5 uniform buffers.
   vk::DescriptorPoolSize pool_sizes[] = {
       {vk::DescriptorType::eCombinedImageSampler, 256},
-      {vk::DescriptorType::eUniformBuffer, 256},
+      {vk::DescriptorType::eUniformBuffer, 512},
   };
   auto info = vk::DescriptorPoolCreateInfo(vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
                                            256, 2, pool_sizes);
@@ -957,24 +957,6 @@ void Renderer::prepareRender(scene::Camera &camera) {
     auto spotLights = mScene->getSpotLights();
     auto texturedLights = mScene->getTexturedLights();
 
-    // The shader loops run to these counts over fixed-size arrays in SceneBuffer, and the
-    // upload truncates to those arrays (shadowed lights first): the counts must be clamped the
-    // same way or the loops read past the arrays.
-    auto sceneLayout = mShaderPack->getShaderInputLayouts()->sceneBufferLayout;
-    auto clampToShader = [&](char const *name, size_t count) {
-      if (sceneLayout) {
-        auto it = sceneLayout->elements.find(name);
-        if (it != sceneLayout->elements.end() && it->second.member &&
-            it->second.member->size > 0) {
-          count = std::min<size_t>(count, it->second.size / it->second.member->size);
-        }
-      }
-      return static_cast<int>(count);
-    };
-    int numPointLights = clampToShader("pointLights", pointLights.size());
-    int numDirectionalLights = clampToShader("directionalLights", directionalLights.size());
-    int numSpotLights = clampToShader("spotLights", spotLights.size());
-
     mPointLightShadowSizes.clear();
     mDirectionalLightShadowSizes.clear();
     mSpotLightShadowSizes.clear();
@@ -1028,10 +1010,11 @@ void Renderer::prepareRender(scene::Camera &camera) {
       }
     }
 
-    setSpecializationConstant<int>("NUM_POINT_LIGHTS", numPointLights);
-    setSpecializationConstant<int>("NUM_DIRECTIONAL_LIGHTS", numDirectionalLights);
-    setSpecializationConstant<int>("NUM_SPOT_LIGHTS", numSpotLights);
-
+    // the light counts size the scene set's light arrays and the shaders' loops; changing one
+    // rebuilds the pipelines and the light buffers
+    setSpecializationConstant<int>("NUM_POINT_LIGHTS", pointLights.size());
+    setSpecializationConstant<int>("NUM_DIRECTIONAL_LIGHTS", directionalLights.size());
+    setSpecializationConstant<int>("NUM_SPOT_LIGHTS", spotLights.size());
     setSpecializationConstant<int>("NUM_POINT_LIGHT_SHADOWS", mPointLightShadowSizes.size());
     setSpecializationConstant<int>("NUM_DIRECTIONAL_LIGHT_SHADOWS",
                                    mDirectionalLightShadowSizes.size());
@@ -1114,9 +1097,25 @@ void Renderer::writeCameraBufferCpu(scene::Camera &camera) {
 }
 
 void Renderer::writeSceneLightBuffers() {
-  mScene->uploadToDevice(*mSceneBuffer,
-                         *mShaderPack->getShaderInputLayouts()->sceneBufferLayout);
+  packLights();
+  auto const &layout = *mShaderPack->getShaderInputLayouts()->sceneBufferLayout;
+  glm::vec4 ambientLight = mScene->getAmbientLight();
+  mSceneBuffer->upload(&ambientLight, sizeof(ambientLight),
+                       layout.elements.at("ambientLight").offset);
 
+  auto writeLights = [](LightBufferBinding &light, auto const &lights) {
+    if (!light.buffer || lights.empty()) {
+      return;
+    }
+    if (lights.size() > light.capacity) {
+      // the light counts change only with a rebuild, which reallocates the buffers
+      throw std::runtime_error("the scene has more lights than its light buffers hold");
+    }
+    light.buffer->upload(lights.data(), lights.size() * sizeof(lights[0]));
+  };
+  writeLights(mPointLightBuffer, mLights.point);
+  writeLights(mDirectionalLightBuffer, mLights.directional);
+  writeLights(mSpotLightBuffer, mLights.spot);
   if (mShaderPack->getShadowPass()) {
     mScene->uploadShadowToDevice(*mShadowBuffer, mLightBuffers,
                                  *mShaderPack->getShaderInputLayouts()->shadowBufferLayout);
@@ -1362,6 +1361,7 @@ void Renderer::prepareSceneBuffer() {
   }
   mSceneBuffer = core::Buffer::CreateUniform(
       *mContext, mShaderPack->getShaderInputLayouts()->sceneBufferLayout->size);
+  // the light buffers are allocated for the new set once its bindings are known
   auto layout = mShaderPackInstance->getSceneDescriptorSetLayout();
 
   mSceneSet = std::move(mContext->getDevice()
@@ -1378,6 +1378,12 @@ void Renderer::prepareSceneBuffer() {
           mContext->getDevice(), mSceneSet.get(),
           {{vk::DescriptorType::eUniformBuffer, mSceneBuffer->getVulkanBuffer(), nullptr}}, {},
           bindingIndex);
+    } else if (binding.name == "PointLights") {
+      mPointLightBuffer.binding = static_cast<int>(bindingIndex);
+    } else if (binding.name == "DirectionalLights") {
+      mDirectionalLightBuffer.binding = static_cast<int>(bindingIndex);
+    } else if (binding.name == "SpotLights") {
+      mSpotLightBuffer.binding = static_cast<int>(bindingIndex);
     } else if (binding.name == "ShadowBuffer") {
       updateDescriptorSets(
           mContext->getDevice(), mSceneSet.get(),
@@ -1475,6 +1481,7 @@ void Renderer::prepareSceneBuffer() {
       throw std::runtime_error("unrecognized uniform binding in scene \"" + binding.name + "\"");
     }
   }
+  allocateLightBuffers();
 } // namespace renderer
 
 // A host-visible buffer of the scene set, rewritten in place from the CPU.
@@ -1563,6 +1570,43 @@ void Renderer::ensureGPUBuffers(uint32_t instanceCount, uint32_t objectCount) {
     writeBufferBinding(mContext->getDevice(), mGPUSceneSet.get(), 4,
                        vk::DescriptorType::eStorageBuffer, *mCustomDataBuffer);
   }
+}
+
+void Renderer::packLights() {
+  mLights.clear();
+  // textured light i samples samplerTexturedLightTextures[i]
+  int textured = 0;
+  mLights.append(*mScene,
+                 [&](std::shared_ptr<resource::SVTexture> const &) { return textured++; });
+}
+
+void Renderer::allocateLightBuffers() {
+  packLights();
+  auto allocate = [&](LightBufferBinding &light, char const *name, size_t count, size_t stride) {
+    light.buffer.reset();
+    if (light.binding < 0) {
+      return;
+    }
+    // the shader arrays hold one light more than the count, so none is empty
+    light.capacity = count + 1;
+    vk::DeviceSize size = light.capacity * stride;
+    if (size > mContext->getPhysicalDeviceLimits().maxUniformBufferRange) {
+      throw std::runtime_error(std::string("the scene has ") + std::to_string(count) + " " +
+                               name + " lights; their uniform buffer of " +
+                               std::to_string(size) + " bytes exceeds the device limit of " +
+                               std::to_string(mContext->getPhysicalDeviceLimits()
+                                                  .maxUniformBufferRange) +
+                               " bytes");
+    }
+    light.buffer = createSceneBuffer(*mContext, size, vk::BufferUsageFlagBits::eUniformBuffer);
+    writeBufferBinding(mContext->getDevice(), mSceneSet.get(), light.binding,
+                       vk::DescriptorType::eUniformBuffer, *light.buffer);
+  };
+  allocate(mPointLightBuffer, "point", mLights.point.size(), sizeof(scene::GpuPointLight));
+  allocate(mDirectionalLightBuffer, "directional", mLights.directional.size(),
+           sizeof(scene::GpuDirectionalLight));
+  allocate(mSpotLightBuffer, "spot and textured", mLights.spot.size(),
+           sizeof(scene::GpuSpotLight));
 }
 
 bool Renderer::refreshMaterialsAndTextures() {

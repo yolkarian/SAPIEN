@@ -3,15 +3,15 @@
 // #include "scene_set.glsl"
 // #undef SET_NUM
 
-#include "../common/lights.glsl"
-#include "../common/shadow.glsl"
+#include "../common/light_data.glsl"
 
+// The lights are in the uniform buffers at bindings 9-11 (common/light_data.glsl), sized by the
+// specialization constants NUM_POINT_LIGHTS, NUM_DIRECTIONAL_LIGHTS, NUM_SPOT_LIGHTS and
+// NUM_TEXTURED_LIGHT_SHADOWS of the including shader (plus one entry, so no array is empty).
+// The first NUM_*_SHADOWS lights of each kind cast shadows; the textured lights follow the
+// NUM_SPOT_LIGHTS spot lights in SpotLights.
 layout(set = SET_NUM, binding = 0) uniform SceneBuffer {
   vec4 ambientLight;
-  DirectionalLight directionalLights[3];
-  SpotLight spotLights[10];
-  PointLight pointLights[10];
-  SpotLight texturedLights[1];
 } sceneBuffer;
 
 struct LightBuffer {
@@ -38,3 +38,13 @@ layout(set = SET_NUM, binding = 6) uniform sampler2D samplerTexturedLightTexture
 
 layout(set = SET_NUM, binding = 7) uniform samplerCube samplerEnvironment;
 layout(set = SET_NUM, binding = 8) uniform sampler2D samplerBRDFLUT;
+
+layout(set = SET_NUM, binding = 9) uniform PointLights {
+  PointLight l[NUM_POINT_LIGHTS + 1];
+} pointLights;
+layout(set = SET_NUM, binding = 10) uniform DirectionalLights {
+  DirectionalLight l[NUM_DIRECTIONAL_LIGHTS + 1];
+} directionalLights;
+layout(set = SET_NUM, binding = 11) uniform SpotLights {
+  SpotLight l[NUM_SPOT_LIGHTS + NUM_TEXTURED_LIGHT_SHADOWS + 1];
+} spotLights;

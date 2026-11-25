@@ -1,13 +1,13 @@
 #version 450
 #extension GL_EXT_nonuniform_qualifier : enable
 
-layout (constant_id = 0) const int NUM_DIRECTIONAL_LIGHTS = 3;
-layout (constant_id = 1) const int NUM_POINT_LIGHTS = 10;
+layout (constant_id = 0) const int NUM_DIRECTIONAL_LIGHTS = 0;
+layout (constant_id = 1) const int NUM_POINT_LIGHTS = 0;
 layout (constant_id = 2) const int NUM_DIRECTIONAL_LIGHT_SHADOWS = 1;
 layout (constant_id = 3) const int NUM_POINT_LIGHT_SHADOWS = 3;
 layout (constant_id = 4) const int NUM_TEXTURED_LIGHT_SHADOWS = 1;
 layout (constant_id = 5) const int NUM_SPOT_LIGHT_SHADOWS = 10;
-layout (constant_id = 6) const int NUM_SPOT_LIGHTS = 10;
+layout (constant_id = 6) const int NUM_SPOT_LIGHTS = 0;
 
 #define SET_NUM 0
 #include "./camera_set.glsl"
@@ -22,10 +22,7 @@ layout (constant_id = 6) const int NUM_SPOT_LIGHTS = 10;
 #undef SET_NUM
 
 #include "../common/environment.glsl"
-
-vec4 world2camera(vec4 pos) {
-  return cameraBuffer.viewMatrix * pos;
-}
+#include "../common/raster_lighting.glsl"
 
 layout(location = 0) in vec4 inPosition;
 layout(location = 1) in vec2 inUV;
@@ -108,59 +105,9 @@ void main() {
 
   vec3 color = emission.rgb * emission.a;
 
-  for (int i = 0; i < NUM_POINT_LIGHTS; i++) {
-    vec3 pos = world2camera(vec4(sceneBuffer.pointLights[i].position.xyz, 1.f)).xyz;
-    vec3 l = pos - csPosition.xyz;
-    color += computePointLight(
-        sceneBuffer.pointLights[i].emission.rgb,
-        l, normal, camDir, diffuseAlbedo, roughness, fresnel);
-  }
-
-  for (int i = 0; i < NUM_DIRECTIONAL_LIGHTS; ++i) {
-    color += computeDirectionalLight(
-        mat3(cameraBuffer.viewMatrix) * sceneBuffer.directionalLights[i].direction.xyz,
-        sceneBuffer.directionalLights[i].emission.rgb,
-        normal, camDir, diffuseAlbedo, roughness, fresnel);
-  }
-
-  for (int i = 0; i < NUM_SPOT_LIGHTS; ++i) {
-    vec3 pos = world2camera(vec4(sceneBuffer.spotLights[i].position.xyz, 1.f)).xyz;
-    vec3 l = pos - csPosition.xyz;
-    vec3 centerDir = mat3(cameraBuffer.viewMatrix) * sceneBuffer.spotLights[i].direction.xyz;
-    color += computeSpotLight(
-        sceneBuffer.spotLights[i].emission.a,
-        sceneBuffer.spotLights[i].direction.a,
-        centerDir,
-        sceneBuffer.spotLights[i].emission.rgb,
-        l, normal, camDir, diffuseAlbedo, roughness, fresnel);
-  }
-
-  for (int i = 0; i < NUM_TEXTURED_LIGHT_SHADOWS; ++i) {
-    mat4 shadowView = shadowBuffer.texturedLightBuffers[i].viewMatrix;
-    mat4 shadowProj = shadowBuffer.texturedLightBuffers[i].projectionMatrix;
-
-    vec3 pos = world2camera(vec4(sceneBuffer.texturedLights[i].position.xyz, 1.f)).xyz;
-    vec3 centerDir = mat3(cameraBuffer.viewMatrix) * sceneBuffer.texturedLights[i].direction.xyz;
-    vec3 l = pos - csPosition.xyz;
-
-    float bias = 0;
-
-    vec4 ssPosition = shadowView * cameraBuffer.viewMatrixInverse * vec4((csPosition.xyz), 1);
-    ssPosition.z += bias;
-    vec4 shadowMapCoord = shadowProj * ssPosition;
-    shadowMapCoord /= shadowMapCoord.w;
-    shadowMapCoord.xy = shadowMapCoord.xy * 0.5 + 0.5;
-
-    float resolution = textureSize(samplerTexturedLightDepths[i], 0).x;
-    float visibility = texture(samplerTexturedLightTextures[i], shadowMapCoord.xy).x;
-
-    color += visibility * computeSpotLight(
-        sceneBuffer.texturedLights[i].emission.a,
-        sceneBuffer.texturedLights[i].direction.a,
-        centerDir,
-        sceneBuffer.texturedLights[i].emission.rgb,
-        l, normal, camDir, diffuseAlbedo, roughness, fresnel);
-  }
+  // transparent surfaces are not shadowed
+  sapienAddDirectLighting(color, csPosition.xyz, normal, camDir, diffuseAlbedo, roughness,
+                          fresnel, false);
 
   vec3 wnormal = mat3(cameraBuffer.viewMatrixInverse) * normal;
   vec3 worldCamDir = mat3(cameraBuffer.viewMatrixInverse) * camDir;

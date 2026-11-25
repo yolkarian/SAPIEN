@@ -36,21 +36,6 @@ void DeferredPassParser::reflectSPV() {
 }
 
 void DeferredPassParser::validate() const {
-  for (auto &desc : mDescriptorSetDescriptions) {
-    if (desc.type == UniformBindingType::eScene) {
-      // validate constants
-      ASSERT(mSpecializationConstantLayout->elements.contains("NUM_DIRECTIONAL_LIGHTS"),
-             "[frag]NUM_DIRECTIONAL_LIGHTS is a required specialization"
-             "constant when using SceneBuffer");
-      ASSERT(mSpecializationConstantLayout->elements.contains("NUM_POINT_LIGHTS"),
-             "[frag]NUM_POINT_LIGHTS is a required specialization "
-             "constant when using SceneBuffer");
-      ASSERT(mSpecializationConstantLayout->elements.contains("NUM_SPOT_LIGHTS"),
-             "[frag]NUM_SPOT_LIGHTS is a required specialization "
-             "constant when using SceneBuffer");
-    }
-  }
-
   // validate out textures
   for (auto &elem : mTextureOutputLayout->elements) {
     ASSERT(elem.second.name.substr(0, 3) == "out",
