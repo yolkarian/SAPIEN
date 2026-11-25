@@ -167,8 +167,6 @@ private:
   std::shared_ptr<shader::RayTracingShaderPack> mShaderPack;
   std::shared_ptr<shader::RayTracingShaderPackInstance> mShaderPackInstance;
 
-  StructDataLayout mMaterialBufferLayout;
-  StructDataLayout mTextureIndexBufferLayout;
   StructDataLayout mGeometryInstanceBufferLayout;
   StructDataLayout mCameraBufferLayout;
   StructDataLayout mObjectBufferLayout;
@@ -178,6 +176,8 @@ private:
 
   std::shared_ptr<scene::Scene> mScene;
   uint64_t mSceneVersion{0l}; // check for rebuild
+  uint64_t mRTTablesVersion{};      // the scene's ray tracing tables the descriptors name
+  scene::Scene::RTMaterialVersions mMaterialVersions; // the scene's materials[] last rendered
 
   uint64_t mSceneRenderVersion{0l}; // check for updating matrices
   int mFrameCount = 0;

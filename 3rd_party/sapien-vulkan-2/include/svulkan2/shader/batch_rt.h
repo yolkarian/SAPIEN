@@ -54,12 +54,10 @@ public:
   /** format of picture `name`, or eUndefined when the pack does not declare it */
   vk::Format getOutputFormat(std::string const &name) const;
 
-  /** element structs of the scene tables as the pack declares them (`Material`, `Object`,
-   *  `GeometryInstance`, `TextureIndex`); throws when the block is missing or malformed */
-  StructDataLayout const &getMaterialBufferLayout() const;
+  /** element structs of the scene tables as the pack declares them (`Object`,
+   *  `GeometryInstance`); throws when the block is missing or malformed */
   StructDataLayout const &getObjectBufferLayout() const;
   StructDataLayout const &getGeometryInstanceBufferLayout() const;
-  StructDataLayout const &getTextureIndexBufferLayout() const;
 
   std::string summary() const;
 

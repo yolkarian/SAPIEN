@@ -15,8 +15,8 @@ layout(set = 1, binding = 1) readonly buffer GeometryInstances {
 } geometryInstances;
 
 layout(set = 1, binding = 2) readonly buffer Materials {
-  Material m;
-} materials[];
+  Material m[];
+} materials;
 
 struct Object {
   uvec4 segmentation;
@@ -33,7 +33,7 @@ layout(set = 1, binding = 11) readonly buffer Objects {
 void main() {
   Object obj = objects.o[gl_InstanceID];
   int instanceId = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT;
-  Material mat = materials[nonuniformEXT(geometryInstances.i[instanceId].materialIndex)].m;
+  Material mat = materials.m[geometryInstances.i[instanceId].materialIndex];
 
   if (ray.isShadow != 0) {
     // A shadow ray passes the uncovered part of the surface (base-colour alpha, object

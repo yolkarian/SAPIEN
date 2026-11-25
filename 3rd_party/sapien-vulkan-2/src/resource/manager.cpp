@@ -461,7 +461,6 @@ void SVResourceManager::releaseGPUResourcesUnsafe() {
     for (auto &m : it.second) {
       for (auto &s : m->getShapes()) {
         s->mesh->removeFromDevice();
-        s->material->removeFromDevice();
       }
     }
   }

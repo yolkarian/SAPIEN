@@ -10,15 +10,11 @@ layout(set = SET_NUM, binding = 1) readonly buffer GeometryInstances
   GeometryInstance i[];
 } geometryInstances;
 
+// one record per material (common/material.glsl); binding 3 is unused
 layout(set = SET_NUM, binding = 2) readonly buffer Materials
 {
-  Material m;
-} materials[];
-
-layout(set = SET_NUM, binding = 3) readonly buffer TextureIndices
-{
-  TextureIndex t[];
-} textureIndices;
+  Material m[];
+} materials;
 
 layout(set = SET_NUM, binding = 4) uniform sampler2D textures[];
 

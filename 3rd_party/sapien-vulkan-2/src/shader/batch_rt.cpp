@@ -256,20 +256,12 @@ findElementStruct(std::unordered_map<uint32_t, DescriptorSetDescription> const &
   throw std::runtime_error("batch shader does not declare \"" + bindingName + "\"");
 }
 
-StructDataLayout const &BatchShaderPack::getMaterialBufferLayout() const {
-  return findElementStruct(mResources, "Materials");
-}
-
 StructDataLayout const &BatchShaderPack::getObjectBufferLayout() const {
   return findElementStruct(mResources, "Objects");
 }
 
 StructDataLayout const &BatchShaderPack::getGeometryInstanceBufferLayout() const {
   return findElementStruct(mResources, "GeometryInstances");
-}
-
-StructDataLayout const &BatchShaderPack::getTextureIndexBufferLayout() const {
-  return findElementStruct(mResources, "TextureIndices");
 }
 
 std::string BatchShaderPack::summary() const {

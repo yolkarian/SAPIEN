@@ -2,12 +2,14 @@
 #include "camera.h"
 #include "light.h"
 #include "light_data.h"
+#include "material_data.h"
 #include "node.h"
 #include "object.h"
 #include "svulkan2/core/as.h"
 #include "svulkan2/core/command_pool.h"
 #include "svulkan2/core/context.h"
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -130,9 +132,9 @@ public:
    *  buffers are not built (buildRTResources builds them). */
   static void BuildAccelerationStructures(std::vector<AccelerationStructureBuild> const &builds);
 
-  void buildRTResources(StructDataLayout const &materialBufferLayout,
-                        StructDataLayout const &textureIndexBufferLayout,
-                        StructDataLayout const &geometryInstanceBufferLayout,
+  /** Build the acceleration structures and the ray tracing tables: geometry instances, the
+   *  materials[] table (common/material.glsl), textures[] and the lights. */
+  void buildRTResources(StructDataLayout const &geometryInstanceBufferLayout,
                         bool externalInstanceBuffer = false);
   /** refit the acceleration structures and, where buildRTResources made them, upload the ray
    *  tracing light buffers */
@@ -142,12 +144,25 @@ public:
   void updateRTTransforms(bool useDeviceTransforms);
   /** upload only the RT light storage buffers from current CPU light state */
   void uploadRTLights();
+  /** versions of the materials[] content; each changes only when the table did */
+  struct RTMaterialVersions {
+    uint64_t content{};  // any field of any material: accumulated samples are stale
+    uint64_t emission{}; // the emission of some material: the emissive light tables are stale
+    bool operator==(RTMaterialVersions const &) const = default;
+  };
+  /** Repack materials[] when any material changed since it was written. Returns nullopt when
+   *  the tables are not built or a material now samples a texture outside textures[]: the
+   *  caller must call buildRTResources again. */
+  std::optional<RTMaterialVersions> uploadRTMaterials();
+  /** bumped whenever buildRTResources replaces the ray tracing tables; a renderer whose
+   *  descriptors still name older tables must rebind */
+  uint64_t getRTTablesVersion();
   inline core::TLAS *getTLAS() const { return mTLAS.get(); }
 
   inline std::vector<vk::Buffer> const &getRTPointSetBuffers() { return mPointSetBuffers; }
   inline std::vector<vk::Buffer> const &getRTVertexBuffers() { return mVertexBuffers; }
   inline std::vector<vk::Buffer> const &getRTIndexBuffers() const { return mIndexBuffers; }
-  inline std::vector<vk::Buffer> const &getRTMaterialBuffers() const { return mMaterialBuffers; }
+  inline vk::Buffer getRTMaterialBuffer() const { return mRTMaterialBuffer->getVulkanBuffer(); }
   inline std::vector<std::tuple<vk::ImageView, vk::Sampler>> const &getRTTextures() const {
     return mTextures;
   }
@@ -156,9 +171,6 @@ public:
   }
   inline vk::Buffer getRTPointInstanceBuffer() const {
     return mPointInstanceBuffer->getVulkanBuffer();
-  }
-  inline vk::Buffer getRTTextureIndexBuffer() const {
-    return mTextureIndexBuffer->getVulkanBuffer();
   }
   inline vk::Buffer getRTPointLightBuffer() const {
     return mRTPointLightBuffer->getVulkanBuffer();
@@ -252,9 +264,7 @@ protected:
   void updateTLAS(bool useDeviceTransforms);
   /** record the refits of the deformable and point-set BLASes; true when any was recorded */
   bool recordDynamicBLASUpdates(vk::CommandBuffer commandBuffer);
-  void createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
-                              StructDataLayout const &textureIndexBufferLayout,
-                              StructDataLayout const &geometryInstanceBufferLayout);
+  void createRTStorageBuffers(StructDataLayout const &geometryInstanceBufferLayout);
   void updateRTStorageBuffers();
 
   // ray tracing resources
@@ -262,17 +272,22 @@ protected:
   std::unique_ptr<core::TLAS> mTLAS;
   std::vector<vk::Buffer> mVertexBuffers;
   std::vector<vk::Buffer> mIndexBuffers;
-  std::vector<vk::Buffer> mMaterialBuffers;
   std::vector<std::tuple<vk::ImageView, vk::Sampler>> mTextures;
-  std::unique_ptr<core::Buffer> mTextureIndexBuffer;
   std::unique_ptr<core::Buffer> mGeometryInstanceBuffer;
 
   std::vector<vk::Buffer> mPointSetBuffers;
   std::unique_ptr<core::Buffer> mPointInstanceBuffer;
 
-  // lights in the layout of common/light_data.glsl; textured lights index mTextures
+  // the materials and lights of common/material.glsl and common/light_data.glsl; their
+  // textures index mTextures through mRTTextureSlots
+  std::vector<std::shared_ptr<resource::SVMetallicMaterial>> mRTMaterials;
+  std::unique_ptr<core::Buffer> mRTMaterialBuffer;
+  std::vector<GpuMaterial> mRTMaterialRecords; // the content of mRTMaterialBuffer
+  uint64_t mRTMaterialVersion{};               // SVMetallicMaterial global version packed
+  RTMaterialVersions mRTMaterialVersions;      // bumped when mRTMaterialRecords changes
+  uint64_t mRTTablesVersion{};                 // bumped by createRTStorageBuffers
   LightTable mRTLights;
-  std::unordered_map<resource::SVTexture const *, int> mRTLightTextureIds;
+  std::unordered_map<resource::SVTexture const *, int> mRTTextureSlots;
   void writeRTLightBuffers();
 
   std::unique_ptr<core::Buffer> mRTPointLightBuffer;

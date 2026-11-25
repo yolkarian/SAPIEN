@@ -2,8 +2,8 @@
 
 Every test below drives a camera group whose cameras use `RenderConfig("rt_batch")`, and
 checks the properties the batched path must keep from the per-camera path: agreement with
-rasterization on geometry, exact environment isolation, GPU-sourced poses, live light edits,
-hard shadows, picture formats, misuse errors and point clouds.
+rasterization on geometry, exact environment isolation, GPU-sourced poses, live light and
+material edits, hard shadows, picture formats, misuse errors and point clouds.
 """
 
 import unittest
@@ -326,6 +326,40 @@ class TestBatchLighting(unittest.TestCase):
             # 6x the radiance is about 2.26x after the default gamma-2.2 tone mapping
             self.assertGreater(dim.mean(), 1.0)
             self.assertGreater(bright.mean(), 1.8 * dim.mean())
+        finally:
+            group.close()
+            scene.close()
+
+    def test_material_edits_after_gpu_init_change_color(self) -> None:
+        scene = make_scene(ambient=1.0)
+        material = sapien.render.RenderMaterial(base_color=[1.0, 0.0, 0.0, 1.0])
+        builder = scene.create_actor_builder()
+        builder.add_box_visual(half_size=[0.4] * 3, material=material)
+        builder.build_kinematic()
+        camera = scene.add_camera("camera", SIZE, SIZE, 1.0, 0.05, 20.0,
+                                  render_config=sapien.render.RenderConfig("rt_batch"))
+        camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+
+        group, camera_group = render_group([camera], ["Color"])
+        try:
+            def centre() -> np.ndarray:
+                group.update_render()
+                camera_group.take_picture()
+                return picture(camera_group, "Color")[0, SIZE // 2, SIZE // 2, :3].astype(np.float32)
+
+            red = centre()
+            self.assertGreater(red[0], red[2] + 50.0)
+            material.base_color = [0.0, 0.0, 1.0, 1.0]
+            blue = centre()
+            self.assertGreater(blue[2], blue[0] + 50.0)
+            # textures[] is sized at gpu_init(); the group keeps rendering after the error
+            white = np.full((2, 2, 4), 255, np.uint8)
+            material.base_color_texture = sapien.render.RenderTexture2D(white, "R8G8B8A8Unorm")
+            with self.assertRaisesRegex(RuntimeError, "texture"):
+                centre()
+            material.set_base_color_texture(None)
+            again = centre()
+            self.assertGreater(again[2], again[0] + 50.0)
         finally:
             group.close()
             scene.close()

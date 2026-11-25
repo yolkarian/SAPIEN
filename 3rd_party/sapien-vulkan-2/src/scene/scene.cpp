@@ -2,6 +2,7 @@
 #include "../common/logger.h"
 #include "svulkan2/core/context.h"
 #include <algorithm>
+#include <cstring>
 #include <mutex>
 #include <unordered_map>
 #include <unordered_set>
@@ -922,28 +923,16 @@ bool Scene::recordDynamicBLASUpdates(vk::CommandBuffer commandBuffer) {
   return !mDeformableObjects.empty() || !pointObjects.empty();
 }
 
-void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
-                                   StructDataLayout const &textureIndexBufferLayout,
-                                   StructDataLayout const &geometryInstanceBufferLayout) {
+void Scene::createRTStorageBuffers(StructDataLayout const &geometryInstanceBufferLayout) {
 
   uint32_t geometryInstanceSize = geometryInstanceBufferLayout.size;
   uint32_t materialIndexOffset = geometryInstanceBufferLayout.elements.at("materialIndex").offset;
   uint32_t geometryIndexOffset = geometryInstanceBufferLayout.elements.at("geometryIndex").offset;
-
-  uint32_t textureIndexSize = textureIndexBufferLayout.size;
-  uint32_t emissionOffset = textureIndexBufferLayout.elements.at("emission").offset;
-  uint32_t diffuseOffset = textureIndexBufferLayout.elements.at("diffuse").offset;
-  uint32_t metallicOffset = textureIndexBufferLayout.elements.at("metallic").offset;
-  uint32_t roughnessOffset = textureIndexBufferLayout.elements.at("roughness").offset;
-  uint32_t normalOffset = textureIndexBufferLayout.elements.at("normal").offset;
-  uint32_t transmissionOffset = textureIndexBufferLayout.elements.at("transmission").offset;
-
   auto objects = getObjects();
 
   uint32_t instanceCount{0};
   uint32_t meshCount{0};
   uint32_t materialCount{0};
-  uint32_t textureCount{0};
 
   std::unordered_map<std::shared_ptr<resource::SVMesh>, uint32_t> mesh2Id;
   std::unordered_map<std::shared_ptr<resource::SVMaterial>, uint32_t> material2Id;
@@ -956,7 +945,6 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
   for (auto &obj : objects) {
     for (auto &shape : obj->getModel()->getShapes()) {
       shape->mesh->uploadToDevice(*mContext);
-      shape->material->uploadToDevice(*mContext);
       ++instanceCount;
 
       if (!mesh2Id.contains(shape->mesh)) {
@@ -965,18 +953,7 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
       }
       if (!material2Id.contains(shape->material)) {
         material2Id[shape->material] = materialCount++;
-        auto mat = std::static_pointer_cast<resource::SVMetallicMaterial>(shape->material);
-        materials.push_back(mat);
-
-        std::array matTextures{mat->getEmissionTexture(),  mat->getBaseColorTexture(),
-                               mat->getNormalTexture(),    mat->getMetallicTexture(),
-                               mat->getRoughnessTexture(), mat->getTransmissionTexture()};
-        for (auto tex : matTextures) {
-          if (tex && !texture2Id.contains(tex)) {
-            texture2Id[tex] = textureCount++;
-            textures.push_back(tex);
-          }
-        }
+        materials.push_back(std::static_pointer_cast<resource::SVMetallicMaterial>(shape->material));
       }
     }
   }
@@ -997,38 +974,33 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
     }
   }
 
-  std::vector<uint8_t> textureIndexBuffer(materialCount * textureIndexSize);
-  uint32_t materialIndex{0};
-  for (auto mat : materials) {
-    auto emissionTex = mat->getEmissionTexture();
-    auto diffuseTex = mat->getBaseColorTexture();
-    auto normalTex = mat->getNormalTexture();
-    auto metallicTex = mat->getMetallicTexture();
-    auto roughnessTex = mat->getRoughnessTexture();
-    auto transmissionTex = mat->getTransmissionTexture();
-
-    int emissionId = emissionTex ? texture2Id.at(emissionTex) : -1;
-    int diffuseId = diffuseTex ? texture2Id.at(diffuseTex) : -1;
-    int normalId = normalTex ? texture2Id.at(normalTex) : -1;
-    int metallicId = metallicTex ? texture2Id.at(metallicTex) : -1;
-    int roughnessId = roughnessTex ? texture2Id.at(roughnessTex) : -1;
-    int transmissionId = transmissionTex ? texture2Id.at(transmissionTex) : -1;
-
-    std::memcpy(textureIndexBuffer.data() + materialIndex * textureIndexSize + emissionOffset,
-                &emissionId, sizeof(int));
-    std::memcpy(textureIndexBuffer.data() + materialIndex * textureIndexSize + diffuseOffset,
-                &diffuseId, sizeof(int));
-    std::memcpy(textureIndexBuffer.data() + materialIndex * textureIndexSize + normalOffset,
-                &normalId, sizeof(int));
-    std::memcpy(textureIndexBuffer.data() + materialIndex * textureIndexSize + metallicOffset,
-                &metallicId, sizeof(int));
-    std::memcpy(textureIndexBuffer.data() + materialIndex * textureIndexSize + roughnessOffset,
-                &roughnessId, sizeof(int));
-    std::memcpy(textureIndexBuffer.data() + materialIndex * textureIndexSize + transmissionOffset,
-                &transmissionId, sizeof(int));
-
-    ++materialIndex;
+  // textures[]: the materials' textures, then those of textured lights
+  mRTTextureSlots.clear();
+  auto textureSlot = [&](std::shared_ptr<resource::SVTexture> const &texture) {
+    if (!texture2Id.contains(texture)) {
+      texture->loadAsync().get();
+      texture->uploadToDevice(*mContext);
+      texture2Id[texture] = static_cast<uint32_t>(textures.size());
+      textures.push_back(texture);
+    }
+    return mRTTextureSlots[texture.get()] = static_cast<int>(texture2Id.at(texture));
+  };
+  mRTMaterials = std::move(materials);
+  mRTMaterialRecords.clear();
+  for (auto const &material : mRTMaterials) {
+    mRTMaterialRecords.push_back(packMaterial(*material, textureSlot));
   }
+  mRTMaterialBuffer = core::Buffer::Create(
+      *mContext, std::max<size_t>(mRTMaterialRecords.size(), 1) * sizeof(GpuMaterial),
+      vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
+      VMA_MEMORY_USAGE_CPU_TO_GPU);
+  if (!mRTMaterialRecords.empty()) {
+    mRTMaterialBuffer->upload(mRTMaterialRecords);
+  }
+  mRTMaterialVersion = resource::SVMetallicMaterial::getGlobalVersion();
+  ++mRTMaterialVersions.content;
+  ++mRTMaterialVersions.emission;
+  ++mRTTablesVersion;
 
   mVertexBuffers.clear();
   mIndexBuffers.clear();
@@ -1036,19 +1008,6 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
     mVertexBuffers.push_back(mesh->getVertexBuffer(*mContext).getVulkanBuffer());
     mIndexBuffers.push_back(mesh->getIndexBuffer(*mContext).getVulkanBuffer());
   }
-
-  // build materials
-  mMaterialBuffers.clear();
-  for (auto mat : materials) {
-    mMaterialBuffers.push_back(mat->getDeviceBuffer(*mContext).getVulkanBuffer());
-  }
-
-  // build texture index
-  mTextureIndexBuffer = core::Buffer::Create(
-      *mContext, std::max(size_t(1), textureIndexBuffer.size()),
-      vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
-      VMA_MEMORY_USAGE_GPU_ONLY);
-  mTextureIndexBuffer->upload(textureIndexBuffer);
 
   mGeometryInstanceBuffer = core::Buffer::Create(
       *mContext, std::max(size_t(1), geometryInstanceBuffer.size()),
@@ -1081,18 +1040,9 @@ void Scene::createRTStorageBuffers(StructDataLayout const &materialBufferLayout,
     mPointSetBuffers.push_back(s->getVertexBuffer(*mContext).getVulkanBuffer());
   }
 
-  // lights; a textured light's texture joins the textures[] the shaders index
-  mRTLightTextureIds.clear();
+  // lights; a textured light's texture joins textures[]
   mRTLights.clear();
-  mRTLights.append(*this, [&](std::shared_ptr<resource::SVTexture> const &texture) {
-    texture->loadAsync().get();
-    texture->uploadToDevice(*mContext);
-    if (!texture2Id.contains(texture)) {
-      textures.push_back(texture);
-      texture2Id[texture] = textures.size() - 1;
-    }
-    return mRTLightTextureIds[texture.get()] = static_cast<int>(texture2Id.at(texture));
-  });
+  mRTLights.append(*this, textureSlot);
   auto lightBuffer = [&](auto const &lights) {
     // a shader array of zero length still needs a buffer to bind
     return core::Buffer::Create(
@@ -1129,14 +1079,69 @@ void Scene::updateRTStorageBuffers() {
   // the scene version did not change, so the same lights and textures are repacked
   mRTLights.clear();
   mRTLights.append(*this, [&](std::shared_ptr<resource::SVTexture> const &texture) {
-    return mRTLightTextureIds.at(texture.get());
+    return mRTTextureSlots.at(texture.get());
   });
   writeRTLightBuffers();
 }
 
-void Scene::buildRTResources(StructDataLayout const &materialBufferLayout,
-                             StructDataLayout const &textureIndexBufferLayout,
-                             StructDataLayout const &geometryInstanceBufferLayout,
+uint64_t Scene::getRTTablesVersion() {
+  std::lock_guard lock(mRTResourcesLock);
+  return mRTTablesVersion;
+}
+
+std::optional<Scene::RTMaterialVersions> Scene::uploadRTMaterials() {
+  std::lock_guard lock(mRTResourcesLock);
+  if (mRTResourcesVersion != mVersion) {
+    return std::nullopt;
+  }
+  uint64_t version = resource::SVMetallicMaterial::getGlobalVersion();
+  if (version == mRTMaterialVersion) {
+    return mRTMaterialVersions;
+  }
+
+  bool newTexture = false;
+  std::vector<GpuMaterial> records;
+  records.reserve(mRTMaterials.size());
+  for (auto const &material : mRTMaterials) {
+    records.push_back(
+        packMaterial(*material, [&](std::shared_ptr<resource::SVTexture> const &texture) {
+          auto slot = mRTTextureSlots.find(texture.get());
+          newTexture |= slot == mRTTextureSlots.end();
+          return slot == mRTTextureSlots.end() ? -1 : slot->second;
+        }));
+  }
+  if (newTexture) {
+    // textures[] is sized at build time: drop the tables so buildRTResources repacks them
+    mRTResourcesVersion = 0;
+    return std::nullopt;
+  }
+  mRTMaterialVersion = version;
+  // edits of other scenes' materials bump the global version too; they leave this table as is
+  if (std::memcmp(records.data(), mRTMaterialRecords.data(),
+                  records.size() * sizeof(GpuMaterial)) == 0) {
+    return mRTMaterialVersions;
+  }
+  bool emissionChanged = false;
+  for (size_t i = 0; i < records.size(); ++i) {
+    emissionChanged |= records[i].emission != mRTMaterialRecords[i].emission ||
+                       records[i].emissionTexture != mRTMaterialRecords[i].emissionTexture;
+  }
+
+  // make sure scene is not in use
+  if (mAccessFences.size()) {
+    if (mContext->getDevice().waitForFences(mAccessFences, VK_TRUE, UINT64_MAX) !=
+        vk::Result::eSuccess) {
+      throw std::runtime_error("failed to wait for scene access fence");
+    }
+  }
+  mRTMaterialBuffer->upload(records);
+  mRTMaterialRecords = std::move(records);
+  ++mRTMaterialVersions.content;
+  mRTMaterialVersions.emission += emissionChanged;
+  return mRTMaterialVersions;
+}
+
+void Scene::buildRTResources(StructDataLayout const &geometryInstanceBufferLayout,
                              bool externalInstanceBuffer) {
 
   std::lock_guard lock(mRTResourcesLock);
@@ -1148,8 +1153,7 @@ void Scene::buildRTResources(StructDataLayout const &materialBufferLayout,
     mTLAS->enableExternalInstanceBuffer();
   }
   if (mRTResourcesVersion != mVersion) {
-    createRTStorageBuffers(materialBufferLayout, textureIndexBufferLayout,
-                           geometryInstanceBufferLayout);
+    createRTStorageBuffers(geometryInstanceBufferLayout);
     mRTResourcesVersion = mVersion;
   }
 }

@@ -19,6 +19,20 @@ Rasterization lights have no fixed limit:
   only `ambientLight`; textured lights follow the spot lights. Copy `default/scene_set.glsl`
   and use `common/raster_lighting.glsl` (`sapienAddDirectLighting`).
 
+Ray tracing reads the rasterizers' material records:
+
+- **Breaking (custom ray-tracing packs):** `rt`, `shadow_catcher` and `rt_batch` read one
+  storage buffer `Materials { Material m[]; } materials` (records of
+  `common/material.glsl`; `rt` binding 2, `rt_batch` binding 5). `TextureIndices` is gone:
+  read `materials.m[i].baseColorTexture` (and `roughnessTexture`, `normalTexture`,
+  `metallicTexture`, `emissionTexture`, `transmissionTexture`, -1 for none).
+- **Behavior change:** editing a material after the first `rt` frame restarts accumulation
+  (old samples were kept); an emission edit relights the scene through light sampling; a
+  texture new to the scene's materials rebuilds its ray-tracing tables (it was ignored).
+- `rt_batch` groups apply material edits before each frame. A texture the group did not
+  have at `gpu_init()` raises `RuntimeError` from `take_picture()`; assign textures before
+  `gpu_init()`.
+
 Shader packs post-process through `pack.json`:
 
 - **Breaking:** `"post"` in `pack.json` lists compute passes (`<pack>/post/<name>.comp`, else

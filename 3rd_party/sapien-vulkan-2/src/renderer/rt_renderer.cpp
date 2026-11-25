@@ -26,8 +26,6 @@ RTRenderer::RTRenderer(std::shared_ptr<core::Context> context, std::string const
   }
   mShaderPack = resource::SVResourceManager::Get()->CreateRTShaderPack(shaderDir, mShaderDefines);
 
-  mMaterialBufferLayout = mShaderPack->getMaterialBufferLayout();
-  mTextureIndexBufferLayout = mShaderPack->getTextureIndexBufferLayout();
   mGeometryInstanceBufferLayout = mShaderPack->getGeometryInstanceBufferLayout();
   mCameraBufferLayout = mShaderPack->getCameraBufferLayout();
   mObjectBufferLayout = mShaderPack->getObjectBufferLayout();
@@ -139,8 +137,22 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
   // original scene. RT resources must be built for the renderer's scene,
   // which is also the scene consumed by prepareScene().
   auto scene = mScene;
-  if (mSceneVersion != scene->getVersion()) {
+  // another renderer of the scene may have replaced its tables (a material gained a texture)
+  if (mSceneVersion != scene->getVersion() || mRTTablesVersion != scene->getRTTablesVersion()) {
     mRequiresRebuild = true;
+  }
+
+  // material edits repack the scene's materials[]; one adding a texture rebuilds the tables
+  bool emissionChanged = false;
+  if (!mRequiresRebuild) {
+    auto materials = scene->uploadRTMaterials();
+    if (!materials) {
+      mRequiresRebuild = true;
+    } else {
+      mAccumulationDirty |= materials->content != mMaterialVersions.content;
+      emissionChanged = materials->emission != mMaterialVersions.emission;
+      mMaterialVersions = *materials;
+    }
   }
 
   if (mRequiresRebuild) {
@@ -148,10 +160,12 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
 
     {
       SVULKAN2_PROFILE_BLOCK("Build RT acceleration structures");
-      scene->buildRTResources(mMaterialBufferLayout, mTextureIndexBufferLayout,
-                              mGeometryInstanceBufferLayout,
+      scene->buildRTResources(mGeometryInstanceBufferLayout,
                               mEffectiveExternalTransformCudaInterop);
     }
+    mRTTablesVersion = scene->getRTTablesVersion();
+    // zeros when another thread dropped the tables meanwhile: the next frame rebuilds
+    mMaterialVersions = scene->uploadRTMaterials().value_or(scene::Scene::RTMaterialVersions{});
 
     mShaderPackInstance = std::make_shared<shader::RayTracingShaderPackInstance>(
         mContext,
@@ -159,7 +173,6 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
             .shaderDir = mShaderDir,
             .defines = mShaderDefines,
             .maxMeshes = static_cast<uint32_t>(mScene->getRTVertexBuffers().size()),
-            .maxMaterials = static_cast<uint32_t>(mScene->getRTMaterialBuffers().size()),
             .maxTextures = static_cast<uint32_t>(mScene->getRTTextures().size()),
             .maxPointSets = static_cast<uint32_t>(mScene->getRTPointSetBuffers().size())});
     prepareOutput();
@@ -177,6 +190,9 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
 #endif
 
     mSceneVersion = scene->getVersion();
+  } else if (emissionChanged) {
+    // the emissive light-sampling tables hold the radiance of the materials
+    prepareScene();
   }
 
   if (mSceneRenderVersion != mScene->getRenderVersion() || mRequiresRebuild) {
@@ -509,15 +525,10 @@ void RTRenderer::prepareScene() {
   vk::DescriptorBufferInfo objectBufferInfo(mObjectBuffer->getVulkanBuffer(), 0, VK_WHOLE_SIZE);
   vk::DescriptorBufferInfo geometryInstanceBufferInfo(mScene->getRTGeometryInstanceBuffer(), 0,
                                                       VK_WHOLE_SIZE);
-  vk::DescriptorBufferInfo textureIndexBufferInfo(mScene->getRTTextureIndexBuffer(), 0,
-                                                  VK_WHOLE_SIZE);
+  vk::DescriptorBufferInfo materialBufferInfo(mScene->getRTMaterialBuffer(), 0, VK_WHOLE_SIZE);
   vk::DescriptorBufferInfo pointInstanceBufferInfo(mScene->getRTPointInstanceBuffer(), 0,
                                                    VK_WHOLE_SIZE);
 
-  std::vector<vk::DescriptorBufferInfo> materialBufferInfos;
-  for (auto buffer : mScene->getRTMaterialBuffers()) {
-    materialBufferInfos.push_back({buffer, 0, VK_WHOLE_SIZE});
-  }
   std::vector<vk::DescriptorImageInfo> textureInfos;
   for (auto [view, sampler] : mScene->getRTTextures()) {
     textureInfos.push_back(
@@ -543,8 +554,7 @@ void RTRenderer::prepareScene() {
           {vk::DescriptorType::eAccelerationStructureKHR, asCount},
           {vk::DescriptorType::eStorageBuffer,
            storageBufferCount +
-               static_cast<uint32_t>(materialBufferInfos.size() + vertexBufferInfos.size() +
-                                     indexBufferInfos.size())},
+               static_cast<uint32_t>(vertexBufferInfos.size() + indexBufferInfos.size())},
           {vk::DescriptorType::eCombinedImageSampler,
            textureCount + static_cast<uint32_t>(textureInfos.size())}});
   mSceneSet = mScenePool->allocateSet(mShaderPackInstance->getSceneSetLayout());
@@ -587,16 +597,10 @@ void RTRenderer::prepareScene() {
       writeDescriptorSets.push_back(vk::WriteDescriptorSet(mSceneSet.get(), bid, 0,
                                                            vk::DescriptorType::eStorageBuffer, {},
                                                            geometryInstanceBufferInfo, {}));
-    } else if (binding.name == "TextureIndices") {
+    } else if (binding.name == "Materials") {
       writeDescriptorSets.push_back(vk::WriteDescriptorSet(mSceneSet.get(), bid, 0,
                                                            vk::DescriptorType::eStorageBuffer, {},
-                                                           textureIndexBufferInfo, {}));
-    } else if (binding.name == "Materials") {
-      if (materialBufferInfos.size()) {
-        writeDescriptorSets.push_back(vk::WriteDescriptorSet(mSceneSet.get(), bid, 0,
-                                                             vk::DescriptorType::eStorageBuffer,
-                                                             {}, materialBufferInfos, {}));
-      }
+                                                           materialBufferInfo, {}));
     } else if (binding.name == "textures") {
       if (textureInfos.size()) {
         writeDescriptorSets.push_back(vk::WriteDescriptorSet(

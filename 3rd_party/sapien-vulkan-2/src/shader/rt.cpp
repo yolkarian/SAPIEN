@@ -437,19 +437,6 @@ RayTracingShaderPack::RayTracingShaderPack(std::string const &shaderDir,
   }
 }
 
-StructDataLayout const &RayTracingShaderPack::getMaterialBufferLayout() const {
-  for (auto &[sid, set] : getResources()) {
-    if (set.type == UniformBindingType::eRTScene) {
-      for (auto &[bid, binding] : set.bindings) {
-        if (binding.name == "Materials") {
-          return *set.buffers.at(binding.arrayIndex)->elements.begin()->second.member;
-        }
-      }
-    }
-  }
-  throw std::runtime_error("failed to retrieve material buffer in shader");
-}
-
 StructDataLayout const &RayTracingShaderPack::getObjectBufferLayout() const {
   for (auto &[sid, set] : getResources()) {
     if (set.type == UniformBindingType::eRTScene) {
@@ -461,19 +448,6 @@ StructDataLayout const &RayTracingShaderPack::getObjectBufferLayout() const {
     }
   }
   throw std::runtime_error("failed to retrieve object buffer in shader");
-}
-
-StructDataLayout const &RayTracingShaderPack::getTextureIndexBufferLayout() const {
-  for (auto &[sid, set] : getResources()) {
-    if (set.type == UniformBindingType::eRTScene) {
-      for (auto &[bid, binding] : set.bindings) {
-        if (binding.name == "TextureIndices") {
-          return *set.buffers.at(binding.arrayIndex)->elements.begin()->second.member;
-        }
-      }
-    }
-  }
-  throw std::runtime_error("failed to retrieve texture index buffer in shader");
 }
 
 StructDataLayout const &RayTracingShaderPack::getGeometryInstanceBufferLayout() const {
@@ -742,85 +716,36 @@ RayTracingShaderPackInstance::RayTracingShaderPackInstance(std::shared_ptr<core:
 
 static vk::UniqueDescriptorSetLayout
 createSceneDescriptorSetLayout(vk::Device device, DescriptorSetDescription const &description,
-                               uint32_t maxMeshes, uint32_t maxMaterials, uint32_t maxTextures,
-                               uint32_t maxPointSets) {
+                               uint32_t maxMeshes, uint32_t maxTextures, uint32_t maxPointSets) {
+  auto const hitStages =
+      vk::ShaderStageFlagBits::eAnyHitKHR | vk::ShaderStageFlagBits::eClosestHitKHR;
   std::vector<vk::DescriptorSetLayoutBinding> bindings;
-  std::vector<vk::DescriptorBindingFlags> bindingFlags;
-  for (uint32_t bid = 0; bid < description.bindings.size(); ++bid) {
-    switch (description.bindings.at(bid).type) {
+  // a binding number the shaders do not declare is left out of the layout
+  for (auto const &[bid, binding] : description.bindings) {
+    switch (binding.type) {
     case vk::DescriptorType::eAccelerationStructureKHR:
-      bindings.push_back({
-          bid,
-          vk::DescriptorType::eAccelerationStructureKHR,
-          1,
-          vk::ShaderStageFlagBits::eRaygenKHR | vk::ShaderStageFlagBits::eClosestHitKHR,
-      });
-      bindingFlags.push_back({});
+      bindings.push_back({bid, binding.type, 1,
+                          vk::ShaderStageFlagBits::eRaygenKHR |
+                              vk::ShaderStageFlagBits::eClosestHitKHR});
       break;
-
     case vk::DescriptorType::eStorageBuffer:
-      if (description.bindings.at(bid).name == "Materials") {
+      if (binding.name == "Vertices" || binding.name == "Indices") {
+        bindings.push_back({bid, binding.type, maxMeshes, hitStages});
+      } else if (binding.name == "Points") {
+        bindings.push_back({bid, binding.type, maxPointSets,
+                            hitStages | vk::ShaderStageFlagBits::eIntersectionKHR});
+      } else if (binding.dim == 0) {
         bindings.push_back(
-            {bid,
-             vk::DescriptorType::eStorageBuffer,
-             maxMaterials,
-             vk::ShaderStageFlagBits::eAnyHitKHR | vk::ShaderStageFlagBits::eClosestHitKHR,
-             {}});
-        bindingFlags.push_back({});
-      } else if (description.bindings.at(bid).name == "Vertices" ||
-                 description.bindings.at(bid).name == "Indices") {
-        bindings.push_back(
-            {bid,
-             vk::DescriptorType::eStorageBuffer,
-             maxMeshes,
-             vk::ShaderStageFlagBits::eAnyHitKHR | vk::ShaderStageFlagBits::eClosestHitKHR,
-             {}});
-        bindingFlags.push_back({});
-      }
-
-      else if (description.bindings.at(bid).name == "Points") {
-        bindings.push_back({bid,
-                            vk::DescriptorType::eStorageBuffer,
-                            maxPointSets,
-                            vk::ShaderStageFlagBits::eAnyHitKHR |
-                                vk::ShaderStageFlagBits::eClosestHitKHR |
-                                vk::ShaderStageFlagBits::eIntersectionKHR,
-                            {}});
-        bindingFlags.push_back({});
-
-      } else if (description.bindings.at(bid).dim == 0) {
-        bindings.push_back({bid,
-                            vk::DescriptorType::eStorageBuffer,
-                            1,
-                            vk::ShaderStageFlagBits::eAnyHitKHR |
-                                vk::ShaderStageFlagBits::eClosestHitKHR |
-                                vk::ShaderStageFlagBits::eIntersectionKHR,
-                            {}});
-        bindingFlags.push_back({});
+            {bid, binding.type, 1, hitStages | vk::ShaderStageFlagBits::eIntersectionKHR});
       } else {
-        throw std::runtime_error("unrecognized storage buffer " +
-                                 description.bindings.at(bid).name);
+        throw std::runtime_error("unrecognized storage buffer " + binding.name);
       }
       break;
-
     case vk::DescriptorType::eCombinedImageSampler:
-      if (description.bindings.at(bid).name == "textures") {
-        bindings.push_back(
-            {bid,
-             vk::DescriptorType::eCombinedImageSampler,
-             maxTextures,
-             vk::ShaderStageFlagBits::eAnyHitKHR | vk::ShaderStageFlagBits::eClosestHitKHR,
-             {}});
-        bindingFlags.push_back({});
+      if (binding.name == "textures") {
+        bindings.push_back({bid, binding.type, maxTextures, hitStages});
       } else {
-        bindings.push_back({
-            bid,
-            vk::DescriptorType::eCombinedImageSampler,
-            1,
-            vk::ShaderStageFlagBits::eAnyHitKHR | vk::ShaderStageFlagBits::eClosestHitKHR |
-                vk::ShaderStageFlagBits::eMissKHR,
-        });
-        bindingFlags.push_back({});
+        bindings.push_back({bid, binding.type, 1, hitStages | vk::ShaderStageFlagBits::eMissKHR});
       }
       break;
     default:
@@ -828,10 +753,7 @@ createSceneDescriptorSetLayout(vk::Device device, DescriptorSetDescription const
                                "allowed in the scene descriptor set");
     }
   }
-  vk::DescriptorSetLayoutBindingFlagsCreateInfo flagInfo(bindingFlags);
-  vk::DescriptorSetLayoutCreateInfo layoutInfo({}, bindings);
-  layoutInfo.setPNext(&flagInfo);
-  return device.createDescriptorSetLayoutUnique(layoutInfo);
+  return device.createDescriptorSetLayoutUnique(vk::DescriptorSetLayoutCreateInfo({}, bindings));
 }
 
 static vk::UniqueDescriptorSetLayout
@@ -884,8 +806,8 @@ void RayTracingShaderPackInstance::initPipeline() {
     auto &set = mShaderPack->getResources().at(sid);
     switch (set.type) {
     case UniformBindingType::eRTScene:
-      mSceneSetLayout = createSceneDescriptorSetLayout(
-          device, set, mDesc.maxMeshes, mDesc.maxMaterials, mDesc.maxTextures, mDesc.maxPointSets);
+      mSceneSetLayout = createSceneDescriptorSetLayout(device, set, mDesc.maxMeshes,
+                                                       mDesc.maxTextures, mDesc.maxPointSets);
       descriptorSetLayouts.push_back(mSceneSetLayout.get());
       break;
     case UniformBindingType::eRTOutput:

@@ -1,7 +1,5 @@
 #include "svulkan2/resource/material.h"
 #include <atomic>
-#include "svulkan2/core/buffer.h"
-#include "svulkan2/core/context.h"
 
 namespace svulkan2 {
 namespace resource {
@@ -26,91 +24,58 @@ SVMetallicMaterial::SVMetallicMaterial(glm::vec4 emission, glm::vec4 baseColor, 
   mBuffer.textureMask = 0;
 }
 
-SVMetallicMaterial::~SVMetallicMaterial() { removeFromDevice(); }
-
-core::Buffer &SVMetallicMaterial::getDeviceBuffer(core::Context const &context) const {
-  auto state = mDeviceStates.find(context);
-  if (!state || !state->buffer) {
-    throw std::runtime_error("failed to get device buffer: the material is not on this device");
-  }
-  return *state->buffer;
-}
-
-std::vector<std::shared_ptr<core::Context>> SVMetallicMaterial::deviceContexts() {
-  std::vector<std::shared_ptr<core::Context>> contexts;
-  mDeviceStates.forEach([&](DeviceState const &state) {
-    if (state.context) {
-      contexts.push_back(state.context);
-    }
-  });
-  return contexts;
-}
-
-// Edits reach every device that already holds the material (the ray tracers bind its buffer)
-// and bump the global version that rasterizers compare to refresh their materials[] table.
-void SVMetallicMaterial::bufferChanged() {
-  ++mBufferVersion;
-  ++gMaterialVersion;
-  for (auto const &context : deviceContexts()) {
-    uploadToDevice(*context);
-  }
-}
-
-void SVMetallicMaterial::texturesChanged() {
-  ++mTextureVersion;
-  bufferChanged(); // the texture mask lives in the uniform buffer
-}
+void SVMetallicMaterial::changed() { ++gMaterialVersion; }
 
 void SVMetallicMaterial::setEmission(glm::vec4 emission) {
   mBuffer.emission = emission;
-  bufferChanged();
+  changed();
 }
 
 glm::vec4 SVMetallicMaterial::getEmission() const { return mBuffer.emission; }
 
 void SVMetallicMaterial::setBaseColor(glm::vec4 baseColor) {
   mBuffer.baseColor = baseColor;
-  bufferChanged();
+  changed();
 }
 
 glm::vec4 SVMetallicMaterial::getBaseColor() const { return mBuffer.baseColor; }
 
 void SVMetallicMaterial::setRoughness(float roughness) {
   mBuffer.roughness = roughness;
-  bufferChanged();
+  changed();
 }
 
 float SVMetallicMaterial::getRoughness() const { return mBuffer.roughness; }
 
 void SVMetallicMaterial::setFresnel(float fresnel) {
   mBuffer.fresnel = fresnel;
-  bufferChanged();
+  changed();
 }
 
 float SVMetallicMaterial::getFresnel() const { return mBuffer.fresnel; }
 
 void SVMetallicMaterial::setMetallic(float metallic) {
   mBuffer.metallic = metallic;
-  bufferChanged();
+  changed();
 }
 
 float SVMetallicMaterial::getMetallic() const { return mBuffer.metallic; }
 
 void SVMetallicMaterial::setTransmission(float transmission) {
   mBuffer.transmission = transmission;
-  bufferChanged();
+  changed();
 }
 float SVMetallicMaterial::getTransmission() const { return mBuffer.transmission; }
 
 void SVMetallicMaterial::setIor(float ior) {
   mBuffer.ior = ior;
-  bufferChanged();
+  changed();
 }
 float SVMetallicMaterial::getIor() const { return mBuffer.ior; }
 
 void SVMetallicMaterial::setTransmissionRoughness(float roughness) {
   mBuffer.transmissionRoughness = roughness;
-  bufferChanged();
+  changed();
 }
 float SVMetallicMaterial::getTransmissionRoughness() const {
   return mBuffer.transmissionRoughness;
@@ -165,7 +130,7 @@ void SVMetallicMaterial::setBaseColorTexture(std::shared_ptr<SVTexture> texture)
   } else {
     unsetBit(mBuffer.textureMask, TextureBit::eBaseColor);
   }
-  texturesChanged();
+  changed();
 }
 void SVMetallicMaterial::setRoughnessTexture(std::shared_ptr<SVTexture> texture) {
   mRoughnessTexture = texture;
@@ -174,7 +139,7 @@ void SVMetallicMaterial::setRoughnessTexture(std::shared_ptr<SVTexture> texture)
   } else {
     unsetBit(mBuffer.textureMask, TextureBit::eRoughness);
   }
-  texturesChanged();
+  changed();
 }
 
 void SVMetallicMaterial::setNormalTexture(std::shared_ptr<SVTexture> texture) {
@@ -184,7 +149,7 @@ void SVMetallicMaterial::setNormalTexture(std::shared_ptr<SVTexture> texture) {
   } else {
     unsetBit(mBuffer.textureMask, TextureBit::eNormal);
   }
-  texturesChanged();
+  changed();
 }
 
 void SVMetallicMaterial::setMetallicTexture(std::shared_ptr<SVTexture> texture) {
@@ -194,7 +159,7 @@ void SVMetallicMaterial::setMetallicTexture(std::shared_ptr<SVTexture> texture) 
   } else {
     unsetBit(mBuffer.textureMask, TextureBit::eMetallic);
   }
-  texturesChanged();
+  changed();
 }
 
 void SVMetallicMaterial::setEmissionTexture(std::shared_ptr<SVTexture> texture) {
@@ -204,7 +169,7 @@ void SVMetallicMaterial::setEmissionTexture(std::shared_ptr<SVTexture> texture) 
   } else {
     unsetBit(mBuffer.textureMask, TextureBit::eEmission);
   }
-  texturesChanged();
+  changed();
 }
 
 void SVMetallicMaterial::setTransmissionTexture(std::shared_ptr<SVTexture> texture) {
@@ -214,32 +179,32 @@ void SVMetallicMaterial::setTransmissionTexture(std::shared_ptr<SVTexture> textu
   } else {
     unsetBit(mBuffer.textureMask, TextureBit::eTransmission);
   }
-  texturesChanged();
+  changed();
 }
 
 void SVMetallicMaterial::setBaseColorTextureTransform(glm::vec4 const &transform) {
   mBuffer.textureTransform[TextureBit::eBaseColor] = transform;
-  bufferChanged();
+  changed();
 }
 void SVMetallicMaterial::setRoughnessTextureTransform(glm::vec4 const &transform) {
   mBuffer.textureTransform[TextureBit::eRoughness] = transform;
-  bufferChanged();
+  changed();
 }
 void SVMetallicMaterial::setNormalTextureTransform(glm::vec4 const &transform) {
   mBuffer.textureTransform[TextureBit::eNormal] = transform;
-  bufferChanged();
+  changed();
 }
 void SVMetallicMaterial::setMetallicTextureTransform(glm::vec4 const &transform) {
   mBuffer.textureTransform[TextureBit::eMetallic] = transform;
-  bufferChanged();
+  changed();
 }
 void SVMetallicMaterial::setEmissionTextureTransform(glm::vec4 const &transform) {
   mBuffer.textureTransform[TextureBit::eEmission] = transform;
-  bufferChanged();
+  changed();
 }
 void SVMetallicMaterial::setTransmissionTextureTransform(glm::vec4 const &transform) {
   mBuffer.textureTransform[TextureBit::eTransmission] = transform;
-  bufferChanged();
+  changed();
 }
 
 glm::vec4 SVMetallicMaterial::getBaseColorTextureTransform() const {
@@ -309,47 +274,7 @@ void SVMetallicMaterial::setTextures(std::shared_ptr<SVTexture> baseColorTexture
   } else {
     unsetBit(mBuffer.textureMask, TextureBit::eTransmission);
   }
-  texturesChanged();
-}
-
-void SVMetallicMaterial::uploadToDevice(core::Context &context) {
-  std::scoped_lock lock(context.getGlobalLock());
-
-  auto &state = mDeviceStates.get(context);
-
-  if (!state.buffer) {
-    vk::BufferUsageFlags flags = vk::BufferUsageFlagBits::eUniformBuffer;
-    if (context.isRayTracingAvailable()) {
-      flags |= vk::BufferUsageFlagBits::eStorageBuffer;
-    }
-    state.buffer = core::Buffer::Create(context, sizeof(SVMetallicMaterial::Buffer), flags,
-                                        VMA_MEMORY_USAGE_CPU_TO_GPU);
-    state.context = context.shared_from_this();
-  }
-
-  if (state.bufferVersion != mBufferVersion) {
-    state.buffer->upload(mBuffer);
-    state.bufferVersion = mBufferVersion;
-  }
-
-  if (state.textureVersion != mTextureVersion) {
-    // the textures live on the device too; renderers index them from their own tables
-    for (auto const &texture : {mBaseColorTexture, mRoughnessTexture, mNormalTexture,
-                                mMetallicTexture, mEmissionTexture, mTransmissionTexture}) {
-      if (texture) {
-        texture->uploadToDevice(context);
-      }
-    }
-    state.textureVersion = mTextureVersion;
-  }
-}
-
-void SVMetallicMaterial::removeFromDevice() {
-  // collect first: erase cannot run inside forEach (it would deadlock on the PerContext lock)
-  for (auto const &context : deviceContexts()) {
-    std::scoped_lock lock(context->getGlobalLock());
-    mDeviceStates.erase(*context);
-  }
+  changed();
 }
 
 } // namespace resource

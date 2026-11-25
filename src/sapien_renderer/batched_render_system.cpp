@@ -170,6 +170,7 @@ public:
   std::vector<std::string> getPictureNames() const { return mRenderer->getPictureNames(); }
   svulkan2::renderer::BatchRTRenderer &getRenderer() { return *mRenderer; }
   void uploadSceneLightState() { mRenderer->uploadSceneLightState(); }
+  void uploadMaterials() { mRenderer->uploadMaterials(); }
   bool hasPicture(std::string const &name) const {
     auto const &names = mRenderer->getPictureNames();
     return std::find(names.begin(), names.end(), name) != names.end();
@@ -515,6 +516,8 @@ void BatchedCamera::takePicture() {
   internalWaitForRendersIdle();
 
   if (mBatchRenderer) {
+    // before the frame counters advance: a throw here leaves no frame unsignalled
+    mBatchRenderer->uploadMaterials();
     // One frame for the whole group: refit every environment's acceleration structure and
     // dispatch over every camera in one command buffer, submitted once. The pictures are the
     // exported buffers themselves, so nothing is copied and no per-camera record commands exist.

@@ -79,38 +79,37 @@ void main() {
   if (dot(worldShadingNormal, worldGeometricNormal) < 0.0)
     worldShadingNormal = -worldShadingNormal;
 
-  Material mat = materials[nonuniformEXT(materialIndex)].m;
-  TextureIndex ti = textureIndices.t[materialIndex];
+  Material mat = materials.m[materialIndex];
   vec3 baseColor = mat.baseColor.rgb;
   float alpha = mat.baseColor.a;
-  if (ti.diffuse >= 0) {
-    vec4 c = texture(textures[nonuniformEXT(ti.diffuse)],
+  if (mat.baseColorTexture >= 0) {
+    vec4 c = texture(textures[nonuniformEXT(mat.baseColorTexture)],
                       uv * mat.textureTransforms[0].zw + mat.textureTransforms[0].xy);
     baseColor *= c.rgb;
     alpha *= c.a;
   }
   float metallic = mat.metallic;
-  if (ti.metallic >= 0)
-    metallic = texture(textures[nonuniformEXT(ti.metallic)],
+  if (mat.metallicTexture >= 0)
+    metallic = texture(textures[nonuniformEXT(mat.metallicTexture)],
                        uv * mat.textureTransforms[3].zw + mat.textureTransforms[3].xy).x;
   float roughness = mat.roughness;
-  if (ti.roughness >= 0)
-    roughness = texture(textures[nonuniformEXT(ti.roughness)],
+  if (mat.roughnessTexture >= 0)
+    roughness = texture(textures[nonuniformEXT(mat.roughnessTexture)],
                         uv * mat.textureTransforms[1].zw + mat.textureTransforms[1].xy).x;
   roughness = clamp(roughness, 0.045, 1.0);
   vec3 texNormal = vec3(0.0, 0.0, 1.0);
-  if (ti.normal >= 0)
-    texNormal = normalize(texture(textures[nonuniformEXT(ti.normal)],
+  if (mat.normalTexture >= 0)
+    texNormal = normalize(texture(textures[nonuniformEXT(mat.normalTexture)],
                                   uv * mat.textureTransforms[2].zw + mat.textureTransforms[2].xy).xyz * 2.0 - 1.0);
   vec3 emission = mat.emission.rgb;
   float strength = mat.emission.a;
-  if (ti.emission >= 0)
-    emission *= texture(textures[nonuniformEXT(ti.emission)],
+  if (mat.emissionTexture >= 0)
+    emission *= texture(textures[nonuniformEXT(mat.emissionTexture)],
                         uv * mat.textureTransforms[4].zw + mat.textureTransforms[4].xy).rgb;
   emission *= strength;
   float transmission = mat.transmission;
-  if (ti.transmission >= 0)
-    transmission = texture(textures[nonuniformEXT(ti.transmission)],
+  if (mat.transmissionTexture >= 0)
+    transmission = texture(textures[nonuniformEXT(mat.transmissionTexture)],
                            uv * mat.textureTransforms[5].zw + mat.textureTransforms[5].xy).x;
 
   // Stochastic transparency of path rays: go on in the same direction. The MIS state still

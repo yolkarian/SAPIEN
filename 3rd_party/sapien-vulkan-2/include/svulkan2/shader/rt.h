@@ -87,9 +87,7 @@ public:
   // getIntersectStageParsers() const {
   //   return mIntersectStageParsers;
   // }
-  StructDataLayout const &getMaterialBufferLayout() const;
   StructDataLayout const &getObjectBufferLayout() const;
-  StructDataLayout const &getTextureIndexBufferLayout() const;
   StructDataLayout const &getGeometryInstanceBufferLayout() const;
   StructDataLayout const &getCameraBufferLayout() const;
   DescriptorSetDescription const &getOutputDescription() const;
@@ -109,7 +107,6 @@ struct RayTracingShaderPackInstanceDesc {
   std::string shaderDir{};
   ShaderDefines defines{};
   uint32_t maxMeshes{};
-  uint32_t maxMaterials{};
   uint32_t maxTextures{};
   uint32_t maxPointSets{};
 };

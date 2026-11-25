@@ -17,13 +17,10 @@ inline void setBit(int &number, int bit) { number |= 1 << bit; }
 inline void unsetBit(int &number, int bit) { number &= ~(1 << bit); }
 inline int getBit(int number, int bit) { return (number >> bit) & 1; }
 
-/** Device-independent material; its buffer lives per device (Context) and is refreshed on upload
- *  when the material changed. Renderers gather materials into their own scene tables. */
+/** Device-independent material. Renderers pack materials into their own scene tables
+ *  (svulkan2/scene/material_data.h) and upload the textures to their devices. */
 class SVMaterial {
 public:
-  virtual void uploadToDevice(core::Context &context) = 0;
-  /** release the device state of every device */
-  virtual void removeFromDevice() = 0;
   virtual float getOpacity() const = 0;
 
   virtual ~SVMaterial() = default;
@@ -70,21 +67,8 @@ private:
   std::shared_ptr<SVTexture> mEmissionTexture;
   std::shared_ptr<SVTexture> mTransmissionTexture;
 
-  struct DeviceState {
-    std::shared_ptr<core::Context> context; // keeps the device alive
-    std::unique_ptr<core::Buffer> buffer;
-    uint64_t bufferVersion{};  // mBufferVersion last written to `buffer`
-    uint64_t textureVersion{}; // mTextureVersion whose textures were last uploaded
-  };
-  core::PerContext<DeviceState> mDeviceStates;
-  /** bumped by every setter of the matching kind; devices upload when behind */
-  uint64_t mBufferVersion{1};
-  uint64_t mTextureVersion{1};
-
-  std::vector<std::shared_ptr<core::Context>> deviceContexts();
-  /** bump the version and re-upload to every device holding the material */
-  void bufferChanged();
-  void texturesChanged();
+  /** every edit bumps the process-wide version renderers compare to repack their tables */
+  void changed();
 
 public:
   SVMetallicMaterial(glm::vec4 emission = {0, 0, 0, 1}, glm::vec4 baseColor = {0, 0, 0, 1},
@@ -150,26 +134,20 @@ public:
                    std::shared_ptr<SVTexture> metallicTexture,
                    std::shared_ptr<SVTexture> emissionTexture,
                    std::shared_ptr<SVTexture> transmissionTexture);
-  void uploadToDevice(core::Context &context) override;
-  void removeFromDevice() override;
   inline float getOpacity() const override { return mBuffer.baseColor.a; }
 
-  /** The device-independent POD uploaded to the per-device buffer. Also the layout of one
-   *  element of the scene-wide materials[] SSBO (the first 160 bytes). */
+  /** the device-independent POD; the first 160 bytes of scene::GpuMaterial */
   inline Buffer const &getBuffer() const { return mBuffer; }
   /** Process-wide stamp of the most recent edit to any material; renderers use it to decide
-   *  whether their scene-wide materials[] buffer needs rebuilding. */
+   *  whether their material tables need repacking. */
   static uint64_t getGlobalVersion();
-
-  /** this device's uniform buffer; throws when the material is not uploaded there */
-  core::Buffer &getDeviceBuffer(core::Context const &context) const;
 
   SVMetallicMaterial(SVMetallicMaterial const &) = delete;
   SVMetallicMaterial &operator=(SVMetallicMaterial const &) = delete;
   SVMetallicMaterial(SVMetallicMaterial const &&) = delete;
   SVMetallicMaterial &operator=(SVMetallicMaterial const &&) = delete;
 
-  virtual ~SVMetallicMaterial();
+  ~SVMetallicMaterial() override = default;
 };
 
 } // namespace resource

@@ -37,32 +37,7 @@ struct InstanceInfo {
   int customDataIndex;  // index into customObjectData[] (-1 for line and point sets)
 };
 
-// 256 B, the same in std140 and std430 (no arrays of scalars): the storage array materials[] and
-// the uniform `material` read the same buffer. The first 160 B match SVMetallicMaterial::Buffer
-// in C++; texture indices are slots of textures[], -1 for none; the tail is reserved for
-// material fields to come.
-struct Material {
-  vec4 emission;
-  vec4 baseColor;
-  float fresnel;
-  float roughness;
-  float metallic;
-  float transmission;
-  float ior;
-  float transmissionRoughness;
-  int textureMask;
-  int padding1;
-  vec4 textureTransforms[6];
-  int baseColorTexture;
-  int roughnessTexture;
-  int normalTexture;
-  int metallicTexture;
-  int emissionTexture;
-  int transmissionTexture;
-  int padding2;
-  int padding3;
-  vec4 reserved[4];
-};
+#include "./material.glsl"
 
 #ifndef SAPIEN_CUSTOM_OBJECT_DATA
 #define SAPIEN_CUSTOM_OBJECT_DATA struct CustomObjectData { int dummy; };

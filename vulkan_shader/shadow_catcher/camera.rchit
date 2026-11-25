@@ -21,15 +21,11 @@ layout(set = 1, binding = 1) readonly buffer GeometryInstances
   GeometryInstance i[];
 } geometryInstances;
 
+// one record per material (common/material.glsl); binding 3 is unused
 layout(set = 1, binding = 2) readonly buffer Materials
 {
-  Material m;
-} materials[];
-
-layout(set = 1, binding = 3) readonly buffer TextureIndices
-{
-  TextureIndex t[];
-} textureIndices;
+  Material m[];
+} materials;
 
 layout(set = 1, binding = 4) uniform sampler2D textures[];
 
@@ -578,43 +574,42 @@ void main() {
     worldShadingNormal = -worldShadingNormal;
   }
 
-  Material mat = materials[nonuniformEXT(materialIndex)].m;
-  TextureIndex ti = textureIndices.t[materialIndex];
+  Material mat = materials.m[materialIndex];
 
   vec3 baseColor = mat.baseColor.rgb;
   float alpha = mat.baseColor.a;
-  if (ti.diffuse >= 0) {
-    vec4 baseColorAlpha = texture(textures[nonuniformEXT(ti.diffuse)], uv * mat.textureTransforms[0].zw + mat.textureTransforms[0].xy);
+  if (mat.baseColorTexture >= 0) {
+    vec4 baseColorAlpha = texture(textures[nonuniformEXT(mat.baseColorTexture)], uv * mat.textureTransforms[0].zw + mat.textureTransforms[0].xy);
     baseColor *= baseColorAlpha.rgb;
     alpha *= baseColorAlpha.a;
   }
 
   float metallic = mat.metallic;
-  if (ti.metallic >= 0) {
-    metallic = texture(textures[nonuniformEXT(ti.metallic)], uv * mat.textureTransforms[3].zw + mat.textureTransforms[3].xy).x;
+  if (mat.metallicTexture >= 0) {
+    metallic = texture(textures[nonuniformEXT(mat.metallicTexture)], uv * mat.textureTransforms[3].zw + mat.textureTransforms[3].xy).x;
   }
 
   float roughness = mat.roughness;
-  if (ti.roughness >= 0) {
-    roughness = texture(textures[nonuniformEXT(ti.roughness)], uv * mat.textureTransforms[1].zw + mat.textureTransforms[1].xy).x;
+  if (mat.roughnessTexture >= 0) {
+    roughness = texture(textures[nonuniformEXT(mat.roughnessTexture)], uv * mat.textureTransforms[1].zw + mat.textureTransforms[1].xy).x;
   }
   roughness = clamp(roughness, 0.045, 1.0);
 
   vec3 texNormal = vec3(0.0, 0.0, 1.0);
-  if (ti.normal >= 0) {
-    texNormal = normalize(texture(textures[nonuniformEXT(ti.normal)], uv * mat.textureTransforms[2].zw + mat.textureTransforms[2].xy).xyz * 2.0 - 1.0);
+  if (mat.normalTexture >= 0) {
+    texNormal = normalize(texture(textures[nonuniformEXT(mat.normalTexture)], uv * mat.textureTransforms[2].zw + mat.textureTransforms[2].xy).xyz * 2.0 - 1.0);
   }
 
   vec3 emission = mat.emission.rgb;
   float strength = mat.emission.a;
-  if (ti.emission >= 0) {
-    emission *= texture(textures[nonuniformEXT(ti.emission)], uv * mat.textureTransforms[4].zw + mat.textureTransforms[4].xy).rgb;
+  if (mat.emissionTexture >= 0) {
+    emission *= texture(textures[nonuniformEXT(mat.emissionTexture)], uv * mat.textureTransforms[4].zw + mat.textureTransforms[4].xy).rgb;
   }
   emission *= strength;
 
   float transmission = mat.transmission;
-  if (ti.transmission >= 0) {
-    transmission = texture(textures[nonuniformEXT(ti.transmission)], uv * mat.textureTransforms[5].zw + mat.textureTransforms[5].xy).x;
+  if (mat.transmissionTexture >= 0) {
+    transmission = texture(textures[nonuniformEXT(mat.transmissionTexture)], uv * mat.textureTransforms[5].zw + mat.textureTransforms[5].xy).x;
   }
 
 

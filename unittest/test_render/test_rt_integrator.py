@@ -1,6 +1,7 @@
 """The `rt` path tracer's integrator: light sampling (next-event estimation) of the environment
 and of emissive meshes combined with BSDF sampling by multiple importance sampling, shadow rays
-through transparent occluders, the indirect clamp and the defaults of its parameters.
+through transparent occluders, the indirect clamp, the defaults of its parameters, and material
+edits after the first frame.
 
 Light sampling, BSDF sampling and their MIS combination estimate the same image, so their means
 must agree; light sampling must also be clearly less noisy where light comes from a small
@@ -138,22 +139,27 @@ class EnvironmentLighting(unittest.TestCase):
 class EmissiveMeshLighting(unittest.TestCase):
     """A white floor lit only by an emissive sphere above it."""
 
-    def floor(self, cfg, emitter_position: list[float], move_to: list[float] | None = None, frames: int = 24) -> np.ndarray:
+    def floor(self, cfg, emitter_position: list[float], move_to: list[float] | None = None,
+              emission_to: list[float] | None = None, frames: int = 24) -> np.ndarray:
         with sapien.Scene() as scene:
             scene.set_ambient_light([0.0, 0.0, 0.0])
             scene.add_ground(0.0, render_material=sapien.render.RenderMaterial(
                 base_color=[1, 1, 1, 1], specular=0.0, roughness=1.0))
             builder = scene.create_actor_builder()
-            builder.add_sphere_visual(radius=0.3, material=sapien.render.RenderMaterial(
-                emission=[20.0, 20.0, 20.0, 1.0], base_color=[0, 0, 0, 1], specular=0.0))
+            material = sapien.render.RenderMaterial(
+                emission=[20.0, 20.0, 20.0, 1.0], base_color=[0, 0, 0, 1], specular=0.0)
+            builder.add_sphere_visual(radius=0.3, material=material)
             emitter = builder.build_kinematic()
             emitter.set_pose(sapien.Pose(emitter_position))
             # looking straight down at the floor; the emitter is outside the view
             camera = scene.add_camera("camera", SIZE, SIZE, 0.6, 0.1, 20.0, render_config=cfg)
             camera.entity.pose = sapien.Pose([0.0, 0.0, 3.0], [0.7071068, 0.0, 0.7071068, 0.0])
-            if move_to is not None:
+            if move_to is not None or emission_to is not None:
                 render(scene, camera, 1)
+            if move_to is not None:
                 emitter.set_pose(sapien.Pose(move_to))  # only the TLAS transform changes
+            if emission_to is not None:
+                material.emission = emission_to
             return render(scene, camera, frames)
 
     def test_strategies_agree_and_light_sampling_cuts_noise(self) -> None:
@@ -178,6 +184,14 @@ class EmissiveMeshLighting(unittest.TestCase):
         for half in (np.s_[:, : SIZE // 2], np.s_[:, SIZE // 2:]):
             self.assertAlmostEqual(float(moved_there[half].mean()), float(built_there[half].mean()),
                                    delta=0.05 * float(built_there[half].mean()))
+
+    def test_an_emission_edit_relights_the_floor(self) -> None:
+        """Light sampling reads the emitter's current radiance: recoloured after the first frame,
+        it lights the floor in the new colour only."""
+        floor = self.floor(config("nee", spp=16, depth=1), [1.2, 0.0, 0.6],
+                           emission_to=[0.0, 0.0, 20.0, 1.0])
+        self.assertGreater(float(floor[..., 2].mean()), 0.05)
+        self.assertLess(float(floor[..., 0].mean()), 1e-3 * float(floor[..., 2].mean()))
 
 
 class Shadows(unittest.TestCase):
@@ -254,6 +268,52 @@ class IndirectClamp(unittest.TestCase):
         full = picture(config(spp=8, depth=3))
         self.assertAlmostEqual(clamped, direct, delta=0.01 * direct)
         self.assertGreater(full, 1.03 * direct)
+
+
+class MaterialEdits(unittest.TestCase):
+    """A box seen from x = -3, lit by nothing: the picture centre is the box's emission."""
+
+    def box(self, material: sapien.render.RenderMaterial, cameras: int = 1):
+        scene = sapien.Scene()
+        self.addCleanup(scene.close)
+        scene.set_ambient_light([0.0, 0.0, 0.0])
+        builder = scene.create_actor_builder()
+        builder.add_box_visual(half_size=[0.8] * 3, material=material)
+        builder.build_kinematic()
+        result = []
+        for index in range(cameras):
+            camera = scene.add_camera(f"camera{index}", SIZE, SIZE, 1.0, 0.1, 10.0,
+                                      render_config=config(spp=1, depth=1))
+            camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+            result.append(camera)
+        scene.update_render()
+        return result
+
+    @staticmethod
+    def centre(camera: sapien.render.RenderCameraComponent) -> np.ndarray:
+        camera.take_picture()
+        return camera.get_picture("HdrColor")[SIZE // 2, SIZE // 2, :3]
+
+    def test_an_edit_replaces_the_accumulated_samples(self) -> None:
+        material = sapien.render.RenderMaterial(emission=[1, 0, 0, 1], base_color=[0, 0, 0, 1])
+        (camera,) = self.box(material)
+        for _ in range(4):
+            self.centre(camera)
+        material.emission = [0, 0, 1, 1]
+        # no update_render: kept samples would leave 4/5 of the red
+        np.testing.assert_allclose(self.centre(camera), [0, 0, 1], atol=0.02)
+
+    def test_a_new_texture_reaches_every_camera_of_the_scene(self) -> None:
+        material = sapien.render.RenderMaterial(emission=[1, 1, 1, 1], base_color=[0, 0, 0, 1])
+        cameras = self.box(material, cameras=2)
+        for camera in cameras:
+            np.testing.assert_allclose(self.centre(camera), [1, 1, 1], atol=0.02)
+        pixels = np.zeros((2, 2, 4), np.uint8)
+        pixels[:] = [0, 255, 0, 255]
+        material.emission_texture = sapien.render.RenderTexture2D(pixels, "R8G8B8A8Unorm")
+        # textures[] grows: the first camera rebuilds the scene's tables, the second rebinds them
+        for camera in cameras:
+            np.testing.assert_allclose(self.centre(camera), [0, 1, 0], atol=0.02)
 
 
 class Defaults(unittest.TestCase):

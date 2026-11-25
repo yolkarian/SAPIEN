@@ -122,6 +122,11 @@ public:
    *  environment map selection from the current CPU state of the environment scenes */
   void uploadSceneLightState();
 
+  /** Repack materials[] when a material changed since the last call; the previous frame must
+   *  have finished. Throws, before anything is recorded, when a material samples a texture the
+   *  group did not have at initialize(). */
+  void uploadMaterials();
+
   /** record every environment's acceleration structure refit and the group dispatch, then
    *  submit once: `wait` at `waitValue` must be reached first, and `signal` is signalled with
    *  `signalValue` when the frame completed */
@@ -170,14 +175,17 @@ private:
   std::map<std::string, std::unique_ptr<core::Buffer>> mPictureBuffers;
   vk::DeviceSize mPictureBytes{};
 
-  std::vector<vk::Buffer> mMaterialBuffers;
+  // the group's materials in materials[] order; mTextureSlots maps a texture to textures[]
+  std::vector<std::shared_ptr<resource::SVMetallicMaterial>> mMaterials;
+  std::unique_ptr<core::Buffer> mMaterialBuffer;
+  uint64_t mMaterialVersion{}; // SVMetallicMaterial global version last packed
+  std::unordered_map<resource::SVTexture const *, int> mTextureSlots;
   std::vector<std::pair<vk::ImageView, vk::Sampler>> mTextures;
   std::unique_ptr<core::Buffer> mCameraBuffer;
   vk::DeviceSize mCameraSlotSize{};
   std::unique_ptr<core::Buffer> mEnvironmentBuffer;
   std::unique_ptr<core::Buffer> mCameraOrderBuffer;
   std::unique_ptr<core::Buffer> mGeometryInstanceBuffer;
-  std::unique_ptr<core::Buffer> mTextureIndexBuffer;
   std::unique_ptr<core::Buffer> mObjectBuffer;
   std::unique_ptr<core::Buffer> mPointInstanceBuffer;
   std::vector<vk::Buffer> mVertexBuffers;

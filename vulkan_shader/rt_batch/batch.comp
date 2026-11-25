@@ -124,13 +124,10 @@ layout(set = 1, binding = 4) readonly buffer GeometryInstances {
   GeometryInstance i[];
 } geometryInstances;
 
+// one record per material of the group (common/material.glsl); binding 6 is unused
 layout(std430, set = 1, binding = 5) readonly buffer Materials {
-  Material m;
-} materials[];
-
-layout(std430, set = 1, binding = 6) readonly buffer TextureIndices {
-  TextureIndex t[];
-} textureIndices;
+  Material m[];
+} materials;
 
 layout(set = 1, binding = 7) uniform sampler2D textures[];
 
@@ -290,43 +287,42 @@ Surface emptySurface() {
 
 /** fill the material terms of `surface`; returns the alpha of the hit texel */
 float shadeTriangleMaterial(uint materialIndex, vec2 uv, inout Surface surface) {
-  Material material = materials[materialIndex].m;
-  TextureIndex ti = textureIndices.t[materialIndex];
+  Material material = materials.m[materialIndex];
 
   vec3 baseColor = material.baseColor.rgb;
   float alpha = material.baseColor.a;
-  if (ti.diffuse >= 0) {
-    vec4 sampled = texture(textures[nonuniformEXT(ti.diffuse)],
+  if (material.baseColorTexture >= 0) {
+    vec4 sampled = texture(textures[nonuniformEXT(material.baseColorTexture)],
                            uv * material.textureTransforms[0].zw +
                                material.textureTransforms[0].xy);
     baseColor *= sampled.rgb;
     alpha *= sampled.a;
   }
   float metallic = material.metallic;
-  if (ti.metallic >= 0) {
-    metallic = texture(textures[nonuniformEXT(ti.metallic)],
+  if (material.metallicTexture >= 0) {
+    metallic = texture(textures[nonuniformEXT(material.metallicTexture)],
                        uv * material.textureTransforms[3].zw +
                            material.textureTransforms[3].xy).x;
   }
   float roughness = material.roughness;
-  if (ti.roughness >= 0) {
-    roughness = texture(textures[nonuniformEXT(ti.roughness)],
+  if (material.roughnessTexture >= 0) {
+    roughness = texture(textures[nonuniformEXT(material.roughnessTexture)],
                         uv * material.textureTransforms[1].zw +
                             material.textureTransforms[1].xy).x;
   }
   roughness = clamp(roughness, 0.045, 1.0);
 
   vec3 emission = material.emission.rgb;
-  if (ti.emission >= 0) {
-    emission *= texture(textures[nonuniformEXT(ti.emission)],
+  if (material.emissionTexture >= 0) {
+    emission *= texture(textures[nonuniformEXT(material.emissionTexture)],
                         uv * material.textureTransforms[4].zw +
                             material.textureTransforms[4].xy).rgb;
   }
   emission *= material.emission.a;
 
   float transmission = material.transmission;
-  if (ti.transmission >= 0) {
-    transmission = texture(textures[nonuniformEXT(ti.transmission)],
+  if (material.transmissionTexture >= 0) {
+    transmission = texture(textures[nonuniformEXT(material.transmissionTexture)],
                            uv * material.textureTransforms[5].zw +
                                material.textureTransforms[5].xy).x;
   }
@@ -385,7 +381,7 @@ Surface traceScene(int envIndex, vec3 origin, vec3 direction, float tMin) {
       int instance = environment.geometryInstanceOffset + customIndex + geometry;
       uint geometryIndex = geometryInstances.i[instance].geometryIndex;
       uint materialIndex = geometryInstances.i[instance].materialIndex;
-      Material material = materials[materialIndex].m;
+      Material material = materials.m[materialIndex];
       bool isInside = !rayQueryGetIntersectionFrontFaceEXT(query, false);
       // a back face of an opaque material is not a visible surface, like camera.rahit
       if (isInside && material.transmission < 1e-4) {
@@ -452,9 +448,8 @@ Surface traceScene(int envIndex, vec3 origin, vec3 direction, float tMin) {
       }
       worldTangent = normalize(worldTangent);
       vec3 worldBitangent = normalize(cross(worldShadingNormal, worldTangent));
-      TextureIndex ti = textureIndices.t[materialIndex];
-      if (ti.normal >= 0) {
-        vec3 texNormal = normalize(texture(textures[nonuniformEXT(ti.normal)],
+      if (material.normalTexture >= 0) {
+        vec3 texNormal = normalize(texture(textures[nonuniformEXT(material.normalTexture)],
                                           uv * material.textureTransforms[2].zw +
                                               material.textureTransforms[2].xy).xyz * 2.0 - 1.0);
         vec3 shaded = mat3(worldTangent, worldBitangent, worldShadingNormal) * texNormal;

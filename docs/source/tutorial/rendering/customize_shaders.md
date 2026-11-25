@@ -348,6 +348,24 @@ The ray-generation shader declares storage images such as `outHdrColor`,
 `outAlbedo`, `outNormal`, `outSegmentation`, `outRadiance`, and
 `outPosition`. Read them from Python by target name after `take_picture`.
 
+The scene set (`rt/scene_set.glsl`) holds one record per material of the scene in
+`materials.m[]`: the `Material` of the rasterization packs
+(`common/material.glsl`), selected by `GeometryInstance.materialIndex`. Its texture
+fields are slots of the bindless `textures[]`, `-1` for none:
+
+```glsl
+Material mat = materials.m[geometryInstances.i[instanceId].materialIndex];
+vec4 albedo = mat.baseColor;
+if (mat.baseColorTexture >= 0)
+  albedo *= texture(textures[nonuniformEXT(mat.baseColorTexture)], uv);
+```
+
+`batch.comp` declares the same `Materials` block (binding 5 of its scene set).
+Editing a material restarts accumulation. Giving a material a texture none of the
+scene's materials used before rebuilds the scene's ray-tracing tables before the
+next frame; a batched group cannot grow its `textures[]` after `gpu_init()` and
+raises `RuntimeError` instead.
+
 ## Post-processing passes
 
 `"post"` in `pack.json` lists compute passes that run in the listed order, each

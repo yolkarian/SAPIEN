@@ -231,12 +231,9 @@ void BatchRTRenderer::initialize(std::vector<std::shared_ptr<scene::Scene>> cons
   std::vector<uint8_t> geometryData;
   std::vector<int> pointInstanceData;
   uint32_t objectStride = mShaderPack->getObjectBufferLayout().size;
-  std::vector<uint8_t> textureIndexData;
-  uint32_t textureIndexStride = mShaderPack->getTextureIndexBufferLayout().size;
 
   std::unordered_map<resource::SVMesh *, uint32_t> meshIds;
   std::unordered_map<resource::SVMaterial *, uint32_t> materialIds;
-  std::unordered_map<resource::SVTexture *, uint32_t> textureIds;
   std::unordered_map<resource::SVPointSet *, uint32_t> pointSetIds;
   std::vector<std::shared_ptr<resource::SVMesh>> meshes;
   std::vector<std::shared_ptr<resource::SVMetallicMaterial>> materials;
@@ -275,7 +272,6 @@ void BatchRTRenderer::initialize(std::vector<std::shared_ptr<scene::Scene>> cons
                    object->getShadeFlat() ? 1 : 0);
       for (auto &shape : object->getModel()->getShapes()) {
         shape->mesh->uploadToDevice(*mContext);
-        shape->material->uploadToDevice(*mContext);
 
         uint32_t meshId;
         auto meshIt = meshIds.find(shape->mesh.get());
@@ -290,23 +286,10 @@ void BatchRTRenderer::initialize(std::vector<std::shared_ptr<scene::Scene>> cons
         uint32_t materialId;
         auto materialIt = materialIds.find(shape->material.get());
         if (materialIt == materialIds.end()) {
-          auto material = std::static_pointer_cast<resource::SVMetallicMaterial>(shape->material);
           materialId = static_cast<uint32_t>(materials.size());
           materialIds[shape->material.get()] = materialId;
-          materials.push_back(material);
-          std::array candidateTextures{material->getEmissionTexture(),
-                                       material->getBaseColorTexture(),
-                                       material->getNormalTexture(),
-                                       material->getMetallicTexture(),
-                                       material->getRoughnessTexture(),
-                                       material->getTransmissionTexture()};
-          for (auto const &texture : candidateTextures) {
-            if (texture && !textureIds.contains(texture.get())) {
-              texture->uploadToDevice(*mContext);
-              textureIds[texture.get()] = static_cast<uint32_t>(textures.size());
-              textures.push_back(texture);
-            }
-          }
+          materials.push_back(
+              std::static_pointer_cast<resource::SVMetallicMaterial>(shape->material));
         } else {
           materialId = materialIt->second;
         }
@@ -335,38 +318,30 @@ void BatchRTRenderer::initialize(std::vector<std::shared_ptr<scene::Scene>> cons
     }
   }
 
-  // per material texture indices; the layout comes from the shader
-  textureIndexData.assign(materials.size() * textureIndexStride, 0);
-  auto const &textureIndexLayout = mShaderPack->getTextureIndexBufferLayout();
-  auto textureOffset = [&](char const *name) {
-    auto it = textureIndexLayout.elements.find(name);
-    if (it == textureIndexLayout.elements.end()) {
-      throw std::runtime_error(std::string("batch.comp TextureIndex must declare \"") + name +
-                               "\"");
-    }
-    return it->second.offset;
-  };
-  mMaterialBuffers.clear();
-  for (size_t index = 0; index < materials.size(); ++index) {
-    auto const &material = materials.at(index);
-    mMaterialBuffers.push_back(material->getDeviceBuffer(*mContext).getVulkanBuffer());
-    auto id = [&](std::shared_ptr<resource::SVTexture> const &texture) {
-      return texture ? static_cast<int>(textureIds.at(texture.get())) : -1;
-    };
-    int emission = id(material->getEmissionTexture());
-    int diffuse = id(material->getBaseColorTexture());
-    int normal = id(material->getNormalTexture());
-    int metallic = id(material->getMetallicTexture());
-    int roughness = id(material->getRoughnessTexture());
-    int transmission = id(material->getTransmissionTexture());
-    size_t base = index * textureIndexStride;
-    copyField(textureIndexData, base, textureOffset("emission"), &emission, sizeof(int));
-    copyField(textureIndexData, base, textureOffset("diffuse"), &diffuse, sizeof(int));
-    copyField(textureIndexData, base, textureOffset("normal"), &normal, sizeof(int));
-    copyField(textureIndexData, base, textureOffset("metallic"), &metallic, sizeof(int));
-    copyField(textureIndexData, base, textureOffset("roughness"), &roughness, sizeof(int));
-    copyField(textureIndexData, base, textureOffset("transmission"), &transmission, sizeof(int));
+  // materials[] and the textures they sample, in first-use order
+  mTextureSlots.clear();
+  std::vector<scene::GpuMaterial> materialRecords;
+  for (auto const &material : materials) {
+    materialRecords.push_back(scene::packMaterial(
+        *material, [&](std::shared_ptr<resource::SVTexture> const &texture) {
+          auto [slot, added] =
+              mTextureSlots.try_emplace(texture.get(), static_cast<int>(textures.size()));
+          if (added) {
+            texture->uploadToDevice(*mContext);
+            textures.push_back(texture);
+          }
+          return slot->second;
+        }));
   }
+  mMaterials = std::move(materials);
+  mMaterialBuffer = core::Buffer::Create(
+      *mContext, std::max<size_t>(materialRecords.size(), 1) * sizeof(scene::GpuMaterial),
+      vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
+      VMA_MEMORY_USAGE_CPU_TO_GPU);
+  if (!materialRecords.empty()) {
+    mMaterialBuffer->upload(materialRecords);
+  }
+  mMaterialVersion = resource::SVMetallicMaterial::getGlobalVersion();
 
   mVertexBuffers.clear();
   mIndexBuffers.clear();
@@ -396,7 +371,6 @@ void BatchRTRenderer::initialize(std::vector<std::shared_ptr<scene::Scene>> cons
   };
 
   mGeometryInstanceBuffer = createStorage(geometryData.data(), geometryData.size());
-  mTextureIndexBuffer = createStorage(textureIndexData.data(), textureIndexData.size());
   mObjectBuffer = createStorage(objectData.data(), objectData.size());
   mPointInstanceBuffer =
       createStorage(pointInstanceData.data(), pointInstanceData.size() * sizeof(int));
@@ -559,10 +533,7 @@ void BatchRTRenderer::writeDescriptors() {
       addBuffers(mSceneSet.get(), bid,
                  {{mGeometryInstanceBuffer->getVulkanBuffer(), 0, VK_WHOLE_SIZE}});
     } else if (name == "Materials") {
-      addBuffers(mSceneSet.get(), bid, buffersOf(mMaterialBuffers));
-    } else if (name == "TextureIndices") {
-      addBuffers(mSceneSet.get(), bid,
-                 {{mTextureIndexBuffer->getVulkanBuffer(), 0, VK_WHOLE_SIZE}});
+      addBuffers(mSceneSet.get(), bid, {{mMaterialBuffer->getVulkanBuffer(), 0, VK_WHOLE_SIZE}});
     } else if (name == "textures") {
       std::vector<vk::DescriptorImageInfo> infos;
       for (auto const &[view, sampler] : mTextures) {
@@ -614,8 +585,6 @@ uint32_t BatchRTRenderer::getSceneBindingCount(std::string const &name) const {
     count = mEnvironments.size();
   } else if (name == "Vertices" || name == "Indices") {
     count = mVertexBuffers.size();
-  } else if (name == "Materials") {
-    count = mMaterialBuffers.size();
   } else if (name == "textures") {
     count = mTextures.size();
   } else if (name == "Points") {
@@ -667,16 +636,14 @@ void BatchRTRenderer::refreshLightRows() {
   // lights concatenate in environment order; each environment names its [begin, end) range
   mLights.clear();
   auto textureIndex = [&](std::shared_ptr<resource::SVTexture> const &texture) {
-    texture->loadAsync().get();
-    texture->uploadToDevice(*mContext);
-    auto it = std::find_if(mTextures.begin(), mTextures.end(), [&](auto const &entry) {
-      return entry.first == texture->getImageView(*mContext);
-    });
-    if (it == mTextures.end()) {
+    auto [slot, added] =
+        mTextureSlots.try_emplace(texture.get(), static_cast<int>(mTextures.size()));
+    if (added) {
+      texture->loadAsync().get();
+      texture->uploadToDevice(*mContext);
       mTextures.emplace_back(texture->getImageView(*mContext), texture->getSampler(*mContext));
-      it = std::prev(mTextures.end());
     }
-    return static_cast<int>(std::distance(mTextures.begin(), it));
+    return slot->second;
   };
   for (size_t index = 0; index < mEnvironments.size(); ++index) {
     BatchEnvironmentRow &row = mEnvironmentRows.at(index);
@@ -690,6 +657,31 @@ void BatchRTRenderer::refreshLightRows() {
     row.spotLightEnd = static_cast<int>(mLights.spot.size());
     row.parallelogramLightEnd = static_cast<int>(mLights.parallelogram.size());
   }
+}
+
+void BatchRTRenderer::uploadMaterials() {
+  checkInitialized();
+  uint64_t version = resource::SVMetallicMaterial::getGlobalVersion();
+  if (version == mMaterialVersion) {
+    return;
+  }
+  std::vector<scene::GpuMaterial> records;
+  records.reserve(mMaterials.size());
+  for (auto const &material : mMaterials) {
+    records.push_back(scene::packMaterial(
+        *material, [&](std::shared_ptr<resource::SVTexture> const &texture) {
+          auto slot = mTextureSlots.find(texture.get());
+          if (slot == mTextureSlots.end()) {
+            throw std::runtime_error("a material of the batched ray tracing group samples a "
+                                     "texture the group did not use when it was initialized");
+          }
+          return slot->second;
+        }));
+  }
+  if (!records.empty()) {
+    mMaterialBuffer->upload(records);
+  }
+  mMaterialVersion = version;
 }
 
 void BatchRTRenderer::uploadSceneLightState() {

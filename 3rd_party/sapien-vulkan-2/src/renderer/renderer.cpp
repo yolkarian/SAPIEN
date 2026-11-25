@@ -1617,11 +1617,8 @@ bool Renderer::refreshMaterialsAndTextures() {
   mTextures.resize(1); // slot 0: the default texture
   mTextureIndices.clear();
 
-  // Register a texture in textures[] and return its slot; -1 for no texture.
+  // Register a texture in textures[] and return its slot.
   auto textureIndex = [&](std::shared_ptr<resource::SVTexture> const &t) -> int32_t {
-    if (!t) {
-      return -1;
-    }
     auto [it, inserted] =
         mTextureIndices.try_emplace(t.get(), static_cast<int32_t>(mTextures.size()));
     if (inserted) {
@@ -1632,7 +1629,7 @@ bool Renderer::refreshMaterialsAndTextures() {
     return it->second;
   };
 
-  std::vector<GPUMaterial> gpuMaterials;
+  std::vector<scene::GpuMaterial> gpuMaterials;
   for (auto obj : objects) {
     for (auto const &shape : obj->getModel()->getShapes()) {
       auto mat = std::static_pointer_cast<resource::SVMetallicMaterial>(shape->material);
@@ -1640,14 +1637,7 @@ bool Renderer::refreshMaterialsAndTextures() {
                .second) {
         continue;
       }
-      GPUMaterial &g = gpuMaterials.emplace_back();
-      std::memcpy(&g, &mat->getBuffer(), sizeof(resource::SVMetallicMaterial::Buffer));
-      g.baseColorTexture = textureIndex(mat->getBaseColorTexture());
-      g.roughnessTexture = textureIndex(mat->getRoughnessTexture());
-      g.normalTexture = textureIndex(mat->getNormalTexture());
-      g.metallicTexture = textureIndex(mat->getMetallicTexture());
-      g.emissionTexture = textureIndex(mat->getEmissionTexture());
-      g.transmissionTexture = textureIndex(mat->getTransmissionTexture());
+      gpuMaterials.push_back(scene::packMaterial(*mat, textureIndex));
       mMaterials.push_back(mat);
     }
   }
@@ -1661,7 +1651,10 @@ bool Renderer::refreshMaterialsAndTextures() {
           continue;
         }
         for (auto const &t : customTextures(*obj, name, elem)) {
-          if (t && t->getDescription().dim != 2) {
+          if (!t) {
+            continue;
+          }
+          if (t->getDescription().dim != 2) {
             throw std::runtime_error("render body texture \"" + name +
                                      "\" must be 2D: shaders sample per-object textures "
                                      "from textures[] (sampler2D)");
@@ -1685,13 +1678,13 @@ bool Renderer::refreshMaterialsAndTextures() {
     mMaterialCapacity =
         std::max({materialCount, mMaterialCapacity * 2, mContext->getMaxNumMaterials()});
     mMaterialBuffer = createSceneBuffer(
-        *mContext, sizeof(GPUMaterial) * mMaterialCapacity,
+        *mContext, sizeof(scene::GpuMaterial) * mMaterialCapacity,
         vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eUniformBuffer);
     writeBufferBinding(mContext->getDevice(), mGPUSceneSet.get(), 2,
                        vk::DescriptorType::eStorageBuffer, *mMaterialBuffer);
     writeBufferBinding(mContext->getDevice(), mGPUSceneSet.get(), 5,
                        vk::DescriptorType::eUniformBufferDynamic, *mMaterialBuffer,
-                       sizeof(GPUMaterial));
+                       sizeof(scene::GpuMaterial));
     rebound = true;
   }
   if (!gpuMaterials.empty()) {
@@ -1792,7 +1785,7 @@ void Renderer::bindSceneSet(vk::CommandBuffer commandBuffer, vk::PipelineLayout 
   if (instance < mInstances.size()) {
     offsets[0] = instance * mInstanceStride;
     if (auto const &material = mInstances[instance].material) {
-      offsets[1] = mMaterialIndices.at(material.get()) * sizeof(GPUMaterial);
+      offsets[1] = mMaterialIndices.at(material.get()) * sizeof(scene::GpuMaterial);
     }
   }
   commandBuffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, layout, set,
