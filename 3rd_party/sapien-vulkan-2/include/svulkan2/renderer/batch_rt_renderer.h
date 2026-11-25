@@ -50,48 +50,6 @@ struct BatchEnvironmentRow {
 };
 static_assert(sizeof(BatchEnvironmentRow) == 64);
 
-struct BatchPointLightRow {
-  glm::vec3 position;
-  float radius{0.f};
-  glm::vec3 rgb;
-  float padding{0.f};
-};
-static_assert(sizeof(BatchPointLightRow) == 32);
-
-struct BatchDirectionalLightRow {
-  glm::vec3 direction;
-  float softness{0.f};
-  glm::vec3 rgb;
-  float padding{0.f};
-};
-static_assert(sizeof(BatchDirectionalLightRow) == 32);
-
-struct BatchSpotLightRow {
-  glm::mat4 viewMat{1};
-  glm::mat4 projMat{1};
-  glm::vec3 rgb;
-  int padding0{0};
-  glm::vec3 position;
-  int padding1{0};
-  float fovInner{0.f};
-  float fovOuter{0.f};
-  int textureId{-1};
-  int padding2{0};
-};
-static_assert(sizeof(BatchSpotLightRow) == 176);
-
-struct BatchParallelogramLightRow {
-  glm::vec3 rgb;
-  float padding0{0.f};
-  glm::vec3 position;
-  float padding1{0.f};
-  glm::vec3 edge0;
-  float padding2{0.f};
-  glm::vec3 edge1;
-  float padding3{0.f};
-};
-static_assert(sizeof(BatchParallelogramLightRow) == 64);
-
 /** Group-level batched ray tracing: one command buffer and one queue submit render every camera
  *  of a camera group.
  *
@@ -230,10 +188,8 @@ private:
   std::unique_ptr<core::Buffer> mSpotLightBuffer;
   std::unique_ptr<core::Buffer> mParallelogramLightBuffer;
 
-  std::vector<BatchPointLightRow> mPointLightHost;
-  std::vector<BatchDirectionalLightRow> mDirectionalLightHost;
-  std::vector<BatchSpotLightRow> mSpotLightHost;
-  std::vector<BatchParallelogramLightRow> mParallelogramLightHost;
+  // every environment's lights, concatenated in environment order
+  scene::LightTable mLights;
 
   std::map<std::string, std::variant<int, float>> mProperties;
 

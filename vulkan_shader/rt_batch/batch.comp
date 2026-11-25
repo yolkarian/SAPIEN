@@ -50,7 +50,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 #include "../common/scene_structs.glsl"
 #include "../common/rt_geometry.glsl"
-#include "../common/rt_light.glsl"
+#include "../common/light_data.glsl"
 #include "../common/rt_point.glsl"
 #include "../common/bsdf.glsl"
 #include "../common/tonemapping.glsl"

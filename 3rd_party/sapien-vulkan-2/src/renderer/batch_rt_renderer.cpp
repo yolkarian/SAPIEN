@@ -435,16 +435,15 @@ void BatchRTRenderer::initialize(std::vector<std::shared_ptr<scene::Scene>> cons
   refreshLightRows();
   mEnvironmentBuffer = createStorage(mEnvironmentRows.data(),
                                      mEnvironmentRows.size() * sizeof(BatchEnvironmentRow));
-  mPointLightBuffer = createStorage(mPointLightHost.data(),
-                                    mPointLightHost.size() * sizeof(BatchPointLightRow));
-  mDirectionalLightBuffer =
-      createStorage(mDirectionalLightHost.data(),
-                    mDirectionalLightHost.size() * sizeof(BatchDirectionalLightRow));
+  mPointLightBuffer = createStorage(mLights.point.data(),
+                                    mLights.point.size() * sizeof(scene::GpuPointLight));
+  mDirectionalLightBuffer = createStorage(
+      mLights.directional.data(), mLights.directional.size() * sizeof(scene::GpuDirectionalLight));
   mSpotLightBuffer =
-      createStorage(mSpotLightHost.data(), mSpotLightHost.size() * sizeof(BatchSpotLightRow));
+      createStorage(mLights.spot.data(), mLights.spot.size() * sizeof(scene::GpuSpotLight));
   mParallelogramLightBuffer =
-      createStorage(mParallelogramLightHost.data(),
-                    mParallelogramLightHost.size() * sizeof(BatchParallelogramLightRow));
+      createStorage(mLights.parallelogram.data(),
+                    mLights.parallelogram.size() * sizeof(scene::GpuParallelogramLight));
 
   allocatePictures();
   buildPipeline();
@@ -666,77 +665,30 @@ void BatchRTRenderer::refreshEnvironmentRows() {
 
 void BatchRTRenderer::refreshLightRows() {
   // lights concatenate in environment order; each environment names its [begin, end) range
-  mPointLightHost.clear();
-  mDirectionalLightHost.clear();
-  mSpotLightHost.clear();
-  mParallelogramLightHost.clear();
-
+  mLights.clear();
+  auto textureIndex = [&](std::shared_ptr<resource::SVTexture> const &texture) {
+    texture->loadAsync().get();
+    texture->uploadToDevice(*mContext);
+    auto it = std::find_if(mTextures.begin(), mTextures.end(), [&](auto const &entry) {
+      return entry.first == texture->getImageView(*mContext);
+    });
+    if (it == mTextures.end()) {
+      mTextures.emplace_back(texture->getImageView(*mContext), texture->getSampler(*mContext));
+      it = std::prev(mTextures.end());
+    }
+    return static_cast<int>(std::distance(mTextures.begin(), it));
+  };
   for (size_t index = 0; index < mEnvironments.size(); ++index) {
-    auto const &scene = mEnvironments.at(index);
     BatchEnvironmentRow &row = mEnvironmentRows.at(index);
-
-    row.pointLightBegin = static_cast<int>(mPointLightHost.size());
-    for (auto *light : scene->getPointLights()) {
-      BatchPointLightRow entry{};
-      entry.position = light->getPosition();
-      entry.rgb = light->getColor();
-      mPointLightHost.push_back(entry);
-    }
-    row.pointLightEnd = static_cast<int>(mPointLightHost.size());
-
-    row.directionalLightBegin = static_cast<int>(mDirectionalLightHost.size());
-    for (auto *light : scene->getDirectionalLights()) {
-      BatchDirectionalLightRow entry{};
-      entry.direction = light->getDirection();
-      entry.softness = light->getSoftness();
-      entry.rgb = light->getColor();
-      mDirectionalLightHost.push_back(entry);
-    }
-    row.directionalLightEnd = static_cast<int>(mDirectionalLightHost.size());
-
-    row.spotLightBegin = static_cast<int>(mSpotLightHost.size());
-    auto appendSpot = [&](scene::SpotLight *light, std::shared_ptr<resource::SVTexture> texture) {
-      BatchSpotLightRow entry{};
-      entry.viewMat = glm::affineInverse(light->getTransform().worldModelMatrix);
-      entry.projMat = light->getShadowProjectionMatrix();
-      entry.rgb = light->getColor();
-      entry.position = light->getPosition();
-      entry.fovInner = light->getFovSmall();
-      entry.fovOuter = light->getFov();
-      if (texture) {
-        texture->loadAsync().get();
-        texture->uploadToDevice(*mContext);
-        auto it = std::find_if(mTextures.begin(), mTextures.end(),
-                               [&](auto const &entry2) {
-                                 return entry2.first == texture->getImageView(*mContext);
-                               });
-        if (it == mTextures.end()) {
-          mTextures.emplace_back(texture->getImageView(*mContext),
-                                 texture->getSampler(*mContext));
-          it = std::prev(mTextures.end());
-        }
-        entry.textureId = static_cast<int>(std::distance(mTextures.begin(), it));
-      }
-      mSpotLightHost.push_back(entry);
-    };
-    for (auto *light : scene->getSpotLights()) {
-      appendSpot(light, nullptr);
-    }
-    for (auto *light : scene->getTexturedLights()) {
-      appendSpot(light, light->getTexture());
-    }
-    row.spotLightEnd = static_cast<int>(mSpotLightHost.size());
-
-    row.parallelogramLightBegin = static_cast<int>(mParallelogramLightHost.size());
-    for (auto *light : scene->getParallelogramLights()) {
-      BatchParallelogramLightRow entry{};
-      entry.rgb = light->getColor();
-      entry.position = light->getOrigin();
-      entry.edge0 = light->getEdgeX();
-      entry.edge1 = light->getEdgeY();
-      mParallelogramLightHost.push_back(entry);
-    }
-    row.parallelogramLightEnd = static_cast<int>(mParallelogramLightHost.size());
+    row.pointLightBegin = static_cast<int>(mLights.point.size());
+    row.directionalLightBegin = static_cast<int>(mLights.directional.size());
+    row.spotLightBegin = static_cast<int>(mLights.spot.size());
+    row.parallelogramLightBegin = static_cast<int>(mLights.parallelogram.size());
+    mLights.append(*mEnvironments.at(index), textureIndex);
+    row.pointLightEnd = static_cast<int>(mLights.point.size());
+    row.directionalLightEnd = static_cast<int>(mLights.directional.size());
+    row.spotLightEnd = static_cast<int>(mLights.spot.size());
+    row.parallelogramLightEnd = static_cast<int>(mLights.parallelogram.size());
   }
 }
 
@@ -758,14 +710,14 @@ void BatchRTRenderer::uploadSceneLightState() {
     }
   }
 
-  mPointLightBuffer->upload(mPointLightHost.data(),
-                            mPointLightHost.size() * sizeof(BatchPointLightRow));
-  mDirectionalLightBuffer->upload(mDirectionalLightHost.data(),
-                                  mDirectionalLightHost.size() * sizeof(BatchDirectionalLightRow));
-  mSpotLightBuffer->upload(mSpotLightHost.data(), mSpotLightHost.size() * sizeof(BatchSpotLightRow));
-  mParallelogramLightBuffer->upload(mParallelogramLightHost.data(),
-                                    mParallelogramLightHost.size() *
-                                        sizeof(BatchParallelogramLightRow));
+  mPointLightBuffer->upload(mLights.point.data(),
+                            mLights.point.size() * sizeof(scene::GpuPointLight));
+  mDirectionalLightBuffer->upload(mLights.directional.data(),
+                                  mLights.directional.size() * sizeof(scene::GpuDirectionalLight));
+  mSpotLightBuffer->upload(mLights.spot.data(), mLights.spot.size() * sizeof(scene::GpuSpotLight));
+  mParallelogramLightBuffer->upload(mLights.parallelogram.data(),
+                                    mLights.parallelogram.size() *
+                                        sizeof(scene::GpuParallelogramLight));
   mEnvironmentBuffer->upload(mEnvironmentRows.data(),
                              mEnvironmentRows.size() * sizeof(BatchEnvironmentRow));
 }

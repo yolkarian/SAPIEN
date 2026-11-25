@@ -1,1 +1,1 @@
-#include "../common/rt_light.glsl"
+#include "../common/light_data.glsl"

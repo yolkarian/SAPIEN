@@ -1,12 +1,14 @@
 #pragma once
 #include "camera.h"
 #include "light.h"
+#include "light_data.h"
 #include "node.h"
 #include "object.h"
 #include "svulkan2/core/as.h"
 #include "svulkan2/core/command_pool.h"
 #include "svulkan2/core/context.h"
 #include <memory>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -269,51 +271,10 @@ protected:
   std::vector<vk::Buffer> mPointSetBuffers;
   std::unique_ptr<core::Buffer> mPointInstanceBuffer;
 
-  struct RTPointLight {
-    glm::vec3 position;
-    float radius;
-    glm::vec3 rgb;
-    float padding;
-  };
-  static_assert(sizeof(RTPointLight) == 32);
-
-  struct RTDirectionalLight {
-    glm::vec3 direction;
-    float softness;
-    glm::vec3 rgb;
-    float padding;
-  };
-  static_assert(sizeof(RTDirectionalLight) == 32);
-
-  struct RTSpotLight {
-    glm::mat4 viewMat;
-    glm::mat4 projMat;
-    glm::vec3 rgb;
-    int padding0;
-    glm::vec3 position;
-    int padding1;
-    float fovInner;
-    float fovOuter;
-    int textureId;
-    int padding2;
-  };
-  static_assert(sizeof(RTSpotLight) == 176);
-
-  struct RTParallelogramLight {
-    glm::vec3 color;
-    float padding0;
-    glm::vec3 position;
-    float padding1;
-    glm::vec3 edge0;
-    float padding2;
-    glm::vec3 edge1;
-    float padding3;
-  };
-
-  std::vector<RTPointLight> mRTPointLightBufferHost;
-  std::vector<RTDirectionalLight> mRTDirectionalLightBufferHost;
-  std::vector<RTSpotLight> mRTSpotLightBufferHost;
-  std::vector<RTParallelogramLight> mRTParallelogramLightBufferHost;
+  // lights in the layout of common/light_data.glsl; textured lights index mTextures
+  LightTable mRTLights;
+  std::unordered_map<resource::SVTexture const *, int> mRTLightTextureIds;
+  void writeRTLightBuffers();
 
   std::unique_ptr<core::Buffer> mRTPointLightBuffer;
   std::unique_ptr<core::Buffer> mRTDirectionalLightBuffer;
