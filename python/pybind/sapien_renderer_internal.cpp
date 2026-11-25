@@ -597,14 +597,22 @@ void init_sapien_renderer_internal(py::module &parent) {
       .def(
           "create_material",
           [](core::Context &, py::array_t<float> emission, py::array_t<float> baseColor,
-             float fresnel, float roughness, float metallic, float transmission, float ior) {
-            return resource::SVResourceManager::Get()->createMetallicMaterial(
-                {emission.at(0), emission.at(1), emission.at(2), emission.at(3)},
-                {baseColor.at(0), baseColor.at(1), baseColor.at(2), baseColor.at(3)}, fresnel,
-                roughness, metallic, transmission, ior);
+             float specularWeight, float roughness, float metallic, float transmission, float ior) {
+            auto material = std::make_shared<resource::SVMetallicMaterial>();
+            material->setEmission(
+                {emission.at(0), emission.at(1), emission.at(2), emission.at(3)});
+            material->setBaseColor(
+                {baseColor.at(0), baseColor.at(1), baseColor.at(2), baseColor.at(3)});
+            material->setSpecularWeight(specularWeight);
+            material->setRoughness(roughness);
+            material->setMetallic(metallic);
+            material->setTransmission(transmission);
+            material->setIor(ior);
+            return material;
           },
-          py::arg("emission"), py::arg("base_color"), py::arg("specular"), py::arg("roughness"),
-          py::arg("metallic"), py::arg("transmission") = 0.f, py::arg("ior") = 1.01f)
+          py::arg("emission"), py::arg("base_color"), py::arg("specular_weight"),
+          py::arg("roughness"), py::arg("metallic"), py::arg("transmission") = 0.f,
+          py::arg("ior") = 1.5f)
       .def(
           "create_model_from_file",
           [](core::Context &, std::string const &filename) {
@@ -741,21 +749,41 @@ void init_sapien_renderer_internal(py::module &parent) {
           py::arg("vertices"), py::arg("colors"));
 
   PyMaterial
-      .def("set_textures", &resource::SVMetallicMaterial::setTextures,
-           py::arg("base_color") = nullptr, py::arg("roughness") = nullptr,
-           py::arg("normal") = nullptr, py::arg("metallic") = nullptr,
-           py::arg("emission") = nullptr, py::arg("transmission") = nullptr)
+      .def(
+          "set_textures",
+          [](resource::SVMetallicMaterial &mat, std::shared_ptr<resource::SVTexture> baseColor,
+             std::shared_ptr<resource::SVTexture> roughness,
+             std::shared_ptr<resource::SVTexture> normal,
+             std::shared_ptr<resource::SVTexture> metallic,
+             std::shared_ptr<resource::SVTexture> emission,
+             std::shared_ptr<resource::SVTexture> transmission) {
+            mat.setTexture(resource::SVMetallicMaterial::eBaseColor, baseColor);
+            mat.setTexture(resource::SVMetallicMaterial::eRoughness, roughness);
+            mat.setTexture(resource::SVMetallicMaterial::eNormal, normal);
+            mat.setTexture(resource::SVMetallicMaterial::eMetallic, metallic);
+            mat.setTexture(resource::SVMetallicMaterial::eEmission, emission);
+            mat.setTexture(resource::SVMetallicMaterial::eTransmission, transmission);
+          },
+          py::arg("base_color") = nullptr, py::arg("roughness") = nullptr,
+          py::arg("normal") = nullptr, py::arg("metallic") = nullptr,
+          py::arg("emission") = nullptr, py::arg("transmission") = nullptr)
       .def(
           "set_base_color",
           [](resource::SVMetallicMaterial &mat, py::array_t<float> color) {
             mat.setBaseColor({color.at(0), color.at(1), color.at(2), color.at(3)});
           },
           py::arg("rgba"))
-      .def("set_specular", &resource::SVMetallicMaterial::setFresnel, py::arg("specular"))
+      .def("set_specular_weight", &resource::SVMetallicMaterial::setSpecularWeight,
+           py::arg("weight"))
       .def("set_metallic", &resource::SVMetallicMaterial::setMetallic, py::arg("metallic"))
       .def("set_roughness", &resource::SVMetallicMaterial::setRoughness, py::arg("roughness"))
-      .def("set_emission", &resource::SVMetallicMaterial::setRoughness, py::arg("emission"))
-      .def("set_transmission", &resource::SVMetallicMaterial::setRoughness,
+      .def(
+          "set_emission",
+          [](resource::SVMetallicMaterial &mat, py::array_t<float> emission) {
+            mat.setEmission({emission.at(0), emission.at(1), emission.at(2), emission.at(3)});
+          },
+          py::arg("emission"))
+      .def("set_transmission", &resource::SVMetallicMaterial::setTransmission,
            py::arg("transmission"));
 
   PyScene

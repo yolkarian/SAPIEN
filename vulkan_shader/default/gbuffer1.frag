@@ -36,21 +36,20 @@ layout(location = 2) out uvec4 outSegmentation;
 layout(location = 3) out vec4 outPositionRaw;
 
 void main() {
-  int textureMask = material.textureMask;
   outSegmentation = inSegmentation;
 
   vec4 emission;
   vec4 albedo;
   vec4 frm;
 
-  emission = material.emission;
-  if ((material.textureMask & 16) != 0) {
-    emission.rgb *= texture(textures[nonuniformEXT(material.emissionTexture)], inUV * material.textureTransforms[4].zw + material.textureTransforms[4].xy).rgb;
+  emission = vec4(material.emissionColor, material.emissionStrength);
+  if (material.emissionTexture >= 0) {
+    emission.rgb *= texture(textures[nonuniformEXT(material.emissionTexture)], materialUV(material.textureTransforms[4], inUV)).rgb;
   }
 
   albedo = material.baseColor;
-  if ((material.textureMask & 1) != 0) {
-    albedo *= texture(textures[nonuniformEXT(material.baseColorTexture)], inUV * material.textureTransforms[0].zw + material.textureTransforms[0].xy);
+  if (material.baseColorTexture >= 0) {
+    albedo *= texture(textures[nonuniformEXT(material.baseColorTexture)], materialUV(material.textureTransforms[0], inUV));
   }
 
   albedo.a *=  (1.f - instance.transparency);
@@ -58,24 +57,31 @@ void main() {
   if (albedo.a == 0) {
     discard;
   }
+  albedo.rgb *= material.baseWeight;
 
-  frm.r = material.fresnel * 0.08;
+  // the coat over the base lowers the IOR contrast of the base's interface
+  frm.r = materialDielectricF0(material.ior / mix(1.0, material.coatIor, material.coatWeight),
+                               material.specularWeight);
 
-  if ((material.textureMask & 2) != 0) {
-    frm.g = texture(textures[nonuniformEXT(material.roughnessTexture)], inUV * material.textureTransforms[1].zw + material.textureTransforms[1].xy).r;
+  if (material.roughnessTexture >= 0) {
+    frm.g = texture(textures[nonuniformEXT(material.roughnessTexture)], materialUV(material.textureTransforms[1], inUV)).r;
   } else {
     frm.g = material.roughness;
   }
 
-  if ((material.textureMask & 8) != 0) {
-    frm.b = texture(textures[nonuniformEXT(material.metallicTexture)], inUV * material.textureTransforms[3].zw + material.textureTransforms[3].xy).r;
+  if (material.metallicTexture >= 0) {
+    frm.b = texture(textures[nonuniformEXT(material.metallicTexture)], materialUV(material.textureTransforms[3], inUV)).r;
   } else {
     frm.b = material.metallic;
   }
 
+  OpenPBR m = openpbrSurface(material, albedo.rgb, frm.b, frm.g, 0.0, false);
+  frm.g = sapienRasterRoughness(m, frm.g, material.specularAnisotropy);
+  bool layered = openpbrHasLayers(m);
+
   if (instance.shadeFlat == 0) {
-    if ((material.textureMask & 4) != 0) {
-      outNormal = vec4(normalize(inTbn * (texture(textures[nonuniformEXT(material.normalTexture)], inUV * material.textureTransforms[2].zw + material.textureTransforms[2].xy).xyz * 2 - 1)), 0);
+    if (material.normalTexture >= 0) {
+      outNormal = vec4(normalize(inTbn * (texture(textures[nonuniformEXT(material.normalTexture)], materialUV(material.textureTransforms[2], inUV)).xyz * 2 - 1)), 0);
     } else {
       outNormal = vec4(normalize(inTbn * vec3(0, 0, 1)), 0);
     }
@@ -101,23 +107,47 @@ void main() {
   vec3 camDir = -normalize(csPosition.xyz);
 
   vec3 diffuseAlbedo = albedo.rgb * (1 - metallic);
-  vec3 fresnel = specular * (1 - metallic) + albedo.rgb * metallic;
+  vec3 fresnel = sapienBaseFresnel(m, albedo.rgb, specular, metallic);
 
   vec3 color = emission.rgb * emission.a;
+  if (layered) {
+    color *= openpbrEmissionFactor(m, clamp(dot(normal, camDir), 1e-6, 1.0));
+  }
 
   sapienAddDirectLighting(color, csPosition.xyz, normal, camDir, diffuseAlbedo, roughness,
-                          fresnel, true);
+                          fresnel, m, true);
 
+  // the material's occlusion texture darkens the indirect light, like the deferred pass
+  float occlusion = 1.0;
+  if (material.occlusionTexture >= 0) {
+    occlusion = texture(textures[nonuniformEXT(material.occlusionTexture)],
+                        materialUV(material.textureTransforms[6], inUV)).r;
+  }
   vec3 wnormal = mat3(cameraBuffer.viewMatrixInverse) * normal;
   vec3 worldCamDir = mat3(cameraBuffer.viewMatrixInverse) * camDir;
   float dotNV = clamp(dot(wnormal, worldCamDir), 0.0, 1.0);
   vec3 environmentFresnel =
       sapienFresnelSchlickRoughness(fresnel, roughness, dotNV);
-  color += sapienDiffuseIBL((1.0 - environmentFresnel) * diffuseAlbedo, wnormal);
-  color += sapienSpecularIBL(fresnel, roughness, wnormal, worldCamDir);
-
-  color += sceneBuffer.ambientLight.rgb *
-           (1.0 - environmentFresnel) * diffuseAlbedo;
+  vec3 diffuseIndirect =
+      occlusion * sapienDiffuseIBL((1.0 - environmentFresnel) * diffuseAlbedo, wnormal);
+  vec3 specularIndirect = mix(1.0, occlusion, roughness) *
+                          sapienSpecularIBL(fresnel, roughness, wnormal, worldCamDir);
+  vec3 ambientIndirect = occlusion * sceneBuffer.ambientLight.rgb *
+                         (1.0 - environmentFresnel) * diffuseAlbedo;
+  if (layered) {
+    float coatRoughness = sqrt(m.coatAlpha);
+    vec3 irradiance =
+        occlusion * (sapienDiffuseIBL(vec3(1.0), wnormal) + sceneBuffer.ambientLight.rgb);
+    vec3 coatReflection = mix(1.0, occlusion, coatRoughness) *
+                          sapienSpecularIBL(vec3(sapienCoatF0(m)), coatRoughness, wnormal,
+                                            worldCamDir);
+    color += sapienLayeredIndirect(diffuseIndirect + specularIndirect + ambientIndirect, m,
+                                   max(dotNV, 1e-6), irradiance, coatReflection);
+  } else {
+    color += diffuseIndirect;
+    color += specularIndirect;
+    color += ambientIndirect;
+  }
 
   outLighting = vec4(color, albedo.a);
 }

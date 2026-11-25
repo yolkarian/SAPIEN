@@ -4,6 +4,29 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+Materials follow the first batch of OpenPBR Surface 1.1:
+
+- **Breaking:** `RenderMaterial(specular=...)` and `.specular` are gone. Use `specular_weight`,
+  which scales the normal-incidence reflectance of `ior`; `specular=s` is `specular_weight=2*s`
+  at the new default `ior=1.5` (was 1.45). `transmission_roughness` is removed.
+- New `RenderMaterial` members: `base_weight`, `specular_weight`, `specular_color`,
+  `specular_roughness_anisotropy`, `transmission_color`, `transmission_depth` (scene units),
+  `coat_weight`, `coat_color`, `coat_roughness`, `coat_ior`, `fuzz_weight`, `fuzz_color`,
+  `fuzz_roughness`, `thin_walled`, `occlusion_texture`. `metallic`, `roughness`, `ior`,
+  `transmission`, `base_color` and `emission` keep their meaning.
+- **Behavior change (`rt`, `shadow_catcher`):** base-colour alpha is coverage, so a glass made
+  with `base_color` alpha now looks cut-out; use `transmission=1.0` (and
+  `transmission_color`). Transmission is tinted by `transmission_color`, not the base colour.
+  Coat, fuzz, anisotropy, specular colour, thin walls and `transmission_depth` absorption are
+  shaded by the path tracers and by `rt_batch`'s `pbr` tier (direct light). The raster packs
+  shade coat, fuzz and specular colour over their base BRDF (anisotropy averaged into the
+  roughness, no transmission) and the occlusion texture; materials without coat or fuzz render
+  as before. Deferred raster packs have a new `uvec4` picture `Material` (packed layers).
+- Custom packs: `Material` (`common/material.glsl`) is 512 bytes; `fresnel`, `textureMask`
+  and `emission` became `specularWeight` (with `ior`), slot tests (`material.xTexture >= 0`)
+  and `emissionColor`/`emissionStrength`. `common/bsdf.glsl` is replaced by
+  `common/openpbr.glsl`.
+
 Rasterization lights have no fixed limit:
 
 - **Behavior change:** the built-in raster packs draw every light of the scene instead of at

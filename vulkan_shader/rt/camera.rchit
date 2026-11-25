@@ -80,75 +80,45 @@ void main() {
     worldShadingNormal = -worldShadingNormal;
 
   Material mat = materials.m[materialIndex];
-  vec3 baseColor = mat.baseColor.rgb;
-  float alpha = mat.baseColor.a;
-  if (mat.baseColorTexture >= 0) {
-    vec4 c = texture(textures[nonuniformEXT(mat.baseColorTexture)],
-                      uv * mat.textureTransforms[0].zw + mat.textureTransforms[0].xy);
-    baseColor *= c.rgb;
-    alpha *= c.a;
-  }
+  vec4 base = mat.baseColor;
+  if (mat.baseColorTexture >= 0)
+    base *= texture(textures[nonuniformEXT(mat.baseColorTexture)],
+                    materialUV(mat.textureTransforms[0], uv));
   float metallic = mat.metallic;
   if (mat.metallicTexture >= 0)
     metallic = texture(textures[nonuniformEXT(mat.metallicTexture)],
-                       uv * mat.textureTransforms[3].zw + mat.textureTransforms[3].xy).x;
+                       materialUV(mat.textureTransforms[3], uv)).x;
   float roughness = mat.roughness;
   if (mat.roughnessTexture >= 0)
     roughness = texture(textures[nonuniformEXT(mat.roughnessTexture)],
-                        uv * mat.textureTransforms[1].zw + mat.textureTransforms[1].xy).x;
-  roughness = clamp(roughness, 0.045, 1.0);
+                        materialUV(mat.textureTransforms[1], uv)).x;
   vec3 texNormal = vec3(0.0, 0.0, 1.0);
   if (mat.normalTexture >= 0)
     texNormal = normalize(texture(textures[nonuniformEXT(mat.normalTexture)],
-                                  uv * mat.textureTransforms[2].zw + mat.textureTransforms[2].xy).xyz * 2.0 - 1.0);
-  vec3 emission = mat.emission.rgb;
-  float strength = mat.emission.a;
+                                  materialUV(mat.textureTransforms[2], uv)).xyz * 2.0 - 1.0);
+  vec3 emission = mat.emissionColor * mat.emissionStrength;
   if (mat.emissionTexture >= 0)
     emission *= texture(textures[nonuniformEXT(mat.emissionTexture)],
-                        uv * mat.textureTransforms[4].zw + mat.textureTransforms[4].xy).rgb;
-  emission *= strength;
-  float transmission = mat.transmission;
+                        materialUV(mat.textureTransforms[4], uv)).rgb;
+  float transmission = mat.transmissionWeight;
   if (mat.transmissionTexture >= 0)
     transmission = texture(textures[nonuniformEXT(mat.transmissionTexture)],
-                           uv * mat.textureTransforms[5].zw + mat.textureTransforms[5].xy).x;
+                           materialUV(mat.textureTransforms[5], uv)).x;
 
-  // Stochastic transparency of path rays: go on in the same direction. The MIS state still
-  // belongs to the vertex the ray left.
-  if (rnd(ray.seed) < obj.transparency) {
+  // A segment inside a translucent body crossed its absorbing medium (transmission_depth).
+  vec3 absorbed = isInside ? exp(-openpbrAbsorption(mat) * gl_HitTEXT) : vec3(1.0);
+
+  // geometry_opacity and object transparency: the uncovered part lets the path ray go straight
+  // on. The MIS state still belongs to the vertex the ray left.
+  float coverage = clamp(base.a, 0.0, 1.0) * (1.0 - clamp(obj.transparency, 0.0, 1.0));
+  if (rnd(ray.seed) >= coverage) {
     ray.origin = worldPosition;
-    ray.attenuation = vec3(1.0);
+    ray.attenuation = absorbed;
     ray.normal = worldShadingNormal;
-    ray.albedo = baseColor;
+    ray.albedo = base.rgb;
     ray.segmentation = obj.segmentation;
     ray.radiance = vec3(0.0);
     return;
-  }
-
-  float specular = max(mat.fresnel, 0.0);
-  transmission = clamp(transmission, 0.0, 1.0);
-  transmission = 1.0 - clamp(alpha, 0.0, 1.0) * (1.0 - transmission);
-  metallic = clamp(metallic, 0.0, 1.0);
-  float ior = clamp(mat.ior, 1.01, 4.0);
-  float diffuseWeight = (1.0 - metallic) * (1.0 - transmission);
-  transmission = (1.0 - metallic) * transmission;
-  vec3 specularColor = (specular * 0.08) * (1.0 - metallic) + baseColor * metallic;
-  vec3 diffuseColor = baseColor * diffuseWeight;
-
-  float diffuseProb = maxVec3(diffuseColor);
-  float specularProb = maxVec3(specularColor);
-  float transmissionProb = transmission;
-  float total = diffuseProb + specularProb + transmissionProb;
-  if (total > 1e-6) {
-    diffuseProb /= total; specularProb /= total; transmissionProb /= total;
-  } else {
-    diffuseProb = specularProb = transmissionProb = 0.0;
-  }
-  if (total > 1e-6) {
-    if (diffuseProb > 1e-6) diffuseProb += 0.1;
-    if (specularProb > 1e-6) specularProb += 0.1;
-    if (transmissionProb > 1e-6) transmissionProb += 0.1;
-    total = diffuseProb + specularProb + transmissionProb;
-    diffuseProb /= total; specularProb /= total; transmissionProb /= total;
   }
 
   vec3 V = normalize(-ray.direction);
@@ -166,47 +136,22 @@ void main() {
   worldTangent -= worldShadingNormal * dot(worldShadingNormal, worldTangent);
   worldTangent = normalize(worldTangent);
   worldShadingBitangent = normalize(cross(worldShadingNormal, worldTangent));
-  tbn = mat3(worldTangent, worldShadingBitangent, worldShadingNormal);
-  float eta = isInside ? ior : (1.0 / ior);
 
-  Surface s;
-  s.pos = worldPosition;
-  s.N = worldShadingNormal;
-  s.Ng = worldGeometricNormal;
-  s.V = V;
-  s.baseColor = baseColor;
-  s.diffuseColor = diffuseColor;
-  s.specularColor = specularColor;
-  s.roughness = roughness;
-  s.transmissionWeight = transmission;
-  s.eta = eta;
-  s.diffuseProb = diffuseProb;
-  s.specularProb = specularProb;
-  s.transmissionProb = transmissionProb;
+  OpenPBR m = openpbrSurface(mat, base.rgb, metallic, roughness, transmission, isInside);
+  Surface s = makeSurface(worldPosition, worldTangent, worldShadingBitangent, worldShadingNormal,
+                          worldGeometricNormal, V, m);
 
   // emission found by this ray, weighted against light-sampling it from the previous vertex
   float emissionWeight = bsdfHitWeight(
       ray.bsdfPdf, hitEmissiveLightPdf(instanceId, gl_ObjectToWorldEXT * vec4(p0, 1.0),
                                        gl_ObjectToWorldEXT * vec4(p1, 1.0),
                                        gl_ObjectToWorldEXT * vec4(p2, 1.0), worldPosition));
-  ray.radiance = emission * emissionWeight + estimateDirect(s);
-
-  float rand = rnd(ray.seed);
-  vec3 attenuation = vec3(0.0);
-  vec3 L = worldShadingNormal;
-  if (diffuseProb > 1e-5 && rand <= diffuseProb) {
-    sampleDiffuse(ray.seed, tbn, V, diffuseColor, L, attenuation);
-    attenuation /= diffuseProb;
-  } else if (specularProb > 1e-5 && rand <= diffuseProb + specularProb) {
-    sampleGGXReflection(ray.seed, tbn, V, roughness, specularColor, L, attenuation);
-    attenuation /= specularProb;
-  } else if (transmissionProb > 1e-5) {
-    sampleGGXTransmission(ray.seed, tbn, V, eta, roughness, L, attenuation);
-    attenuation *= transmission / transmissionProb * baseColor;
-  }
-  setContinuation(s, L);
-  ray.attenuation = attenuation;
+  ray.radiance = (emission * openpbrEmissionFactor(m, s.wo.z) * emissionWeight +
+                  estimateDirect(s)) *
+                 absorbed;
+  sampleBsdf(s);
+  ray.attenuation *= absorbed;
   ray.normal = worldShadingNormal;
-  ray.albedo = baseColor;
+  ray.albedo = base.rgb;
   ray.segmentation = obj.segmentation;
 }

@@ -71,7 +71,7 @@ def _default_ground_render_material(
 
     material = sapien.render.RenderMaterial(
         base_color=[1.0, 1.0, 1.0, 1.0],
-        specular=0.5,
+        specular_weight=1.0,
         roughness=0.6,
     )
     material.base_color_texture = texture

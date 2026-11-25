@@ -219,9 +219,10 @@ scene.add_directional_light(
 )
 ```
 
-`RenderMaterial()` defaults to a neutral white dielectric with `specular=0.5`
-and `roughness=0.45`, so adding a color or color texture retains a useful PBR
-response. Primitive visuals that omit a material use a light blue-gray variant.
+`RenderMaterial()` defaults to a neutral white dielectric with `specular_weight=1.0`,
+`ior=1.5` (a normal-incidence reflectance of 0.04) and `roughness=0.45`, so adding a color or
+color texture retains a useful PBR response. Primitive visuals that omit a material use a
+light blue-gray variant.
 `Scene.add_ground` and `Scene.add_heightfield` instead use a subtle mipmapped
 checker with `roughness=0.6` for scale cues and broader floor reflections.
 Explicit render materials are never modified.
@@ -357,14 +358,18 @@ fields are slots of the bindless `textures[]`, `-1` for none:
 Material mat = materials.m[geometryInstances.i[instanceId].materialIndex];
 vec4 albedo = mat.baseColor;
 if (mat.baseColorTexture >= 0)
-  albedo *= texture(textures[nonuniformEXT(mat.baseColorTexture)], uv);
+  albedo *= texture(textures[nonuniformEXT(mat.baseColorTexture)],
+                    materialUV(mat.textureTransforms[0], uv));
 ```
 
-`batch.comp` declares the same `Materials` block (binding 5 of its scene set).
-Editing a material restarts accumulation. Giving a material a texture none of the
-scene's materials used before rebuilds the scene's ray-tracing tables before the
-next frame; a batched group cannot grow its `textures[]` after `gpu_init()` and
-raises `RuntimeError` instead.
+`common/openpbr.glsl` turns a record into OpenPBR shading parameters
+(`openpbrSurface`) and evaluates (`openpbrEvalReflection`), samples (`openpbrSample`) and
+gives the pdf (`openpbrPdfReflection`) of its lobes in a local shading frame; the `rt`,
+`shadow_catcher` and `rt_batch` packs all shade with it. `batch.comp` declares the same
+`Materials` block (binding 5 of its scene set). Editing a material restarts accumulation.
+Giving a material a texture none of the scene's materials used before rebuilds the scene's
+ray-tracing tables before the next frame; a batched group cannot grow its `textures[]`
+after `gpu_init()` and raises `RuntimeError` instead.
 
 ## Post-processing passes
 
@@ -483,8 +488,10 @@ camera group because it selects shader source:
 
 - `visibility` (`SHADING_VISIBILITY`) — primary ray only; albedo, depth, normal, position,
   segmentation.
-- `lambert` (`SHADING_LAMBERT`, the default) — emission + albedo·(ambient + Σ lights N·L).
-- `pbr` (`SHADING_PBR`) — adds the GGX specular lobe of `common/bsdf.glsl`.
+- `lambert` (`SHADING_LAMBERT`, the default) — emission + the base's diffuse lobe under the
+  ambient light and every light.
+- `pbr` (`SHADING_PBR`) — every lobe of the OpenPBR material (`common/openpbr.glsl`): fuzz,
+  coat, metal, specular and diffuse.
 
 ```python
 config = sapien.render.RenderConfig("rt_batch", preset="pbr")
@@ -496,9 +503,9 @@ The `shadows` bool variant casts a hard shadow ray for each of the first
 `maxShadowLights` (default 4) lights facing the surface point; later lights are
 unshadowed. The `spp` uniform supersamples the primary ray with a fixed,
 deterministic Halton pattern; there is no accumulation and no denoiser, and there is
-no `SPP` preprocessor definition. The pure BSDF functions live in
-`vulkan_shader/common/bsdf.glsl`, shared with the `rt` pack, so a custom batched pack
-and the `rt` pack shade identically when they use the same tier.
+no `SPP` preprocessor definition. The BSDF lives in `vulkan_shader/common/openpbr.glsl`,
+shared with the `rt` pack, so a custom batched pack and the `rt` pack shade a surface under
+a light identically.
 
 ## Changing target formats
 
@@ -566,8 +573,23 @@ if (material.baseColorTexture >= 0)
   albedo *= texture(textures[nonuniformEXT(material.baseColorTexture)], uv);
 ```
 
-`Material` is 256 bytes: the first 160 bytes are the previous `MaterialBuffer`, followed by
-six texture indices (`-1` = none) and a reserved tail. `textures[]` has `max_num_textures`
+`Material` is 512 bytes (`common/material.glsl`, `svulkan2/scene/material_data.h`): the first
+batch of the OpenPBR Surface 1.1 parameters, seven texture slots (`-1` = none; base colour,
+roughness, normal, metallic, emission, transmission, occlusion) with their UV transforms, and
+a reserved tail for the OpenPBR parameters to come. Read a texture's UV with
+`materialUV(material.textureTransforms[slot], uv)`.
+
+The rasterization packs (`common/raster_material.glsl`) keep their base BRDF (Lambert plus
+GGX) with the base colour times `baseWeight` and the F0 `materialDielectricF0` of `ior` and
+`specularWeight` tinted by `specularColor` (or the base colour scaled by `specularWeight` for
+metals), and lay the OpenPBR fuzz and coat of `common/openpbr.glsl` over it by albedo scaling,
+for every light and for the image-based and ambient light; a material without coat or fuzz
+takes exactly the base path. Anisotropy is averaged into the roughness, and transmission is
+shaded by the ray-tracing packs only. The occlusion texture darkens the ambient and
+image-based light. The deferred packs carry the occlusion in the alpha channel of `Specular`
+and the rest in the `uvec4` target `Material` (`sapienPackMaterial` in the G-buffer pass,
+`sapienUnpackMaterial` in the lighting pass, sampled as `usampler2D samplerMaterial`); a
+custom deferred pack that wants the layers declares both. `textures[]` has `max_num_textures`
 slots (`sapien.render.set_global_config`, default 512); slot 0 always holds the white
 default texture, and a scene that needs more distinct textures raises `RuntimeError`.
 `materials[]` grows with the scene. Line and point sets have no material.

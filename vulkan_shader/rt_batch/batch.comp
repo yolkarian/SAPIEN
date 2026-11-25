@@ -26,8 +26,8 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 
 // Shading tier. SHADING_VISIBILITY traces the primary ray and reports albedo, depth, normal,
 // position and segmentation only. SHADING_LAMBERT (the default) adds emission, the ambient term
-// and a diffuse N.L sum over the environment's lights. SHADING_PBR adds the GGX specular lobe of
-// common/bsdf.glsl to the direct lights and to the ambient term.
+// and the diffuse lobe of the base under the environment's lights. SHADING_PBR evaluates every
+// lobe of the OpenPBR material (common/openpbr.glsl) for the direct lights and the ambient term.
 #if !defined(SHADING_VISIBILITY) && !defined(SHADING_LAMBERT) && !defined(SHADING_PBR)
 #define SHADING_LAMBERT
 #endif
@@ -52,7 +52,7 @@ layout(local_size_x = 8, local_size_y = 8, local_size_z = 1) in;
 #include "../common/rt_geometry.glsl"
 #include "../common/light_data.glsl"
 #include "../common/rt_point.glsl"
-#include "../common/bsdf.glsl"
+#include "../common/openpbr.glsl"
 #include "../common/tonemapping.glsl"
 
 
@@ -252,14 +252,9 @@ struct Surface {
   vec3 tangent;
   vec3 bitangent;
   vec2 uv;
-  vec3 baseColor;
+  vec3 baseColor; // the textured base_color, the Albedo picture
   vec3 emission;
-  vec3 diffuseColor;
-  vec3 specularColor;
-  float roughness;
-  float metallic;
-  float transmission;
-  float eta;
+  OpenPBR material;
   uvec4 segmentation;
 };
 
@@ -275,12 +270,7 @@ Surface emptySurface() {
   surface.uv = vec2(0.0);
   surface.baseColor = vec3(0.0);
   surface.emission = vec3(0.0);
-  surface.diffuseColor = vec3(0.0);
-  surface.specularColor = vec3(0.0);
-  surface.roughness = 1.0;
-  surface.metallic = 0.0;
-  surface.transmission = 0.0;
-  surface.eta = 1.0;
+  surface.material = openpbrDielectric(vec3(0.0), 1.0, 1.5, 0.0);
   surface.segmentation = uvec4(0);
   return surface;
 }
@@ -289,62 +279,37 @@ Surface emptySurface() {
 float shadeTriangleMaterial(uint materialIndex, vec2 uv, inout Surface surface) {
   Material material = materials.m[materialIndex];
 
-  vec3 baseColor = material.baseColor.rgb;
-  float alpha = material.baseColor.a;
+  vec4 base = material.baseColor;
   if (material.baseColorTexture >= 0) {
-    vec4 sampled = texture(textures[nonuniformEXT(material.baseColorTexture)],
-                           uv * material.textureTransforms[0].zw +
-                               material.textureTransforms[0].xy);
-    baseColor *= sampled.rgb;
-    alpha *= sampled.a;
+    base *= texture(textures[nonuniformEXT(material.baseColorTexture)],
+                    materialUV(material.textureTransforms[0], uv));
   }
   float metallic = material.metallic;
   if (material.metallicTexture >= 0) {
     metallic = texture(textures[nonuniformEXT(material.metallicTexture)],
-                       uv * material.textureTransforms[3].zw +
-                           material.textureTransforms[3].xy).x;
+                       materialUV(material.textureTransforms[3], uv)).x;
   }
   float roughness = material.roughness;
   if (material.roughnessTexture >= 0) {
     roughness = texture(textures[nonuniformEXT(material.roughnessTexture)],
-                        uv * material.textureTransforms[1].zw +
-                            material.textureTransforms[1].xy).x;
+                        materialUV(material.textureTransforms[1], uv)).x;
   }
-  roughness = clamp(roughness, 0.045, 1.0);
-
-  vec3 emission = material.emission.rgb;
+  vec3 emission = material.emissionColor * material.emissionStrength;
   if (material.emissionTexture >= 0) {
     emission *= texture(textures[nonuniformEXT(material.emissionTexture)],
-                        uv * material.textureTransforms[4].zw +
-                            material.textureTransforms[4].xy).rgb;
+                        materialUV(material.textureTransforms[4], uv)).rgb;
   }
-  emission *= material.emission.a;
-
-  float transmission = material.transmission;
+  float transmission = material.transmissionWeight;
   if (material.transmissionTexture >= 0) {
     transmission = texture(textures[nonuniformEXT(material.transmissionTexture)],
-                           uv * material.textureTransforms[5].zw +
-                               material.textureTransforms[5].xy).x;
+                           materialUV(material.textureTransforms[5], uv)).x;
   }
 
-  metallic = clamp(metallic, 0.0, 1.0);
-  transmission = clamp(transmission, 0.0, 1.0);
-  transmission = 1.0 - clamp(alpha, 0.0, 1.0) * (1.0 - transmission);
-  float ior = clamp(material.ior, 1.01, 4.0);
-
-  float diffuseWeight = (1.0 - metallic) * (1.0 - transmission);
-  transmission = (1.0 - metallic) * transmission;
-
-  surface.baseColor = baseColor;
+  surface.baseColor = base.rgb;
   surface.emission = emission;
-  surface.diffuseColor = baseColor * diffuseWeight;
-  surface.specularColor = (max(material.fresnel, 0.0) * 0.08) * (1.0 - metallic) +
-                          baseColor * metallic;
-  surface.roughness = roughness;
-  surface.metallic = metallic;
-  surface.transmission = transmission;
-  surface.eta = surface.geometricNormal == surface.normal || !surface.hit ? 1.0 / ior : ior;
-  return alpha;
+  // primary rays only: the lights are always on the side of the camera
+  surface.material = openpbrSurface(material, base.rgb, metallic, roughness, transmission, false);
+  return base.a;
 }
 
 /** Trace the primary ray into the dispatch's environment. Non-opaque candidates are confirmed or
@@ -384,7 +349,7 @@ Surface traceScene(int envIndex, vec3 origin, vec3 direction, float tMin) {
       Material material = materials.m[materialIndex];
       bool isInside = !rayQueryGetIntersectionFrontFaceEXT(query, false);
       // a back face of an opaque material is not a visible surface, like camera.rahit
-      if (isInside && material.transmission < 1e-4) {
+      if (isInside && material.transmissionWeight < 1e-4 && material.thinWalled == 0) {
         continue;
       }
 
@@ -509,11 +474,7 @@ Surface traceScene(int envIndex, vec3 origin, vec3 direction, float tMin) {
                                         worldNormal));
       surface.bitangent = cross(worldNormal, surface.tangent);
       surface.baseColor = point.color.rgb;
-      surface.diffuseColor = point.color.rgb * (1.0 - transmission);
-      surface.specularColor = vec3(0.5 * 0.08);
-      surface.roughness = 0.1;
-      surface.transmission = transmission;
-      surface.eta = 1.0;
+      surface.material = openpbrDielectric(point.color.rgb, 0.1, 1.5, transmission);
       surface.segmentation = object.segmentation;
       best = surface;
     }
@@ -535,21 +496,47 @@ float lit(int envIndex, vec3 origin, vec3 direction, float tMax) {
              : 0.0;
 }
 
+#ifdef SHADING_LIGHTING
+/** the BSDF times cos toward L in this tier; wo is the view direction in the surface frame */
+vec3 surfaceBsdf(Surface surface, vec3 wo, vec3 L) {
+  vec3 wi = vec3(dot(L, surface.tangent), dot(L, surface.bitangent), dot(L, surface.normal));
+#if defined(SHADING_PBR)
+  return openpbrEvalReflection(surface.material, wo, wi);
+#else
+  OpenPBR m = surface.material;
+  return m.base * ((1.0 - m.metallic) * (1.0 - m.transmission) * max(wi.z, 0.0) / OPENPBR_PI);
+#endif
+}
+
+/** the fraction of uniform ambient light the surface reflects toward wo */
+vec3 surfaceAmbientAlbedo(Surface surface, vec3 wo) {
+  OpenPBR m = surface.material;
+  vec3 diffuse = m.base * ((1.0 - m.metallic) * (1.0 - m.transmission));
+#if defined(SHADING_PBR)
+  float fd = openpbrFresnel(wo.z, m.eta);
+  vec3 base = diffuse * (1.0 - fd) +
+              m.metallic * openpbrMetalFresnel(wo.z, m.base, m.specularColor, m.specularWeight) +
+              (1.0 - m.metallic) * fd * m.specularColor;
+  float fuzz = m.fuzzWeight * openpbrFuzzAlbedo(wo.z, m.fuzzRoughness);
+  return fuzz * m.fuzzColor + (1.0 - fuzz) * m.coatWeight * openpbrFresnel(wo.z, m.coatEta) +
+         openpbrUnderLayers(m, wo.z, wo.z) * base;
+#else
+  return diffuse;
+#endif
+}
+#endif
+
 /** radiance leaving a hit surface towards the camera */
 vec3 shadeSurface(Surface surface, vec3 viewDirection) {
   vec3 result = surface.emission;
 
 #ifdef SHADING_LIGHTING
   BatchEnvironment environment = environments.e[envIndex];
-  vec3 ambient = max(environment.ambientLight.rgb, vec3(0.0));
-  result += surface.diffuseColor * ambient;
-#if defined(SHADING_PBR)
-  result += surface.specularColor * ambient;
-#endif
-
   vec3 V = normalize(-viewDirection);
   vec3 N = surface.normal;
-  float dotNV = clamp(dot(N, V), 1e-6, 1.0);
+  vec3 wo = vec3(dot(V, surface.tangent), dot(V, surface.bitangent), dot(V, N));
+  wo = normalize(vec3(wo.xy, max(wo.z, 1e-4))); // a normal map can tilt N away from V
+  result += surfaceAmbientAlbedo(surface, wo) * max(environment.ambientLight.rgb, vec3(0.0));
   int shadowBudget = 0;
 #ifdef SHADOWS
   shadowBudget = MAX_SHADOW_LIGHTS;
@@ -572,16 +559,7 @@ vec3 shadeSurface(Surface surface, vec3 viewDirection) {
       }
     }
 #endif
-    vec3 emission = light.rgb / d2;
-    vec3 H = normalize(V + L);
-    float dotNH = clamp(dot(N, H), 1e-6, 1.0);
-    float dotVH = clamp(dot(V, H), 1e-6, 1.0);
-    result += evalDiffuse(dotNL, dotNV, surface.diffuseColor) * emission;
-#if defined(SHADING_PBR)
-    result +=
-        evalGGXReflection(dotNL, dotNV, dotNH, dotVH, surface.roughness, surface.specularColor) *
-        emission;
-#endif
+    result += surfaceBsdf(surface, wo, L) * (light.rgb / d2);
   }
 
   for (int i = environment.directionalLightBegin; i < environment.directionalLightEnd; ++i) {
@@ -599,15 +577,7 @@ vec3 shadeSurface(Surface surface, vec3 viewDirection) {
       }
     }
 #endif
-    vec3 H = normalize(V + L);
-    float dotNH = clamp(dot(N, H), 1e-6, 1.0);
-    float dotVH = clamp(dot(V, H), 1e-6, 1.0);
-    result += evalDiffuse(dotNL, dotNV, surface.diffuseColor) * light.rgb;
-#if defined(SHADING_PBR)
-    result +=
-        evalGGXReflection(dotNL, dotNV, dotNH, dotVH, surface.roughness, surface.specularColor) *
-        light.rgb;
-#endif
+    result += surfaceBsdf(surface, wo, L) * light.rgb;
   }
 
   for (int i = environment.spotLightBegin; i < environment.spotLightEnd; ++i) {
@@ -638,16 +608,7 @@ vec3 shadeSurface(Surface surface, vec3 viewDirection) {
       }
     }
 #endif
-    vec3 emission = light.rgb * cone * texColor / d2;
-    vec3 H = normalize(V + L);
-    float dotNH = clamp(dot(N, H), 1e-6, 1.0);
-    float dotVH = clamp(dot(V, H), 1e-6, 1.0);
-    result += evalDiffuse(dotNL, dotNV, surface.diffuseColor) * emission;
-#if defined(SHADING_PBR)
-    result +=
-        evalGGXReflection(dotNL, dotNV, dotNH, dotVH, surface.roughness, surface.specularColor) *
-        emission;
-#endif
+    result += surfaceBsdf(surface, wo, L) * (light.rgb * cone * texColor / d2);
   }
 
   // parallelogram lights: centre point and a hard shadow, no area sampling
@@ -672,16 +633,7 @@ vec3 shadeSurface(Surface surface, vec3 viewDirection) {
       }
     }
 #endif
-    vec3 emission = light.rgb * dotLnLd * area / d2;
-    vec3 H = normalize(V + L);
-    float dotNH = clamp(dot(N, H), 1e-6, 1.0);
-    float dotVH = clamp(dot(V, H), 1e-6, 1.0);
-    result += evalDiffuse(dotNL, dotNV, surface.diffuseColor) * emission;
-#if defined(SHADING_PBR)
-    result +=
-        evalGGXReflection(dotNL, dotNV, dotNH, dotVH, surface.roughness, surface.specularColor) *
-        emission;
-#endif
+    result += surfaceBsdf(surface, wo, L) * (light.rgb * dotLnLd * area / d2);
   }
 #endif
 

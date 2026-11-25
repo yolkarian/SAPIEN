@@ -124,16 +124,27 @@ config["lightSampling"] = "mis"  # "mis" | "nee" | "bsdf"
 
 ## Materials for ray tracing
 
-Render materials live in `sapien.render`. The parameters `base_color`,
-`roughness`, `metallic`, `transmission`, `ior`, and
-`transmission_roughness` affect ray-traced reflection/refraction.
+Render materials live in `sapien.render` and carry the first batch of the
+OpenPBR Surface 1.1 parameters. The parameters `base_color`, `roughness`
+(OpenPBR `specular_roughness`), `metallic` (`base_metalness`), `specular_weight`,
+`specular_color`, `ior` (`specular_ior`), `transmission`, `transmission_color`,
+`transmission_depth`, `coat_weight`, `coat_color`, `coat_roughness`, `coat_ior`,
+`fuzz_weight`, `fuzz_color`, `fuzz_roughness`, `base_weight`, `thin_walled`, and
+the emission strength affect ray-traced reflection, refraction and shading.
+
+`base_color`'s alpha channel is the geometry coverage (a cut-out), not
+transparency: glass is made with `transmission`, and `transmission_color` with
+`transmission_depth` tints light over distance. `specular_weight` scales the
+normal-incidence reflectance of `ior`; the removed `specular` parameter s is
+`2*s` here at `ior=1.5`.
 
 ```python
 glass = sapien.render.RenderMaterial(
-   base_color=[0.8, 0.9, 1.0, 0.4],
+   base_color=[0.8, 0.9, 1.0, 1.0],
    roughness=0.02,
    metallic=0.0,
-   transmission=0.9,
+   transmission=1.0,
+   transmission_color=[0.8, 0.9, 1.0],
    ior=1.45,
 )
 

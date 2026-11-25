@@ -1,6 +1,8 @@
 #ifndef SAPIEN_RT_INTEGRATOR_COMMON_GLSL
 #define SAPIEN_RT_INTEGRATOR_COMMON_GLSL
 
+#include "../common/openpbr.glsl"
+
 #define SAPIEN_PI 3.141592653589793
 
 // One triangle of an emissive mesh, in the object space of its TLAS instance. std430: 64 B.
@@ -29,22 +31,37 @@ vec3 instanceVector(TlasInstance m, vec3 v) {
   return vec3(dot(m.row0.xyz, v), dot(m.row1.xyz, v), dot(m.row2.xyz, v));
 }
 
-// Everything the integrator needs about the current surface vertex.
+// Everything the integrator needs about the current surface vertex. The local frame (T, B, N)
+// is the OpenPBR shading frame: x along the anisotropy tangent, z the shading normal.
 struct Surface {
   vec3 pos;
   vec3 N;   // shading normal
   vec3 Ng;  // geometric normal, on the same side as N
-  vec3 V;
-  vec3 baseColor;
-  vec3 diffuseColor;
-  vec3 specularColor;
-  float roughness;
-  float transmissionWeight;
-  float eta;
-  float diffuseProb;
-  float specularProb;
-  float transmissionProb;
+  vec3 T;
+  vec3 B;
+  vec3 wo;  // view direction in the local frame
+  OpenPBR m;
+  OpenPBRLobes lobes;
 };
+
+vec3 surfaceLocal(Surface s, vec3 d) { return vec3(dot(d, s.T), dot(d, s.B), dot(d, s.N)); }
+
+vec3 surfaceWorld(Surface s, vec3 d) { return d.x * s.T + d.y * s.B + d.z * s.N; }
+
+// The surface at `pos` with shading frame (T, B, N), seen from world direction V.
+Surface makeSurface(vec3 pos, vec3 T, vec3 B, vec3 N, vec3 Ng, vec3 V, OpenPBR m) {
+  Surface s;
+  s.pos = pos;
+  s.N = N;
+  s.Ng = Ng;
+  s.T = T;
+  s.B = B;
+  vec3 wo = surfaceLocal(s, V);
+  s.wo = normalize(vec3(wo.xy, max(wo.z, 1e-4))); // a normal map can tilt N away from V
+  s.m = m;
+  s.lobes = openpbrLobes(m, s.wo);
+  return s;
+}
 
 // Power heuristic (beta = 2) of two solid-angle pdfs.
 float misPowerHeuristic(float a, float b) {

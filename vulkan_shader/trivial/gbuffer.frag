@@ -30,9 +30,9 @@ layout(location = 2) out uvec4 outSegmentation;
 void main() {
   outPosition = inPosition;
   outSegmentation = inSeg;
-  if ((material.textureMask & 1) != 0) {
-    outColor = texture(textures[nonuniformEXT(material.baseColorTexture)], inUV);
-  } else {
-    outColor = material.baseColor;
+  outColor = material.baseColor;
+  if (material.baseColorTexture >= 0) {
+    outColor *= texture(textures[nonuniformEXT(material.baseColorTexture)],
+                        materialUV(material.textureTransforms[0], inUV));
   }
 }

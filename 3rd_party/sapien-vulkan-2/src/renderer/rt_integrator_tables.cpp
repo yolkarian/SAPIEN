@@ -218,7 +218,8 @@ void IntegratorTables::build(core::Context &context, scene::Scene &scene,
       glm::vec4 emission = material->getEmission();
       glm::vec3 radiance = glm::vec3(emission) * emission.w;
       auto const &mesh = shape->mesh;
-      bool emissive = luminance(radiance) > 0.f && !material->getEmissionTexture() && mesh &&
+      bool emissive = luminance(radiance) > 0.f &&
+                      !material->getTexture(resource::SVMetallicMaterial::eEmission) && mesh &&
                       mesh->getTriangleCount() > 0 && mesh->hasVertexAttribute("position");
       bases.push_back(emissive ? int32_t(weights.size()) : -1);
       if (!emissive) {

@@ -1,4 +1,3 @@
-#include "../common/bsdf.glsl"
 #include "integrator_common.glsl"
 
 // Shadow rays share the path payload. Transparent occluders scale ray.transmittance in the
@@ -18,41 +17,18 @@ vec3 traceShadow(vec3 origin, vec3 L, float tMax) {
 // BSDF times cos(N, L) toward L. Zero below the shading or the geometric surface: light
 // sampling only covers directions above both, BSDF sampling everything else.
 vec3 evalBsdf(Surface s, vec3 L) {
-  float dotNL = dot(s.N, L);
-  if (dotNL <= 0.0 || dot(s.Ng, L) <= 0.0) {
+  if (dot(s.N, L) <= 0.0 || dot(s.Ng, L) <= 0.0) {
     return vec3(0.0);
   }
-  float dotNV = clamp(dot(s.N, s.V), 1e-6, 1.0);
-  vec3 H = normalize(s.V + L);
-  float dotNH = clamp(dot(s.N, H), 1e-6, 1.0);
-  float dotVH = clamp(dot(s.V, H), 1e-6, 1.0);
-  vec3 f = evalDiffuse(dotNL, dotNV, s.diffuseColor);
-  f += evalGGXReflection(dotNL, dotNV, dotNH, dotVH, s.roughness, s.specularColor);
-  if (s.transmissionWeight > 1e-5) {
-    // the sampled transmission lobe is tinted by the base colour in both of its branches
-    f += s.transmissionWeight * s.baseColor *
-         evalGGXTransmission(s.N, L, s.V, s.eta, s.roughness);
-  }
-  return f;
+  return openpbrEvalReflection(s.m, s.wo, surfaceLocal(s, L));
 }
 
-// Solid-angle pdf of BSDF sampling producing L above the surface: the mixture of the lobes,
-// the transmission lobe reflecting with the Fresnel probability.
+// Solid-angle pdf of BSDF sampling producing L above the surface.
 float evalBsdfPdf(Surface s, vec3 L) {
-  float dotNL = dot(s.N, L);
-  if (dotNL <= 0.0) {
+  if (dot(s.N, L) <= 0.0) {
     return 0.0;
   }
-  vec3 H = normalize(s.V + L);
-  float dotVH = clamp(dot(s.V, H), 1e-6, 1.0);
-  float dotNH = clamp(dot(s.N, H), 1e-6, 1.0);
-  float a = s.roughness * s.roughness;
-  float reflection = ggxNormalDistribution(dotNH, a * a) * dotNH / (4.0 * dotVH);
-  float pdf = s.diffuseProb * dotNL / SAPIEN_PI + s.specularProb * reflection;
-  if (s.transmissionProb > 1e-5) {
-    pdf += s.transmissionProb * dielectricFresnel(dotVH, 1.0 / s.eta) * reflection;
-  }
-  return pdf;
+  return openpbrPdfReflection(s.m, s.lobes, s.wo, surfaceLocal(s, L));
 }
 
 bool isBlack(vec3 c) {
@@ -265,4 +241,16 @@ void setContinuation(Surface s, vec3 L) {
   ray.scatterOrigin = s.pos;
   ray.origin = s.pos;
   ray.direction = L;
+}
+
+// Sample the BSDF for the path's next direction: the payload's attenuation and continuation.
+void sampleBsdf(Surface s) {
+  OpenPBRSample b = openpbrSample(s.m, s.wo, vec3(rnd(ray.seed), rnd(ray.seed), rnd(ray.seed)));
+  vec3 L = surfaceWorld(s, b.wi);
+  // a reflection must leave above the geometric surface, a transmission below it
+  if ((dot(s.Ng, L) > 0.0) == b.transmitted) {
+    b.weight = vec3(0.0);
+  }
+  setContinuation(s, L);
+  ray.attenuation = b.weight;
 }

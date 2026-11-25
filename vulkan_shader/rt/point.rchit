@@ -26,74 +26,20 @@ void main() {
   Point p = points[nonuniformEXT(id)].p[gl_PrimitiveID];
   vec3 worldShadingNormal = normalize(vec3((objectPos - p.position) * gl_WorldToObjectEXT));
   vec3 baseColor = p.color.xyz;
-  float alpha = p.color.a;
-  float roughness = 0.1;
-  float metallic = 0.0;
-  float transmission = 1.0 - alpha;
-  float specular = 0.5;
-  float ior = 1.2;
-  float diffuseWeight = (1.0 - metallic) * (1.0 - transmission);
-  transmission = (1.0 - metallic) * transmission;
-  vec3 specularColor = (specular * 0.08) * (1.0 - metallic) + baseColor * metallic;
-  vec3 diffuseColor = baseColor * diffuseWeight;
-
-  float diffuseProb = maxVec3(diffuseColor);
-  float specularProb = maxVec3(specularColor);
-  float transmissionProb = transmission;
-  float total = diffuseProb + specularProb + transmissionProb;
-  if (total > 1e-6) {
-    diffuseProb /= total; specularProb /= total; transmissionProb /= total;
-  } else {
-    diffuseProb = specularProb = transmissionProb = 0.0;
-  }
-  if (total > 1e-6) {
-    if (diffuseProb > 1e-6) diffuseProb += 0.1;
-    if (specularProb > 1e-6) specularProb += 0.1;
-    if (transmissionProb > 1e-6) transmissionProb += 0.1;
-    total = diffuseProb + specularProb + transmissionProb;
-    diffuseProb /= total; specularProb /= total; transmissionProb /= total;
-  }
+  // a rough dielectric bead whose alpha becomes transmission, tinted by its colour
+  OpenPBR m = openpbrDielectric(baseColor, 0.1, 1.2, 1.0 - p.color.a);
+  m.transmissionTint = m.base;
 
   vec3 V = normalize(-ray.direction);
   vec3 wx = vec3(1, 0, 0);
   if (abs(dot(worldShadingNormal, vec3(1, 0, 0))) > 0.95) wx = vec3(0, 1, 0);
   vec3 wy = normalize(cross(worldShadingNormal, wx));
   wx = cross(wy, worldShadingNormal);
-  mat3 tbn = mat3(wx, wy, worldShadingNormal);
-  float eta = 1.0 / ior;
-
-  Surface s;
-  s.pos = worldPosition;
-  s.N = worldShadingNormal;
-  s.Ng = worldShadingNormal; // a sphere's normal is its own geometric normal
-  s.V = V;
-  s.baseColor = baseColor;
-  s.diffuseColor = diffuseColor;
-  s.specularColor = specularColor;
-  s.roughness = roughness;
-  s.transmissionWeight = transmission;
-  s.eta = eta;
-  s.diffuseProb = diffuseProb;
-  s.specularProb = specularProb;
-  s.transmissionProb = transmissionProb;
+  // a sphere's normal is its own geometric normal
+  Surface s = makeSurface(worldPosition, wx, wy, worldShadingNormal, worldShadingNormal, V, m);
 
   ray.radiance = estimateDirect(s);
-
-  float rand = rnd(ray.seed);
-  vec3 attenuation = vec3(0.0);
-  vec3 L = worldShadingNormal;
-  if (diffuseProb > 1e-5 && rand <= diffuseProb) {
-    sampleDiffuse(ray.seed, tbn, V, diffuseColor, L, attenuation);
-    attenuation /= diffuseProb;
-  } else if (specularProb > 1e-5 && rand <= diffuseProb + specularProb) {
-    sampleGGXReflection(ray.seed, tbn, V, roughness, specularColor, L, attenuation);
-    attenuation /= specularProb;
-  } else if (transmissionProb > 1e-5) {
-    sampleGGXTransmission(ray.seed, tbn, V, eta, roughness, L, attenuation);
-    attenuation *= transmission / transmissionProb * baseColor;
-  }
-  setContinuation(s, L);
-  ray.attenuation = attenuation;
+  sampleBsdf(s);
   ray.normal = worldShadingNormal;
   ray.albedo = baseColor;
   ray.segmentation = uvec4(0);

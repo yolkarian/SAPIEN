@@ -1,5 +1,6 @@
 #pragma once
 #include "texture.h"
+#include <array>
 #include <svulkan2/resource/material.h>
 
 namespace sapien {
@@ -10,26 +11,50 @@ class SapienRenderMaterial {
 public:
   SapienRenderMaterial();
   SapienRenderMaterial(std::array<float, 4> emission, std::array<float, 4> baseColor,
-                       float fresnel, float roughness, float metallic, float transmission,
-                       float ior, float transmissionRoughness);
+                       float specularWeight, float roughness, float metallic, float transmission,
+                       float ior);
   explicit SapienRenderMaterial(std::shared_ptr<svulkan2::resource::SVMetallicMaterial> material);
 
   void setEmission(std::array<float, 4> color);
   [[nodiscard]] std::array<float, 4> getEmission() const;
   void setBaseColor(std::array<float, 4> color);
   [[nodiscard]] std::array<float, 4> getBaseColor() const;
-  void setRoughness(float roughness);
-  [[nodiscard]] float getRoughness() const;
-  void setSpecular(float specular);
-  [[nodiscard]] float getSpecular() const;
+  void setBaseWeight(float weight);
+  [[nodiscard]] float getBaseWeight() const;
   void setMetallic(float metallic);
   [[nodiscard]] float getMetallic() const;
+  void setRoughness(float roughness);
+  [[nodiscard]] float getRoughness() const;
+  void setSpecularWeight(float weight);
+  [[nodiscard]] float getSpecularWeight() const;
+  void setSpecularColor(std::array<float, 3> color);
+  [[nodiscard]] std::array<float, 3> getSpecularColor() const;
+  void setSpecularAnisotropy(float anisotropy);
+  [[nodiscard]] float getSpecularAnisotropy() const;
   void setIOR(float ior);
   [[nodiscard]] float getIOR() const;
   void setTransmission(float transmission);
   [[nodiscard]] float getTransmission() const;
-  void setTransmissionRoughness(float roughness);
-  [[nodiscard]] float getTransmissionRoughness() const;
+  void setTransmissionColor(std::array<float, 3> color);
+  [[nodiscard]] std::array<float, 3> getTransmissionColor() const;
+  void setTransmissionDepth(float depth);
+  [[nodiscard]] float getTransmissionDepth() const;
+  void setCoatWeight(float weight);
+  [[nodiscard]] float getCoatWeight() const;
+  void setCoatColor(std::array<float, 3> color);
+  [[nodiscard]] std::array<float, 3> getCoatColor() const;
+  void setCoatRoughness(float roughness);
+  [[nodiscard]] float getCoatRoughness() const;
+  void setCoatIor(float ior);
+  [[nodiscard]] float getCoatIor() const;
+  void setFuzzWeight(float weight);
+  [[nodiscard]] float getFuzzWeight() const;
+  void setFuzzColor(std::array<float, 3> color);
+  [[nodiscard]] std::array<float, 3> getFuzzColor() const;
+  void setFuzzRoughness(float roughness);
+  [[nodiscard]] float getFuzzRoughness() const;
+  void setThinWalled(bool thinWalled);
+  [[nodiscard]] bool getThinWalled() const;
 
   void setEmissionTexture(std::shared_ptr<SapienRenderTexture2D> texture);
   [[nodiscard]] std::shared_ptr<SapienRenderTexture2D> getEmissionTexture() const;
@@ -43,20 +68,13 @@ public:
   [[nodiscard]] std::shared_ptr<SapienRenderTexture2D> getNormalTexture() const;
   void setTransmissionTexture(std::shared_ptr<SapienRenderTexture2D> texture);
   [[nodiscard]] std::shared_ptr<SapienRenderTexture2D> getTransmissionTexture() const;
-
-  // TODO: support the following?
-  // void setEmissionTextureFromFilename(std::string_view filename);
-  // void setBaseColorTextureFromFilename(std::string_view filename);
-  // void setRoughnessTextureFromFilename(std::string_view filename);
-  // void setMetallicTextureFromFilename(std::string_view filename);
-  // void setNormalTextureFromFilename(std::string_view filename);
-  // void setTransmissionTextureFromFilename(std::string_view filename);
+  void setOcclusionTexture(std::shared_ptr<SapienRenderTexture2D> texture);
+  [[nodiscard]] std::shared_ptr<SapienRenderTexture2D> getOcclusionTexture() const;
 
   [[nodiscard]] std::shared_ptr<svulkan2::resource::SVMetallicMaterial> getMaterial() const {
     return mMaterial;
   }
 
-public:
   std::shared_ptr<SapienRenderEngine> mEngine;
   std::shared_ptr<svulkan2::resource::SVMetallicMaterial> mMaterial;
 };

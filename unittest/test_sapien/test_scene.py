@@ -56,7 +56,7 @@ class TestScene(unittest.TestCase):
         self.assertIsNotNone(material.base_color_texture)
         self.assertGreater(material.base_color_texture.mipmap_levels, 1)
         self.assertTrue(np.allclose(material.base_color, [1.0, 1.0, 1.0, 1.0]))
-        self.assertAlmostEqual(material.specular, 0.5)
+        self.assertAlmostEqual(material.specular_weight, 1.0)
         self.assertAlmostEqual(material.roughness, 0.6)
 
         second_ground = scene.add_ground(-1.0, render_half_size=[2.0, 3.0])
@@ -92,7 +92,7 @@ class TestScene(unittest.TestCase):
 
         render_part = render_body.render_shapes[0].parts[0]
         self.assertIsNotNone(render_part.material.base_color_texture)
-        self.assertAlmostEqual(render_part.material.specular, 0.5)
+        self.assertAlmostEqual(render_part.material.specular_weight, 1.0)
         self.assertAlmostEqual(render_part.material.roughness, 0.6)
         np.testing.assert_allclose(
             render_part.vertices,

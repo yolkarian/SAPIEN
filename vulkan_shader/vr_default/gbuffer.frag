@@ -9,6 +9,8 @@
 #include "../common/scene.glsl"
 #undef SET_NUM
 
+#include "../common/raster_material.glsl"
+
 layout(location = 0) in vec4 inPosition;
 layout(location = 1) in vec2 inUV;
 layout(location = 2) in flat uvec4 inSegmentation;
@@ -22,56 +24,64 @@ layout(location = 3) out vec4 outNormal;
 layout(location = 4) out uvec4 outSegmentation;
 layout(location = 5) out vec4 outCustom;
 layout(location = 6) out vec4 outEmission;
+layout(location = 7) out uvec4 outMaterial; // what the lighting pass needs beyond the base
 
 void main() {
-  int textureMask = material.textureMask;
-
   outCustom = vec4(objectCoord, 1);
   outSegmentation = inSegmentation;
 
   outPositionRaw = inPosition;
 
-  outEmission = material.emission;
-  if ((textureMask & 16) != 0) {
+  outEmission = vec4(material.emissionColor, material.emissionStrength);
+  if (material.emissionTexture >= 0) {
     outEmission.rgb *= texture(textures[nonuniformEXT(material.emissionTexture)],
-                               inUV * material.textureTransforms[4].zw +
-                                   material.textureTransforms[4].xy).rgb;
+                               materialUV(material.textureTransforms[4], inUV)).rgb;
   }
 
   outAlbedo = material.baseColor;
-  if ((textureMask & 1) != 0) {
+  if (material.baseColorTexture >= 0) {
     outAlbedo *= texture(textures[nonuniformEXT(material.baseColorTexture)],
-                          inUV * material.textureTransforms[0].zw +
-                              material.textureTransforms[0].xy);
+                         materialUV(material.textureTransforms[0], inUV));
   }
 
   if (outAlbedo.a == 0) {
     discard;
   }
+  outAlbedo.rgb *= material.baseWeight;
 
-  outSpecular.r = material.fresnel * 0.08;
+  // the coat over the base lowers the IOR contrast of the base's interface
+  outSpecular.r = materialDielectricF0(material.ior / mix(1.0, material.coatIor, material.coatWeight),
+                                       material.specularWeight);
 
-  if ((textureMask & 2) != 0) {
+  if (material.roughnessTexture >= 0) {
     outSpecular.g = texture(textures[nonuniformEXT(material.roughnessTexture)],
-                            inUV * material.textureTransforms[1].zw +
-                                material.textureTransforms[1].xy).r;
+                            materialUV(material.textureTransforms[1], inUV)).r;
   } else {
     outSpecular.g = material.roughness;
   }
 
-  if ((textureMask & 8) != 0) {
+  if (material.metallicTexture >= 0) {
     outSpecular.b = texture(textures[nonuniformEXT(material.metallicTexture)],
-                            inUV * material.textureTransforms[3].zw +
-                                material.textureTransforms[3].xy).r;
+                            materialUV(material.textureTransforms[3], inUV)).r;
   } else {
     outSpecular.b = material.metallic;
   }
 
+  OpenPBR m = openpbrSurface(material, outAlbedo.rgb, outSpecular.b, outSpecular.g, 0.0, false);
+  outSpecular.g = sapienRasterRoughness(m, outSpecular.g, material.specularAnisotropy);
+  outMaterial = sapienPackMaterial(m);
+
+  // occlusion of the indirect light, from glTF's occlusion texture (red channel)
+  outSpecular.a = 1.0;
+  if (material.occlusionTexture >= 0) {
+    outSpecular.a = texture(textures[nonuniformEXT(material.occlusionTexture)],
+                            materialUV(material.textureTransforms[6], inUV)).r;
+  }
+
   if (instance.shadeFlat == 0) {
-    if ((textureMask & 4) != 0) {
+    if (material.normalTexture >= 0) {
       outNormal = vec4(normalize(inTbn * (texture(textures[nonuniformEXT(material.normalTexture)],
-                                                  inUV * material.textureTransforms[2].zw +
-                                                      material.textureTransforms[2].xy).xyz * 2 - 1)), 0);
+                                                  materialUV(material.textureTransforms[2], inUV)).xyz * 2 - 1)), 0);
     } else {
       outNormal = vec4(normalize(inTbn * vec3(0, 0, 1)), 0);
     }

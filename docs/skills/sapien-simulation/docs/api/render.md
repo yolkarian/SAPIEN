@@ -306,19 +306,32 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
-| `base_color` | `Annotated[list[float], FixedSize(4)]` |  |  |
+| `base_color` | `Annotated[list[float], FixedSize(4)]` |  | RGBA base colour; the alpha channel is the geometry coverage (cut-out), not transparency. |
 | `base_color_texture` | `RenderTexture2D` |  |  |
-| `emission` | `Annotated[list[float], FixedSize(4)]` |  |  |
+| `base_weight` | `float` |  | OpenPBR base_weight. |
+| `coat_color` | `Annotated[list[float], FixedSize(3)]` |  | OpenPBR coat_color: RGB tint of the clear-coat layer. |
+| `coat_ior` | `float` |  | OpenPBR coat_ior. |
+| `coat_roughness` | `float` |  | OpenPBR coat_roughness. |
+| `coat_weight` | `float` |  | OpenPBR coat_weight. |
+| `emission` | `Annotated[list[float], FixedSize(4)]` |  | RGB emitted colour and, in alpha, the emission strength: OpenPBR emission_luminance as a plain radiance multiplier. |
 | `emission_texture` | `RenderTexture2D` |  |  |
-| `ior` | `float` |  |  |
-| `metallic` | `float` |  |  |
+| `fuzz_color` | `Annotated[list[float], FixedSize(3)]` |  | OpenPBR fuzz_color: RGB tint of the fuzz (sheen) layer. |
+| `fuzz_roughness` | `float` |  | OpenPBR fuzz_roughness. |
+| `fuzz_weight` | `float` |  | OpenPBR fuzz_weight. |
+| `ior` | `float` |  | OpenPBR specular_ior: index of refraction of the base dielectric. |
+| `metallic` | `float` |  | OpenPBR base_metalness. |
 | `metallic_texture` | `RenderTexture2D` |  |  |
 | `normal_texture` | `RenderTexture2D` |  |  |
-| `roughness` | `float` |  |  |
+| `occlusion_texture` | `RenderTexture2D \| None` |  |  |
+| `roughness` | `float` |  | OpenPBR specular_roughness. |
 | `roughness_texture` | `RenderTexture2D` |  |  |
-| `specular` | `float` |  |  |
-| `transmission` | `float` |  |  |
-| `transmission_roughness` | `float` |  |  |
+| `specular_color` | `Annotated[list[float], FixedSize(3)]` |  | OpenPBR specular_color: RGB tint of the specular reflection. |
+| `specular_roughness_anisotropy` | `float` |  | OpenPBR specular_roughness_anisotropy. |
+| `specular_weight` | `float` |  | OpenPBR specular_weight: scales the normal-incidence reflectance of `ior`. The removed `specular` parameter s is 2*s here, at ior 1.5. |
+| `thin_walled` | `bool` |  | OpenPBR geometry_thin_walled: a closed thin shell rather than a solid. |
+| `transmission` | `float` |  | OpenPBR transmission_weight. |
+| `transmission_color` | `Annotated[list[float], FixedSize(3)]` |  | OpenPBR transmission_color: RGB tint of light passing through. |
+| `transmission_depth` | `float` |  | OpenPBR transmission_depth in scene units (metres): the distance over which the transmitted colour reaches full saturation. |
 | `transmission_texture` | `RenderTexture2D` |  |  |
 
 ### Methods/properties
@@ -327,34 +340,60 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 |---|---|---|---|---|
 | `get_base_color` | method | `get_base_color(self) -> Annotated[list[float], FixedSize(4)]` |  |  |
 | `get_base_color_texture` | method | `get_base_color_texture(self) -> RenderTexture2D` |  |  |
+| `get_base_weight` | method | `get_base_weight(self) -> float` |  |  |
+| `get_coat_color` | method | `get_coat_color(self) -> Annotated[list[float], FixedSize(3)]` |  |  |
+| `get_coat_ior` | method | `get_coat_ior(self) -> float` |  |  |
+| `get_coat_roughness` | method | `get_coat_roughness(self) -> float` |  |  |
+| `get_coat_weight` | method | `get_coat_weight(self) -> float` |  |  |
 | `get_emission` | method | `get_emission(self) -> Annotated[list[float], FixedSize(4)]` |  |  |
 | `get_emission_texture` | method | `get_emission_texture(self) -> RenderTexture2D` |  |  |
+| `get_fuzz_color` | method | `get_fuzz_color(self) -> Annotated[list[float], FixedSize(3)]` |  |  |
+| `get_fuzz_roughness` | method | `get_fuzz_roughness(self) -> float` |  |  |
+| `get_fuzz_weight` | method | `get_fuzz_weight(self) -> float` |  |  |
 | `get_ior` | method | `get_ior(self) -> float` |  |  |
 | `get_metallic` | method | `get_metallic(self) -> float` |  |  |
 | `get_metallic_texture` | method | `get_metallic_texture(self) -> RenderTexture2D` |  |  |
 | `get_normal_texture` | method | `get_normal_texture(self) -> RenderTexture2D` |  |  |
+| `get_occlusion_texture` | method | `get_occlusion_texture(self) -> RenderTexture2D` |  |  |
 | `get_roughness` | method | `get_roughness(self) -> float` |  |  |
 | `get_roughness_texture` | method | `get_roughness_texture(self) -> RenderTexture2D` |  |  |
-| `get_specular` | method | `get_specular(self) -> float` |  |  |
+| `get_specular_color` | method | `get_specular_color(self) -> Annotated[list[float], FixedSize(3)]` |  |  |
+| `get_specular_roughness_anisotropy` | method | `get_specular_roughness_anisotropy(self) -> float` |  |  |
+| `get_specular_weight` | method | `get_specular_weight(self) -> float` |  |  |
+| `get_thin_walled` | method | `get_thin_walled(self) -> bool` |  |  |
 | `get_transmission` | method | `get_transmission(self) -> float` |  |  |
-| `get_transmission_roughness` | method | `get_transmission_roughness(self) -> float` |  |  |
+| `get_transmission_color` | method | `get_transmission_color(self) -> Annotated[list[float], FixedSize(3)]` |  |  |
+| `get_transmission_depth` | method | `get_transmission_depth(self) -> float` |  |  |
 | `get_transmission_texture` | method | `get_transmission_texture(self) -> RenderTexture2D` |  |  |
 | `set_base_color` | method | `set_base_color(self, color: Annotated[list[float], FixedSize(4)]) -> None` |  |  |
 | `set_base_color_texture` | method | `set_base_color_texture(self, texture: RenderTexture2D) -> None` |  |  |
+| `set_base_weight` | method | `set_base_weight(self, weight: float) -> None` |  |  |
+| `set_coat_color` | method | `set_coat_color(self, color: Annotated[list[float], FixedSize(3)]) -> None` |  |  |
+| `set_coat_ior` | method | `set_coat_ior(self, ior: float) -> None` |  |  |
+| `set_coat_roughness` | method | `set_coat_roughness(self, roughness: float) -> None` |  |  |
+| `set_coat_weight` | method | `set_coat_weight(self, weight: float) -> None` |  |  |
 | `set_emission` | method | `set_emission(self, emission: Annotated[list[float], FixedSize(4)]) -> None` |  |  |
 | `set_emission_texture` | method | `set_emission_texture(self, texture: RenderTexture2D) -> None` |  |  |
+| `set_fuzz_color` | method | `set_fuzz_color(self, color: Annotated[list[float], FixedSize(3)]) -> None` |  |  |
+| `set_fuzz_roughness` | method | `set_fuzz_roughness(self, roughness: float) -> None` |  |  |
+| `set_fuzz_weight` | method | `set_fuzz_weight(self, weight: float) -> None` |  |  |
 | `set_ior` | method | `set_ior(self, ior: float) -> None` |  |  |
 | `set_metallic` | method | `set_metallic(self, metallic: float) -> None` |  |  |
 | `set_metallic_texture` | method | `set_metallic_texture(self, texture: RenderTexture2D) -> None` |  |  |
 | `set_normal_texture` | method | `set_normal_texture(self, texture: RenderTexture2D) -> None` |  |  |
+| `set_occlusion_texture` | method | `set_occlusion_texture(self, texture: RenderTexture2D) -> None` |  |  |
 | `set_roughness` | method | `set_roughness(self, roughness: float) -> None` |  |  |
 | `set_roughness_texture` | method | `set_roughness_texture(self, texture: RenderTexture2D) -> None` |  |  |
-| `set_specular` | method | `set_specular(self, specular: float) -> None` |  |  |
+| `set_specular_color` | method | `set_specular_color(self, color: Annotated[list[float], FixedSize(3)]) -> None` |  |  |
+| `set_specular_roughness_anisotropy` | method | `set_specular_roughness_anisotropy(self, anisotropy: float) -> None` |  |  |
+| `set_specular_weight` | method | `set_specular_weight(self, weight: float) -> None` |  |  |
+| `set_thin_walled` | method | `set_thin_walled(self, thin_walled: bool) -> None` |  |  |
 | `set_transmission` | method | `set_transmission(self, transmission: float) -> None` |  |  |
-| `set_transmission_roughness` | method | `set_transmission_roughness(self, roughness: float) -> None` |  |  |
+| `set_transmission_color` | method | `set_transmission_color(self, color: Annotated[list[float], FixedSize(3)]) -> None` |  |  |
+| `set_transmission_depth` | method | `set_transmission_depth(self, depth: float) -> None` |  |  |
 | `set_transmission_texture` | method | `set_transmission_texture(self, texture: RenderTexture2D) -> None` |  |  |
 | `__eq__` | method | `__eq__(self, arg0: RenderMaterial) -> bool` |  |  |
-| `__init__` | method | `__init__(self, emission: Annotated[list[float], FixedSize(4)]=[0.0, 0.0, 0.0, 0.0], base_color: Annotated[list[float], FixedSize(4)]=[1.0, 1.0, 1.0, 1.0], specular: float=0.5, roughness: float=0.44999998807907104, metallic: float=0.0, transmission: float=0.0, ior: float=1.4500000476837158, transmission_roughness: float=0.0) -> None` |  |  |
+| `__init__` | method | `__init__(self, emission: Annotated[list[float], FixedSize(4)]=[0.0, 0.0, 0.0, 0.0], base_color: Annotated[list[float], FixedSize(4)]=[1.0, 1.0, 1.0, 1.0], specular_weight: float=1.0, roughness: float=0.44999998807907104, metallic: float=0.0, transmission: float=0.0, ior: float=1.5) -> None` |  |  |
 
 ## `sapien.render.RenderParallelogramLightComponent`
 

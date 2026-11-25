@@ -386,14 +386,6 @@ std::shared_ptr<SVModel> SVResourceManager::CreateModelFromFile(std::string cons
   return SVModel::FromPrototype(prototype);
 }
 
-std::shared_ptr<SVMetallicMaterial>
-SVResourceManager::createMetallicMaterial(glm::vec4 emission, glm::vec4 baseColor, float fresnel,
-                                          float roughness, float metallic, float transparency,
-                                          float ior) {
-  return std::make_shared<SVMetallicMaterial>(emission, baseColor, fresnel, roughness, metallic,
-                                              transparency, ior);
-}
-
 std::shared_ptr<resource::SVModel> SVResourceManager::createModel(
     std::vector<std::shared_ptr<resource::SVMesh>> const &meshes,
     std::vector<std::shared_ptr<resource::SVMaterial>> const &materials) {

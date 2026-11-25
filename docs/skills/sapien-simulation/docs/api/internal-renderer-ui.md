@@ -74,7 +74,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `create_cubemap_from_files` | method | `create_cubemap_from_files(self, filenames: Annotated[list[str], FixedSize(6)], mipmap_levels: int) -> Cubemap` | Load cube map, its mipmaps are generated based on roughness, details see https://learnopengl.com/PBR/IBL/Specular-IBL |  |
 | `create_cylinder_mesh` | method | `create_cylinder_mesh(self, segments: int=32) -> Mesh` | Create a cylinder mesh. |  |
 | `create_line_set` | method | `create_line_set(self, vertices: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, colors: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> PointSet` | Create a line set. |  |
-| `create_material` | method | `create_material(self, emission: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, base_color: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, specular: float, roughness: float, metallic: float, transmission: float=0.0, ior: float=1.0099999904632568) -> Material` | Create a material. |  |
+| `create_material` | method | `create_material(self, emission: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, base_color: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, specular_weight: float, roughness: float, metallic: float, transmission: float=0.0, ior: float=1.5) -> Material` | Create a material. |  |
 | `create_mesh_from_array` | method | `create_mesh_from_array(self, vertices: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple, indices: np.ndarray[np.uint32], normals: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple=..., uvs: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple=...) -> Mesh` | Create a mesh from an array. |  |
 | `create_model` | method | `create_model(self, meshes: list[Mesh], materials: list[Material]) -> Model` | Create a model. |  |
 | `create_model_from_file` | method | `create_model_from_file(self, filename: str) -> Model` | Create a model from a file. |  |
@@ -113,10 +113,10 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
 | `set_base_color` | method | `set_base_color(self, rgba: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
-| `set_emission` | method | `set_emission(self, emission: float) -> None` |  |  |
+| `set_emission` | method | `set_emission(self, emission: np.ndarray[Any, np.dtype[np.float32]] \| list \| tuple) -> None` |  |  |
 | `set_metallic` | method | `set_metallic(self, metallic: float) -> None` |  |  |
 | `set_roughness` | method | `set_roughness(self, roughness: float) -> None` |  |  |
-| `set_specular` | method | `set_specular(self, specular: float) -> None` |  |  |
+| `set_specular_weight` | method | `set_specular_weight(self, weight: float) -> None` |  |  |
 | `set_textures` | method | `set_textures(self, base_color: Texture \| None=None, roughness: Texture \| None=None, normal: Texture \| None=None, metallic: Texture \| None=None, emission: Texture \| None=None, transmission: Texture \| None=None) -> None` |  |  |
 | `set_transmission` | method | `set_transmission(self, transmission: float) -> None` |  |  |
 

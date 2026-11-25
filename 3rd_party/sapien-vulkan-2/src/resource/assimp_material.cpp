@@ -4,6 +4,8 @@
 #include "svulkan2/common/image.h"
 #include "svulkan2/resource/manager.h"
 #include <assimp/GltfMaterial.h>
+#include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <unordered_map>
@@ -127,24 +129,21 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
                      std::tuple<std::shared_ptr<SVTexture>, std::shared_ptr<SVTexture>>>
       roughnessMetallicTextureCache;
 
+  // glTF keeps transmission thin-walled unless KHR_materials_volume gives it a thickness
+  std::string extension = fs::path(filename).extension().string();
+  bool gltf = extension == ".gltf" || extension == ".glb";
+
   for (uint32_t mat_idx = 0; mat_idx < scene->mNumMaterials; ++mat_idx) {
     auto *m = scene->mMaterials[mat_idx];
-    int twoSided{0};
-    aiColor3D emission{0, 0, 0};
-    float emissionStrength = 1.f;
+    auto material = std::make_shared<SVMetallicMaterial>();
 
-    aiColor3D diffuse{0, 0, 0};
-    float specular = 0.5f;
+    int twoSided{0};
+    m->Get(AI_MATKEY_TWOSIDED, twoSided);
+    if (twoSided && honorTwoSided) {
+      material->setCullMode(vk::CullModeFlagBits::eNone);
+    }
 
     float alpha = 1.f;
-    float metallic = 0.f;
-    float transmission = 0.f;
-    float ior = 1.01f;
-
-    float roughness = 1.f;
-
-    m->Get(AI_MATKEY_TWOSIDED, twoSided);
-
     if (m->Get(AI_MATKEY_OPACITY, alpha) == AI_SUCCESS) {
       if (alpha < 1e-5) {
         logger::warn("The file {} has a fully transparent material. This is "
@@ -153,33 +152,32 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
                      filename);
         alpha = 1.f;
       }
-    } else {
-      if (m->Get(AI_MATKEY_TRANSPARENCYFACTOR, alpha) == AI_SUCCESS) {
-        alpha = 1 - alpha;
-      }
+    } else if (m->Get(AI_MATKEY_TRANSPARENCYFACTOR, alpha) == AI_SUCCESS) {
+      alpha = 1 - alpha;
     }
 
+    aiColor3D emission{0, 0, 0};
+    float emissionStrength = 1.f;
     m->Get(AI_MATKEY_COLOR_EMISSIVE, emission);
-    m->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse);
     m->Get(AI_MATKEY_EMISSIVE_INTENSITY, emissionStrength);
+    material->setEmission({emission.r, emission.g, emission.b, emissionStrength});
 
-    {
-      aiColor4D baseColor = {0, 0, 0, 1};
-      if (m->Get(AI_MATKEY_BASE_COLOR, baseColor) == AI_SUCCESS) {
-        diffuse = {baseColor.r, baseColor.g, baseColor.b};
-        alpha = baseColor.a;
-      }
+    aiColor3D diffuse{0, 0, 0};
+    m->Get(AI_MATKEY_COLOR_DIFFUSE, diffuse);
+    aiColor4D baseColor = {0, 0, 0, 1};
+    if (m->Get(AI_MATKEY_BASE_COLOR, baseColor) == AI_SUCCESS) {
+      diffuse = {baseColor.r, baseColor.g, baseColor.b};
+      alpha = baseColor.a;
     }
+    material->setBaseColor({diffuse.r, diffuse.g, diffuse.b, alpha});
 
-    // CHECK GLTF_PBRMETALLICROUGHNESS_METALLIC_FACTOR
+    float metallic = 0.f;
+    m->Get(AI_MATKEY_METALLIC_FACTOR, metallic);
+    material->setMetallic(metallic);
 
-    // assimp code for reading roughness, metallic, and glossiness
-    if (m->Get(AI_MATKEY_METALLIC_FACTOR, metallic) != AI_SUCCESS) {
-      metallic = 0.f;
-    }
-
-    // pbrSpecularGlossiness
+    float roughness = 1.f;
     if (m->Get(AI_MATKEY_ROUGHNESS_FACTOR, roughness) != AI_SUCCESS) {
+      // pbrSpecularGlossiness and legacy formats: roughness from the shininess
       aiColor4D specularColor;
       ai_real shininess;
       if (m->Get(AI_MATKEY_COLOR_SPECULAR, specularColor) == AI_SUCCESS &&
@@ -188,270 +186,137 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
             specularColor[0] * 0.2125f + specularColor[1] * 0.7154f + specularColor[2] * 0.0721f;
         float normalizedShininess = std::sqrt(shininess / 1000);
         normalizedShininess = std::min(std::max(normalizedShininess, 0.0f), 1.0f);
-        normalizedShininess = normalizedShininess * specularIntensity;
-        roughness = 1 - normalizedShininess;
+        roughness = 1 - normalizedShininess * specularIntensity;
       }
     }
+    material->setRoughness(roughness);
 
-    // KHR_materials_specular
-    {
-      float specularFactor = 1.f;
-      if (m->Get(AI_MATKEY_SPECULAR_FACTOR, specularFactor) == AI_SUCCESS) {
-        // F0 = 0.04 * specularFactor * specularColor in glTF and 0.08 * specular here; the
-        // colour is optional and defaults to white
-        aiColor3D specularColor{1, 1, 1};
-        m->Get(AI_MATKEY_COLOR_SPECULAR, specularColor);
-        specular = 0.5f * specularFactor *
-                   (specularColor[0] * 0.2125f + specularColor[1] * 0.7154f +
-                    specularColor[2] * 0.0721f);
+    // KHR_materials_specular is OpenPBR's specular_weight and specular_color
+    float specularFactor = 1.f;
+    if (m->Get(AI_MATKEY_SPECULAR_FACTOR, specularFactor) == AI_SUCCESS) {
+      aiColor3D specularColor{1, 1, 1};
+      m->Get(AI_MATKEY_COLOR_SPECULAR, specularColor);
+      material->setSpecularWeight(specularFactor);
+      material->setSpecularColor({specularColor.r, specularColor.g, specularColor.b});
+    }
+
+    // an index of refraction of 1 (OBJ exporters write "Ni 1") would remove every reflection
+    float ior = 1.5f;
+    if (m->Get(AI_MATKEY_REFRACTI, ior) != AI_SUCCESS || ior <= 1.001f) {
+      ior = 1.5f;
+    }
+    material->setIor(ior);
+
+    float transmission = 0.f;
+    m->Get(AI_MATKEY_TRANSMISSION_FACTOR, transmission);
+    material->setTransmission(transmission);
+
+    // KHR_materials_volume: a thickness makes the body solid; the attenuation colour is reached
+    // at the attenuation distance (OpenPBR's transmission_color at transmission_depth)
+    float thickness = 0.f;
+    bool volume = m->Get(AI_MATKEY_VOLUME_THICKNESS_FACTOR, thickness) == AI_SUCCESS;
+    material->setThinWalled(transmission > 0.f && (volume ? thickness <= 0.f : gltf));
+    float attenuationDistance = 0.f;
+    aiColor3D attenuationColor{1, 1, 1};
+    if (m->Get(AI_MATKEY_VOLUME_ATTENUATION_DISTANCE, attenuationDistance) == AI_SUCCESS &&
+        std::isfinite(attenuationDistance) && attenuationDistance > 0.f &&
+        m->Get(AI_MATKEY_VOLUME_ATTENUATION_COLOR, attenuationColor) == AI_SUCCESS) {
+      material->setTransmissionDepth(attenuationDistance);
+      material->setTransmissionColor({attenuationColor.r, attenuationColor.g, attenuationColor.b});
+    }
+
+    // KHR_materials_clearcoat is the coat (its IOR is fixed at 1.5)
+    float coat = 0.f;
+    if (m->Get(AI_MATKEY_CLEARCOAT_FACTOR, coat) == AI_SUCCESS && coat > 0.f) {
+      float coatRoughness = 0.f;
+      m->Get(AI_MATKEY_CLEARCOAT_ROUGHNESS_FACTOR, coatRoughness);
+      material->setCoatWeight(coat);
+      material->setCoatRoughness(coatRoughness);
+      material->setCoatIor(1.5f);
+    }
+
+    // KHR_materials_sheen is the fuzz
+    aiColor3D sheenColor{0, 0, 0};
+    if (m->Get(AI_MATKEY_SHEEN_COLOR_FACTOR, sheenColor) == AI_SUCCESS &&
+        std::max({sheenColor.r, sheenColor.g, sheenColor.b}) > 0.f) {
+      float sheenRoughness = 0.f;
+      m->Get(AI_MATKEY_SHEEN_ROUGHNESS_FACTOR, sheenRoughness);
+      material->setFuzzWeight(1.f);
+      material->setFuzzColor({sheenColor.r, sheenColor.g, sheenColor.b});
+      material->setFuzzRoughness(sheenRoughness);
+    }
+
+    // texture `type` into `slot`: an embedded image of the file or a file next to it, cached
+    // per path; colour textures (base colour, emission) are sRGB
+    auto loadTexture = [&](aiTextureType type, SVMetallicMaterial::TextureSlot slot, bool color) {
+      aiString path;
+      if (m->GetTextureCount(type) == 0 || m->GetTexture(type, 0, &path) != AI_SUCCESS) {
+        return;
       }
-    }
+      if (!loadTextures) {
+        logger::info("Texture ignored {}", path.C_Str());
+      } else if (auto embedded = scene->GetEmbeddedTexture(path.C_Str())) {
+        auto [entry, added] =
+            textureCache.try_emplace(std::string(path.C_Str()) + (color ? "#srgb" : ""));
+        if (added) {
+          logger::info("Loading embeded texture {}", path.C_Str());
+          entry->second = loadEmbededTexture(embedded, MIP_LEVEL, color ? 4 : 0, color);
+        }
+        material->setTexture(slot, entry->second);
+      } else {
+        std::string fullPath = (parentDir / path.C_Str()).string();
+        auto texture = color ? manager->CreateTextureFromFile(
+                                   fullPath, MIP_LEVEL, vk::Filter::eLinear, vk::Filter::eLinear,
+                                   vk::SamplerAddressMode::eRepeat,
+                                   vk::SamplerAddressMode::eRepeat, true, 4)
+                             : manager->CreateTextureFromFile(fullPath, MIP_LEVEL);
+        futures.push_back(texture->loadAsync());
+        material->setTexture(slot, texture);
+      }
+      aiUVTransform transform;
+      if (m->Get(AI_MATKEY_UVTRANSFORM(type, 0), transform) == AI_SUCCESS) {
+        material->setTextureTransform(
+            slot, {transform.mTranslation.x, transform.mTranslation.y + 1 - transform.mScaling.y,
+                   transform.mScaling.x, transform.mScaling.y});
+      }
+    };
+    loadTexture(aiTextureType_DIFFUSE, SVMetallicMaterial::eBaseColor, true);
+    loadTexture(aiTextureType_METALNESS, SVMetallicMaterial::eMetallic, false);
+    loadTexture(aiTextureType_NORMALS, SVMetallicMaterial::eNormal, false);
+    loadTexture(aiTextureType_EMISSIVE, SVMetallicMaterial::eEmission, true);
+    loadTexture(aiTextureType_DIFFUSE_ROUGHNESS, SVMetallicMaterial::eRoughness, false);
+    loadTexture(aiTextureType_TRANSMISSION, SVMetallicMaterial::eTransmission, false);
+    // glTF's occlusion texture arrives as a light map
+    loadTexture(aiTextureType_LIGHTMAP, SVMetallicMaterial::eOcclusion, false);
+    loadTexture(aiTextureType_AMBIENT_OCCLUSION, SVMetallicMaterial::eOcclusion, false);
 
-    // if (m->Get(AI_MATKEY_GLOSSINESS_FACTOR, specular) != AI_SUCCESS) {
-    //   float shininess;
-    //   if (m->Get(AI_MATKEY_SHININESS, shininess)) {
-    //     specular = shininess / 1000;
-    //   }
-    // }
-
-    if (m->Get(AI_MATKEY_TRANSMISSION_FACTOR, transmission) != AI_SUCCESS) {
-      transmission = 0.f;
-    }
-    if (m->Get(AI_MATKEY_REFRACTI, ior) != AI_SUCCESS) {
-      ior = 1.01f;
-    }
-
-    std::shared_ptr<SVTexture> baseColorTexture{};
-    std::shared_ptr<SVTexture> normalTexture{};
-    std::shared_ptr<SVTexture> roughnessTexture{};
-    std::shared_ptr<SVTexture> metallicTexture{};
-    std::shared_ptr<SVTexture> emissionTexture{};
-    std::shared_ptr<SVTexture> transmissionTexture{};
-
-    glm::vec4 baseColorTransform{0, 0, 1, 1};
-    glm::vec4 normalTransform{0, 0, 1, 1};
-    glm::vec4 roughnessTransform{0, 0, 1, 1};
-    glm::vec4 metallicTransform{0, 0, 1, 1};
-    glm::vec4 emissionTransform{0, 0, 1, 1};
-    glm::vec4 transmissionTransform{0, 0, 1, 1};
-
-    aiUVTransform transform;
-
+    // glTF's metallic-roughness texture: one image, roughness in green and metallic in blue
     aiString path;
-    if (m->GetTextureCount(aiTextureType_DIFFUSE) > 0 &&
-        m->GetTexture(aiTextureType_DIFFUSE, 0, &path) == AI_SUCCESS) {
-      if (!loadTextures) {
-        logger::info("Texture ignored {}", path.C_Str());
-      } else {
-        logger::info("Trying to load texture {}", path.C_Str());
-        if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
-          if (textureCache.contains(std::string(path.C_Str()))) {
-            baseColorTexture = textureCache[std::string(path.C_Str())];
-          } else {
-            logger::info("Loading embeded texture {}", path.C_Str());
-            textureCache[std::string(path.C_Str())] = baseColorTexture =
-                loadEmbededTexture(texture, MIP_LEVEL, 4, true);
-          }
-        } else {
-          std::string p = std::string(path.C_Str());
-          std::string fullPath = (parentDir / p).string();
-          baseColorTexture = manager->CreateTextureFromFile(
-              fullPath, MIP_LEVEL, vk::Filter::eLinear, vk::Filter::eLinear,
-              vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat, true, 4);
-          futures.push_back(baseColorTexture->loadAsync());
-        }
-      }
-      if (m->Get(AI_MATKEY_UVTRANSFORM_DIFFUSE(0), transform) == AI_SUCCESS) {
-        baseColorTransform = {transform.mTranslation.x,
-                              transform.mTranslation.y + 1 - transform.mScaling.y,
-                              transform.mScaling.x, transform.mScaling.y};
-      }
-    }
-
-    if (m->GetTextureCount(aiTextureType_METALNESS) > 0 &&
-        m->GetTexture(aiTextureType_METALNESS, 0, &path) == AI_SUCCESS) {
-      if (!loadTextures) {
-        logger::info("Texture ignored {}", path.C_Str());
-      } else {
-        if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
-          if (textureCache.contains(std::string(path.C_Str()))) {
-            metallicTexture = textureCache[std::string(path.C_Str())];
-          } else {
-            logger::info("Loading embeded texture {}", path.C_Str());
-            textureCache[std::string(path.C_Str())] = metallicTexture =
-                loadEmbededTexture(texture, MIP_LEVEL);
-          }
-        } else {
-          std::string p = std::string(path.C_Str());
-          std::string fullPath = (parentDir / p).string();
-          metallicTexture = manager->CreateTextureFromFile(fullPath, MIP_LEVEL);
-          futures.push_back(metallicTexture->loadAsync());
-        }
-      }
-
-      if (m->Get(AI_MATKEY_UVTRANSFORM(aiTextureType_METALNESS, 0), transform) == AI_SUCCESS) {
-        metallicTransform = {transform.mTranslation.x,
-                             transform.mTranslation.y + 1 - transform.mScaling.y,
-                             transform.mScaling.x, transform.mScaling.y};
-      }
-    }
-
-    if (m->GetTextureCount(aiTextureType_NORMALS) > 0 &&
-        m->GetTexture(aiTextureType_NORMALS, 0, &path) == AI_SUCCESS) {
-      if (!loadTextures) {
-        logger::info("Texture ignored {}", path.C_Str());
-      } else {
-        if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
-          if (textureCache.contains(std::string(path.C_Str()))) {
-            normalTexture = textureCache[std::string(path.C_Str())];
-          } else {
-            logger::info("Loading embeded texture {}", path.C_Str());
-            textureCache[std::string(path.C_Str())] = normalTexture =
-                loadEmbededTexture(texture, MIP_LEVEL);
-          }
-        } else {
-          std::string p = std::string(path.C_Str());
-          std::string fullPath = (parentDir / p).string();
-          normalTexture = manager->CreateTextureFromFile(fullPath, MIP_LEVEL);
-          futures.push_back(normalTexture->loadAsync());
-        }
-      }
-      if (m->Get(AI_MATKEY_UVTRANSFORM_NORMALS(0), transform) == AI_SUCCESS) {
-        normalTransform = {transform.mTranslation.x,
-                           transform.mTranslation.y + 1 - transform.mScaling.y,
-                           transform.mScaling.x, transform.mScaling.y};
-      }
-    }
-
-    if (m->GetTextureCount(aiTextureType_EMISSIVE) > 0 &&
-        m->GetTexture(aiTextureType_EMISSIVE, 0, &path) == AI_SUCCESS) {
-      if (!loadTextures) {
-        logger::info("Texture ignored {}", path.C_Str());
-      } else {
-        if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
-          if (textureCache.contains(std::string(path.C_Str()))) {
-            emissionTexture = textureCache[std::string(path.C_Str())];
-          } else {
-            logger::info("Loading embeded texture {}", path.C_Str());
-            textureCache[std::string(path.C_Str())] = emissionTexture =
-                loadEmbededTexture(texture, MIP_LEVEL, 4, true);
-          }
-        } else {
-          std::string p = std::string(path.C_Str());
-          std::string fullPath = (parentDir / p).string();
-          emissionTexture = manager->CreateTextureFromFile(
-              fullPath, MIP_LEVEL, vk::Filter::eLinear, vk::Filter::eLinear,
-              vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat, true, 4);
-          futures.push_back(emissionTexture->loadAsync());
-        }
-      }
-      if (m->Get(AI_MATKEY_UVTRANSFORM_EMISSIVE(0), transform) == AI_SUCCESS) {
-        emissionTransform = {transform.mTranslation.x,
-                             transform.mTranslation.y + 1 - transform.mScaling.y,
-                             transform.mScaling.x, transform.mScaling.y};
-      }
-    }
-
-    if (m->GetTextureCount(aiTextureType_DIFFUSE_ROUGHNESS) > 0 &&
-        m->GetTexture(aiTextureType_DIFFUSE_ROUGHNESS, 0, &path) == AI_SUCCESS) {
-      if (!loadTextures) {
-        logger::info("Texture ignored {}", path.C_Str());
-      } else {
-        if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
-          if (textureCache.contains(std::string(path.C_Str()))) {
-            roughnessTexture = textureCache[std::string(path.C_Str())];
-          } else {
-            logger::info("Loading embeded texture {}", path.C_Str());
-            textureCache[std::string(path.C_Str())] = roughnessTexture =
-                loadEmbededTexture(texture, MIP_LEVEL);
-          }
-        } else {
-          std::string p = std::string(path.C_Str());
-          std::string fullPath = (parentDir / p).string();
-          roughnessTexture = manager->CreateTextureFromFile(fullPath, MIP_LEVEL);
-          futures.push_back(roughnessTexture->loadAsync());
-        }
-      }
-      if (m->Get(AI_MATKEY_UVTRANSFORM(aiTextureType_DIFFUSE_ROUGHNESS, 0), transform) ==
-          AI_SUCCESS) {
-        roughnessTransform = {transform.mTranslation.x,
-                              transform.mTranslation.y + 1 - transform.mScaling.y,
-                              transform.mScaling.x, transform.mScaling.y};
-      }
-    }
-
     if (m->GetTexture(AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_METALLICROUGHNESS_TEXTURE, &path) ==
         AI_SUCCESS) {
       if (!loadTextures) {
         logger::info("Texture ignored {}", path.C_Str());
-      } else {
-        if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
-          if (roughnessMetallicTextureCache.contains(std::string(path.C_Str()))) {
-            std::tie(roughnessTexture, metallicTexture) =
-                roughnessMetallicTextureCache[std::string(path.C_Str())];
-          } else {
-            logger::info("Loading embeded roughness metallic texture {}", path.C_Str());
-            std::tie(roughnessTexture, metallicTexture) =
-                roughnessMetallicTextureCache[std::string(path.C_Str())] =
-                    loadEmbededRoughnessMetallicTexture(texture);
-          }
-        } else {
-          logger::warn("Loading non-embeded roughness metallic texture is "
-                       "currently not supported");
+      } else if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
+        auto [entry, added] = roughnessMetallicTextureCache.try_emplace(path.C_Str());
+        if (added) {
+          logger::info("Loading embeded roughness metallic texture {}", path.C_Str());
+          entry->second = loadEmbededRoughnessMetallicTexture(texture);
         }
+        material->setTexture(SVMetallicMaterial::eRoughness, std::get<0>(entry->second));
+        material->setTexture(SVMetallicMaterial::eMetallic, std::get<1>(entry->second));
+      } else {
+        logger::warn("Loading non-embeded roughness metallic texture is "
+                     "currently not supported");
       }
-      // TODO: check if this actually does anything
+      aiUVTransform transform;
       if (m->Get(AI_MATKEY_UVTRANSFORM(aiTextureType_UNKNOWN, 0), transform) == AI_SUCCESS) {
-        roughnessTransform = metallicTransform = {
-            transform.mTranslation.x, transform.mTranslation.y + 1 - transform.mScaling.y,
-            transform.mScaling.x, transform.mScaling.y};
+        glm::vec4 uv{transform.mTranslation.x,
+                     transform.mTranslation.y + 1 - transform.mScaling.y, transform.mScaling.x,
+                     transform.mScaling.y};
+        material->setTextureTransform(SVMetallicMaterial::eRoughness, uv);
+        material->setTextureTransform(SVMetallicMaterial::eMetallic, uv);
       }
     }
-
-    if (m->GetTextureCount(aiTextureType_TRANSMISSION) > 0 &&
-        m->GetTexture(aiTextureType_TRANSMISSION, 0, &path) == AI_SUCCESS) {
-      if (!loadTextures) {
-        logger::info("Texture ignored {}", path.C_Str());
-      } else {
-        if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
-          if (textureCache.contains(std::string(path.C_Str()))) {
-            transmissionTexture = textureCache[std::string(path.C_Str())];
-          } else {
-            logger::info("Loading embeded texture {}", path.C_Str());
-            textureCache[std::string(path.C_Str())] = transmissionTexture =
-                loadEmbededTexture(texture, MIP_LEVEL);
-          }
-        } else {
-          std::string p = std::string(path.C_Str());
-          std::string fullPath = (parentDir / p).string();
-          transmissionTexture = manager->CreateTextureFromFile(fullPath, MIP_LEVEL);
-          futures.push_back(transmissionTexture->loadAsync());
-        }
-      }
-      if (m->Get(AI_MATKEY_UVTRANSFORM(aiTextureType_TRANSMISSION, 0), transform) ==
-          AI_SUCCESS) {
-        transmissionTransform = {transform.mTranslation.x,
-                                 transform.mTranslation.y + 1 - transform.mScaling.y,
-                                 transform.mScaling.x, transform.mScaling.y};
-      }
-    }
-
-    auto material = std::make_shared<SVMetallicMaterial>(
-        glm::vec4{emission.r, emission.g, emission.b, emissionStrength},
-        glm::vec4{diffuse.r, diffuse.g, diffuse.b, alpha}, specular, roughness, metallic,
-        transmission, ior);
-    if (twoSided && honorTwoSided) {
-      material->setCullMode(vk::CullModeFlagBits::eNone);
-    }
-
-    material->setTextures(baseColorTexture, roughnessTexture, normalTexture, metallicTexture,
-                          emissionTexture, transmissionTexture);
-    material->setBaseColorTextureTransform(baseColorTransform);
-    material->setNormalTextureTransform(normalTransform);
-    material->setRoughnessTextureTransform(roughnessTransform);
-    material->setMetallicTextureTransform(metallicTransform);
-    material->setTransmissionTextureTransform(transmissionTransform);
-    material->setEmissionTextureTransform(emissionTransform);
     materials.push_back(material);
   }
 

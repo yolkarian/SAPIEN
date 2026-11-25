@@ -63,19 +63,7 @@ std::future<void> SVModel::loadAsync() {
         auto newShape = std::make_shared<SVShape>();
 
         auto mat = std::dynamic_pointer_cast<SVMetallicMaterial>(s->material);
-        auto newMat = std::make_shared<SVMetallicMaterial>(
-            mat->getEmission(), mat->getBaseColor(), mat->getFresnel(), mat->getRoughness(),
-            mat->getMetallic(), mat->getTransmission(), mat->getIor());
-        newMat->setTextures(mat->getBaseColorTexture(), mat->getRoughnessTexture(),
-                            mat->getNormalTexture(), mat->getMetallicTexture(),
-                            mat->getEmissionTexture(), mat->getTransmissionTexture());
-        newMat->setBaseColorTextureTransform(mat->getBaseColorTextureTransform());
-        newMat->setRoughnessTextureTransform(mat->getRoughnessTextureTransform());
-        newMat->setNormalTextureTransform(mat->getNormalTextureTransform());
-        newMat->setMetallicTextureTransform(mat->getMetallicTextureTransform());
-        newMat->setEmissionTextureTransform(mat->getEmissionTextureTransform());
-        newMat->setTransmissionTextureTransform(mat->getTransmissionTextureTransform());
-        newMat->setCullMode(mat->getCullMode());
+        auto newMat = mat->clone();
 
         newShape->mesh = s->mesh;
         newShape->material = newMat;

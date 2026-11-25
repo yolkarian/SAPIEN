@@ -18,7 +18,7 @@ def build_scene(render_system, physx_system):
             Pose(q=[0.7071068, 0, -0.7071068, 0]),
             [10, 10, 10],
             sapien.render.RenderMaterial(
-                base_color=np.array([202, 164, 114, 256]) / 256, specular=0.5
+                base_color=np.array([202, 164, 114, 256]) / 256, specular_weight=1.0
             ),
             "",
         )

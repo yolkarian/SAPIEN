@@ -39,12 +39,12 @@ void main() {
     ignoreIntersectionEXT;
   }
 
-  // HACK: manual backface culling for bad models
+  // back faces of opaque single-sided surfaces are invisible
   int instanceId = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT;
   uint materialIndex = geometryInstances.i[instanceId].materialIndex;
   Material mat = materials.m[materialIndex];
   bool isInside = gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT;
-  if (isInside && mat.transmission < 1e-4) {
+  if (isInside && mat.transmissionWeight < 1e-4 && mat.thinWalled == 0) {
     ignoreIntersectionEXT;
   }
 }

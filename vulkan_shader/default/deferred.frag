@@ -25,6 +25,7 @@ layout(set = 2, binding = 3) uniform sampler2D samplerNormal;
 layout(set = 2, binding = 4) uniform sampler2D samplerEmission;
 layout(set = 2, binding = 5) uniform sampler2D samplerGbufferDepth;
 layout(set = 2, binding = 6) uniform sampler2D samplerCustom;
+layout(set = 2, binding = 7) uniform usampler2D samplerMaterial;
 
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outLighting;
@@ -81,7 +82,7 @@ float computeAmbientOcclusion(vec3 position, vec3 normal) {
 
 void main() {
   vec3 albedo = texture(samplerAlbedo, inUV).xyz;
-  vec3 frm = texture(samplerSpecular, inUV).xyz;
+  vec4 frm = texture(samplerSpecular, inUV); // F0, roughness, metallic, material occlusion
   float specular = max(frm.x, 0.0);
   float roughness = clamp(frm.y, 0.045, 1.0);
   float metallic = clamp(frm.z, 0.0, 1.0);
@@ -100,14 +101,19 @@ void main() {
 
   vec3 camDir = -normalize(csPosition.xyz);
 
+  OpenPBR m = sapienUnpackMaterial(texture(samplerMaterial, inUV), albedo, metallic, roughness);
+  bool layered = openpbrHasLayers(m);
   vec3 diffuseAlbedo = albedo * (1 - metallic);
-  vec3 fresnel = specular * (1 - metallic) + albedo * metallic;
+  vec3 fresnel = sapienBaseFresnel(m, albedo, specular, metallic);
 
   vec4 emission = texture(samplerEmission, inUV);
   vec3 color = emission.rgb * emission.a;
+  if (layered) {
+    color *= openpbrEmissionFactor(m, clamp(dot(normal, camDir), 1e-6, 1.0));
+  }
 
   sapienAddDirectLighting(color, csPosition.xyz, normal, camDir, diffuseAlbedo, roughness,
-                          fresnel, true);
+                          fresnel, m, true);
 
   // environmental light
   vec3 wnormal = mat3(cameraBuffer.viewMatrixInverse) * normal;
@@ -115,14 +121,28 @@ void main() {
   float dotNV = clamp(dot(wnormal, worldCamDir), 0.0, 1.0);
   vec3 environmentFresnel =
       sapienFresnelSchlickRoughness(fresnel, roughness, dotNV);
-  float ambientOcclusion = computeAmbientOcclusion(csPosition.xyz, normal);
-  color += ambientOcclusion *
-           sapienDiffuseIBL((1.0 - environmentFresnel) * diffuseAlbedo, wnormal);
-  color += mix(1.0, ambientOcclusion, roughness) *
-           sapienSpecularIBL(fresnel, roughness, wnormal, worldCamDir);
-
-  color += ambientOcclusion * sceneBuffer.ambientLight.rgb *
-           (1.0 - environmentFresnel) * diffuseAlbedo;
+  // screen-space ambient occlusion times the material's occlusion texture
+  float ambientOcclusion = computeAmbientOcclusion(csPosition.xyz, normal) * frm.w;
+  vec3 diffuseIndirect = ambientOcclusion *
+                         sapienDiffuseIBL((1.0 - environmentFresnel) * diffuseAlbedo, wnormal);
+  vec3 specularIndirect = mix(1.0, ambientOcclusion, roughness) *
+                          sapienSpecularIBL(fresnel, roughness, wnormal, worldCamDir);
+  vec3 ambientIndirect = ambientOcclusion * sceneBuffer.ambientLight.rgb *
+                         (1.0 - environmentFresnel) * diffuseAlbedo;
+  if (layered) {
+    float coatRoughness = sqrt(m.coatAlpha);
+    vec3 irradiance = ambientOcclusion * (sapienDiffuseIBL(vec3(1.0), wnormal) +
+                                          sceneBuffer.ambientLight.rgb);
+    vec3 coatReflection = mix(1.0, ambientOcclusion, coatRoughness) *
+                          sapienSpecularIBL(vec3(sapienCoatF0(m)), coatRoughness, wnormal,
+                                            worldCamDir);
+    color += sapienLayeredIndirect(diffuseIndirect + specularIndirect + ambientIndirect, m,
+                                   max(dotNV, 1e-6), irradiance, coatReflection);
+  } else {
+    color += diffuseIndirect;
+    color += specularIndirect;
+    color += ambientIndirect;
+  }
 
   outLighting = vec4(color, 1.0);
 }

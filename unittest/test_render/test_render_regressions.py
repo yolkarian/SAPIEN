@@ -315,8 +315,9 @@ class TestGltfMaterialImport(unittest.TestCase):
             np.testing.assert_allclose(imported.base_color, [0.2, 0.4, 0.6, 1.0], atol=1e-6)
             self.assertAlmostEqual(imported.metallic, 0.3, places=6)
             self.assertAlmostEqual(imported.roughness, 0.7, places=6)
-            # F0 = 0.04 * factor * colour in glTF and 0.08 * specular in SAPIEN
-            self.assertAlmostEqual(imported.specular, 0.25, places=5)
+            # KHR_materials_specular maps to OpenPBR specular_weight and specular_color directly
+            self.assertAlmostEqual(imported.specular_weight, 0.5, places=6)
+            np.testing.assert_allclose(imported.specular_color, [1.0, 1.0, 1.0], atol=1e-6)
 
             # load_scene imports materials through the same code
             node = sapien.render.load_scene(str(path))
@@ -330,7 +331,7 @@ class TestGltfMaterialImport(unittest.TestCase):
             self.assertEqual(len(meshes), 1)
             from_scene = meshes[0].parts[0].material
             np.testing.assert_allclose(from_scene.base_color, [0.2, 0.4, 0.6, 1.0], atol=1e-6)
-            self.assertAlmostEqual(from_scene.specular, 0.25, places=5)
+            self.assertAlmostEqual(from_scene.specular_weight, 0.5, places=6)
 
 
 class TestIdleSceneUpdates(unittest.TestCase):

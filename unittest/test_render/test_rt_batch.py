@@ -364,6 +364,35 @@ class TestBatchLighting(unittest.TestCase):
             group.close()
             scene.close()
 
+    def test_pbr_tier_lights_the_coat(self) -> None:
+        """A black base without base specular under a clear coat, lit from the camera: in the
+        pbr tier only the coat's lobe reflects the light back."""
+        def centre(coat_weight: float) -> np.ndarray:
+            scene = make_scene(ambient=0.0)
+            material = sapien.render.RenderMaterial(base_color=[0.0, 0.0, 0.0, 1.0],
+                                                    specular_weight=0.0)
+            material.coat_weight = coat_weight
+            material.coat_roughness = 0.3
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(half_size=[0.4] * 3, material=material)
+            builder.build_kinematic()
+            scene.add_directional_light([1.0, 0.0, 0.0], [3.0, 3.0, 3.0], shadow=False)
+            camera = scene.add_camera(
+                "camera", SIZE, SIZE, 1.0, 0.05, 20.0,
+                render_config=sapien.render.RenderConfig("rt_batch", preset="pbr"))
+            camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+            group, camera_group = render_group([camera], ["Color"])
+            try:
+                group.update_render()
+                camera_group.take_picture()
+                return picture(camera_group, "Color")[0, SIZE // 2, SIZE // 2, :3].astype(np.float32)
+            finally:
+                group.close()
+                scene.close()
+
+        self.assertLess(float(centre(0.0).max()), 5.0)
+        self.assertGreater(float(centre(1.0).min()), 30.0)
+
     def test_shadows_darken_the_ground_under_an_occluder(self) -> None:
         scene = make_scene(ambient=0.1)
         scene.add_ground(0.0)

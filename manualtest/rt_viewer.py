@@ -30,7 +30,7 @@ def main():
 
     ground_material = renderer.create_material()
     ground_material.base_color = np.array([202, 164, 114, 256]) / 256
-    ground_material.specular = 0.5
+    ground_material.specular_weight = 1.0
     scene.add_ground(0, render_material=ground_material, render_half_size=[1.0, 10.0])
     scene.set_timestep(1 / 240)
 

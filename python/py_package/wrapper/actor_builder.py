@@ -90,7 +90,7 @@ Vec3 = Tuple
 
 def _create_default_visual_material() -> sapien.render.RenderMaterial:
     return sapien.render.RenderMaterial(
-        base_color=[0.72, 0.74, 0.78, 1.0], specular=0.5, roughness=0.45
+        base_color=[0.72, 0.74, 0.78, 1.0], specular_weight=1.0, roughness=0.45
     )
 
 

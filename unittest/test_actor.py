@@ -16,7 +16,7 @@ class TestActor(unittest.TestCase):
         self.assertTrue(
             np.allclose(material.base_color, [0.72, 0.74, 0.78, 1.0])
         )
-        self.assertAlmostEqual(material.specular, 0.5)
+        self.assertAlmostEqual(material.specular_weight, 1.0)
         self.assertAlmostEqual(material.roughness, 0.45)
 
     def test_build_box(self):

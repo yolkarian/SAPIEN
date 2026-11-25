@@ -1102,48 +1102,114 @@ version moved; an unchanged version means zero per-frame light uploads.)doc")
       .def_property_readonly("_internal_cubemap", &SapienRenderCubemap::getCubemap);
 
   PyRenderMaterial
-      .def(py::init<std::array<float, 4>, std::array<float, 4>, float, float, float, float, float,
+      .def(py::init<std::array<float, 4>, std::array<float, 4>, float, float, float, float,
                     float>(),
            py::arg("emission") = std::array<float, 4>{0.f, 0.f, 0.f, 0.f},
            py::arg("base_color") = std::array<float, 4>{1.f, 1.f, 1.f, 1.f},
-           py::arg("specular") = 0.5f, py::arg("roughness") = 0.45f,
-           py::arg("metallic") = 0.f,
-           py::arg("transmission") = 0.f, py::arg("ior") = 1.45f,
-           py::arg("transmission_roughness") = 0.f)
+           py::arg("specular_weight") = 1.f, py::arg("roughness") = 0.45f,
+           py::arg("metallic") = 0.f, py::arg("transmission") = 0.f, py::arg("ior") = 1.5f)
 
       // property
       .def_property("base_color", &SapienRenderMaterial::getBaseColor,
-                    &SapienRenderMaterial::setBaseColor)
+                    &SapienRenderMaterial::setBaseColor,
+                    "RGBA base colour; the alpha channel is the geometry coverage (cut-out), "
+                    "not transparency.")
       .def("get_base_color", &SapienRenderMaterial::getBaseColor)
       .def("set_base_color", &SapienRenderMaterial::setBaseColor, py::arg("color"))
       .def_property("emission", &SapienRenderMaterial::getEmission,
-                    &SapienRenderMaterial::setEmission)
+                    &SapienRenderMaterial::setEmission,
+                    "RGB emitted colour and, in alpha, the emission strength: "
+                    "OpenPBR emission_luminance as a plain radiance multiplier.")
       .def("get_emission", &SapienRenderMaterial::getEmission)
       .def("set_emission", &SapienRenderMaterial::setEmission, py::arg("emission"))
-      .def_property("specular", &SapienRenderMaterial::getSpecular,
-                    &SapienRenderMaterial::setSpecular)
-      .def("get_specular", &SapienRenderMaterial::getSpecular)
-      .def("set_specular", &SapienRenderMaterial::setSpecular, py::arg("specular"))
+      .def_property("base_weight", &SapienRenderMaterial::getBaseWeight,
+                    &SapienRenderMaterial::setBaseWeight, "OpenPBR base_weight.")
+      .def("get_base_weight", &SapienRenderMaterial::getBaseWeight)
+      .def("set_base_weight", &SapienRenderMaterial::setBaseWeight, py::arg("weight"))
+      .def_property("specular_weight", &SapienRenderMaterial::getSpecularWeight,
+                    &SapienRenderMaterial::setSpecularWeight,
+                    "OpenPBR specular_weight: scales the normal-incidence reflectance of `ior`. "
+                    "A previous specular value s maps to specular_weight 2*s at ior 1.5.")
+      .def("get_specular_weight", &SapienRenderMaterial::getSpecularWeight)
+      .def("set_specular_weight", &SapienRenderMaterial::setSpecularWeight, py::arg("weight"))
+      .def_property("specular_color", &SapienRenderMaterial::getSpecularColor,
+                    &SapienRenderMaterial::setSpecularColor,
+                    "OpenPBR specular_color: RGB tint of the specular reflection.")
+      .def("get_specular_color", &SapienRenderMaterial::getSpecularColor)
+      .def("set_specular_color", &SapienRenderMaterial::setSpecularColor, py::arg("color"))
+      .def_property("specular_roughness_anisotropy",
+                    &SapienRenderMaterial::getSpecularAnisotropy,
+                    &SapienRenderMaterial::setSpecularAnisotropy,
+                    "OpenPBR specular_roughness_anisotropy.")
+      .def("get_specular_roughness_anisotropy", &SapienRenderMaterial::getSpecularAnisotropy)
+      .def("set_specular_roughness_anisotropy", &SapienRenderMaterial::setSpecularAnisotropy,
+           py::arg("anisotropy"))
       .def_property("metallic", &SapienRenderMaterial::getMetallic,
-                    &SapienRenderMaterial::setMetallic)
+                    &SapienRenderMaterial::setMetallic, "OpenPBR base_metalness.")
       .def("get_metallic", &SapienRenderMaterial::getMetallic)
       .def("set_metallic", &SapienRenderMaterial::setMetallic, py::arg("metallic"))
       .def_property("roughness", &SapienRenderMaterial::getRoughness,
-                    &SapienRenderMaterial::setRoughness)
+                    &SapienRenderMaterial::setRoughness, "OpenPBR specular_roughness.")
       .def("get_roughness", &SapienRenderMaterial::getRoughness)
       .def("set_roughness", &SapienRenderMaterial::setRoughness, py::arg("roughness"))
       .def_property("transmission", &SapienRenderMaterial::getTransmission,
-                    &SapienRenderMaterial::setTransmission)
+                    &SapienRenderMaterial::setTransmission, "OpenPBR transmission_weight.")
       .def("get_transmission", &SapienRenderMaterial::getTransmission)
       .def("set_transmission", &SapienRenderMaterial::setTransmission, py::arg("transmission"))
-      .def_property("ior", &SapienRenderMaterial::getIOR, &SapienRenderMaterial::setIOR)
+      .def_property("transmission_color", &SapienRenderMaterial::getTransmissionColor,
+                    &SapienRenderMaterial::setTransmissionColor,
+                    "OpenPBR transmission_color: RGB tint of light passing through.")
+      .def("get_transmission_color", &SapienRenderMaterial::getTransmissionColor)
+      .def("set_transmission_color", &SapienRenderMaterial::setTransmissionColor,
+           py::arg("color"))
+      .def_property("transmission_depth", &SapienRenderMaterial::getTransmissionDepth,
+                    &SapienRenderMaterial::setTransmissionDepth,
+                    "OpenPBR transmission_depth in scene units (metres): the distance over "
+                    "which the transmitted colour reaches full saturation.")
+      .def("get_transmission_depth", &SapienRenderMaterial::getTransmissionDepth)
+      .def("set_transmission_depth", &SapienRenderMaterial::setTransmissionDepth,
+           py::arg("depth"))
+      .def_property("ior", &SapienRenderMaterial::getIOR, &SapienRenderMaterial::setIOR,
+                    "OpenPBR specular_ior: index of refraction of the base dielectric.")
       .def("get_ior", &SapienRenderMaterial::getIOR)
       .def("set_ior", &SapienRenderMaterial::setIOR, py::arg("ior"))
-      .def_property("transmission_roughness", &SapienRenderMaterial::getTransmissionRoughness,
-                    &SapienRenderMaterial::setTransmissionRoughness)
-      .def("get_transmission_roughness", &SapienRenderMaterial::getTransmissionRoughness)
-      .def("set_transmission_roughness", &SapienRenderMaterial::setTransmissionRoughness,
+      .def_property("coat_weight", &SapienRenderMaterial::getCoatWeight,
+                    &SapienRenderMaterial::setCoatWeight, "OpenPBR coat_weight.")
+      .def("get_coat_weight", &SapienRenderMaterial::getCoatWeight)
+      .def("set_coat_weight", &SapienRenderMaterial::setCoatWeight, py::arg("weight"))
+      .def_property("coat_color", &SapienRenderMaterial::getCoatColor,
+                    &SapienRenderMaterial::setCoatColor,
+                    "OpenPBR coat_color: RGB tint of the clear-coat layer.")
+      .def("get_coat_color", &SapienRenderMaterial::getCoatColor)
+      .def("set_coat_color", &SapienRenderMaterial::setCoatColor, py::arg("color"))
+      .def_property("coat_roughness", &SapienRenderMaterial::getCoatRoughness,
+                    &SapienRenderMaterial::setCoatRoughness, "OpenPBR coat_roughness.")
+      .def("get_coat_roughness", &SapienRenderMaterial::getCoatRoughness)
+      .def("set_coat_roughness", &SapienRenderMaterial::setCoatRoughness,
            py::arg("roughness"))
+      .def_property("coat_ior", &SapienRenderMaterial::getCoatIor,
+                    &SapienRenderMaterial::setCoatIor, "OpenPBR coat_ior.")
+      .def("get_coat_ior", &SapienRenderMaterial::getCoatIor)
+      .def("set_coat_ior", &SapienRenderMaterial::setCoatIor, py::arg("ior"))
+      .def_property("fuzz_weight", &SapienRenderMaterial::getFuzzWeight,
+                    &SapienRenderMaterial::setFuzzWeight, "OpenPBR fuzz_weight.")
+      .def("get_fuzz_weight", &SapienRenderMaterial::getFuzzWeight)
+      .def("set_fuzz_weight", &SapienRenderMaterial::setFuzzWeight, py::arg("weight"))
+      .def_property("fuzz_color", &SapienRenderMaterial::getFuzzColor,
+                    &SapienRenderMaterial::setFuzzColor,
+                    "OpenPBR fuzz_color: RGB tint of the fuzz (sheen) layer.")
+      .def("get_fuzz_color", &SapienRenderMaterial::getFuzzColor)
+      .def("set_fuzz_color", &SapienRenderMaterial::setFuzzColor, py::arg("color"))
+      .def_property("fuzz_roughness", &SapienRenderMaterial::getFuzzRoughness,
+                    &SapienRenderMaterial::setFuzzRoughness, "OpenPBR fuzz_roughness.")
+      .def("get_fuzz_roughness", &SapienRenderMaterial::getFuzzRoughness)
+      .def("set_fuzz_roughness", &SapienRenderMaterial::setFuzzRoughness,
+           py::arg("roughness"))
+      .def_property("thin_walled", &SapienRenderMaterial::getThinWalled,
+                    &SapienRenderMaterial::setThinWalled,
+                    "OpenPBR geometry_thin_walled: a closed thin shell rather than a solid.")
+      .def("get_thin_walled", &SapienRenderMaterial::getThinWalled)
+      .def("set_thin_walled", &SapienRenderMaterial::setThinWalled, py::arg("thin_walled"))
 
       .def_property("emission_texture", &SapienRenderMaterial::getEmissionTexture,
                     &SapienRenderMaterial::setEmissionTexture)
@@ -1172,6 +1238,11 @@ version moved; an unchanged version means zero per-frame light uploads.)doc")
                     &SapienRenderMaterial::setTransmissionTexture)
       .def("get_transmission_texture", &SapienRenderMaterial::getTransmissionTexture)
       .def("set_transmission_texture", &SapienRenderMaterial::setTransmissionTexture,
+           py::arg("texture"))
+      .def_property("occlusion_texture", &SapienRenderMaterial::getOcclusionTexture,
+                    &SapienRenderMaterial::setOcclusionTexture)
+      .def("get_occlusion_texture", &SapienRenderMaterial::getOcclusionTexture)
+      .def("set_occlusion_texture", &SapienRenderMaterial::setOcclusionTexture,
            py::arg("texture"))
       .def("__eq__", [](SapienRenderMaterial &self, SapienRenderMaterial &other) {
         return self.getMaterial() == other.getMaterial();

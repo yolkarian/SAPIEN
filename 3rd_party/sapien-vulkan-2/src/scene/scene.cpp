@@ -1123,8 +1123,12 @@ std::optional<Scene::RTMaterialVersions> Scene::uploadRTMaterials() {
   }
   bool emissionChanged = false;
   for (size_t i = 0; i < records.size(); ++i) {
-    emissionChanged |= records[i].emission != mRTMaterialRecords[i].emission ||
-                       records[i].emissionTexture != mRTMaterialRecords[i].emissionTexture;
+    auto const &now = records[i];
+    auto const &before = mRTMaterialRecords[i];
+    emissionChanged |= now.parameters.emissionColor != before.parameters.emissionColor ||
+                       now.parameters.emissionStrength != before.parameters.emissionStrength ||
+                       now.textures[resource::SVMetallicMaterial::eEmission] !=
+                           before.textures[resource::SVMetallicMaterial::eEmission];
   }
 
   // make sure scene is not in use

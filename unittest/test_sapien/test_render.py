@@ -85,7 +85,7 @@ class TestScene(unittest.TestCase):
                 material = sapien.render.RenderMaterial(
                     base_color=[1.0, 0.02, 0.02, alpha],
                     roughness=0.8,
-                    specular=0.0,
+                    specular_weight=0.0,
                 )
                 texture_data = np.full((2, 2, 4), 255, dtype=np.uint8)
                 material.base_color_texture = sapien.render.RenderTexture2D(

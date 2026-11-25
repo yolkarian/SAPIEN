@@ -112,11 +112,25 @@ class EnvironmentLighting(unittest.TestCase):
         """A white Lambertian sphere in a uniform environment reflects exactly the environment's
         radiance, whichever strategy estimates it."""
         environment = self.environment(np.full((32, 64, 3), 2.0, np.float32))
-        white = sapien.render.RenderMaterial(base_color=[1, 1, 1, 1], specular=0.0, roughness=1.0)
+        white = sapien.render.RenderMaterial(base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0)
         for mode in ("mis", "nee", "bsdf"):
             with self.subTest(mode=mode):
                 image = self.sphere(environment, white, config(mode, spp=16), frames=8)
                 self.assertAlmostEqual(float(image[disk(0.5)].mean()), 2.0, delta=0.03)
+
+    def test_layers_redistribute_energy(self) -> None:
+        """A white base under a clear coat and a white fuzz: albedo scaling keeps the layered
+        reflectance at most the base's, losing only what the rough lobes' single scattering
+        loses, so the sphere reflects nearly, and never more than, the environment's radiance."""
+        environment = self.environment(np.full((32, 64, 3), 2.0, np.float32))
+        layered = sapien.render.RenderMaterial(base_color=[1, 1, 1, 1], roughness=0.5)
+        layered.coat_weight = 1.0
+        layered.coat_roughness = 0.1
+        layered.fuzz_weight = 1.0
+        layered.fuzz_roughness = 0.5
+        mean = float(self.sphere(environment, layered, config("mis", spp=16), frames=8)[disk(0.5)].mean())
+        self.assertLess(mean, 2.0 * 1.01)
+        self.assertGreater(mean, 2.0 * 0.9)
 
     def test_small_bright_environment_region(self) -> None:
         """A bright band on a dim sky: the strategies agree on a glossy sphere (the MIS weights
@@ -124,7 +138,7 @@ class EnvironmentLighting(unittest.TestCase):
         image = np.full((32, 64, 3), 0.05, np.float32)
         image[10:12] = 30.0  # a thin ring around the sky lights every side of the sphere
         environment = self.environment(image)
-        glossy = sapien.render.RenderMaterial(base_color=[0.8, 0.8, 0.8, 1], specular=0.5, roughness=0.4)
+        glossy = sapien.render.RenderMaterial(base_color=[0.8, 0.8, 0.8, 1], specular_weight=1.0, roughness=0.4)
         means, noises = {}, {}
         for mode in ("mis", "nee", "bsdf"):
             picture = self.sphere(environment, glossy, config(mode, spp=32), frames=24).mean(axis=-1)
@@ -140,14 +154,15 @@ class EmissiveMeshLighting(unittest.TestCase):
     """A white floor lit only by an emissive sphere above it."""
 
     def floor(self, cfg, emitter_position: list[float], move_to: list[float] | None = None,
-              emission_to: list[float] | None = None, frames: int = 24) -> np.ndarray:
+              emission_to: list[float] | None = None, frames: int = 24,
+              floor_material: sapien.render.RenderMaterial | None = None) -> np.ndarray:
         with sapien.Scene() as scene:
             scene.set_ambient_light([0.0, 0.0, 0.0])
-            scene.add_ground(0.0, render_material=sapien.render.RenderMaterial(
-                base_color=[1, 1, 1, 1], specular=0.0, roughness=1.0))
+            scene.add_ground(0.0, render_material=floor_material or sapien.render.RenderMaterial(
+                base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0))
             builder = scene.create_actor_builder()
             material = sapien.render.RenderMaterial(
-                emission=[20.0, 20.0, 20.0, 1.0], base_color=[0, 0, 0, 1], specular=0.0)
+                emission=[20.0, 20.0, 20.0, 1.0], base_color=[0, 0, 0, 1], specular_weight=0.0)
             builder.add_sphere_visual(radius=0.3, material=material)
             emitter = builder.build_kinematic()
             emitter.set_pose(sapien.Pose(emitter_position))
@@ -193,6 +208,26 @@ class EmissiveMeshLighting(unittest.TestCase):
         self.assertGreater(float(floor[..., 2].mean()), 0.05)
         self.assertLess(float(floor[..., 0].mean()), 1e-3 * float(floor[..., 2].mean()))
 
+    def test_strategies_agree_on_every_lobe(self) -> None:
+        """Light sampling evaluates the BSDF, BSDF sampling divides by its pdf: on a floor that
+        uses every OpenPBR lobe of the first batch the two must still agree, which they do only
+        when evaluation, pdf and sampling describe the same distribution."""
+        floor = sapien.render.RenderMaterial(base_color=[0.6, 0.5, 0.4, 1], metallic=0.3, roughness=0.35)
+        floor.specular_color = [1.0, 0.8, 0.6]
+        floor.specular_roughness_anisotropy = 0.6
+        floor.coat_weight = 0.7
+        floor.coat_roughness = 0.2
+        floor.coat_color = [0.9, 0.9, 1.0]
+        floor.fuzz_weight = 0.5
+        floor.fuzz_color = [0.8, 0.6, 1.0]
+        floor.fuzz_roughness = 0.4
+        means = {mode: float(self.floor(config(mode, spp=16, depth=1), [1.2, 0.0, 0.6],
+                                        floor_material=floor).mean())
+                 for mode in ("mis", "nee", "bsdf")}
+        self.assertGreater(means["bsdf"], 0.05)
+        for mode in ("mis", "nee"):
+            self.assertAlmostEqual(means[mode], means["bsdf"], delta=0.05 * means["bsdf"], msg=str(means))
+
 
 class Shadows(unittest.TestCase):
     """Direct light (maxDepth 0) on a white floor beside an occluder: the camera looks straight
@@ -203,7 +238,7 @@ class Shadows(unittest.TestCase):
         with sapien.Scene() as scene:
             scene.set_ambient_light([0.0, 0.0, 0.0])
             scene.add_ground(0.0, render_material=sapien.render.RenderMaterial(
-                base_color=[1, 1, 1, 1], specular=0.0, roughness=1.0))
+                base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0))
             scene.add_directional_light([0.7071068, 0.0, -0.7071068], [2.0, 2.0, 2.0])
             if material is not None:  # its shadow is centred on the origin
                 builder = scene.create_actor_builder()
@@ -231,8 +266,10 @@ class Shadows(unittest.TestCase):
         # each of the box's two faces covers 0.25: 0.75 * 0.75 of the light gets through
         sheer = self.shadow(sapien.render.RenderMaterial(base_color=[1, 1, 1, 0.25]))
         np.testing.assert_allclose(sheer / lit, 0.75 * 0.75, atol=0.01)
-        # a clear red filter passes red only
-        red = self.shadow(sapien.render.RenderMaterial(base_color=[1, 0, 0, 1], transmission=1.0))
+        # a clear red filter passes red only: transmission_color tints light entering the body
+        filter_material = sapien.render.RenderMaterial(base_color=[1, 1, 1, 1], transmission=1.0)
+        filter_material.transmission_color = [1.0, 0.0, 0.0]
+        red = self.shadow(filter_material)
         np.testing.assert_allclose(red / lit, [1.0, 0.0, 0.0], atol=0.01)
 
     def test_point_clouds_cast_shadows(self) -> None:
@@ -241,6 +278,47 @@ class Shadows(unittest.TestCase):
         lit = self.shadow(None)
         blocked = self.shadow(None, cloud=True)
         np.testing.assert_allclose(blocked, 0.0, atol=1e-3 * float(lit.mean()))
+
+
+class Transmission(unittest.TestCase):
+    """A clear box of half size 0.5 at the origin, seen face-on from x = -3 in front of a white
+    emissive wall at x = 2 and a black sky: the centre pixel sees only light that crossed both
+    faces of the box straight on."""
+
+    def centre(self, glass: sapien.render.RenderMaterial) -> np.ndarray:
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([0.0, 0.0, 0.0])
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(half_size=[0.5, 0.5, 0.5], material=glass)
+            builder.add_box_visual(sapien.Pose([2.0, 0.0, 0.0]), half_size=[0.05, 2.0, 2.0],
+                                   material=sapien.render.RenderMaterial(
+                                       emission=[1, 1, 1, 1], base_color=[0, 0, 0, 1],
+                                       specular_weight=0.0))
+            builder.build_kinematic()
+            camera = scene.add_camera("camera", SIZE, SIZE, 0.2, 0.1, 20.0,
+                                      render_config=config(spp=16, depth=6))
+            camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+            centre = np.s_[SIZE // 2 - 2:SIZE // 2 + 2, SIZE // 2 - 2:SIZE // 2 + 2]
+            return render(scene, camera, 4)[centre].mean(axis=(0, 1))
+
+    def test_transmission_colour_where_it_is_reached(self) -> None:
+        def glass(**fields) -> sapien.render.RenderMaterial:
+            material = sapien.render.RenderMaterial(base_color=[1, 1, 1, 1], roughness=0.0,
+                                                    transmission=1.0)
+            material.transmission_color = [0.5, 1.0, 1.0]
+            for name, value in fields.items():
+                setattr(material, name, value)
+            return material
+
+        # transmission_depth 0: the colour tints the light where it enters the body
+        surface = self.centre(glass())
+        # thin walls: each of the two sheets tints
+        thin = self.centre(glass(thin_walled=True))
+        # the colour is reached after 0.25 of medium; the ray crosses 1.0 of it
+        deep = self.centre(glass(transmission_depth=0.25))
+        self.assertGreater(float(surface[1]), 0.5)
+        for picture, ratio in ((surface, 0.5), (thin, 0.25), (deep, 0.5 ** 4)):
+            self.assertAlmostEqual(float(picture[0] / picture[1]), ratio, delta=0.02, msg=str(picture))
 
 
 class IndirectClamp(unittest.TestCase):
@@ -252,11 +330,11 @@ class IndirectClamp(unittest.TestCase):
             with sapien.Scene() as scene:
                 scene.set_ambient_light([0.0, 0.0, 0.0])
                 scene.add_ground(0.0, render_material=sapien.render.RenderMaterial(
-                    base_color=[1, 1, 1, 1], specular=0.0, roughness=1.0))
+                    base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0))
                 builder = scene.create_actor_builder()
                 for x in (-1.0, 1.0):  # two white walls beside the lit floor
                     builder.add_box_visual(sapien.Pose([x, 0.0, 0.5]), half_size=[0.05, 1.0, 0.5],
-                                           material=sapien.render.RenderMaterial(base_color=[1, 1, 1, 1], specular=0.0))
+                                           material=sapien.render.RenderMaterial(base_color=[1, 1, 1, 1], specular_weight=0.0))
                 builder.build_kinematic()
                 scene.add_point_light([0.0, 0.0, 0.9], [4.0, 4.0, 4.0])
                 camera = scene.add_camera("camera", SIZE, SIZE, 0.6, 0.1, 20.0, render_config=cfg)
