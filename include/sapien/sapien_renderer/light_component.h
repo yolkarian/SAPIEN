@@ -85,6 +85,9 @@ protected:
 
 class SapienRenderPointLightComponent : public SapienRenderLightComponent {
 public:
+  float getRadius() const { return mRadius; }
+  void setRadius(float radius);
+
   void onAddToScene(Scene &scene) override;
   void onRemoveFromScene(Scene &scene) override;
 
@@ -97,6 +100,7 @@ protected:
 
 private:
   svulkan2::scene::PointLight *mPointLight{};
+  float mRadius{0.f};
 };
 
 class SapienRenderDirectionalLightComponent : public SapienRenderLightComponent {
@@ -107,6 +111,9 @@ public:
     internalApplyShadowParameters();
     markLightStateDirty();
   }
+
+  float getSoftness() const { return mSoftness; }
+  void setSoftness(float softness);
 
   void onAddToScene(Scene &scene) override;
   void onRemoveFromScene(Scene &scene) override;
@@ -121,6 +128,7 @@ protected:
 private:
   svulkan2::scene::DirectionalLight *mDirectionalLight{};
   float mShadowHalfSize{10.f};
+  float mSoftness{0.f};
 };
 
 class SapienRenderSpotLightComponent : public SapienRenderLightComponent {
@@ -142,6 +150,9 @@ public:
     markLightStateDirty();
   }
 
+  float getRadius() const { return mRadius; }
+  void setRadius(float radius);
+
   void onAddToScene(Scene &scene) override;
   void onRemoveFromScene(Scene &scene) override;
 
@@ -154,6 +165,7 @@ protected:
 
   float mFovInner{0.f};
   float mFovOuter{0.f};
+  float mRadius{0.f};
   svulkan2::scene::SpotLight *mSpotLight{};
 };
 

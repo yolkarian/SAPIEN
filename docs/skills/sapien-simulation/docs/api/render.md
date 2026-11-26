@@ -246,13 +246,16 @@ image width/height ratio, including portrait images.
 | Member | Type | Use | Notes |
 |---|---|---|---|
 | `shadow_half_size` | `float` |  |  |
+| `softness` | `float` | Angular light softness for raster PCSS and RT shadow jitter (default `0.0`). | CPU real-time. |
 
 ### Methods/properties
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
 | `get_shadow_half_size` | method | `get_shadow_half_size(self) -> float` |  |  |
+| `get_softness` | method | `get_softness(self) -> float` |  |  |
 | `set_shadow_half_size` | method | `set_shadow_half_size(self, size: float) -> None` |  |  |
+| `set_softness` | method | `set_softness(self, softness: float) -> None` |  |  |
 | `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.render.RenderLightComponent`
@@ -435,10 +438,18 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 - Use: Concrete render light component.
 - Bases: `RenderLightComponent`
 
+### Attributes/properties declared as fields
+
+| Member | Type | Use | Notes |
+|---|---|---|---|
+| `radius` | `float` | Emitter radius in metres for raster PCSS and RT shadow jitter (default `0.0`). | CPU real-time. |
+
 ### Methods/properties
 
 | Member | Kind | Signature | Use | Notes |
 |---|---|---|---|---|
+| `get_radius` | method | `get_radius(self) -> float` |  |  |
+| `set_radius` | method | `set_radius(self, radius: float) -> None` |  |  |
 | `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.render.RenderSceneLoaderNode`
@@ -634,6 +645,7 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 |---|---|---|---|
 | `inner_fov` | `float` |  |  |
 | `outer_fov` | `float` |  |  |
+| `radius` | `float` | Emitter radius in metres for raster PCSS and RT shadow jitter (default `0.0`). | CPU real-time. |
 
 ### Methods/properties
 
@@ -641,8 +653,10 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 |---|---|---|---|---|
 | `get_inner_fov` | method | `get_inner_fov(self) -> float` |  |  |
 | `get_outer_fov` | method | `get_outer_fov(self) -> float` |  |  |
+| `get_radius` | method | `get_radius(self) -> float` |  |  |
 | `set_inner_fov` | method | `set_inner_fov(self, fov: float) -> None` |  |  |
 | `set_outer_fov` | method | `set_outer_fov(self, fov: float) -> None` |  |  |
+| `set_radius` | method | `set_radius(self, radius: float) -> None` |  |  |
 | `__init__` | method | `__init__(self) -> None` |  |  |
 
 ## `sapien.render.RenderSystem`

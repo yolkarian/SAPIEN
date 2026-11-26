@@ -65,6 +65,24 @@ class TestLight(unittest.TestCase):
         l.set_shadow_half_size(9)
         self.assertAlmostEqual(l.get_shadow_half_size(), 9)
 
+        self.assertAlmostEqual(l.softness, 0.0)
+        l.softness = 0.05
+        self.assertAlmostEqual(l.softness, 0.05)
+        l.set_softness(0.1)
+        self.assertAlmostEqual(l.get_softness(), 0.1)
+        with self.assertRaises(RuntimeError):
+            l.softness = -0.01
+
+    def test_point(self):
+        l = sapien.render.RenderPointLightComponent()
+        self.assertAlmostEqual(l.radius, 0.0)
+        l.radius = 0.2
+        self.assertAlmostEqual(l.radius, 0.2)
+        l.set_radius(0.35)
+        self.assertAlmostEqual(l.get_radius(), 0.35)
+        with self.assertRaises(RuntimeError):
+            l.radius = -0.1
+
     def test_spot(self):
         l = sapien.render.RenderSpotLightComponent()
         l.inner_fov = 0.1
@@ -76,6 +94,14 @@ class TestLight(unittest.TestCase):
         l.set_outer_fov(0.4)
         self.assertAlmostEqual(l.get_inner_fov(), 0.2)
         self.assertAlmostEqual(l.get_outer_fov(), 0.4)
+
+        self.assertAlmostEqual(l.radius, 0.0)
+        l.radius = 0.15
+        self.assertAlmostEqual(l.radius, 0.15)
+        l.set_radius(0.25)
+        self.assertAlmostEqual(l.get_radius(), 0.25)
+        with self.assertRaises(RuntimeError):
+            l.radius = -0.1
 
     def test_parallelogram(self):
         l = sapien.render.RenderParallelogramLightComponent()

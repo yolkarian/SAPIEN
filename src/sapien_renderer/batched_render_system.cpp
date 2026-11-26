@@ -1499,10 +1499,12 @@ void BatchedRenderSystem::update() {
   SAPIEN_PROFILE_BLOCK_END;
 #endif
 
-  SAPIEN_PROFILE_BLOCK_BEGIN("RT render version update");
+  SAPIEN_PROFILE_BLOCK_BEGIN("RT and shadow render version update");
   for (uint32_t i = 0; i < mRenderScenes.size(); ++i) {
     if (mRTSceneEnabled[i]) {
       mRenderScenes[i]->updateRenderVersion();
+    } else if (mShapeCount > 0) {
+      mRenderScenes[i]->markShadowsDirty();
     }
   }
   SAPIEN_PROFILE_BLOCK_END;
@@ -1559,6 +1561,7 @@ void BatchedRenderSystem::refreshAndUploadCpuState() {
   for (uint32_t i : dirtyLightScenes) {
     auto const &selection = mRenderSceneSystems[i];
     auto const &renderScene = mRenderScenes[i];
+    renderScene->markShadowsDirty();
 
     // Multi-system scene groups copy the base system's ambient light at resolution
     // time; refresh it here so post-init ambient changes propagate. The alpha channel

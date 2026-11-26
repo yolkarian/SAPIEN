@@ -290,7 +290,12 @@ same index; their number is `NUM_POINT_LIGHT_SHADOWS`,
 shadow-map arrays of the pack. The `NUM_TEXTURED_LIGHT_SHADOWS` textured lights
 follow the `NUM_SPOT_LIGHTS` spot lights in `SpotLights`.
 `common/raster_lighting.glsl` sums the direct light of all of them
-(`sapienAddDirectLighting`) for the passes of the built-in packs.
+(`sapienAddDirectLighting`) for the passes of the built-in packs. Each
+shadow-casting directional light uses 3 concentric shadow cascades stored in a
+`sampler2DArray` (`samplerDirectionalLightDepths[N]`) with `3 * N` entries in
+`ShadowBuffer.directionalLightBuffers`, matching point lights' `samplerCube` and
+`6 * N` entries in `pointLightBuffers`; shadow maps are owned by the scene and
+shared across cameras.
 
 When writing a custom shader pack, keep these names and layouts compatible with
 the renderer code or copy and modify the provided include files.

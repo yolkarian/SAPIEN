@@ -40,35 +40,22 @@ class Renderer : public RendererBase {
   std::unordered_map<std::string, std::shared_ptr<resource::SVRenderTarget>> mRenderTargets;
   std::unordered_map<std::string, std::shared_ptr<resource::SVRenderTarget>> mMultisampledTargets;
 
-  // shadow targets ================================
+  // shadow targets (scene-owned, shared across cameras) =====
   std::vector<uint32_t> mPointLightShadowSizes{};
   std::vector<uint32_t> mDirectionalLightShadowSizes{};
   std::vector<uint32_t> mSpotLightShadowSizes{};
   std::vector<uint32_t> mTexturedLightShadowSizes{};
 
-  std::vector<std::shared_ptr<resource::SVRenderTarget>> mDirectionalShadowReadTargets;
-  std::vector<std::shared_ptr<resource::SVRenderTarget>> mDirectionalShadowWriteTargets;
-
-  std::vector<std::shared_ptr<resource::SVRenderTarget>> mPointShadowWriteTargets;
-  std::vector<std::shared_ptr<resource::SVRenderTarget>> mPointShadowReadTargets;
-
-  std::vector<std::shared_ptr<resource::SVRenderTarget>> mSpotShadowReadTargets;
-  std::vector<std::shared_ptr<resource::SVRenderTarget>> mSpotShadowWriteTargets;
-
-  std::vector<std::shared_ptr<resource::SVRenderTarget>> mTexturedLightShadowReadTargets;
-  std::vector<std::shared_ptr<resource::SVRenderTarget>> mTexturedLightShadowWriteTargets;
-
+  std::shared_ptr<scene::RasterShadowMaps> mShadowMaps;
   std::vector<vk::UniqueDescriptorSet> mLightSets;
-  std::vector<std::unique_ptr<core::Buffer>> mLightBuffers;
 
   std::unique_ptr<core::Buffer> mShadowBuffer;
-  // ================================================
+  // ========================================================
 
   std::unordered_map<std::string, vk::ImageLayout> mRenderTargetFinalLayouts;
 
   std::vector<vk::UniqueFramebuffer> mFramebuffers;
   std::vector<vk::UniqueFramebuffer> mShadowFramebuffers;
-  std::vector<uint32_t> mShadowSizes;
 
   std::map<std::string, std::vector<std::shared_ptr<resource::SVTexture>>> mCustomTextureArray;
   std::map<std::string, std::shared_ptr<resource::SVTexture>> mCustomTextures;
@@ -309,6 +296,7 @@ private:
 
   void recordShadows();
   void recordRenderPasses();
+  bool shouldRenderShadows(bool &wantsPointShadow) const;
 
   bool mExternalTransformUpdates{false};
 

@@ -8,6 +8,7 @@
 #include "svulkan2/core/as.h"
 #include "svulkan2/core/command_pool.h"
 #include "svulkan2/core/context.h"
+#include <map>
 #include <memory>
 #include <optional>
 #include <unordered_map>
@@ -18,9 +19,48 @@ namespace svulkan2 {
 
 namespace resource {
 class SVCubemap;
-}
+class SVRenderTarget;
+} // namespace resource
 
 namespace scene {
+
+/** Scene-owned shadow map targets and light UBOs shared across all rasterization cameras
+ *  viewing the same Scene. Directional lights allocate a kShadowCascadeCount-layer 2D array,
+ *  point lights a 6-layer cubemap, and spot/textured lights a 2D depth target. */
+struct RasterShadowMaps {
+  vk::Format depthFormat{vk::Format::eUndefined};
+  uint64_t sceneVersion{0};
+  size_t lightBufferSize{0};
+
+  std::vector<uint32_t> directionalShadowSizes;
+  std::vector<uint32_t> pointShadowSizes;
+  std::vector<uint32_t> spotShadowSizes;
+  std::vector<uint32_t> texturedShadowSizes;
+
+  std::vector<std::shared_ptr<resource::SVRenderTarget>> directionalReadTargets;
+  std::vector<std::shared_ptr<resource::SVRenderTarget>> pointReadTargets;
+  std::vector<std::shared_ptr<resource::SVRenderTarget>> spotReadTargets;
+  std::vector<std::shared_ptr<resource::SVRenderTarget>> texturedReadTargets;
+
+  std::vector<std::shared_ptr<resource::SVRenderTarget>> allWriteTargets;
+  std::vector<uint32_t> allShadowSizes;
+
+  std::vector<std::unique_ptr<core::Buffer>> lightBuffers;
+  std::vector<uint8_t> lastLightBufferBytes;
+
+  uint64_t renderedShadowEpoch{0};
+  bool renderedWithPointShadow{false};
+
+  bool matches(vk::Format format, size_t bufferSize,
+               std::vector<uint32_t> const &dirSizes,
+               std::vector<uint32_t> const &ptSizes,
+               std::vector<uint32_t> const &spSizes,
+               std::vector<uint32_t> const &texSizes) const {
+    return depthFormat == format && lightBufferSize == bufferSize &&
+           directionalShadowSizes == dirSizes && pointShadowSizes == ptSizes &&
+           spotShadowSizes == spSizes && texturedShadowSizes == texSizes;
+  }
+};
 
 class Scene {
 public:
@@ -93,9 +133,19 @@ public:
   Scene(Scene &&other) = delete;
   Scene &operator=(Scene &&other) = delete;
 
-  void uploadShadowToDevice(core::Buffer &shadowBuffer,
-                            std::vector<std::unique_ptr<core::Buffer>> &lightBuffers,
+  std::shared_ptr<RasterShadowMaps> getOrCreateRasterShadowMaps(vk::Format depthFormat,
+                                                                size_t lightBufferSize);
+
+  void uploadShadowToDevice(core::Buffer &shadowBuffer, RasterShadowMaps &shadowMaps,
                             StructDataLayout const &shadowLayout);
+
+  /** Shadow state epoch incremented whenever geometry, transforms, or light shadow matrices
+   *  change. Cameras sharing a Scene skip redundant shadow passes when renderedShadowEpoch
+   *  already matches getShadowEpoch(). */
+  uint64_t getShadowEpoch() const { return mShadowEpoch; }
+  void markShadowsDirty();
+  uint64_t getRasterShadowRenderCount() const { return mRasterShadowRenderCount; }
+  void noteRasterShadowsRendered() { mRasterShadowRenderCount++; }
 
   /** call exactly once per time frame to update the object matrices
    *  this function also copies current matrices into the previous matrices
@@ -230,6 +280,11 @@ protected:
 
   /** when models in the scene are updated, the version changes */
   uint64_t mRenderVersion{1l};
+
+  /** incremented whenever shadow maps need re-rendering */
+  uint64_t mShadowEpoch{1l};
+  uint64_t mRasterShadowRenderCount{0l};
+  std::map<vk::Format, std::shared_ptr<RasterShadowMaps>> mRasterShadowMaps;
 
   // state of the world matrices, see updateModelMatrices()
   uint64_t mModelMatricesVersion{0l};

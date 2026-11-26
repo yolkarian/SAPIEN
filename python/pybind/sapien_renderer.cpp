@@ -1631,13 +1631,22 @@ Configure the light's grouped pose source before RenderSystemGroup.gpu_init():
 update_render(). A cpu-mode light must not share its entity with a PhysX GPU body.
 Color, FOV, shape, and shadow near/far/half-size stay CPU real-time in both modes.)doc");
 
-  PyRenderPointLightComponent.def(py::init<>());
+  PyRenderPointLightComponent.def(py::init<>())
+      .def_property("radius", &SapienRenderPointLightComponent::getRadius,
+                    &SapienRenderPointLightComponent::setRadius)
+      .def("get_radius", &SapienRenderPointLightComponent::getRadius)
+      .def("set_radius", &SapienRenderPointLightComponent::setRadius, py::arg("radius"));
   PyRenderDirectionalLightComponent.def(py::init<>())
       .def_property("shadow_half_size", &SapienRenderDirectionalLightComponent::getShadowHalfSize,
                     &SapienRenderDirectionalLightComponent::setShadowHalfSize)
       .def("get_shadow_half_size", &SapienRenderDirectionalLightComponent::getShadowHalfSize)
       .def("set_shadow_half_size", &SapienRenderDirectionalLightComponent::setShadowHalfSize,
-           py::arg("size"));
+           py::arg("size"))
+      .def_property("softness", &SapienRenderDirectionalLightComponent::getSoftness,
+                    &SapienRenderDirectionalLightComponent::setSoftness)
+      .def("get_softness", &SapienRenderDirectionalLightComponent::getSoftness)
+      .def("set_softness", &SapienRenderDirectionalLightComponent::setSoftness,
+           py::arg("softness"));
 
   PyRenderSpotLightComponent.def(py::init<>())
       .def_property("inner_fov", &SapienRenderSpotLightComponent::getFovInner,
@@ -1648,7 +1657,12 @@ Color, FOV, shape, and shadow near/far/half-size stay CPU real-time in both mode
       .def_property("outer_fov", &SapienRenderSpotLightComponent::getFovOuter,
                     &SapienRenderSpotLightComponent::setFovOuter)
       .def("get_outer_fov", &SapienRenderSpotLightComponent::getFovOuter)
-      .def("set_outer_fov", &SapienRenderSpotLightComponent::setFovOuter, py::arg("fov"));
+      .def("set_outer_fov", &SapienRenderSpotLightComponent::setFovOuter, py::arg("fov"))
+
+      .def_property("radius", &SapienRenderSpotLightComponent::getRadius,
+                    &SapienRenderSpotLightComponent::setRadius)
+      .def("get_radius", &SapienRenderSpotLightComponent::getRadius)
+      .def("set_radius", &SapienRenderSpotLightComponent::setRadius, py::arg("radius"));
 
   PyRenderTexturedLightComponent.def(py::init<>())
       .def_property("texture", &SapienRenderTexturedLightComponent::getTexture,

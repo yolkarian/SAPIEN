@@ -84,6 +84,16 @@ glm::mat4 DirectionalLight::getShadowProjectionMatrix() const {
                      mShadowFar);
 }
 
+std::array<glm::mat4, DirectionalLight::kShadowCascadeCount>
+DirectionalLight::getShadowProjectionMatrices() const {
+  std::array<glm::mat4, kShadowCascadeCount> result;
+  for (uint32_t c = 0; c < kShadowCascadeCount; ++c) {
+    float s = mShadowScaling * kShadowCascadeScales[c];
+    result[c] = math::ortho(-s, s, -s, s, mShadowNear, mShadowFar);
+  }
+  return result;
+}
+
 SpotLight::SpotLight(std::string const &name) : Node(name){};
 void SpotLight::enableShadow(bool enable) {
   mCastShadow = enable;

@@ -4,6 +4,14 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+Rasterization shadow upgrades and scene-owned shared shadow maps:
+
+- **New light softness / radius properties (default `0.0`, real-time):**
+  - `RenderDirectionalLightComponent.softness` (`get_softness`/`set_softness`, optional `softness=` on `Scene.add_directional_light`): angular softness for raster PCSS soft shadows and RT directional shadow jitter.
+  - `RenderPointLightComponent.radius` and `RenderSpotLightComponent.radius` (`get_radius`/`set_radius`, optional `radius=` on `Scene.add_point_light`/`Scene.add_spot_light`): emitter radius in metres for raster PCSS soft shadows and RT shadow jitter.
+- **Behavior change:** directional raster shadows use 3 concentric cascades (`0.15x`, `0.40x`, `1.0x` of `shadow_half_size`), point shadows use 16-tap cube PCF with slope bias instead of 1-tap un-biased depth comparison, and all raster shadow maps are owned by `Scene` and shared across cameras viewing the same scene (rendering shadows once per scene update instead of once per camera).
+- **Breaking (custom raster packs with shadows):** `samplerDirectionalLightDepths` is now `sampler2DArray` (3 cascade layers per directional light) and `ShadowBuffer.directionalLightBuffers` holds `3 * N` `LightBuffer` entries (matching `pointLightBuffers` `6 * N`). `SpotLight` in `common/light_data.glsl` uses its last field as `float radius`.
+
 `RenderBodyComponent.cast_shadow` and full post-processing passes:
 
 - `RenderBodyComponent.cast_shadow` (default `True`): controls shadow casting in rasterization, `rt`, `shadow_catcher` and `rt_batch` (via TLAS instance mask bit `0x02`). Setting it to `False` keeps the body visible to camera rays while skipping shadow rays and shadow maps.

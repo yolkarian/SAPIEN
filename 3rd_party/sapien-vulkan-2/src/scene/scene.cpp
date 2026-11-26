@@ -1,6 +1,7 @@
 #include "svulkan2/scene/scene.h"
 #include "../common/logger.h"
 #include "svulkan2/core/context.h"
+#include "svulkan2/resource/render_target.h"
 #include <algorithm>
 #include <cstring>
 #include <mutex>
@@ -63,14 +64,19 @@ void notifySceneVersionChanged(Scene *source, bool renderOnly) {
 }
 } // namespace detail
 
-struct LightBufferData {
+// Matches GLSL std140 array stride (16-byte aligned struct = 272 bytes) for ShadowBuffer arrays
+// as well as the standalone LightBuffer UBO of shadow passes (first 264 bytes).
+struct alignas(16) LightBufferData {
   glm::mat4 viewMatrix;
   glm::mat4 viewMatrixInverse;
   glm::mat4 projectionMatrix;
   glm::mat4 projectionMatrixInverse;
   int width;
   int height;
+  int padding0{0};
+  int padding1{0};
 };
+static_assert(sizeof(LightBufferData) == 272);
 
 struct ScopedBufferMapping {
   explicit ScopedBufferMapping(core::Buffer &buffer) : buffer(buffer) { buffer.map(); }
@@ -440,121 +446,313 @@ void Scene::updateModelMatrices() {
   mModelMatricesVersion = mVersion;
 }
 
-void Scene::uploadShadowToDevice(core::Buffer &shadowBuffer,
-                                 std::vector<std::unique_ptr<core::Buffer>> &lightBuffers,
+std::shared_ptr<RasterShadowMaps>
+Scene::getOrCreateRasterShadowMaps(vk::Format depthFormat, size_t lightBufferSize) {
+  std::vector<uint32_t> dirSizes;
+  std::vector<uint32_t> ptSizes;
+  std::vector<uint32_t> spSizes;
+  std::vector<uint32_t> texSizes;
+
+  for (auto *l : getDirectionalLights()) {
+    if (l->isShadowEnabled()) {
+      dirSizes.push_back(l->getShadowMapSize());
+    }
+  }
+  for (auto *l : getPointLights()) {
+    if (l->isShadowEnabled()) {
+      ptSizes.push_back(l->getShadowMapSize());
+    }
+  }
+  for (auto *l : getSpotLights()) {
+    if (l->isShadowEnabled()) {
+      spSizes.push_back(l->getShadowMapSize());
+    }
+  }
+  for (auto *l : getTexturedLights()) {
+    texSizes.push_back(l->getShadowMapSize());
+  }
+
+  auto it = mRasterShadowMaps.find(depthFormat);
+  if (it != mRasterShadowMaps.end() && it->second &&
+      it->second->matches(depthFormat, lightBufferSize, dirSizes, ptSizes, spSizes, texSizes)) {
+    return it->second;
+  }
+
+  auto maps = std::make_shared<RasterShadowMaps>();
+  maps->depthFormat = depthFormat;
+  maps->sceneVersion = mVersion;
+  maps->lightBufferSize = lightBufferSize;
+  maps->directionalShadowSizes = std::move(dirSizes);
+  maps->pointShadowSizes = std::move(ptSizes);
+  maps->spotShadowSizes = std::move(spSizes);
+  maps->texturedShadowSizes = std::move(texSizes);
+
+  bool hasAnyShadow = !maps->directionalShadowSizes.empty() || !maps->pointShadowSizes.empty() ||
+                      !maps->spotShadowSizes.empty() || !maps->texturedShadowSizes.empty();
+
+  if (hasAnyShadow && mContext->isVulkanAvailable()) {
+    auto pool = mContext->createCommandPool();
+    auto commandBuffer = pool->allocateCommandBuffer();
+    commandBuffer->begin(
+        vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
+
+    vk::ComponentMapping componentMapping(vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG,
+                                          vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA);
+
+    auto makeShadowSampler = [&]() {
+      return mContext->createSampler(vk::SamplerCreateInfo(
+          {}, vk::Filter::eNearest, vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest,
+          vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder,
+          vk::SamplerAddressMode::eClampToBorder, 0.f, false, 0.f, false, vk::CompareOp::eNever,
+          0.f, 0.f, vk::BorderColor::eFloatOpaqueWhite));
+    };
+
+    // 1. Directional lights: kShadowCascadeCount-layer 2D array per shadow-casting light
+    for (uint32_t size : maps->directionalShadowSizes) {
+      constexpr uint32_t kCascades = DirectionalLight::kShadowCascadeCount;
+      auto image = std::make_shared<core::Image>(
+          *mContext, vk::ImageType::e2D, vk::Extent3D{size, size, 1}, depthFormat,
+          vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
+          VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1, kCascades);
+      image->transitionLayout(commandBuffer.get(), vk::ImageLayout::eUndefined,
+                              vk::ImageLayout::eShaderReadOnlyOptimal, {},
+                              vk::AccessFlagBits::eShaderRead,
+                              vk::PipelineStageFlagBits::eBottomOfPipe,
+                              vk::PipelineStageFlagBits::eFragmentShader);
+
+      vk::ImageViewCreateInfo readViewInfo(
+          {}, image->getVulkanImage(), vk::ImageViewType::e2DArray, depthFormat, componentMapping,
+          vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, kCascades));
+      auto readView = mContext->getDevice().createImageViewUnique(readViewInfo);
+      maps->directionalReadTargets.push_back(std::make_shared<resource::SVRenderTarget>(
+          mContext, "DirectionalShadow", size, size, image, std::move(readView),
+          makeShadowSampler()));
+
+      for (uint32_t cascade = 0; cascade < kCascades; ++cascade) {
+        vk::ImageViewCreateInfo writeViewInfo(
+            {}, image->getVulkanImage(), vk::ImageViewType::e2D, depthFormat, componentMapping,
+            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, cascade, 1));
+        auto writeView = mContext->getDevice().createImageViewUnique(writeViewInfo);
+        maps->allWriteTargets.push_back(std::make_shared<resource::SVRenderTarget>(
+            mContext, "DirectionalShadow", size, size, image, std::move(writeView), vk::Sampler{}));
+        maps->allShadowSizes.push_back(size);
+      }
+    }
+
+    // 2. Point lights: 6-layer cubemap per shadow-casting light
+    for (uint32_t size : maps->pointShadowSizes) {
+      auto image = std::make_shared<core::Image>(
+          *mContext, vk::ImageType::e2D, vk::Extent3D{size, size, 1}, depthFormat,
+          vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
+          VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1, 6,
+          vk::ImageTiling::eOptimal, vk::ImageCreateFlagBits::eCubeCompatible);
+      image->transitionLayout(commandBuffer.get(), vk::ImageLayout::eUndefined,
+                              vk::ImageLayout::eShaderReadOnlyOptimal, {},
+                              vk::AccessFlagBits::eShaderRead,
+                              vk::PipelineStageFlagBits::eBottomOfPipe,
+                              vk::PipelineStageFlagBits::eFragmentShader);
+
+      vk::ImageViewCreateInfo readViewInfo(
+          {}, image->getVulkanImage(), vk::ImageViewType::eCube, depthFormat, componentMapping,
+          vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 6));
+      auto readView = mContext->getDevice().createImageViewUnique(readViewInfo);
+      maps->pointReadTargets.push_back(std::make_shared<resource::SVRenderTarget>(
+          mContext, "PointShadow", size, size, image, std::move(readView), makeShadowSampler()));
+
+      for (uint32_t face = 0; face < 6; ++face) {
+        vk::ImageViewCreateInfo writeViewInfo(
+            {}, image->getVulkanImage(), vk::ImageViewType::e2D, depthFormat, componentMapping,
+            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, face, 1));
+        auto writeView = mContext->getDevice().createImageViewUnique(writeViewInfo);
+        maps->allWriteTargets.push_back(std::make_shared<resource::SVRenderTarget>(
+            mContext, "PointShadow", size, size, image, std::move(writeView), vk::Sampler{}));
+        maps->allShadowSizes.push_back(size);
+      }
+    }
+
+    // 3. Spot lights: single 2D depth map per shadow-casting light
+    for (uint32_t size : maps->spotShadowSizes) {
+      auto image = std::make_shared<core::Image>(
+          *mContext, vk::ImageType::e2D, vk::Extent3D{size, size, 1}, depthFormat,
+          vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
+          VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1, 1);
+      image->transitionLayout(commandBuffer.get(), vk::ImageLayout::eUndefined,
+                              vk::ImageLayout::eShaderReadOnlyOptimal, {},
+                              vk::AccessFlagBits::eShaderRead,
+                              vk::PipelineStageFlagBits::eBottomOfPipe,
+                              vk::PipelineStageFlagBits::eFragmentShader);
+
+      vk::ImageViewCreateInfo readViewInfo(
+          {}, image->getVulkanImage(), vk::ImageViewType::e2D, depthFormat, componentMapping,
+          vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
+      auto readView = mContext->getDevice().createImageViewUnique(readViewInfo);
+      maps->spotReadTargets.push_back(std::make_shared<resource::SVRenderTarget>(
+          mContext, "SpotShadow", size, size, image, std::move(readView), makeShadowSampler()));
+
+      vk::ImageViewCreateInfo writeViewInfo(
+          {}, image->getVulkanImage(), vk::ImageViewType::e2D, depthFormat, componentMapping,
+          vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
+      auto writeView = mContext->getDevice().createImageViewUnique(writeViewInfo);
+      maps->allWriteTargets.push_back(std::make_shared<resource::SVRenderTarget>(
+          mContext, "SpotShadow", size, size, image, std::move(writeView), vk::Sampler{}));
+      maps->allShadowSizes.push_back(size);
+    }
+
+    // 4. Textured lights: single 2D depth map per textured light
+    for (uint32_t size : maps->texturedShadowSizes) {
+      auto image = std::make_shared<core::Image>(
+          *mContext, vk::ImageType::e2D, vk::Extent3D{size, size, 1}, depthFormat,
+          vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
+          VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1, 1);
+      image->transitionLayout(commandBuffer.get(), vk::ImageLayout::eUndefined,
+                              vk::ImageLayout::eShaderReadOnlyOptimal, {},
+                              vk::AccessFlagBits::eShaderRead,
+                              vk::PipelineStageFlagBits::eBottomOfPipe,
+                              vk::PipelineStageFlagBits::eFragmentShader);
+
+      vk::ImageViewCreateInfo readViewInfo(
+          {}, image->getVulkanImage(), vk::ImageViewType::e2D, depthFormat, componentMapping,
+          vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
+      auto readView = mContext->getDevice().createImageViewUnique(readViewInfo);
+      maps->texturedReadTargets.push_back(std::make_shared<resource::SVRenderTarget>(
+          mContext, "TexturedLightShadow", size, size, image, std::move(readView),
+          makeShadowSampler()));
+
+      vk::ImageViewCreateInfo writeViewInfo(
+          {}, image->getVulkanImage(), vk::ImageViewType::e2D, depthFormat, componentMapping,
+          vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
+      auto writeView = mContext->getDevice().createImageViewUnique(writeViewInfo);
+      maps->allWriteTargets.push_back(std::make_shared<resource::SVRenderTarget>(
+          mContext, "TexturedLightShadow", size, size, image, std::move(writeView),
+          vk::Sampler{}));
+      maps->allShadowSizes.push_back(size);
+    }
+
+    commandBuffer->end();
+    mContext->getQueue().submitAndWait(commandBuffer.get());
+
+    size_t const allocSize = std::max(lightBufferSize, sizeof(LightBufferData));
+    maps->lightBuffers.reserve(maps->allWriteTargets.size());
+    for (size_t i = 0; i < maps->allWriteTargets.size(); ++i) {
+      maps->lightBuffers.push_back(core::Buffer::CreateUniform(*mContext, allocSize));
+    }
+  }
+
+  mRasterShadowMaps[depthFormat] = maps;
+  return maps;
+}
+
+void Scene::uploadShadowToDevice(core::Buffer &shadowBuffer, RasterShadowMaps &shadowMaps,
                                  StructDataLayout const &shadowLayout) {
+  constexpr uint32_t kCascades = DirectionalLight::kShadowCascadeCount;
 
   uint32_t maxNumDirectionalLightShadows =
-      shadowLayout.elements.at("directionalLightBuffers").size /
-      shadowLayout.elements.at("directionalLightBuffers").member->size;
-  uint32_t maxNumPointLightShadows = shadowLayout.elements.at("pointLightBuffers").size /
-                                     shadowLayout.elements.at("pointLightBuffers").member->size /
-                                     6;
-  uint32_t maxNumSpotLightShadows = shadowLayout.elements.at("spotLightBuffers").size /
-                                    shadowLayout.elements.at("spotLightBuffers").member->size;
+      shadowLayout.elements.at("directionalLightBuffers").array.at(0) / kCascades;
+  uint32_t maxNumPointLightShadows =
+      shadowLayout.elements.at("pointLightBuffers").array.at(0) / 6;
+  uint32_t maxNumSpotLightShadows =
+      shadowLayout.elements.at("spotLightBuffers").array.at(0);
   uint32_t maxNumTexturedLightShadows =
-      shadowLayout.elements.at("texturedLightBuffers").size /
-      shadowLayout.elements.at("texturedLightBuffers").member->size;
+      shadowLayout.elements.at("texturedLightBuffers").array.at(0);
 
   ScopedBufferMapping shadowMapping(shadowBuffer);
 
-  uint32_t lightBufferIndex = 0;
+  std::vector<LightBufferData> allLightData;
+  allLightData.reserve(shadowMaps.lightBuffers.size());
+
   {
     std::vector<LightBufferData> directionalLightShadowData;
     uint32_t numDirectionalLightShadows = 0;
     for (auto &l : getDirectionalLights()) {
-      if (l->isShadowEnabled()) {
-        if (numDirectionalLightShadows >= maxNumDirectionalLightShadows) {
-          throw std::runtime_error("The scene contains too many directional "
-                                   "lights that cast shadows.");
-          break;
-        }
-        numDirectionalLightShadows++;
+      if (!l->isShadowEnabled()) {
+        continue;
+      }
+      if (numDirectionalLightShadows >= maxNumDirectionalLightShadows) {
+        throw std::runtime_error("The scene contains too many directional "
+                                 "lights that cast shadows.");
+      }
+      numDirectionalLightShadows++;
 
-        auto modelMat = l->getTransform().worldModelMatrix;
-        auto projMat = l->getShadowProjectionMatrix();
-        directionalLightShadowData.push_back({.viewMatrix = glm::affineInverse(modelMat),
+      auto modelMat = l->getTransform().worldModelMatrix;
+      auto viewMat = glm::affineInverse(modelMat);
+      auto projMats = l->getShadowProjectionMatrices();
+      for (uint32_t c = 0; c < kCascades; ++c) {
+        directionalLightShadowData.push_back({.viewMatrix = viewMat,
                                               .viewMatrixInverse = modelMat,
-                                              .projectionMatrix = projMat,
-                                              .projectionMatrixInverse = glm::inverse(projMat),
+                                              .projectionMatrix = projMats[c],
+                                              .projectionMatrixInverse = glm::inverse(projMats[c]),
                                               .width = static_cast<int>(l->getShadowMapSize()),
                                               .height = static_cast<int>(l->getShadowMapSize())});
-        lightBuffers[lightBufferIndex++]->upload(&directionalLightShadowData.back(),
-                                                 sizeof(LightBufferData));
-      } else {
-        break;
+        allLightData.push_back(directionalLightShadowData.back());
       }
     }
-    shadowBuffer.upload(directionalLightShadowData.data(),
-                        directionalLightShadowData.size() * sizeof(LightBufferData),
-                        shadowLayout.elements.at("directionalLightBuffers").offset);
+    if (!directionalLightShadowData.empty()) {
+      shadowBuffer.upload(directionalLightShadowData.data(),
+                          directionalLightShadowData.size() * sizeof(LightBufferData),
+                          shadowLayout.elements.at("directionalLightBuffers").offset);
+    }
   }
 
   {
     std::vector<LightBufferData> pointLightShadowData;
     uint32_t numPointLightShadows = 0;
     for (auto &l : getPointLights()) {
-      if (l->isShadowEnabled()) {
-        if (numPointLightShadows >= maxNumPointLightShadows) {
-          throw std::runtime_error("The scene contains too many point "
-                                   "lights that cast shadows.");
-          // log::warn(
-          //     "The scene contains too many point lights that cast shadows. "
-          //     "Truncated.");
-          break;
-        }
-        numPointLightShadows++;
-        auto modelMats =
-            PointLight::getModelMatrices(glm::vec3(l->getTransform().worldModelMatrix[3]));
-        auto projMat = l->getShadowProjectionMatrix();
-        for (uint32_t i = 0; i < 6; ++i) {
-          pointLightShadowData.push_back({.viewMatrix = glm::affineInverse(modelMats[i]),
-                                          .viewMatrixInverse = modelMats[i],
-                                          .projectionMatrix = projMat,
-                                          .projectionMatrixInverse = glm::inverse(projMat),
-                                          .width = static_cast<int>(l->getShadowMapSize()),
-                                          .height = static_cast<int>(l->getShadowMapSize())});
-          lightBuffers[lightBufferIndex++]->upload(&pointLightShadowData.back(),
-                                                   sizeof(LightBufferData));
-        }
-      } else {
-        break;
+      if (!l->isShadowEnabled()) {
+        continue;
+      }
+      if (numPointLightShadows >= maxNumPointLightShadows) {
+        throw std::runtime_error("The scene contains too many point "
+                                 "lights that cast shadows.");
+      }
+      numPointLightShadows++;
+      auto modelMats =
+          PointLight::getModelMatrices(glm::vec3(l->getTransform().worldModelMatrix[3]));
+      auto projMat = l->getShadowProjectionMatrix();
+      for (uint32_t i = 0; i < 6; ++i) {
+        pointLightShadowData.push_back({.viewMatrix = glm::affineInverse(modelMats[i]),
+                                        .viewMatrixInverse = modelMats[i],
+                                        .projectionMatrix = projMat,
+                                        .projectionMatrixInverse = glm::inverse(projMat),
+                                        .width = static_cast<int>(l->getShadowMapSize()),
+                                        .height = static_cast<int>(l->getShadowMapSize())});
+        allLightData.push_back(pointLightShadowData.back());
       }
     }
-    shadowBuffer.upload(pointLightShadowData.data(),
-                        pointLightShadowData.size() * sizeof(LightBufferData),
-                        shadowLayout.elements.at("pointLightBuffers").offset);
+    if (!pointLightShadowData.empty()) {
+      shadowBuffer.upload(pointLightShadowData.data(),
+                          pointLightShadowData.size() * sizeof(LightBufferData),
+                          shadowLayout.elements.at("pointLightBuffers").offset);
+    }
   }
 
   {
     std::vector<LightBufferData> spotLightShadowData;
     uint32_t numSpotLightShadows = 0;
     for (auto &l : getSpotLights()) {
-      if (l->isShadowEnabled()) {
-        if (numSpotLightShadows >= maxNumSpotLightShadows) {
-          throw std::runtime_error("The scene contains too many spot "
-                                   "lights that cast shadows.");
-          break;
-        }
-        numSpotLightShadows++;
-
-        auto modelMat = l->getTransform().worldModelMatrix;
-        auto projMat = l->getShadowProjectionMatrix();
-        spotLightShadowData.push_back({.viewMatrix = glm::affineInverse(modelMat),
-                                       .viewMatrixInverse = modelMat,
-                                       .projectionMatrix = projMat,
-                                       .projectionMatrixInverse = glm::inverse(projMat),
-                                       .width = static_cast<int>(l->getShadowMapSize()),
-                                       .height = static_cast<int>(l->getShadowMapSize())});
-        lightBuffers[lightBufferIndex++]->upload(&spotLightShadowData.back(),
-                                                 sizeof(LightBufferData));
-      } else {
-        break;
+      if (!l->isShadowEnabled()) {
+        continue;
       }
+      if (numSpotLightShadows >= maxNumSpotLightShadows) {
+        throw std::runtime_error("The scene contains too many spot "
+                                 "lights that cast shadows.");
+      }
+      numSpotLightShadows++;
+
+      auto modelMat = l->getTransform().worldModelMatrix;
+      auto projMat = l->getShadowProjectionMatrix();
+      spotLightShadowData.push_back({.viewMatrix = glm::affineInverse(modelMat),
+                                     .viewMatrixInverse = modelMat,
+                                     .projectionMatrix = projMat,
+                                     .projectionMatrixInverse = glm::inverse(projMat),
+                                     .width = static_cast<int>(l->getShadowMapSize()),
+                                     .height = static_cast<int>(l->getShadowMapSize())});
+      allLightData.push_back(spotLightShadowData.back());
     }
-    shadowBuffer.upload(spotLightShadowData.data(),
-                        spotLightShadowData.size() * sizeof(LightBufferData),
-                        shadowLayout.elements.at("spotLightBuffers").offset);
+    if (!spotLightShadowData.empty()) {
+      shadowBuffer.upload(spotLightShadowData.data(),
+                          spotLightShadowData.size() * sizeof(LightBufferData),
+                          shadowLayout.elements.at("spotLightBuffers").offset);
+    }
   }
 
   {
@@ -574,13 +772,36 @@ void Scene::uploadShadowToDevice(core::Buffer &shadowBuffer,
                                          .projectionMatrixInverse = glm::inverse(projMat),
                                          .width = static_cast<int>(l->getShadowMapSize()),
                                          .height = static_cast<int>(l->getShadowMapSize())});
-      lightBuffers[lightBufferIndex++]->upload(&texturedLightShadowData.back(),
-                                               sizeof(LightBufferData));
+      allLightData.push_back(texturedLightShadowData.back());
     }
-    shadowBuffer.upload(texturedLightShadowData.data(),
-                        texturedLightShadowData.size() * sizeof(LightBufferData),
-                        shadowLayout.elements.at("texturedLightBuffers").offset);
+    if (!texturedLightShadowData.empty()) {
+      shadowBuffer.upload(texturedLightShadowData.data(),
+                          texturedLightShadowData.size() * sizeof(LightBufferData),
+                          shadowLayout.elements.at("texturedLightBuffers").offset);
+    }
   }
+
+  // Upload shared per-view LightBuffers only when the packed shadow matrices actually changed,
+  // so multiple cameras uploading on the same frame do not invalidate already-rendered shadows.
+  size_t const totalBytes = allLightData.size() * sizeof(LightBufferData);
+  bool changed = shadowMaps.lastLightBufferBytes.size() != totalBytes ||
+                 (totalBytes > 0 && std::memcmp(shadowMaps.lastLightBufferBytes.data(),
+                                                allLightData.data(), totalBytes) != 0);
+  if (changed) {
+    for (size_t i = 0; i < allLightData.size() && i < shadowMaps.lightBuffers.size(); ++i) {
+      shadowMaps.lightBuffers[i]->upload(&allLightData[i], sizeof(LightBufferData));
+    }
+    shadowMaps.lastLightBufferBytes.resize(totalBytes);
+    if (totalBytes > 0) {
+      std::memcpy(shadowMaps.lastLightBufferBytes.data(), allLightData.data(), totalBytes);
+    }
+    markShadowsDirty();
+  }
+}
+
+void Scene::markShadowsDirty() {
+  mShadowEpoch++;
+  detail::notifySceneVersionChanged(this, true);
 }
 
 void Scene::reorderLights() {
@@ -596,11 +817,13 @@ void Scene::reorderLights() {
 void Scene::updateVersion() {
   mVersion++;
   mRenderVersion++;
+  mShadowEpoch++;
   detail::notifySceneVersionChanged(this, false);
 }
 
 void Scene::updateRenderVersion() {
   mRenderVersion++;
+  mShadowEpoch++;
   detail::notifySceneVersionChanged(this, true);
 }
 

@@ -41,9 +41,9 @@ vec3 sapienLayeredPoint(vec3 base, OpenPBR m, vec3 normal, vec3 camDir, vec3 l, 
   return sapienLayered(base, m, normal, camDir, normalize(l), rgb / max(dot(l, l), 1e-8));
 }
 
-// the light-space shadow map coordinates of a camera-space position
-vec3 sapienShadowMapCoord(mat4 shadowView, mat4 shadowProj, vec3 position) {
-  vec4 coord = shadowProj * (shadowView * cameraBuffer.viewMatrixInverse * vec4(position, 1));
+// the light-space shadow map coordinates of a world-space position
+vec3 sapienShadowMapCoordWorld(mat4 shadowView, mat4 shadowProj, vec4 worldPos) {
+  vec4 coord = shadowProj * (shadowView * worldPos);
   coord /= coord.w;
   coord.xy = coord.xy * 0.5 + 0.5;
   return coord.xyz;
@@ -53,16 +53,16 @@ void sapienAddDirectLighting(inout vec3 color, vec3 position, vec3 normal, vec3 
                              vec3 diffuseAlbedo, float roughness, vec3 fresnel, OpenPBR m,
                              bool shadows) {
   bool layered = openpbrHasLayers(m);
+  vec4 worldPos = cameraBuffer.viewMatrixInverse * vec4(position, 1.0);
+  vec3 worldNormal = normalize(mat3(cameraBuffer.viewMatrixInverse) * normal);
+
   int pointShadows = shadows ? NUM_POINT_LIGHT_SHADOWS : 0;
   for (int i = 0; i < pointShadows; ++i) {
     vec3 l = (cameraBuffer.viewMatrix * vec4(pointLights.l[i].position, 1.f)).xyz - position;
     mat4 shadowProj = shadowBuffer.pointLightBuffers[6 * i].projectionMatrix;
     vec3 wsl = vec3(cameraBuffer.viewMatrixInverse * vec4(l, 0));
-    vec3 v = abs(wsl);
-    vec4 p = shadowProj * vec4(0, 0, -max(max(v.x, v.y), v.z), 1);
-    float pixelDepth = p.z / p.w;
-    float shadowDepth = texture(samplerPointLightDepths[i], wsl).x;
-    float visibility = step(pixelDepth - shadowDepth, 0);
+    float visibility = sapienPointShadow(samplerPointLightDepths[i], wsl, shadowProj, worldNormal,
+                                         pointLights.l[i].radius, gl_FragCoord.xy);
     vec3 c = computePointLight(pointLights.l[i].rgb, l, normal, camDir, diffuseAlbedo,
                                roughness, fresnel);
     if (layered) {
@@ -82,12 +82,16 @@ void sapienAddDirectLighting(inout vec3 color, vec3 position, vec3 normal, vec3 
 
   int directionalShadows = shadows ? NUM_DIRECTIONAL_LIGHT_SHADOWS : 0;
   for (int i = 0; i < directionalShadows; ++i) {
-    vec3 coord = sapienShadowMapCoord(shadowBuffer.directionalLightBuffers[i].viewMatrix,
-                                      shadowBuffer.directionalLightBuffers[i].projectionMatrix,
-                                      position);
-    float resolution = textureSize(samplerDirectionalLightDepths[i], 0).x;
-    float visibility =
-        ShadowMapPCF(samplerDirectionalLightDepths[i], coord, resolution, 1 / resolution, 1);
+    int base = i * SAPIEN_DIRECTIONAL_SHADOW_CASCADES;
+    float visibility = sapienDirectionalShadow(
+        samplerDirectionalLightDepths[i],
+        shadowBuffer.directionalLightBuffers[base + 0].viewMatrix,
+        shadowBuffer.directionalLightBuffers[base + 0].projectionMatrix,
+        shadowBuffer.directionalLightBuffers[base + 1].viewMatrix,
+        shadowBuffer.directionalLightBuffers[base + 1].projectionMatrix,
+        shadowBuffer.directionalLightBuffers[base + 2].viewMatrix,
+        shadowBuffer.directionalLightBuffers[base + 2].projectionMatrix,
+        worldPos, worldNormal, directionalLights.l[i].softness, gl_FragCoord.xy);
     vec3 direction = mat3(cameraBuffer.viewMatrix) * directionalLights.l[i].direction;
     vec3 c = computeDirectionalLight(direction, directionalLights.l[i].rgb, normal, camDir,
                                      diffuseAlbedo, roughness, fresnel);
@@ -112,20 +116,19 @@ void sapienAddDirectLighting(inout vec3 color, vec3 position, vec3 normal, vec3 
     vec3 centerDir = mat3(cameraBuffer.viewMatrix) * spotLightDirection(light);
     float visibility = 1.0;
     if (shadows && i < NUM_SPOT_LIGHT_SHADOWS) {
-      vec3 coord = sapienShadowMapCoord(shadowBuffer.spotLightBuffers[i].viewMatrix,
-                                        shadowBuffer.spotLightBuffers[i].projectionMatrix,
-                                        position);
-      float resolution = textureSize(samplerSpotLightDepths[i], 0).x;
-      visibility = ShadowMapPCF(samplerSpotLightDepths[i], coord, resolution, 1 / resolution, 1);
+      mat4 sv = shadowBuffer.spotLightBuffers[i].viewMatrix;
+      mat4 sp = shadowBuffer.spotLightBuffers[i].projectionMatrix;
+      vec3 coord = sapienShadowMapCoordWorld(sv, sp, worldPos);
+      visibility = sapienPerspectiveShadow(samplerSpotLightDepths[i], coord, sv, sp, worldNormal,
+                                           light.radius, gl_FragCoord.xy);
     } else if (i >= NUM_SPOT_LIGHTS) {
       int t = i - NUM_SPOT_LIGHTS;
-      vec3 coord = sapienShadowMapCoord(shadowBuffer.texturedLightBuffers[t].viewMatrix,
-                                        shadowBuffer.texturedLightBuffers[t].projectionMatrix,
-                                        position);
+      mat4 sv = shadowBuffer.texturedLightBuffers[t].viewMatrix;
+      mat4 sp = shadowBuffer.texturedLightBuffers[t].projectionMatrix;
+      vec3 coord = sapienShadowMapCoordWorld(sv, sp, worldPos);
       if (shadows) {
-        float resolution = textureSize(samplerTexturedLightDepths[t], 0).x;
-        visibility =
-            ShadowMapPCF(samplerTexturedLightDepths[t], coord, resolution, 1 / resolution, 1);
+        visibility = sapienPerspectiveShadow(samplerTexturedLightDepths[t], coord, sv, sp,
+                                             worldNormal, light.radius, gl_FragCoord.xy);
       }
       visibility *= texture(samplerTexturedLightTextures[light.textureId], coord.xy).x;
     }

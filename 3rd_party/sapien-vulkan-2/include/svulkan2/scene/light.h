@@ -8,7 +8,7 @@ namespace scene {
 
 class DirectionalLight : public Node {
   glm::vec3 mColor{0, 0, 0};
-  float mSoftness{0}; // ray tracing only
+  float mSoftness{0};
   bool mCastShadow{};
   float mShadowNear{0};
   float mShadowFar{10};
@@ -16,6 +16,13 @@ class DirectionalLight : public Node {
   uint32_t mShadowMapSize{2048};
 
 public:
+  // Concentric shadow map cascades centered on the light frame so multiple cameras sharing a
+  // scene share one cascaded shadow map array. The outermost cascade covers [-mShadowScaling,
+  // +mShadowScaling], matching the single-map extent.
+  static constexpr uint32_t kShadowCascadeCount = 3;
+  static constexpr std::array<float, kShadowCascadeCount> kShadowCascadeScales = {
+      0.15f, 0.40f, 1.0f};
+
   DirectionalLight(std::string const &name = "");
   inline void setColor(glm::vec3 const &color) { mColor = color; }
   inline glm::vec3 getColor() const { return mColor; }
@@ -33,10 +40,12 @@ public:
   inline uint32_t getShadowMapSize() const { return mShadowMapSize; }
 
   glm::mat4 getShadowProjectionMatrix() const;
+  std::array<glm::mat4, kShadowCascadeCount> getShadowProjectionMatrices() const;
 };
 
 class PointLight : public Node {
   glm::vec3 mColor{0, 0, 0};
+  float mRadius{0};
   bool mCastShadow{};
   float mShadowNear{0};
   float mShadowFar{10};
@@ -48,6 +57,8 @@ public:
   PointLight(std::string const &name = "");
   inline void setColor(glm::vec3 const &color) { mColor = color; }
   inline glm::vec3 getColor() const { return mColor; }
+  inline void setRadius(float radius) { mRadius = radius; }
+  inline float getRadius() const { return mRadius; }
   void enableShadow(bool enable);
   inline bool isShadowEnabled() const { return mCastShadow; }
   void setShadowParameters(float near, float far, uint32_t size);
@@ -60,6 +71,7 @@ public:
 
 class SpotLight : public Node {
   glm::vec3 mColor{0, 0, 0};
+  float mRadius{0};
   bool mCastShadow{};
   float mShadowNear{0};
   float mShadowFar{10};
@@ -71,6 +83,8 @@ public:
   SpotLight(std::string const &name = "");
   inline void setColor(glm::vec3 const &color) { mColor = color; }
   inline glm::vec3 getColor() const { return mColor; }
+  inline void setRadius(float radius) { mRadius = radius; }
+  inline float getRadius() const { return mRadius; }
   void enableShadow(bool enable);
   inline bool isShadowEnabled() const { return mCastShadow; }
   void setShadowParameters(float near, float far, uint32_t size);

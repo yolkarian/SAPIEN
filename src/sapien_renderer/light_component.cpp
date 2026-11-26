@@ -12,6 +12,7 @@ void SapienRenderPointLightComponent::onAddToScene(Scene &scene) {
   auto s = system->getScene();
   mPointLight = &s->addPointLight();
   mPointLight->setColor({mColor.x, mColor.y, mColor.z});
+  mPointLight->setRadius(mRadius);
   mPointLight->enableShadow(mShadowEnabled);
   mPointLight->setShadowParameters(mShadowNear, mShadowFar, mShadowMapSize);
   system->registerComponent(
@@ -34,6 +35,7 @@ void SapienRenderDirectionalLightComponent::onAddToScene(Scene &scene) {
   auto s = system->getScene();
   mDirectionalLight = &s->addDirectionalLight();
   mDirectionalLight->setColor({mColor.x, mColor.y, mColor.z});
+  mDirectionalLight->setSoftness(mSoftness);
   mDirectionalLight->enableShadow(mShadowEnabled);
   mDirectionalLight->setShadowParameters(mShadowNear, mShadowFar, mShadowHalfSize, mShadowMapSize);
   system->registerComponent(
@@ -54,6 +56,7 @@ void SapienRenderSpotLightComponent::onAddToScene(Scene &scene) {
   auto s = system->getScene();
   mSpotLight = &s->addSpotLight();
   mSpotLight->setColor({mColor.x, mColor.y, mColor.z});
+  mSpotLight->setRadius(mRadius);
   mSpotLight->enableShadow(mShadowEnabled);
   mSpotLight->setShadowParameters(mShadowNear, mShadowFar, mShadowMapSize);
   mSpotLight->setFovSmall(mFovInner);
@@ -81,6 +84,7 @@ void SapienRenderTexturedLightComponent::onAddToScene(Scene &scene) {
   auto s = system->getScene();
   mSpotLight = &s->addTexturedLight();
   mSpotLight->setColor({mColor.x, mColor.y, mColor.z});
+  mSpotLight->setRadius(mRadius);
   mSpotLight->enableShadow(mShadowEnabled);
   mSpotLight->setShadowParameters(mShadowNear, mShadowFar, mShadowMapSize);
   mSpotLight->setFovSmall(mFovInner);
@@ -353,6 +357,39 @@ void SapienRenderSpotLightComponent::internalApplyShadowEnabled() {
   if (mSpotLight) {
     mSpotLight->enableShadow(mShadowEnabled);
   }
+}
+
+void SapienRenderPointLightComponent::setRadius(float radius) {
+  if (radius < 0.f) {
+    throw std::runtime_error("point light radius must be non-negative");
+  }
+  mRadius = radius;
+  if (mPointLight) {
+    mPointLight->setRadius(radius);
+  }
+  markLightStateDirty();
+}
+
+void SapienRenderDirectionalLightComponent::setSoftness(float softness) {
+  if (softness < 0.f) {
+    throw std::runtime_error("directional light softness must be non-negative");
+  }
+  mSoftness = softness;
+  if (mDirectionalLight) {
+    mDirectionalLight->setSoftness(softness);
+  }
+  markLightStateDirty();
+}
+
+void SapienRenderSpotLightComponent::setRadius(float radius) {
+  if (radius < 0.f) {
+    throw std::runtime_error("spot light radius must be non-negative");
+  }
+  mRadius = radius;
+  if (mSpotLight) {
+    mSpotLight->setRadius(radius);
+  }
+  markLightStateDirty();
 }
 
 void SapienRenderPointLightComponent::internalApplyShadowParameters() {

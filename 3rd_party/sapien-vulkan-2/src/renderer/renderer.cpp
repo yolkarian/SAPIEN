@@ -142,6 +142,7 @@ void Renderer::setScene(std::shared_ptr<scene::Scene> scene) {
         "failed to set scene: the scene renders on a different device than the renderer");
   }
   mScene = std::move(scene);
+  mShadowMaps.reset();
   mRequiresRebuild = true;
   mRequiresRecord = true;
 }
@@ -201,195 +202,11 @@ void Renderer::prepareRenderTargets(uint32_t width, uint32_t height) {
 }
 
 void Renderer::prepareShadowRenderTargets() {
-  if (!mContext->isVulkanAvailable()) {
+  if (!mContext->isVulkanAvailable() || !mScene) {
     return;
   }
-
-  auto format = mConfig->depthFormat;
-
-  mDirectionalShadowWriteTargets.clear();
-  mPointShadowWriteTargets.clear();
-  mSpotShadowWriteTargets.clear();
-  mTexturedLightShadowWriteTargets.clear();
-
-  mDirectionalShadowReadTargets.clear();
-  mPointShadowReadTargets.clear();
-  mSpotShadowReadTargets.clear();
-  mTexturedLightShadowReadTargets.clear();
-
-  // TODO: this pool may not be necessary
-  auto pool = mContext->createCommandPool();
-  auto commandBuffer = pool->allocateCommandBuffer();
-
-  commandBuffer->begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
-
-  vk::ComponentMapping componentMapping(vk::ComponentSwizzle::eR, vk::ComponentSwizzle::eG,
-                                        vk::ComponentSwizzle::eB, vk::ComponentSwizzle::eA);
-
-  // point light
-  {
-    for (uint32_t size : mPointLightShadowSizes) {
-      auto pointShadowImage = std::make_shared<core::Image>(
-          *mContext, vk::ImageType::e2D, vk::Extent3D{size, size, 1}, format,
-          vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
-          VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1, 6,
-          vk::ImageTiling::eOptimal, vk::ImageCreateFlagBits::eCubeCompatible);
-
-      // HACK: transition to shader read to stop validation from complaining
-      // dummy texture is not shader read
-      pointShadowImage->transitionLayout(
-          commandBuffer.get(), vk::ImageLayout::eUndefined,
-          vk::ImageLayout::eShaderReadOnlyOptimal, {}, vk::AccessFlagBits::eShaderRead,
-          vk::PipelineStageFlagBits::eBottomOfPipe, vk::PipelineStageFlagBits::eFragmentShader);
-
-      // read targets
-      vk::ImageViewCreateInfo viewInfo(
-          {}, pointShadowImage->getVulkanImage(), vk::ImageViewType::eCube, format,
-          componentMapping,
-          vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 6));
-      auto imageView = mContext->getDevice().createImageViewUnique(viewInfo);
-      auto sampler = mContext->createSampler(vk::SamplerCreateInfo(
-          {}, vk::Filter::eNearest, vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest,
-          vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder,
-          vk::SamplerAddressMode::eClampToBorder, 0.f, false, 0.f, false, vk::CompareOp::eNever,
-          0.f, 0.f, vk::BorderColor::eFloatOpaqueWhite));
-      mPointShadowReadTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-          mContext, "PointShadow", size, size, pointShadowImage, std::move(imageView), sampler));
-
-      // write targets
-      for (uint32_t faceIndex = 0; faceIndex < 6; ++faceIndex) {
-        vk::ImageViewCreateInfo viewInfo(
-            {}, pointShadowImage->getVulkanImage(), vk::ImageViewType::e2D, format,
-            componentMapping,
-            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, faceIndex, 1));
-        auto imageView = mContext->getDevice().createImageViewUnique(viewInfo);
-        mPointShadowWriteTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            mContext, "PointShadow", size, size, pointShadowImage, std::move(imageView),
-            vk::Sampler{}));
-      }
-    }
-  }
-
-  // directional light
-  {
-    for (uint32_t size : mDirectionalLightShadowSizes) {
-      auto directionalShadowImage = std::make_shared<core::Image>(
-          *mContext, vk::ImageType::e2D, vk::Extent3D{size, size, 1}, format,
-          vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
-          VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1, 1);
-
-      directionalShadowImage->transitionLayout(
-          commandBuffer.get(), vk::ImageLayout::eUndefined,
-          vk::ImageLayout::eShaderReadOnlyOptimal, {}, vk::AccessFlagBits::eShaderRead,
-          vk::PipelineStageFlagBits::eBottomOfPipe, vk::PipelineStageFlagBits::eFragmentShader);
-
-      {
-        vk::ImageViewCreateInfo viewInfo(
-            {}, directionalShadowImage->getVulkanImage(), vk::ImageViewType::e2D, format,
-            componentMapping,
-            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
-        auto imageView = mContext->getDevice().createImageViewUnique(viewInfo);
-        auto sampler = mContext->createSampler(vk::SamplerCreateInfo(
-            {}, vk::Filter::eNearest, vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest,
-            vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder,
-            vk::SamplerAddressMode::eClampToBorder, 0.f, false, 0.f, false, vk::CompareOp::eNever,
-            0.f, 0.f, vk::BorderColor::eFloatOpaqueWhite));
-        mDirectionalShadowReadTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            mContext, "DirectionalShadow", size, size, directionalShadowImage,
-            std::move(imageView), sampler));
-      }
-
-      {
-        vk::ImageViewCreateInfo viewInfo(
-            {}, directionalShadowImage->getVulkanImage(), vk::ImageViewType::e2D, format,
-            componentMapping,
-            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
-        auto imageView = mContext->getDevice().createImageViewUnique(viewInfo);
-        mDirectionalShadowWriteTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            mContext, "DirectionalShadow", size, size, directionalShadowImage,
-            std::move(imageView), vk::Sampler{}));
-      }
-    }
-  }
-
-  // spot lights
-  {
-    for (uint32_t size : mSpotLightShadowSizes) {
-      auto shadowImage = std::make_shared<core::Image>(
-          *mContext, vk::ImageType::e2D, vk::Extent3D{size, size, 1}, format,
-          vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
-          VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1, 1);
-
-      shadowImage->transitionLayout(
-          commandBuffer.get(), vk::ImageLayout::eUndefined,
-          vk::ImageLayout::eShaderReadOnlyOptimal, {}, vk::AccessFlagBits::eShaderRead,
-          vk::PipelineStageFlagBits::eBottomOfPipe, vk::PipelineStageFlagBits::eFragmentShader);
-
-      {
-        vk::ImageViewCreateInfo viewInfo(
-            {}, shadowImage->getVulkanImage(), vk::ImageViewType::e2D, format, componentMapping,
-            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
-        auto imageView = mContext->getDevice().createImageViewUnique(viewInfo);
-        auto sampler = mContext->createSampler(vk::SamplerCreateInfo(
-            {}, vk::Filter::eNearest, vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest,
-            vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder,
-            vk::SamplerAddressMode::eClampToBorder, 0.f, false, 0.f, false, vk::CompareOp::eNever,
-            0.f, 0.f, vk::BorderColor::eFloatOpaqueWhite));
-        mSpotShadowReadTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            mContext, "SpotShadow", size, size, shadowImage, std::move(imageView), sampler));
-      }
-      {
-        vk::ImageViewCreateInfo viewInfo(
-            {}, shadowImage->getVulkanImage(), vk::ImageViewType::e2D, format, componentMapping,
-            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
-        auto imageView = mContext->getDevice().createImageViewUnique(viewInfo);
-        mSpotShadowWriteTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            mContext, "SpotShadow", size, size, shadowImage, std::move(imageView), vk::Sampler{}));
-      }
-    }
-  }
-
-  // textured lights
-  {
-    for (uint32_t size : mTexturedLightShadowSizes) {
-      auto shadowImage = std::make_shared<core::Image>(
-          *mContext, vk::ImageType::e2D, vk::Extent3D{size, size, 1}, format,
-          vk::ImageUsageFlagBits::eDepthStencilAttachment | vk::ImageUsageFlagBits::eSampled,
-          VmaMemoryUsage::VMA_MEMORY_USAGE_GPU_ONLY, vk::SampleCountFlagBits::e1, 1, 1);
-
-      shadowImage->transitionLayout(
-          commandBuffer.get(), vk::ImageLayout::eUndefined,
-          vk::ImageLayout::eShaderReadOnlyOptimal, {}, vk::AccessFlagBits::eShaderRead,
-          vk::PipelineStageFlagBits::eBottomOfPipe, vk::PipelineStageFlagBits::eFragmentShader);
-
-      {
-        vk::ImageViewCreateInfo viewInfo(
-            {}, shadowImage->getVulkanImage(), vk::ImageViewType::e2D, format, componentMapping,
-            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
-        auto imageView = mContext->getDevice().createImageViewUnique(viewInfo);
-        auto sampler = mContext->createSampler(vk::SamplerCreateInfo(
-            {}, vk::Filter::eNearest, vk::Filter::eNearest, vk::SamplerMipmapMode::eNearest,
-            vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder,
-            vk::SamplerAddressMode::eClampToBorder, 0.f, false, 0.f, false, vk::CompareOp::eNever,
-            0.f, 0.f, vk::BorderColor::eFloatOpaqueWhite));
-        mTexturedLightShadowReadTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            mContext, "TexturedLightShadow", size, size, shadowImage, std::move(imageView),
-            sampler));
-      }
-      {
-        vk::ImageViewCreateInfo viewInfo(
-            {}, shadowImage->getVulkanImage(), vk::ImageViewType::e2D, format, componentMapping,
-            vk::ImageSubresourceRange(vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1));
-        auto imageView = mContext->getDevice().createImageViewUnique(viewInfo);
-        mTexturedLightShadowWriteTargets.push_back(std::make_shared<resource::SVRenderTarget>(
-            mContext, "TexturedLightShadow", size, size, shadowImage, std::move(imageView),
-            vk::Sampler{}));
-      }
-    }
-  }
-
-  commandBuffer->end();
-  mContext->getQueue().submitAndWait(commandBuffer.get());
+  auto lightBufferLayout = mShaderPack->getShaderInputLayouts()->lightBufferLayout;
+  mShadowMaps = mScene->getOrCreateRasterShadowMaps(mConfig->depthFormat, lightBufferLayout->size);
 }
 
 void Renderer::preparePipelines() {
@@ -450,46 +267,18 @@ void Renderer::prepareFramebuffers(uint32_t width, uint32_t height) {
 }
 
 void Renderer::prepareShadowFramebuffers() {
-  if (!mContext->isVulkanAvailable()) {
+  if (!mContext->isVulkanAvailable() || !mShadowMaps) {
     return;
   }
   mShadowFramebuffers.clear();
-  mShadowSizes.clear();
-  std::vector<std::shared_ptr<resource::SVRenderTarget>> targets;
-  targets.insert(targets.end(), mDirectionalShadowWriteTargets.begin(),
-                 mDirectionalShadowWriteTargets.begin() + mDirectionalLightShadowSizes.size());
-  for (uint32_t i = 0; i < mDirectionalLightShadowSizes.size(); ++i) {
-    mShadowSizes.push_back(mDirectionalLightShadowSizes[i]);
-  }
-
-  targets.insert(targets.end(), mPointShadowWriteTargets.begin(),
-                 mPointShadowWriteTargets.begin() + mPointLightShadowSizes.size() * 6);
-  for (uint32_t i = 0; i < mPointLightShadowSizes.size(); ++i) {
-    for (uint32_t j = 0; j < 6; ++j) {
-      mShadowSizes.push_back(mPointLightShadowSizes[i]);
-    }
-  }
-
-  targets.insert(targets.end(), mSpotShadowWriteTargets.begin(),
-                 mSpotShadowWriteTargets.begin() + mSpotLightShadowSizes.size());
-  for (uint32_t i = 0; i < mSpotLightShadowSizes.size(); ++i) {
-    mShadowSizes.push_back(mSpotLightShadowSizes[i]);
-  }
-
-  targets.insert(targets.end(), mTexturedLightShadowWriteTargets.begin(),
-                 mTexturedLightShadowWriteTargets.begin() + mTexturedLightShadowSizes.size());
-  for (uint32_t i = 0; i < mTexturedLightShadowSizes.size(); ++i) {
-    mShadowSizes.push_back(mTexturedLightShadowSizes[i]);
-  }
-
-  for (auto &target : targets) {
+  for (auto const &target : mShadowMaps->allWriteTargets) {
     vk::ImageView view = target->getImageView();
     vk::FramebufferCreateInfo info({},
                                    mShaderPackInstance->getShadowPassResources().renderPass.get(),
                                    1, &view, target->getWidth(), target->getHeight(), 1);
     mShadowFramebuffers.push_back(mContext->getDevice().createFramebufferUnique(info));
   }
-  assert(mShadowSizes.size() == mShadowFramebuffers.size());
+  assert(mShadowMaps->allShadowSizes.size() == mShadowFramebuffers.size());
 }
 
 void Renderer::resize(int width, int height) {
@@ -535,19 +324,19 @@ void Renderer::recordShadows() {
 
   mShadowCommandBuffer->begin(vk::CommandBufferBeginInfo({}, {}));
 
+  uint32_t const shadowViewCount =
+      mShadowMaps ? static_cast<uint32_t>(mShadowMaps->allWriteTargets.size()) : 0u;
+
   // render shadow passes
-  if (mShaderPack->getShadowPass()) {
+  if (mShaderPack->getShadowPass() && shadowViewCount > 0) {
     auto objects = mScene->getObjects();
     auto shadowPass = mShaderPack->getShadowPass();
 
     std::vector<vk::ClearValue> clearValues;
     clearValues.push_back(vk::ClearDepthStencilValue(1.0f, 0));
 
-    for (uint32_t shadowIdx = 0;
-         shadowIdx < mDirectionalLightShadowSizes.size() + 6 * mPointLightShadowSizes.size() +
-                         mSpotLightShadowSizes.size() + mTexturedLightShadowSizes.size();
-         ++shadowIdx) {
-      uint32_t size = mShadowSizes[shadowIdx];
+    for (uint32_t shadowIdx = 0; shadowIdx < shadowViewCount; ++shadowIdx) {
+      uint32_t size = mShadowMaps->allShadowSizes[shadowIdx];
 
       vk::Viewport viewport{0.f, 0.f, static_cast<float>(size), static_cast<float>(size),
                             0.f, 1.f};
@@ -604,17 +393,14 @@ void Renderer::recordShadows() {
     }
   }
 
-  if (mShaderPack->getPointShadowPass()) {
+  if (mShaderPack->getPointShadowPass() && shadowViewCount > 0) {
     auto objects = mScene->getPointObjects();
     auto pointShadowPass = mShaderPack->getPointShadowPass();
     std::vector<vk::ClearValue> clearValues;
     clearValues.push_back(vk::ClearDepthStencilValue(1.0f, 0));
 
-    for (uint32_t shadowIdx = 0;
-         shadowIdx < mDirectionalLightShadowSizes.size() + 6 * mPointLightShadowSizes.size() +
-                         mSpotLightShadowSizes.size() + mTexturedLightShadowSizes.size();
-         ++shadowIdx) {
-      uint32_t size = mShadowSizes[shadowIdx];
+    for (uint32_t shadowIdx = 0; shadowIdx < shadowViewCount; ++shadowIdx) {
+      uint32_t size = mShadowMaps->allShadowSizes[shadowIdx];
 
       vk::Viewport viewport{0.f, 0.f, static_cast<float>(size), static_cast<float>(size),
                             0.f, 1.f};
@@ -1020,6 +806,16 @@ void Renderer::prepareRender(scene::Camera &camera) {
                                    mDirectionalLightShadowSizes.size());
     setSpecializationConstant<int>("NUM_SPOT_LIGHT_SHADOWS", mSpotLightShadowSizes.size());
     setSpecializationConstant<int>("NUM_TEXTURED_LIGHT_SHADOWS", mTexturedLightShadowSizes.size());
+
+    if (mShaderPack->getShadowPass()) {
+      auto lightBufferLayout = mShaderPack->getShaderInputLayouts()->lightBufferLayout;
+      if (!mShadowMaps ||
+          !mShadowMaps->matches(mConfig->depthFormat, lightBufferLayout->size,
+                                mDirectionalLightShadowSizes, mPointLightShadowSizes,
+                                mSpotLightShadowSizes, mTexturedLightShadowSizes)) {
+        mRequiresRebuild = true;
+      }
+    }
   }
 
   if (mRequiresRebuild || mSpecializationConstantsChanged) {
@@ -1116,8 +912,8 @@ void Renderer::writeSceneLightBuffers() {
   writeLights(mPointLightBuffer, mLights.point);
   writeLights(mDirectionalLightBuffer, mLights.directional);
   writeLights(mSpotLightBuffer, mLights.spot);
-  if (mShaderPack->getShadowPass()) {
-    mScene->uploadShadowToDevice(*mShadowBuffer, mLightBuffers,
+  if (mShaderPack->getShadowPass() && mShadowMaps) {
+    mScene->uploadShadowToDevice(*mShadowBuffer, *mShadowMaps,
                                  *mShaderPack->getShaderInputLayouts()->shadowBufferLayout);
   }
 }
@@ -1176,6 +972,20 @@ void Renderer::forceUploadCameraBuffer(scene::Camera &camera) {
   }
 }
 
+bool Renderer::shouldRenderShadows(bool &wantsPointShadow) const {
+  wantsPointShadow = false;
+  if (!mShadowMaps || mShadowMaps->allWriteTargets.empty()) {
+    return false;
+  }
+  wantsPointShadow =
+      mShaderPack->getPointShadowPass() != nullptr && !mScene->getPointObjects().empty();
+  if (mShadowMaps->renderedShadowEpoch == mScene->getShadowEpoch() &&
+      (!wantsPointShadow || mShadowMaps->renderedWithPointShadow)) {
+    return false;
+  }
+  return true;
+}
+
 void Renderer::render(scene::Camera &camera, std::vector<vk::Semaphore> const &waitSemaphores,
                       std::vector<vk::PipelineStageFlags> const &waitStages,
                       std::vector<vk::Semaphore> const &signalSemaphores, vk::Fence fence) {
@@ -1192,9 +1002,18 @@ void Renderer::render(scene::Camera &camera, std::vector<vk::Semaphore> const &w
     uploadGpuResources(camera);
   }
 
-  std::array<vk::CommandBuffer, 2> cbs = {mShadowCommandBuffer.get(),
-                                          mRenderCommandBuffer.get()};
-  mContext->getQueue().submit(cbs, waitSemaphores, waitStages, signalSemaphores, fence);
+  bool wantsPointShadow = false;
+  if (shouldRenderShadows(wantsPointShadow)) {
+    std::array<vk::CommandBuffer, 2> cbs = {mShadowCommandBuffer.get(),
+                                            mRenderCommandBuffer.get()};
+    mContext->getQueue().submit(cbs, waitSemaphores, waitStages, signalSemaphores, fence);
+    mShadowMaps->renderedShadowEpoch = mScene->getShadowEpoch();
+    mShadowMaps->renderedWithPointShadow = wantsPointShadow;
+    mScene->noteRasterShadowsRendered();
+  } else {
+    mContext->getQueue().submit(mRenderCommandBuffer.get(), waitSemaphores, waitStages,
+                                signalSemaphores, fence);
+  }
 }
 
 void Renderer::render(
@@ -1216,10 +1035,19 @@ void Renderer::render(
     uploadGpuResources(camera);
   }
 
-  std::array<vk::CommandBuffer, 2> cbs = {mShadowCommandBuffer.get(),
-                                          mRenderCommandBuffer.get()};
-  mContext->getQueue().submit(cbs, waitSemaphores, waitStageMasks, waitValues, signalSemaphores,
-                              signalValues, {});
+  bool wantsPointShadow = false;
+  if (shouldRenderShadows(wantsPointShadow)) {
+    std::array<vk::CommandBuffer, 2> cbs = {mShadowCommandBuffer.get(),
+                                            mRenderCommandBuffer.get()};
+    mContext->getQueue().submit(cbs, waitSemaphores, waitStageMasks, waitValues, signalSemaphores,
+                                signalValues, {});
+    mShadowMaps->renderedShadowEpoch = mScene->getShadowEpoch();
+    mShadowMaps->renderedWithPointShadow = wantsPointShadow;
+    mScene->noteRasterShadowsRendered();
+  } else {
+    mContext->getQueue().submit(mRenderCommandBuffer.get(), waitSemaphores, waitStageMasks,
+                                waitValues, signalSemaphores, signalValues, {});
+  }
 }
 
 std::vector<std::string> Renderer::getDisplayTargetNames() const {
@@ -1391,26 +1219,34 @@ void Renderer::prepareSceneBuffer() {
           bindingIndex);
     } else if (binding.name == "samplerPointLightDepths") {
       std::vector<std::tuple<vk::ImageView, vk::Sampler>> textures;
-      for (auto t : mPointShadowReadTargets) {
-        textures.push_back({t->getImageView(), t->getSampler()});
+      if (mShadowMaps) {
+        for (auto const &t : mShadowMaps->pointReadTargets) {
+          textures.push_back({t->getImageView(), t->getSampler()});
+        }
       }
       updateArrayDescriptorSets(mContext->getDevice(), mSceneSet.get(), textures, bindingIndex);
     } else if (binding.name == "samplerDirectionalLightDepths") {
       std::vector<std::tuple<vk::ImageView, vk::Sampler>> textures;
-      for (auto t : mDirectionalShadowReadTargets) {
-        textures.push_back({t->getImageView(), t->getSampler()});
+      if (mShadowMaps) {
+        for (auto const &t : mShadowMaps->directionalReadTargets) {
+          textures.push_back({t->getImageView(), t->getSampler()});
+        }
       }
       updateArrayDescriptorSets(mContext->getDevice(), mSceneSet.get(), textures, bindingIndex);
     } else if (binding.name == "samplerSpotLightDepths") {
       std::vector<std::tuple<vk::ImageView, vk::Sampler>> textures;
-      for (auto t : mSpotShadowReadTargets) {
-        textures.push_back({t->getImageView(), t->getSampler()});
+      if (mShadowMaps) {
+        for (auto const &t : mShadowMaps->spotReadTargets) {
+          textures.push_back({t->getImageView(), t->getSampler()});
+        }
       }
       updateArrayDescriptorSets(mContext->getDevice(), mSceneSet.get(), textures, bindingIndex);
     } else if (binding.name == "samplerTexturedLightDepths") {
       std::vector<std::tuple<vk::ImageView, vk::Sampler>> textures;
-      for (auto t : mTexturedLightShadowReadTargets) {
-        textures.push_back({t->getImageView(), t->getSampler()});
+      if (mShadowMaps) {
+        for (auto const &t : mShadowMaps->texturedReadTargets) {
+          textures.push_back({t->getImageView(), t->getSampler()});
+        }
       }
       updateArrayDescriptorSets(mContext->getDevice(), mSceneSet.get(), textures, bindingIndex);
     } else if (binding.name == "samplerTexturedLightTextures") {
@@ -1793,30 +1629,27 @@ void Renderer::bindSceneSet(vk::CommandBuffer commandBuffer, vk::PipelineLayout 
 }
 
 void Renderer::prepareLightBuffers() {
-  auto lightBufferLayout = mShaderPack->getShaderInputLayouts()->lightBufferLayout;
+  uint32_t numShadows =
+      mShadowMaps ? static_cast<uint32_t>(mShadowMaps->lightBuffers.size()) : 0u;
 
-  uint32_t numShadows = mPointLightShadowSizes.size() * 6 + mDirectionalLightShadowSizes.size() +
-                        mSpotLightShadowSizes.size() + mTexturedLightShadowSizes.size();
-
-  // too many shadow sets
   if (numShadows * 2 < mLightSets.size()) {
-    uint32_t newSize = numShadows;
-    mLightSets.resize(newSize);
-    mLightBuffers.resize(newSize);
+    mLightSets.resize(numShadows);
   }
 
-  // too few shadow sets
-  for (uint32_t i = mLightSets.size(); i < numShadows; ++i) {
-    auto layout = mShaderPackInstance->getLightDescriptorSetLayout();
-    mLightBuffers.push_back(core::Buffer::CreateUniform(*mContext, lightBufferLayout->size));
+  auto layout = mShaderPackInstance->getLightDescriptorSetLayout();
+  while (mLightSets.size() < numShadows) {
     auto shadowSet = std::move(mContext->getDevice()
                                    .allocateDescriptorSetsUnique(vk::DescriptorSetAllocateInfo(
                                        mDescriptorPool.get(), 1, &layout))
                                    .front());
     mLightSets.push_back(std::move(shadowSet));
+  }
+
+  for (uint32_t i = 0; i < numShadows; ++i) {
     updateDescriptorSets(
-        mContext->getDevice(), mLightSets.back().get(),
-        {{vk::DescriptorType::eUniformBuffer, mLightBuffers.back()->getVulkanBuffer(), nullptr}},
+        mContext->getDevice(), mLightSets[i].get(),
+        {{vk::DescriptorType::eUniformBuffer, mShadowMaps->lightBuffers[i]->getVulkanBuffer(),
+          nullptr}},
         {}, 0);
   }
 }

@@ -40,7 +40,7 @@ struct GpuSpotLight {
   float fovInner{0.f}; // full angles, radians
   float fovOuter{0.f};
   int textureId{-1}; // renderer-specific texture slot of a textured light, -1 for none
-  int padding2{0};
+  float radius{0.f}; // emitter radius in meters for soft shadows (PCSS / RT)
 };
 static_assert(sizeof(GpuSpotLight) == 176);
 

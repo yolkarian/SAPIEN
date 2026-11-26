@@ -1,6 +1,7 @@
 #include "svulkan2/shader/shader_pack.h"
 #include "../common/logger.h"
 #include "svulkan2/common/fs.h"
+#include "svulkan2/scene/light.h"
 #include "svulkan2/shader/deferred.h"
 #include "svulkan2/shader/gbuffer.h"
 #include "svulkan2/shader/primitive.h"
@@ -206,8 +207,15 @@ void ShaderPack::validateShadowArrays() {
           mMaxPointShadowCount = shadowBuffer->elements.at("pointLightBuffers").array.at(0) / 6;
         }
         if (shadowBuffer->elements.contains("directionalLightBuffers")) {
-          mMaxDirectionalShadowCount =
+          uint32_t directionalBuffers =
               shadowBuffer->elements.at("directionalLightBuffers").array.at(0);
+          if (directionalBuffers % scene::DirectionalLight::kShadowCascadeCount != 0) {
+            throw std::runtime_error(
+                "ShadowBuffer directionalLightBuffers count must be a multiple of " +
+                std::to_string(scene::DirectionalLight::kShadowCascadeCount));
+          }
+          mMaxDirectionalShadowCount =
+              directionalBuffers / scene::DirectionalLight::kShadowCascadeCount;
         }
         if (shadowBuffer->elements.contains("spotLightBuffers")) {
           mMaxSpotShadowCount = shadowBuffer->elements.at("spotLightBuffers").array.at(0);
@@ -264,8 +272,10 @@ void ShaderPack::validateShadowArrays() {
       }
 
       if (maxDirectionalTexCount != mMaxDirectionalShadowCount) {
-        throw std::runtime_error("samplerDirectionalLightDepths and ShadowBuffer "
-                                 "directionalLightBuffers should have the same size");
+        throw std::runtime_error(
+            "samplerDirectionalLightDepths and ShadowBuffer directionalLightBuffers "
+            "should have matching sizes (N vs " +
+            std::to_string(scene::DirectionalLight::kShadowCascadeCount) + "N)");
       }
 
       if (maxSpotTexCount != mMaxSpotShadowCount) {

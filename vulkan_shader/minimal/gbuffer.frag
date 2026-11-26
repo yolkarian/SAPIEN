@@ -39,13 +39,13 @@ struct LightBuffer {
 
 layout(set = 2, binding = 1) uniform ShadowBuffer {
   LightBuffer pointLightBuffers[60];
-  LightBuffer directionalLightBuffers[3];
+  LightBuffer directionalLightBuffers[9];
   LightBuffer spotLightBuffers[10];
   LightBuffer texturedLightBuffers[1];
 } shadowBuffer;
 
 layout(set = 2, binding = 2) uniform samplerCube samplerPointLightDepths[10];
-layout(set = 2, binding = 3) uniform sampler2D samplerDirectionalLightDepths[3];
+layout(set = 2, binding = 3) uniform sampler2DArray samplerDirectionalLightDepths[3];
 layout(set = 2, binding = 4) uniform sampler2D samplerSpotLightDepths[10];
 layout(set = 2, binding = 5) uniform sampler2D samplerTexturedLightDepths[1];
 layout(set = 2, binding = 6) uniform sampler2D samplerTexturedLightTextures[1];

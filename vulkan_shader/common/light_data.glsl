@@ -32,7 +32,7 @@ struct SpotLight {
   float fovInner;
   float fovOuter;
   int textureId;
-  int padding2;
+  float radius;
 };
 
 struct ParallelogramLight {

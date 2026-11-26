@@ -19,13 +19,16 @@ GpuSpotLight spotLightData(SpotLight const &light, int textureId) {
           .position = light.getPosition(),
           .fovInner = light.getFovSmall(),
           .fovOuter = light.getFov(),
-          .textureId = textureId};
+          .textureId = textureId,
+          .radius = light.getRadius()};
 }
 } // namespace
 
 void LightTable::append(Scene &scene, TextureIndex const &textureIndex) {
   for (auto *light : shadowsFirst(scene.getPointLights())) {
-    point.push_back({.position = light->getPosition(), .rgb = light->getColor()});
+    point.push_back({.position = light->getPosition(),
+                     .radius = light->getRadius(),
+                     .rgb = light->getColor()});
   }
   for (auto *light : shadowsFirst(scene.getDirectionalLights())) {
     directional.push_back({.direction = light->getDirection(),

@@ -49,16 +49,27 @@ bool isBlack(vec3 c) {
 // ---------------------------------------------------------------------------------------------
 void tracePointLights(Surface s, inout DirectLighting result) {
   for (int i = 0; i < pointLightCount; ++i) {
-    vec3 d = pointLights.l[i].position - s.pos;
+    PointLight light = pointLights.l[i];
+    vec3 target = light.position;
+    vec3 toCenter = target - s.pos;
+    if (light.radius > 0.0 && dot(toCenter, toCenter) > 1e-12) {
+      vec3 dir = normalize(toCenter);
+      vec3 tangent = abs(dir.z) < 0.999 ? normalize(cross(dir, vec3(0, 0, 1))) : vec3(1, 0, 0);
+      vec3 bitangent = cross(dir, tangent);
+      float r = sqrt(rnd(ray.seed)) * light.radius;
+      float angle = 2.0 * SAPIEN_PI * rnd(ray.seed);
+      target += r * (cos(angle) * tangent + sin(angle) * bitangent);
+    }
+    vec3 d = target - s.pos;
     float d2 = max(dot(d, d), 1e-12);
     float dist = sqrt(d2);
     vec3 L = d / dist;
     vec3 fDiff, fSpec;
     evalBsdfSplit(s, L, fDiff, fSpec);
     if (!isBlack(fDiff + fSpec)) {
-      vec3 light = traceShadow(offsetRayOrigin(s.pos, s.Ng), L, dist) * pointLights.l[i].rgb / d2;
-      result.diffuse += light * fDiff;
-      result.specular += light * fSpec;
+      vec3 li = traceShadow(offsetRayOrigin(s.pos, s.Ng), L, dist) * light.rgb / d2;
+      result.diffuse += li * fDiff;
+      result.specular += li * fSpec;
     }
   }
 }
@@ -88,7 +99,17 @@ void traceSpotLights(Surface s, inout DirectLighting result) {
   for (int i = 0; i < spotLightCount; ++i) {
     SpotLight light = spotLights.l[i];
     vec3 centerDir = vec3(0.0, 0.0, -1.0) * mat3(light.viewMat);
-    vec3 d = light.position - s.pos;
+    vec3 target = light.position;
+    vec3 toCenter = target - s.pos;
+    if (light.radius > 0.0 && dot(toCenter, toCenter) > 1e-12) {
+      vec3 dir = normalize(toCenter);
+      vec3 tangent = abs(dir.z) < 0.999 ? normalize(cross(dir, vec3(0, 0, 1))) : vec3(1, 0, 0);
+      vec3 bitangent = cross(dir, tangent);
+      float r = sqrt(rnd(ray.seed)) * light.radius;
+      float angle = 2.0 * SAPIEN_PI * rnd(ray.seed);
+      target += r * (cos(angle) * tangent + sin(angle) * bitangent);
+    }
+    vec3 d = target - s.pos;
     float d2 = max(dot(d, d), 1e-12);
     float dist = sqrt(d2);
     vec3 L = d / dist;

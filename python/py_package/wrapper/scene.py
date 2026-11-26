@@ -617,6 +617,7 @@ class Scene(_Scene):
         shadow_near=0.1,
         shadow_far=10.0,
         shadow_map_size=2048,
+        radius=0.0,
     ):
         entity = sapien.Entity()
         light = sapien.render.RenderPointLightComponent()
@@ -626,6 +627,7 @@ class Scene(_Scene):
         light.shadow_near = shadow_near
         light.shadow_far = shadow_far
         light.shadow_map_size = shadow_map_size
+        light.radius = radius
         light.pose = sapien.Pose(position)
         self.add_entity(entity)
         return light
@@ -640,6 +642,7 @@ class Scene(_Scene):
         shadow_near=-10.0,
         shadow_far=10.0,
         shadow_map_size=2048,
+        softness=0.0,
     ):
         entity = sapien.Entity()
         light = sapien.render.RenderDirectionalLightComponent()
@@ -650,6 +653,7 @@ class Scene(_Scene):
         light.shadow_far = shadow_far
         light.shadow_half_size = shadow_scale
         light.shadow_map_size = shadow_map_size
+        light.softness = softness
         light.pose = sapien.Pose(
             position, sapien.math.shortest_rotation([1, 0, 0], direction)
         )
@@ -667,6 +671,7 @@ class Scene(_Scene):
         shadow_near=0.1,
         shadow_far=10.0,
         shadow_map_size=2048,
+        radius=0.0,
     ):
         entity = sapien.Entity()
         light = sapien.render.RenderSpotLightComponent()
@@ -678,6 +683,7 @@ class Scene(_Scene):
         light.shadow_map_size = shadow_map_size
         light.inner_fov = inner_fov
         light.outer_fov = outer_fov
+        light.radius = radius
         light.pose = sapien.Pose(
             position, sapien.math.shortest_rotation([1, 0, 0], direction)
         )
