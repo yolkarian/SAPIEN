@@ -4,6 +4,10 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+Linux-only platform support:
+
+- **Breaking:** SAPIEN supports Linux (`x86_64`) only. Windows wheel builds, CI jobs, and all Windows/non-Linux runtime, physics (`PhysXGpu_64.dll`, `msvcrt` download lock, `%USERPROFILE%`), renderer (`VK_KHR_EXTERNAL_*_WIN32`, `OpenImageDenoise*.dll`), CUDA (`nvcuda.dll`), and Pinocchio fallback paths have been removed. `setup.py` and CMake now reject non-Linux platforms at configure/build time.
+
 Grouped rasterization single-submit and target/pass trimming:
 
 - **Behavior change (`RenderCameraGroup` with rasterization packs):** `RenderCameraGroup.take_picture()` now records all unique scene shadow passes, all member camera raster passes, and all CUDA-buffer copies into one reusable command buffer with a single queue submit per frame. Member raster cameras also trim render targets, `VK_ATTACHMENT_UNUSED` outputs, shadow passes, post chains, and unreferenced passes to the transitive dependencies of the `render_targets` passed to `create_camera_group()` (requesting an unknown target raises `RuntimeError` at `gpu_init()`; closing the group restores all pack targets for standalone capture). Request only the targets you consume (e.g. `["Color"]`, `["Albedo"]`, `["GbufferDepth"]`) to reduce per-camera VRAM and pass overhead.

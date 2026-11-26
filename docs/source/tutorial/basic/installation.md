@@ -6,20 +6,19 @@
 .. highlight:: python
 ```
 
-SAPIEN release binaries are distributed as Python wheels, and for Linux also as a C++
-SDK archive ({ref}`cpp_sdk`), on
+SAPIEN supports Linux (`x86_64`) only. Release binaries are distributed as Python
+wheels and a C++ SDK archive ({ref}`cpp_sdk`) on
 [GitHub Releases](https://github.com/yolkarian/SAPIEN/releases).
 
 The checked-in build automation currently builds Linux wheels for Python 3.9,
-3.10, 3.11, 3.12, and 3.13, and Windows wheels for Python 3.9, 3.10, 3.11,
-and 3.12. Prefer these versions when installing released or nightly wheels.
-Besides the numbered releases, the `nightly` prerelease holds the wheels and the
-Linux C++ SDK of the latest `main` commit and `dev-nightly` those of the latest
-`dev` commit; both are replaced on every push and meant for testing.
+3.10, 3.11, 3.12, and 3.13. Prefer these versions when installing released or
+nightly wheels. Besides the numbered releases, the `nightly` prerelease holds
+the wheels and C++ SDK of the latest `main` commit and `dev-nightly` those of
+the latest `dev` commit; both are replaced on every push and meant for testing.
 
-Supported platforms and hardware depend on which SAPIEN features you use:
+Supported hardware depends on which SAPIEN features you use:
 
-- Physics-only CPU simulation: Linux or Windows wheel matching your Python ABI.
+- Physics-only CPU simulation: Linux (`x86_64`) wheel matching your Python ABI.
 - Rasterized rendering: a Vulkan-capable NVIDIA, AMD, or Intel GPU.
 - PhysX GPU simulation: NVIDIA GPU with a driver/runtime stack compatible with
   CUDA `>= 12.8`. Source builds with GPU support also need a matching CUDA
@@ -30,7 +29,7 @@ Supported platforms and hardware depend on which SAPIEN features you use:
 
 ## Install from GitHub Releases
 
-Download the wheel that matches your Python version and platform from
+Download the Linux wheel that matches your Python version from
 [GitHub Releases](https://github.com/yolkarian/SAPIEN/releases), then install
 it with pip:
 
@@ -76,7 +75,7 @@ You can learn more about this scene in {ref}`hello_world`.
 ## C++ SDK
 
 Programs that use SAPIEN from C++ without Python, such as native RL trainers, use the
-C++ SDK instead of the wheel. Each Linux release has a
+C++ SDK instead of the wheel. Each release has a
 `sapien-sdk-<version>-linux_x86_64.tar.gz`; unpack it anywhere.
 
 | Path | Contents |

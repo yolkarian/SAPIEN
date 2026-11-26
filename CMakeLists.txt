@@ -1,20 +1,15 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 project(sapien LANGUAGES C CXX CUDA)
 
-if(MSVC)
-    set(CMAKE_MSVC_RUNTIME_LIBRARY MultiThreaded)
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "SAPIEN only supports Linux (got ${CMAKE_SYSTEM_NAME}).")
 endif()
-
 
 set(CMAKE_CXX_STANDARD 20)
 
-if(MSVC)
-    add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:/W4>" "$<$<CONFIG:Release>:$<$<COMPILE_LANGUAGE:CXX>:/O2>>")
-else()
-    add_compile_options("-Wall"
-        "$<$<CONFIG:Debug>:-g3>" "$<$<CONFIG:Debug>:-O0>"
-        "$<$<CONFIG:Release>:-O3>")
-endif()
+add_compile_options("-Wall"
+    "$<$<CONFIG:Debug>:-g3>" "$<$<CONFIG:Debug>:-O0>"
+    "$<$<CONFIG:Release>:-O3>")
 
 add_compile_definitions("$<$<CONFIG:DEBUG>:_DEBUG>")
 add_compile_definitions("$<$<CONFIG:DEBUG>:VK_VALIDATION>")
@@ -39,17 +34,11 @@ if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Choose the type of build." FORCE)
 endif ()
 
-if (WIN32)
-    set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
-endif()
-
 # The install tree is SAPIEN's C++ SDK, which scripts/build.sh packs into an archive: every shared
 # library goes to lib/ and finds the others through $ORIGIN, so the tree works wherever it is
 # unpacked.
 set(CMAKE_INSTALL_LIBDIR lib)
-if (UNIX)
-    set(CMAKE_INSTALL_RPATH "$ORIGIN")
-endif()
+set(CMAKE_INSTALL_RPATH "$ORIGIN")
 
 macro(FetchContent_MakeAvailableExclude)
     FetchContent_GetProperties(${ARGV})
@@ -106,22 +95,14 @@ if (${SAPIEN_CUDA})
     # currently used by the realistic depth sensor pipeline.
     set_target_properties(sapien PROPERTIES CUDA_ARCHITECTURES "60;61;70;75;80;86;89;90;100;120")
 
-    if (MSVC)
-        target_link_libraries(svulkan2 PRIVATE "$ENV{CUDA_PATH}/lib/x64/cudart_static.lib")
-    else()
-        target_link_libraries(sapien PRIVATE "$ENV{CUDA_PATH}/lib64/libcudart_static.a")
-    endif()
+    target_link_libraries(sapien PRIVATE "$ENV{CUDA_PATH}/lib64/libcudart_static.a")
     target_include_directories(sapien PRIVATE "3rd_party/dlpack/include" "$ENV{CUDA_PATH}/include")
 endif ()
 
 target_link_libraries(sapien PUBLIC eigen svulkan2)
 # the public headers are C++20, also for programs using the installed CMake package
 target_compile_features(sapien PUBLIC cxx_std_20)
-target_link_libraries(sapien PRIVATE physx5 spdlog::spdlog ${CMAKE_DL_LIBS} assimp::assimp)
-
-if (UNIX)
-    target_link_libraries(sapien PRIVATE stdc++fs)
-endif ()
+target_link_libraries(sapien PRIVATE physx5 spdlog::spdlog ${CMAKE_DL_LIBS} assimp::assimp stdc++fs)
 
 if (${SAPIEN_CUDA})
     target_compile_definitions(sapien PUBLIC SAPIEN_CUDA SAPIEN_CUDA)
@@ -195,7 +176,7 @@ endif()
 
 # PhysxDefault::EnableGPU() looks for the PhysX GPU runtime next to libsapien first, so the SDK
 # enables GPU PhysX without the download sapien.physx.enable_gpu() makes. The wheel leaves it out.
-if (UNIX AND ${SAPIEN_CUDA})
+if (${SAPIEN_CUDA})
     set(_sapien_physx_gpu_runtime "${physx5_GPU_SOURCE_DIR}/bin/linux.x86_64/release/libPhysXGpu_64.so")
     if (EXISTS "${_sapien_physx_gpu_runtime}")
         install(FILES "${_sapien_physx_gpu_runtime}" DESTINATION "${CMAKE_INSTALL_LIBDIR}")

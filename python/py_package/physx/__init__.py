@@ -1,7 +1,7 @@
 import contextlib
+import fcntl
 import io
 import os
-import platform
 import shutil
 import tempfile
 from pathlib import Path
@@ -22,30 +22,11 @@ from ..pysapien.physx import (
 def _exclusive_file_lock(path: Path) -> Iterator[None]:
     """Hold an exclusive advisory lock on ``path`` (created if missing) for the block."""
     with open(path, "a+b") as f:
-        if platform.system() == "Windows":
-            import msvcrt
-
-            # LK_LOCK gives up after ~10 s; keep retrying while another process downloads.
-            while True:
-                try:
-                    f.seek(0)
-                    msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
-                    break
-                except OSError:
-                    continue
-            try:
-                yield
-            finally:
-                f.seek(0)
-                msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
 def _find_library(candidates: List[Path]) -> Optional[Path]:
@@ -91,12 +72,7 @@ def enable_gpu():
         return
 
     physx_version = version()
-    if platform.system() == "Windows":
-        url = f"https://github.com/yolkarian/physx-release/releases/download/{physx_version}-windows/physxgpu-windows-vc17win64.zip"
-    elif platform.system() == "Linux":
-        url = f"https://github.com/yolkarian/physx-release/releases/download/{physx_version}-Linux/physxgpu-linux-clang.zip"
-    else:
-        raise RuntimeError("Unsupported platform")
+    url = f"https://github.com/yolkarian/physx-release/releases/download/{physx_version}-Linux/physxgpu-linux-clang.zip"
 
     # The cache location and the runtime's place inside the release package come from C++, so
     # Python downloads to where C++ programs (PhysxDefault::EnableGPU) look as well.

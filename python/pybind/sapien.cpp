@@ -371,15 +371,10 @@ handed to e.g. ``PhysxGpuSystem.cuda_articulation_qf`` and applied right away.)d
           "array itself to a from_dlpack function.")
 #endif
       ;
-#ifdef _MSC_VER
-  m.def("compiled_with_cxx11_abi", []() { return true; });
-  m.def("abi_version", []() { return _MSC_VER; });
-#else
 #ifdef SAPIEN_CUDA
   m.def("compiled_with_cxx11_abi", []() { return (bool)_GLIBCXX_USE_CXX11_ABI; });
 #endif
   m.def("abi_version", []() { return __GXX_ABI_VERSION; });
-#endif
   m.def("pybind11_use_smart_holder", []() {
 #ifdef PYBIND11_USE_SMART_HOLDER_AS_DEFAULT
     return true;

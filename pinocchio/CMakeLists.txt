@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.18 FATAL_ERROR)
 project(sapien_pinocchio LANGUAGES C CXX)
 
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "SAPIEN only supports Linux (got ${CMAKE_SYSTEM_NAME}).")
+endif ()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g3 -Wall")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -g0 -Wall")

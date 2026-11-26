@@ -1,6 +1,5 @@
 from importlib.resources import files
 from warnings import warn
-import platform
 import os
 
 
@@ -64,7 +63,6 @@ def _ensure_egl_icd():
     )
 
 
-if platform.system() == "Linux":
-    _ensure_libvulkan_linux()
-    _ensure_vulkan_icd()
-    _ensure_egl_icd()
+_ensure_libvulkan_linux()
+_ensure_vulkan_icd()
+_ensure_egl_icd()

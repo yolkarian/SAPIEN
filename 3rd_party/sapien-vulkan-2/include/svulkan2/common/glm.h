@@ -11,13 +11,6 @@
 #include <glm/gtx/quaternion.hpp>
 #include <stdexcept>
 
-#ifdef near
-#undef near
-#endif
-#ifdef far
-#undef far
-#endif
-
 namespace svulkan2 {
 namespace math {
 

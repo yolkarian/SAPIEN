@@ -11,11 +11,9 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
-#ifndef _WIN32
 #include <dlfcn.h>
 #include <pwd.h>
 #include <unistd.h>
-#endif
 
 namespace sapien {
 namespace physx {
@@ -139,18 +137,12 @@ PhysxGpuLibraryHook gPhysxGpuLibraryHook;
 #endif
 
 fs::path homeDirectory() {
-#ifdef _WIN32
-  if (char const *profile = std::getenv("USERPROFILE"); profile && *profile) {
-    return profile;
-  }
-#else
   if (char const *home = std::getenv("HOME"); home && *home) {
     return home;
   }
   if (passwd const *entry = getpwuid(getuid()); entry && entry->pw_dir) {
     return entry->pw_dir;
   }
-#endif
   throw std::runtime_error("failed to find the home directory holding the PhysX GPU runtime");
 }
 
@@ -163,12 +155,6 @@ std::string PhysxDefault::GetPhysxGpuCacheDirectory() {
 std::vector<std::string> PhysxDefault::GetPhysxGpuLibraryCandidates() {
   // the layout of the release packages sapien.physx.enable_gpu() downloads
   fs::path dir = GetPhysxGpuCacheDirectory();
-#ifdef _WIN32
-  return {(dir / "PhysXGpu_64.dll").string(),
-          (dir / "physxgpu-windows-vc17win64" / "PhysX" / "bin" / "win.x86_64.vc143.mt" /
-           "release" / "PhysXGpu_64.dll")
-              .string()};
-#else
   // first the runtime the C++ SDK ships next to libsapien
   Dl_info self{};
   if (!dladdr(reinterpret_cast<void *>(&PhysxDefault::GetPhysxGpuLibraryCandidates), &self) ||
@@ -180,7 +166,6 @@ std::vector<std::string> PhysxDefault::GetPhysxGpuLibraryCandidates() {
           (dir / "physxgpu-linux-clang" / "PhysX" / "bin" / "linux.x86_64" / "release" /
            "libPhysXGpu_64.so")
               .string()};
-#endif
 }
 
 void PhysxDefault::EnableGPU(std::string const &physxGpuLibrary) {
@@ -225,7 +210,7 @@ void PhysxDefault::EnableGPU(std::string const &physxGpuLibrary) {
                              gPhysxGpuLibraryHook.path);
   }
   gPhysxGpuLibraryHook.path = library.string();
-  // PhysX itself loads the CUDA driver (libcuda.so.1 / nvcuda.dll) before this runtime.
+  // PhysX itself loads the CUDA driver (libcuda.so.1) before this runtime.
   ::PxSetPhysXGpuLoadHook(&gPhysxGpuLibraryHook);
 #endif
   gGPUEnabled = true;

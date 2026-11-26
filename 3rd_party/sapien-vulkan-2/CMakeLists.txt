@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.24 FATAL_ERROR)
 project(sapienvulkan2 LANGUAGES C CXX)
+
+if (NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    message(FATAL_ERROR "svulkan2 only supports Linux (got ${CMAKE_SYSTEM_NAME}).")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 
 option(SVULKAN2_SHARED "Force svulkan2 to be shared" ON)
@@ -7,13 +12,9 @@ option(SVULKAN2_PROFILE "Build with profiler" OFF)
 option(SVULKAN2_BUILD_TEST "Build with unit test" OFF)
 option(SVULKAN2_CUDA_INTEROP "Allow CUDA to use Vulkan buffer" ON)
 
-if(MSVC)
-    add_compile_options("/W4" "$<$<CONFIG:Release>:/O2>")
-else()
-    add_compile_options("-Wall"
-        "$<$<CONFIG:Debug>:-g3>" "$<$<CONFIG:Debug>:-O0>"
-        "$<$<CONFIG:Release>:-O3>")
-endif()
+add_compile_options("-Wall"
+    "$<$<CONFIG:Debug>:-g3>" "$<$<CONFIG:Debug>:-O0>"
+    "$<$<CONFIG:Release>:-O3>")
 
 add_compile_definitions("$<$<CONFIG:DEBUG>:_DEBUG>")
 add_compile_definitions("$<$<CONFIG:DEBUG>:VK_VALIDATION>")
@@ -72,12 +73,7 @@ target_include_directories(svulkan2 PRIVATE
 target_link_libraries(svulkan2 PUBLIC Vulkan::Headers glm)
 
 find_package(Threads REQUIRED)
-target_link_libraries(svulkan2 PRIVATE assimp::assimp glslang SPIRV spirv-cross-cpp glfw spdlog::spdlog ktx imgui ${CMAKE_DL_LIBS} Threads::Threads OpenEXR)
-if (MSVC)
-    target_link_libraries(svulkan2 PRIVATE openvr_api64)
-else()
-    target_link_libraries(svulkan2 PRIVATE openvr_api)
-endif()
+target_link_libraries(svulkan2 PRIVATE assimp::assimp glslang SPIRV spirv-cross-cpp glfw spdlog::spdlog ktx imgui ${CMAKE_DL_LIBS} Threads::Threads OpenEXR openvr_api)
 
 if (${SVULKAN2_PROFILE})
     target_compile_definitions(svulkan2 PUBLIC SVULKAN2_PROFILE)
@@ -129,22 +125,13 @@ install(DIRECTORY "${vulkan_SOURCE_DIR}/include/vk_video" DESTINATION "include")
 install(DIRECTORY "${glm_SOURCE_DIR}/glm" DESTINATION "include")
 
 add_executable(svulkan2_main app/main.cpp)
-target_link_libraries(svulkan2_main svulkan2 glfw imgui)
-if (UNIX)
-    target_link_libraries(svulkan2_main stdc++fs)
-endif()
+target_link_libraries(svulkan2_main svulkan2 glfw imgui stdc++fs)
 
 add_executable(svulkan2_vr app/vr.cpp)
-target_link_libraries(svulkan2_vr svulkan2 glfw imgui)
-if (UNIX)
-    target_link_libraries(svulkan2_vr stdc++fs)
-endif()
+target_link_libraries(svulkan2_vr svulkan2 glfw imgui stdc++fs)
 
 add_executable(gencube app/gencube.cpp)
 target_link_libraries(gencube svulkan2)
 
 add_executable(glslc_embed app/glslc_embed.cpp)
-target_link_libraries(glslc_embed svulkan2)
-if (UNIX)
-    target_link_libraries(glslc_embed stdc++fs)
-endif()
+target_link_libraries(glslc_embed svulkan2 stdc++fs)

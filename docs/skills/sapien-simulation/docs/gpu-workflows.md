@@ -144,7 +144,7 @@ Notes:
 - Put this `RUN` after the layer that installs the SAPIEN wheel, because it imports `sapien.physx.version()`.
 - `SAPIEN_HOME` must match the runtime user's home because SAPIEN uses `Path.home()` and has no path override. If running as a non-root user, set `SAPIEN_HOME`, `HOME`, and ownership consistently.
 - If reproducible/pinned layers are preferred, use `ARG PHYSX_VERSION=...` matching `sapien.physx.version()` instead of deriving it dynamically, but still verify the `.so`.
-- Both platforms use a suffixed release tag: Linux pulls `<version>-Linux/physxgpu-linux-clang.zip`, Windows pulls `<version>-windows/physxgpu-windows-vc17win64.zip` and extracts `PhysXGpu_64.dll`. Both extract into the same `~/.sapien/physx/<version>/` directory, which is named by the bare version.
+- The release asset uses a suffixed release tag (`<version>-Linux/physxgpu-linux-clang.zip`) and extracts `libPhysXGpu_64.so` into `~/.sapien/physx/<version>/`, which is named by the bare version.
 
 Verify with a GPU container and fail if SAPIEN still tries to download:
 

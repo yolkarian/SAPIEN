@@ -1,5 +1,4 @@
 import os
-import platform
 
 import numpy as np
 import sapien
@@ -148,14 +147,7 @@ class KeyframeWindow(Plugin):
             editor_file.close()
             self._editor_file_name = editor_file.name
 
-        if platform.system() == "Linux":
-            os.system("gedit '{}' & disown".format(self._editor_file_name))
-        elif platform.system() == "Windows":
-            print(
-                "Please open and edit the file {} manually".format(
-                    self._editor_file_name
-                )
-            )
+        os.system("gedit '{}' & disown".format(self._editor_file_name))
 
     def notify_window_focus_change(self, focused):
         if focused and self.edited_duration and self._editor_file_name:

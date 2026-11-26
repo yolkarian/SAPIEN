@@ -12,7 +12,6 @@ FetchContent_Declare(
     GIT_TAG        0ea31aa6734336dc1e62c6d9bde3e49b6d71b811
     GIT_SHALLOW TRUE
     GIT_PROGRESS TRUE
-    # PATCH_COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_CURRENT_LIST_DIR}/assimp.patch.CMakeLists.txt <SOURCE_DIR>/CMakeLists.txt  # patch for MSVC
 )
 
 FetchContent_GetProperties(zlib)
@@ -47,6 +46,5 @@ endif()
 
 set_target_properties(assimp PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 
-# the following seems needed by MSVC
 target_include_directories(assimp PUBLIC $<BUILD_INTERFACE:${zlib_SOURCE_DIR}> $<BUILD_INTERFACE:${zlib_BINARY_DIR}>)
 target_link_libraries(assimp zlibstatic)

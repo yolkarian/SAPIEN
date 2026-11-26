@@ -1,7 +1,6 @@
 import os
 import re
 import sys
-import platform
 import subprocess
 import time
 import shutil
@@ -108,6 +107,9 @@ if args.get_version:
     print(version)
     exit(0)
 
+if sys.platform != "linux":
+    raise RuntimeError(f"SAPIEN only supports Linux (got {sys.platform!r}).")
+
 
 def build_sapien(sapien_source_dir, sapien_build_dir):
     build_dir = os.path.join(sapien_build_dir, "_sapien_build")
@@ -124,7 +126,6 @@ def build_sapien(sapien_source_dir, sapien_build_dir):
         cfg = "Debug"
     else:
         cfg = "Release"
-    build_args = ["--config", cfg]
     if args.profile:
         cmake_args += ["-DSAPIEN_PROFILE=ON"]
     else:
@@ -145,11 +146,7 @@ def build_sapien(sapien_source_dir, sapien_build_dir):
     cmake_args += [
         f"-DCMAKE_BUILD_TYPE={cfg}",
         f"-DCMAKE_INSTALL_PREFIX={install_dir}",
-        "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
     ]
-    
-    if sys.platform == "win32":
-        cmake_args += [f"-DBUILD_TESTING=Off"]
 
     deps_dir = os.path.join(sapien_build_dir, "_sapien_deps")
     cmake_args += [f"-DFETCHCONTENT_BASE_DIR={deps_dir}"]
@@ -159,7 +156,7 @@ def build_sapien(sapien_source_dir, sapien_build_dir):
         ["cmake", sapien_source_dir] + cmake_args, cwd=build_dir, env=env
     )
     subprocess.check_call(
-        ["cmake", "--build", ".", "--target", "install"] + build_args,
+        ["cmake", "--build", ".", "--target", "install"],
         cwd=build_dir,
     )
 
@@ -212,7 +209,6 @@ class CMakeBuild(build_ext):
         cmake_args = [
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$<1:{extdir}>",
             f"-DPYTHON_EXECUTABLE={sys.executable}",
-            f"-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
         ]
 
         deps_dir = os.path.join(self.sapien_build_dir, "_sapien_deps")
@@ -222,7 +218,6 @@ class CMakeBuild(build_ext):
             cfg = "Debug"
         else:
             cfg = "Release"
-        build_args = ["--config", cfg]
         cmake_args += ["-DCMAKE_BUILD_TYPE=" + cfg]
         cmake_args += [
             "-Dsapien_DIR=" + os.path.join(sapien_install_dir, "lib/cmake/sapien")
@@ -234,7 +229,7 @@ class CMakeBuild(build_ext):
             env=env,
         )
         subprocess.check_call(
-            ["cmake", "--build", ".", "--target", "pysapien_pinocchio"] + build_args,
+            ["cmake", "--build", ".", "--target", "pysapien_pinocchio"],
             cwd=build_dir,
         )
 
@@ -248,19 +243,17 @@ class CMakeBuild(build_ext):
         cmake_args = [
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY=$<1:{extdir}>",
             f"-DPYTHON_EXECUTABLE={sys.executable}",
-            f"-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
         ]
-        
+
         if args.debug:
             cfg = "Debug"
         else:
             cfg = "Release"
-        build_args = ["--config", cfg]
         cmake_args += ["-DCMAKE_BUILD_TYPE=" + cfg]
         cmake_args += [
             "-Dsapien_DIR=" + os.path.join(sapien_install_dir, "lib/cmake/sapien")
         ]
-        
+
         env = os.environ.copy()
         subprocess.check_call(
             ["cmake", os.path.join(ext.sourcedir, "python")] + cmake_args,
@@ -268,7 +261,7 @@ class CMakeBuild(build_ext):
             env=env,
         )
         subprocess.check_call(
-            ["cmake", "--build", ".", "--target", "pysapien"] + build_args,
+            ["cmake", "--build", ".", "--target", "pysapien"],
             cwd=self.build_temp,
         )
 
@@ -278,32 +271,25 @@ class CMakeBuild(build_ext):
             shutil.rmtree(include_path)
         shutil.copytree(source_include_path, include_path)
 
-        if platform.system() == "Windows":
-            bindir = os.path.join(sapien_install_dir, "bin")
-            for f in os.listdir(bindir):
-                if f.endswith("dll"):
-                    shutil.copy(os.path.join(bindir, f), extdir)
-
         oidn_library_path = os.path.join(extdir, "oidn_library")
         if os.path.exists(oidn_library_path):
             shutil.rmtree(oidn_library_path)
         os.makedirs(oidn_library_path, exist_ok=True)
 
-        # provide OIDN for linux. The exact OIDN patch version is controlled by
-        # sapien-vulkan-2, so copy all real OpenImageDenoise shared libraries
-        # instead of hard-coding names such as 2.0.1.
-        if platform.system() == "Linux":
-            library_dir = os.path.join(sapien_install_dir, "lib")
-            print("copy library from", library_dir)
-            for lib in os.listdir(library_dir):
-                source = os.path.join(library_dir, lib)
-                if (
-                    lib.startswith("libOpenImageDenoise")
-                    and ".so" in lib
-                    and os.path.isfile(source)
-                    and not os.path.islink(source)
-                ):
-                    shutil.copy2(source, oidn_library_path)
+        # The exact OIDN patch version is controlled by sapien-vulkan-2, so copy
+        # all real OpenImageDenoise shared libraries instead of hard-coding names
+        # such as 2.0.1.
+        library_dir = os.path.join(sapien_install_dir, "lib")
+        print("copy library from", library_dir)
+        for lib in os.listdir(library_dir):
+            source = os.path.join(library_dir, lib)
+            if (
+                lib.startswith("libOpenImageDenoise")
+                and ".so" in lib
+                and os.path.isfile(source)
+                and not os.path.islink(source)
+            ):
+                shutil.copy2(source, oidn_library_path)
 
     def copy_assets(self, ext):
         vulkan_shader_path = os.path.join(self.build_lib, "sapien", "vulkan_shader")
@@ -313,16 +299,14 @@ class CMakeBuild(build_ext):
         assert os.path.exists(source_path)
         shutil.copytree(source_path, vulkan_shader_path)
 
-        # provide Vulkan libraries for linux
-        if platform.system() == "Linux":
-            vulkan_library_path = os.path.join(
-                self.build_lib, "sapien", "vulkan_library"
-            )
-            source_path = os.path.join(ext.sourcedir, "vulkan_library")
-            if os.path.exists(vulkan_library_path):
-                shutil.rmtree(vulkan_library_path)
-            assert os.path.exists(source_path)
-            shutil.copytree(source_path, vulkan_library_path)
+        vulkan_library_path = os.path.join(
+            self.build_lib, "sapien", "vulkan_library"
+        )
+        source_path = os.path.join(ext.sourcedir, "vulkan_library")
+        if os.path.exists(vulkan_library_path):
+            shutil.rmtree(vulkan_library_path)
+        assert os.path.exists(source_path)
+        shutil.copytree(source_path, vulkan_library_path)
 
         sensor_assets_path = os.path.join(self.build_lib, "sapien", "sensor", "assets")
         source_patterns_path = os.path.join(
@@ -338,8 +322,7 @@ class CMakeBuild(build_ext):
             f.write('__version__="{}"'.format(version))
 
     def build_extension(self, ext):
-        if platform.system() == "Linux":
-            self.build_pinocchio(ext)
+        self.build_pinocchio(ext)
         self.build_pybind(ext)
         self.copy_assets(ext)
 
@@ -365,18 +348,13 @@ package_data = {
         "pysapien/render.pyi",
         "pysapien/math.pyi",
         "pysapien/internal_renderer.pyi",
+        "pysapien_pinocchio.pyi",
         "wrapper/pinocchio_model.pyi",
         "physx/__init__.pyi",
         "render/__init__.pyi",
         "internal_renderer/__init__.pyi",
     ],
 }
-
-exclude_package_data = {}
-if platform.system() == "Linux":
-    package_data["sapien"].append("pysapien_pinocchio.pyi")
-else:
-    exclude_package_data["sapien"] = ["pysapien_pinocchio.pyi"]
 
 
 if not args.pybind_only:
@@ -440,7 +418,6 @@ setup(
     url="https://sapien.ucsd.edu",
     project_urls={"Documentation": "https://sapien.ucsd.edu/docs"},
     package_data=package_data,
-    exclude_package_data=exclude_package_data,
     package_dir={"sapien": project_python_home_dir},
     scripts=["python/py_package/scripts/sapien"],
 )

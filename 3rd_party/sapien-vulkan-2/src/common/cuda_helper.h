@@ -7,9 +7,7 @@
 #include <map>
 #include <stdexcept>
 #include <string>
-#ifndef _WIN32
 #include <unistd.h>
-#endif
 
 // Raises std::runtime_error, which the Python bindings turn into RuntimeError. Destructors must
 // catch it: an exception leaving a destructor terminates the process.
@@ -25,13 +23,7 @@
 
 /** Close a file descriptor exported for a CUDA import that failed: CUDA takes ownership only on
  *  success, and an open descriptor keeps the exported Vulkan memory alive. */
-inline void closeUnimportedFd(int fd) {
-#ifdef _WIN32
-  (void)fd;
-#else
-  ::close(fd);
-#endif
-}
+inline void closeUnimportedFd(int fd) { ::close(fd); }
 
 inline std::array<uint32_t, 4> parsePCIString(std::string s) {
   if (s.length() == 12) {

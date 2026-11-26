@@ -24,7 +24,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 | `sapien.set_log_level` | `sapien.pysapien.set_log_level` | re-export/import alias |
 | `sapien.simsense` | `sapien.pysapien.simsense` | SimSense module re-export |
 | `sapien.SceneConfig` | `sapien.pysapien.physx.PhysxSceneConfig` | re-export/import alias |
-| `sapien.PinocchioModel` | `sapien.wrapper.pinocchio_model.PinocchioModel` | top-level robotics wrapper; may fallback to built-in `pysapien_pinocchio` on Linux |
+| `sapien.PinocchioModel` | `sapien.wrapper.pinocchio_model.PinocchioModel` | top-level robotics wrapper; falls back to built-in `pysapien_pinocchio` |
 | `sapien.ActorBuilder` | `sapien.wrapper.actor_builder.ActorBuilder` | re-export/import alias |
 | `sapien.ArticulationBuilder` | `sapien.wrapper.articulation_builder.ArticulationBuilder` | re-export/import alias |
 | `sapien.Engine` | `sapien.wrapper.engine.Engine` | re-export/import alias |

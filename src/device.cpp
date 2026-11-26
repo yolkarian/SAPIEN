@@ -19,15 +19,8 @@ static std::vector<std::shared_ptr<Device>> vulkanFindDevices() {
   svulkan2::logger::setLogLevel("off");
 
   std::vector<std::shared_ptr<Device>> res;
-#ifdef _WIN32
-  // Win32 extension-name macros require VK_USE_PLATFORM_WIN32_KHR, but this code only needs
-  // the platform-independent extension strings.
-  constexpr auto externalMemoryExtensionName = "VK_KHR_external_memory_win32";
-  constexpr auto externalSemaphoreExtensionName = "VK_KHR_external_semaphore_win32";
-#else
   constexpr auto externalMemoryExtensionName = VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME;
   constexpr auto externalSemaphoreExtensionName = VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME;
-#endif
   try {
     // The shared instance enumerated and probed every physical device when it was created.
     auto instance = svulkan2::core::Instance::Get();

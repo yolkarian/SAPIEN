@@ -12,13 +12,6 @@
 #include <svulkan2/renderer/renderer_base.h>
 #include <svulkan2/renderer/rt_renderer.h>
 
-#ifdef near
-#undef near
-#endif
-#ifdef far
-#undef far
-#endif
-
 namespace sapien {
 namespace sapien_renderer {
 

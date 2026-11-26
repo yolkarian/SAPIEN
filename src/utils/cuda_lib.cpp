@@ -6,12 +6,7 @@
 #include <stdexcept>
 #include <string>
 
-#if _WIN64
-#define WIN32_LEAN_AND_MEAN
-#include <Windows.h>
-#else
 #include <dlfcn.h>
-#endif
 
 namespace sapien {
 
@@ -20,14 +15,8 @@ template <typename F> static void bindSymbol(F *&function, void *symbol) {
 }
 
 CudaLib::CudaLib() {
-#if _WIN64
-  HMODULE handle = LoadLibrary("nvcuda.dll");
-  libcuda = (void *)handle;
-  auto load = [handle](char const *name) { return (void *)GetProcAddress(handle, name); };
-#else
   libcuda = dlopen("libcuda.so", RTLD_LAZY);
   auto load = [this](char const *name) { return dlsym(libcuda, name); };
-#endif
   if (!libcuda) {
     return;
   }

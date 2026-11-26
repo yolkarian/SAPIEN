@@ -75,7 +75,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
     - `./scripts/build.sh 311 --jobs 4`
 - Local install helpers exist at `scripts/install.sh` and `scripts/install_debug.sh`, but CI does not use them. Inspect them before relying on them for validation automation.
 - `setup.py` drives the wheel build and invokes CMake for the native library.
-- Zig `0.17.1` is required and pinned: `cmake/zig.cmake` compiles each Zig module into an object linked into `libsapien`, so SDK consumers never need Zig. The build image ships it and the Windows CI installs it; native builds need it in `PATH`. Upgrading Zig is a separate change of `docker/Dockerfile`, the Windows CI step, `cmake/zig.cmake` and the sources.
+- Zig `0.17.1` is required and pinned: `cmake/zig.cmake` compiles each Zig module into an object linked into `libsapien`, so SDK consumers never need Zig. The build image ships it; native builds need it in `PATH`. Upgrading Zig is a separate change of `docker/Dockerfile`, `cmake/zig.cmake` and the sources.
 - Current PhysX baseline is `107.3-physx-5.6.1`.
 - CUDA support is controlled by `CUDA_PATH`. If it is unset, `setup.py` builds with `SAPIEN_CUDA=OFF`.
 - PhysX 5.6.1 GPU builds require a CUDA toolkit and driver stack compatible with CUDA `>= 12.8`.
@@ -111,7 +111,7 @@ If documentation and checked-in automation disagree, prefer the repository scrip
 - When examples or module names change, verify the docs still point at real files in `python/py_package/example/`.
 
 ## CI Notes
-- GitHub Actions builds Linux wheels in `yolkarian/sapien-build-env:<tag>` and Windows wheels separately. Check `.github/workflows/build.yml` for the current/latest image tag instead of relying on stale hard-coded values.
+- SAPIEN supports Linux (`x86_64`) only. GitHub Actions builds Linux wheels and the C++ SDK in `yolkarian/sapien-build-env:<tag>`. Check `.github/workflows/build.yml` for the current/latest image tag instead of relying on stale hard-coded values.
 - When build behavior, Python version support, or packaging details matter, check:
   - `.github/workflows/build.yml`
   - `scripts/build.sh`

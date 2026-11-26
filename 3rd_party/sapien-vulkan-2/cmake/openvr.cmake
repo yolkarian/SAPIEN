@@ -13,11 +13,5 @@ if(NOT openvr_POPULATED)
   add_subdirectory(${openvr_SOURCE_DIR} ${openvr_BINARY_DIR} EXCLUDE_FROM_ALL)
 endif()
 
-if (MSVC)
-  target_compile_definitions(openvr_api64 INTERFACE OPENVR_BUILD_STATIC)
-endif()
-
 # HACK: disable openvr log
-if (NOT MSVC)
-  target_compile_options(openvr_api PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/cmake/openvr_definitions.h)
-endif()
+target_compile_options(openvr_api PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/cmake/openvr_definitions.h)

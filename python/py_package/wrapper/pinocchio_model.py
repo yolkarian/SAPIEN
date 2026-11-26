@@ -2,7 +2,6 @@ import numpy as np
 import warnings
 from ..pysapien import Pose
 from ..pysapien.physx import PhysxArticulation
-import platform
 from .urdf_exporter import export_kinematic_chain_urdf
 
 try:
@@ -279,25 +278,13 @@ try:
             return self.q_p2s(best_q), success, best_error
 
 except ModuleNotFoundError:
-    if platform.system() == "Linux":
-        from ..pysapien_pinocchio import PinocchioModel
-    else:
-        warnings.warn(
-            "pinnochio package is not installed, robotics functionalities will not be available"
-        )
-        PinocchioModel = None
+    from ..pysapien_pinocchio import PinocchioModel
 
 except ImportError:
-    if platform.system() == "Linux":
-        warnings.warn(
-            "pinnochio package is broken, fallback to built-in pinocchio. This may be fixed by installing pinocchio via conda instead of pip"
-        )
-        from ..pysapien_pinocchio import PinocchioModel
-    else:
-        warnings.warn(
-            "pinnochio package is broken, robotics functionalities will not be available"
-        )
-        PinocchioModel = None
+    warnings.warn(
+        "pinnochio package is broken, fallback to built-in pinocchio. This may be fixed by installing pinocchio via conda instead of pip"
+    )
+    from ..pysapien_pinocchio import PinocchioModel
 
 
 def _create_pinocchio_model(
