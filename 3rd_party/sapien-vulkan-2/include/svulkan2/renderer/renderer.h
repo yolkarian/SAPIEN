@@ -146,11 +146,14 @@ class Renderer : public RendererBase {
   // before the first pass that samples the result. Its properties are push constants, so a
   // change only re-records.
   std::unique_ptr<PostChain> mPostChain;
-  bool hasPostChain() const { return mPostChain && !mPostChain->empty(); }
+  bool hasPostChain() const {
+    return mPostChain && !mPostChain->empty() &&
+           (!mShaderPackInstance || mShaderPackInstance->needsPostChain());
+  }
   bool isPostProperty(std::string const &name) const {
     return mPostChain && mPostChain->getPropertyType(name) != CustomPropertyType::eNone;
   }
-  void recordPostChain();
+  void recordPostChainInto(vk::CommandBuffer commandBuffer);
 
 #ifdef SVULKAN2_CUDA_INTEROP
   std::map<std::string, std::shared_ptr<core::Buffer>> mTransferBuffers;
@@ -239,6 +242,24 @@ public:
   void setExternalTransformUpdatesEnabled(bool enable) { mExternalTransformUpdates = enable; }
   bool getExternalTransformUpdatesEnabled() const { return mExternalTransformUpdates; }
 
+  /** Restrict allocated render targets and active passes to the transitive dependencies of
+   *  `targets` (empty restores every target of the shader pack). */
+  void setRequestedTargets(std::vector<std::string> const &targets);
+  /** Skip recording per-camera shadow/render command buffers when a group records them into one
+   *  shared command buffer instead. */
+  void setGroupedSingleSubmit(bool enable) { mGroupedSingleSubmit = enable; }
+
+  /** Steady-state grouped frame check: refreshes material buffers in place and runs
+   *  prepareRender() only when scene/pipeline/descriptor state changed. Returns true when any
+   *  recorded group command buffer must be re-recorded. */
+  bool prepareGroupedFrame(scene::Camera &camera);
+  bool hasActiveShadows() const;
+  bool wantsPointShadowPass() const;
+  std::shared_ptr<scene::RasterShadowMaps> getShadowMaps() const { return mShadowMaps; }
+
+  void recordShadowsInto(vk::CommandBuffer commandBuffer);
+  void recordRenderPassesInto(vk::CommandBuffer commandBuffer);
+
   void forceUploadCameraBuffer(scene::Camera &camera);
 
   Renderer(Renderer const &other) = delete;
@@ -299,6 +320,7 @@ private:
   bool shouldRenderShadows(bool &wantsPointShadow) const;
 
   bool mExternalTransformUpdates{false};
+  bool mGroupedSingleSubmit{false};
 
   // load and uplaod required resources
   void prepareRender(scene::Camera &camera);

@@ -326,6 +326,22 @@ void BatchedCamera::internalGpuInit() {
       cam->gpuInit();
     }
   } else {
+    mAllRaster = !mCameras.empty() &&
+                 std::all_of(mCameras.begin(), mCameras.end(), [](auto const &cam) {
+                   return dynamic_cast<svulkan2::renderer::Renderer *>(
+                              &cam->getInternalRenderer()) != nullptr;
+                 });
+    if (mAllRaster) {
+      for (auto &cam : mCameras) {
+        auto &raster = static_cast<svulkan2::renderer::Renderer &>(cam->getInternalRenderer());
+        raster.setGroupedSingleSubmit(true);
+        if (!mRenderTargets.empty()) {
+          raster.setRequestedTargets(mRenderTargets);
+        }
+      }
+    }
+    mGroupCommandBufferRecorded = false;
+
 #ifdef SAPIEN_CUDA
     // Enter grouped ownership before resource preparation. prepareResources() must
     // never perform an implicit CPU transform upload; gpuInit() takes the one explicit
@@ -453,6 +469,53 @@ void BatchedCamera::recordCopyCommands() {
   mCommandBuffer->end();
 }
 
+void BatchedCamera::recordGroupedRasterCommands() {
+  mRecordedCopyImages.clear();
+  mGroupedShadowScenes.clear();
+  mCommandBuffer->reset();
+  mCommandBuffer->begin(vk::CommandBufferBeginInfo());
+  auto cb = mCommandBuffer.get();
+
+  // 1. Shadow passes: record once per unique scene-owned shadow-map set across the group.
+  std::unordered_set<svulkan2::scene::RasterShadowMaps *> recordedShadowMaps;
+  for (auto &cam : mCameras) {
+    auto &raster = static_cast<svulkan2::renderer::Renderer &>(cam->getInternalRenderer());
+    if (!raster.hasActiveShadows()) {
+      continue;
+    }
+    auto shadowMaps = raster.getShadowMaps();
+    if (recordedShadowMaps.insert(shadowMaps.get()).second) {
+      raster.recordShadowsInto(cb);
+      mGroupedShadowScenes.push_back(
+          {cam->getInternalRenderScene(), std::move(shadowMaps), raster.wantsPointShadowPass()});
+    }
+  }
+
+  // 2. Per-camera raster passes (and optional post-processing chain).
+  for (auto &cam : mCameras) {
+    auto &raster = static_cast<svulkan2::renderer::Renderer &>(cam->getInternalRenderer());
+    raster.recordRenderPassesInto(cb);
+  }
+
+  // 3. Copy only the requested targets into the group's exported CUDA buffers.
+  for (uint32_t i = 0; i < mCameras.size(); ++i) {
+    auto &cam = mCameras[i];
+    for (auto &name : mRenderTargets) {
+      auto &image = cam->getInternalImage(name);
+      auto extent = image.getExtent();
+      vk::DeviceSize imageSize = extent.width * extent.height * extent.depth *
+                                 svulkan2::getFormatSize(image.getFormat());
+      image.recordCopyToBuffer(cb, cam->getInternalRenderer().getRenderTargetImageLayout(name),
+                               mCudaImageBuffers.at(name)->getVulkanBuffer(), i * imageSize,
+                               imageSize, {0, 0, 0}, extent, 0);
+      mRecordedCopyImages.push_back(image.getVulkanImage());
+    }
+  }
+
+  mCommandBuffer->end();
+  mGroupCommandBufferRecorded = true;
+}
+
 void BatchedCamera::internalWaitForRendersIdle() {
   if (!mSemaphore) {
     return;
@@ -535,6 +598,50 @@ void BatchedCamera::takePicture() {
     copied.params.fence.value = mFrameCounter;
     checkCudaErrors(cudaWaitExternalSemaphoresAsync(&mCudaSem, &copied, 1, mCudaStream));
 #endif
+    return;
+  }
+
+  if (mAllRaster) {
+    // Record every scene's shadow pass once, every camera's trimmed raster passes, and the
+    // copies into the exported CUDA buffers in one command buffer, submitted once per frame.
+    bool needsReRecord = !mGroupCommandBufferRecorded;
+    for (auto &cam : mCameras) {
+      auto &raster = static_cast<svulkan2::renderer::Renderer &>(cam->getInternalRenderer());
+      needsReRecord |= raster.prepareGroupedFrame(cam->getInternalCamera());
+    }
+    std::vector<vk::Image> currentImages;
+    currentImages.reserve(mCameras.size() * mRenderTargets.size());
+    for (auto &cam : mCameras) {
+      for (auto &name : mRenderTargets) {
+        currentImages.push_back(cam->getInternalImage(name).getVulkanImage());
+      }
+    }
+    if (needsReRecord || currentImages != mRecordedCopyImages) {
+      recordGroupedRasterCommands();
+    }
+    mFrameCounter++;
+#ifdef SAPIEN_CUDA
+    // Waiting on mConsumerSemaphore at eTransfer lets all graphics/compute render passes run
+    // immediately while holding the final copies until prior CUDA consumers finish reading.
+    cudaExternalSemaphoreSignalParams streamDone{};
+    streamDone.params.fence.value = ++mConsumerValue;
+    checkCudaErrors(
+        cudaSignalExternalSemaphoresAsync(&mCudaConsumerSem, &streamDone, 1, mCudaStream));
+    vk::PipelineStageFlags copyStage = vk::PipelineStageFlagBits::eTransfer;
+    context->getQueue().submit(mCommandBuffer.get(), mConsumerSemaphore.get(), copyStage,
+                               mConsumerValue, mSemaphore.get(), mFrameCounter, {});
+    cudaExternalSemaphoreWaitParams copied{};
+    copied.params.fence.value = mFrameCounter;
+    checkCudaErrors(cudaWaitExternalSemaphoresAsync(&mCudaSem, &copied, 1, mCudaStream));
+#else
+    context->getQueue().submit(mCommandBuffer.get(), {}, {}, {}, mSemaphore.get(), mFrameCounter,
+                               {});
+#endif
+    for (auto &entry : mGroupedShadowScenes) {
+      entry.shadowMaps->renderedShadowEpoch = entry.scene->getShadowEpoch();
+      entry.shadowMaps->renderedWithPointShadow = entry.wantsPointShadow;
+      entry.scene->noteRasterShadowsRendered();
+    }
     return;
   }
 
@@ -730,6 +837,9 @@ void BatchedCamera::closeImpl() {
   mCommandBuffer.reset();
   mCommandPool.reset();
   mRecordedCopyImages.clear();
+  mGroupedShadowScenes.clear();
+  mGroupCommandBufferRecorded = false;
+  mAllRaster = false;
   mUploadedStateVersions.clear();
   mCudaRowCameraDataBuffer = CudaArray{};
   mCudaRowPoseBuffer = CudaArray{};

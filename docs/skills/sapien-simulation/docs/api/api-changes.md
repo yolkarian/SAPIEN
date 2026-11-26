@@ -4,6 +4,10 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+Grouped rasterization single-submit and target/pass trimming:
+
+- **Behavior change (`RenderCameraGroup` with rasterization packs):** `RenderCameraGroup.take_picture()` now records all unique scene shadow passes, all member camera raster passes, and all CUDA-buffer copies into one reusable command buffer with a single queue submit per frame. Member raster cameras also trim render targets, `VK_ATTACHMENT_UNUSED` outputs, shadow passes, post chains, and unreferenced passes to the transitive dependencies of the `render_targets` passed to `create_camera_group()` (requesting an unknown target raises `RuntimeError` at `gpu_init()`; closing the group restores all pack targets for standalone capture). Request only the targets you consume (e.g. `["Color"]`, `["Albedo"]`, `["GbufferDepth"]`) to reduce per-camera VRAM and pass overhead.
+
 Half-resolution GTAO in `default` and `vr_default` rasterization packs:
 
 - **Behavior change:** `default` and `vr_default` replace inline SSAO with a half-resolution `ao` pass (`vulkan_shader/common/gtao.glsl`) plus a 3×3 depth-aware bilateral filter/upsample in `deferred.frag`. Controlled by the existing `ambientOcclusionStrength` (default `0.65`, `0` disables) and `ambientOcclusionRadius` (default `0.3` m) parameters.

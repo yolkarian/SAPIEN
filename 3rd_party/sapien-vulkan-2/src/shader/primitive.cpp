@@ -74,8 +74,13 @@ vk::UniqueRenderPass PrimitivePassParser::createRenderPass(
   std::vector<vk::AttachmentReference> colorAttachments;
 
   auto elems = mTextureOutputLayout->getElementsSorted();
+  uint32_t attachmentIndex{0};
   for (uint32_t i = 0; i < elems.size(); ++i) {
-    colorAttachments.push_back({i, vk::ImageLayout::eColorAttachmentOptimal});
+    if (colorFormats.at(i) == vk::Format::eUndefined) {
+      colorAttachments.push_back({VK_ATTACHMENT_UNUSED, vk::ImageLayout::eUndefined});
+      continue;
+    }
+    colorAttachments.push_back({attachmentIndex++, vk::ImageLayout::eColorAttachmentOptimal});
     attachmentDescriptions.push_back(vk::AttachmentDescription(
         {}, colorFormats.at(i), sampleCount,
         colorTargetLayouts[i].first == vk::ImageLayout::eUndefined ? vk::AttachmentLoadOp::eClear
@@ -91,7 +96,7 @@ vk::UniqueRenderPass PrimitivePassParser::createRenderPass(
       vk::AttachmentStoreOp::eStore, vk::AttachmentLoadOp::eDontCare,
       vk::AttachmentStoreOp::eDontCare, depthLayout.first, depthLayout.second));
 
-  vk::AttachmentReference depthAttachment(elems.size(),
+  vk::AttachmentReference depthAttachment(attachmentIndex,
                                           vk::ImageLayout::eDepthStencilAttachmentOptimal);
 
   vk::SubpassDescription subpassDescription({}, vk::PipelineBindPoint::eGraphics, 0, nullptr,

@@ -162,11 +162,16 @@ static RenderTargetOperation getLastOperation(optable_t optable, std::string tex
 }
 
 static std::vector<std::pair<vk::ImageLayout, vk::ImageLayout>>
-getColorAttachmentLayoutsForPass(optable_t optable, std::shared_ptr<BaseParser> pass) {
+getColorAttachmentLayoutsForPass(optable_t const &optable, std::shared_ptr<BaseParser> pass,
+                                 std::vector<bool> const &activeOutputs) {
   auto elems = pass->getTextureOutputLayout()->getElementsSorted();
-  std::vector<std::pair<vk::ImageLayout, vk::ImageLayout>> result(elems.size());
+  std::vector<std::pair<vk::ImageLayout, vk::ImageLayout>> result(
+      elems.size(), {vk::ImageLayout::eUndefined, vk::ImageLayout::eUndefined});
   for (uint32_t i = 0; i < elems.size(); ++i) {
     ASSERT(elems[i].location == i, "output textures must have consecutive binding locations");
+    if (!activeOutputs[i]) {
+      continue;
+    }
     auto texName = getOutTextureName(elems[i].name);
     auto prevOp = getPrevOperation(optable, texName, pass);
     auto nextOp = getNextOperation(optable, texName, pass);
@@ -283,6 +288,136 @@ std::future<void> ShaderPackInstance::loadAsync() {
     auto inputLayouts = mShaderPack->getShaderInputLayouts();
     auto passes = mShaderPack->getNonShadowPasses();
 
+    // Determine active passes and active color outputs. When requestedTargets is empty, every
+    // pass and declared render target stays active (standalone behavior). When non-empty,
+    // backward reachability trims passes and attachments that cannot reach any requested target.
+    std::set<std::string> allTargets;
+    for (auto const &[name, _] : textureOperationTable) {
+      allTargets.insert(name);
+    }
+
+    mActivePasses.assign(passes.size(), true);
+    mActiveColorOutputs.clear();
+    mActiveColorOutputs.reserve(passes.size());
+    for (auto const &pass : passes) {
+      mActiveColorOutputs.emplace_back(pass->getTextureOutputLayout()->elements.size(), true);
+    }
+    mNeedsPostChain = !mDesc.config->postPasses.empty();
+
+    if (!mDesc.config->requestedTargets.empty()) {
+      for (auto const &name : mDesc.config->requestedTargets) {
+        if (!allTargets.contains(name)) {
+          throw std::runtime_error("requested render target \"" + name +
+                                   "\" is not produced by shader pack \"" +
+                                   mDesc.config->shaderDir + "\"");
+        }
+      }
+
+      // Track the latest pass index that consumes each target (passes.size() = final output).
+      // Passes execute strictly in order 0..N-1, so one reverse pass finds the exact live set.
+      std::unordered_map<std::string, int> neededBefore;
+      std::set<std::string> allocatedTargets;
+      auto markNeeded = [&](std::string const &target, int beforePass) {
+        allocatedTargets.insert(target);
+        auto it = neededBefore.find(target);
+        if (it == neededBefore.end() || beforePass > it->second) {
+          neededBefore[target] = beforePass;
+        }
+      };
+
+      int const finalSlot = static_cast<int>(passes.size());
+      for (auto const &name : mDesc.config->requestedTargets) {
+        markNeeded(name, finalSlot);
+      }
+
+      mActivePasses.assign(passes.size(), false);
+      bool postNeeded = false;
+      for (int p = finalSlot - 1; p >= 0; --p) {
+        auto const &pass = passes[p];
+        auto depthName = getDepthRenderTargetName(*pass);
+        auto colorElems = pass->getTextureOutputLayout()->getElementsSorted();
+
+        bool producesNeeded =
+            depthName.has_value() && neededBefore.contains(depthName.value()) &&
+            neededBefore.at(depthName.value()) > p;
+        for (uint32_t outIdx = 0; outIdx < colorElems.size(); ++outIdx) {
+          std::string texName = getOutTextureName(colorElems[outIdx].name);
+          bool outNeeded = neededBefore.contains(texName) && neededBefore.at(texName) > p;
+          mActiveColorOutputs[p][outIdx] = outNeeded;
+          producesNeeded |= outNeeded;
+        }
+        if (!producesNeeded) {
+          continue;
+        }
+
+        mActivePasses[p] = true;
+        if (depthName.has_value()) {
+          // Active passes with a depth attachment always bind that depth target and may load
+          // earlier passes' depth values, so earlier writers of the same depth target stay live.
+          markNeeded(depthName.value(), p);
+        }
+        for (auto const &inName : pass->getInputTextureNames()) {
+          if (allTargets.contains(inName)) {
+            markNeeded(inName, p);
+          }
+          if (inName == kRasterPostResult && !mDesc.config->postPasses.empty()) {
+            postNeeded = true;
+            if (allTargets.contains(kRasterPostSource)) {
+              markNeeded(kRasterPostSource, p);
+            }
+          }
+        }
+      }
+      mNeedsPostChain = postNeeded;
+
+      // Prune inactive targets, passes, and unused color writes from the operation table so
+      // remaining attachment loadOps and final image layouts match the trimmed pass graph.
+      for (auto it = textureOperationTable.begin(); it != textureOperationTable.end();) {
+        if (!allocatedTargets.contains(it->first)) {
+          it = textureOperationTable.erase(it);
+        } else {
+          ++it;
+        }
+      }
+      for (uint32_t p = 0; p < passes.size(); ++p) {
+        if (!mActivePasses[p]) {
+          for (auto &[_, ops] : textureOperationTable) {
+            ops[p] = RenderTargetOperation::eNoOp;
+          }
+          continue;
+        }
+        auto colorElems = passes[p]->getTextureOutputLayout()->getElementsSorted();
+        for (uint32_t outIdx = 0; outIdx < colorElems.size(); ++outIdx) {
+          if (mActiveColorOutputs[p][outIdx]) {
+            continue;
+          }
+          std::string texName = getOutTextureName(colorElems[outIdx].name);
+          auto it = textureOperationTable.find(texName);
+          if (it != textureOperationTable.end() &&
+              it->second[p] == RenderTargetOperation::eColorWrite) {
+            it->second[p] = RenderTargetOperation::eNoOp;
+          }
+        }
+      }
+    }
+
+    mNeedsSceneSet = false;
+    for (uint32_t passIdx = 0; passIdx < passes.size(); ++passIdx) {
+      if (!mActivePasses[passIdx]) {
+        continue;
+      }
+      for (auto type : passes[passIdx]->getUniformBindingTypes()) {
+        if (type == UniformBindingType::eScene) {
+          mNeedsSceneSet = true;
+          break;
+        }
+      }
+      if (mNeedsSceneSet) {
+        break;
+      }
+    }
+    mNeedsShadowPass = (mShaderPack->getShadowPass() != nullptr) && mNeedsSceneSet;
+
     // descriptor set layout
     mSceneSetLayout = createSceneDescriptorSetLayout(device, inputLayouts->sceneSetDescription);
     mGPUSceneSetLayout = createGPUSceneDescriptorSetLayout(
@@ -299,6 +434,10 @@ std::future<void> ShaderPackInstance::loadAsync() {
 
     // non shadow
     for (uint32_t passIdx = 0; passIdx < passes.size(); ++passIdx) {
+      if (!mActivePasses[passIdx]) {
+        mNonShadowPassResources.push_back(PipelineResources{});
+        continue;
+      }
       auto pass = passes[passIdx];
       std::vector<vk::DescriptorSetLayout> descriptorSetLayouts;
       for (auto type : pass->getUniformBindingTypes()) {
@@ -320,9 +459,15 @@ std::future<void> ShaderPackInstance::loadAsync() {
                                    "implemented uniform binding type");
         }
       }
+      auto colorElems = pass->getTextureOutputLayout()->getElementsSorted();
       std::vector<vk::Format> formats;
-      for (auto layout : pass->getTextureOutputLayout()->getElementsSorted()) {
-        formats.push_back(getRenderTargetFormat(*mDesc.config, layout));
+      formats.reserve(colorElems.size());
+      for (uint32_t outIdx = 0; outIdx < colorElems.size(); ++outIdx) {
+        if (mActiveColorOutputs[passIdx][outIdx]) {
+          formats.push_back(getRenderTargetFormat(*mDesc.config, colorElems[outIdx]));
+        } else {
+          formats.push_back(vk::Format::eUndefined);
+        }
       }
 
       // determine whether to use alpha blend
@@ -336,12 +481,13 @@ std::future<void> ShaderPackInstance::loadAsync() {
 
       PipelineResources res;
       res.layout = pass->createPipelineLayout(device, descriptorSetLayouts);
-      res.renderPass =
-          pass->createRenderPass(device, formats, mDesc.config->depthFormat,
-                                 getColorAttachmentLayoutsForPass(textureOperationTable, pass),
-                                 getDepthAttachmentLayoutsForPass(textureOperationTable, pass,
-                                                                  getDepthRenderTargetName(*pass)),
-                                 msaa);
+      res.renderPass = pass->createRenderPass(
+          device, formats, mDesc.config->depthFormat,
+          getColorAttachmentLayoutsForPass(textureOperationTable, pass,
+                                           mActiveColorOutputs[passIdx]),
+          getDepthAttachmentLayoutsForPass(textureOperationTable, pass,
+                                           getDepthRenderTargetName(*pass)),
+          msaa);
       res.pipeline = pass->createPipeline(
           device, res.layout.get(), res.renderPass.get(), vk::CullModeFlagBits::eBack,
           vk::FrontFace::eCounterClockwise, alpha, msaa, mDesc.specializationConstants);
@@ -351,7 +497,7 @@ std::future<void> ShaderPackInstance::loadAsync() {
 
     // shadow
     auto shadowPass = mShaderPack->getShadowPass();
-    if (shadowPass) {
+    if (shadowPass && mNeedsShadowPass) {
       std::vector<vk::DescriptorSetLayout> descriptorSetLayouts;
       for (auto type : shadowPass->getUniformBindingTypes()) {
         switch (type) {
@@ -385,7 +531,7 @@ std::future<void> ShaderPackInstance::loadAsync() {
 
     // point shadow
     auto pointShadowPass = mShaderPack->getPointShadowPass();
-    if (pointShadowPass) {
+    if (pointShadowPass && mNeedsShadowPass) {
       std::vector<vk::DescriptorSetLayout> descriptorSetLayouts;
       for (auto type : pointShadowPass->getUniformBindingTypes()) {
         switch (type) {
@@ -424,20 +570,28 @@ std::future<void> ShaderPackInstance::loadAsync() {
       mPointShadowPassResources = std::move(res);
     }
 
-    // generate render target formats and resolution scales
-    for (auto pass : passes) {
+    // generate render target formats and resolution scales for active outputs only
+    for (uint32_t passIdx = 0; passIdx < passes.size(); ++passIdx) {
+      if (!mActivePasses[passIdx]) {
+        continue;
+      }
+      auto pass = passes[passIdx];
       float scale = pass->getResolutionScale();
       auto depthName = getDepthRenderTargetName(*pass);
       if (depthName.has_value()) {
         mRenderTargetFormats[depthName.value()] = mDesc.config->depthFormat;
         mRenderTargetScales[depthName.value()] = scale;
       }
-      for (auto &elem : pass->getTextureOutputLayout()->elements) {
-        std::string texName = getOutTextureName(elem.second.name);
+      auto colorElems = pass->getTextureOutputLayout()->getElementsSorted();
+      for (uint32_t outIdx = 0; outIdx < colorElems.size(); ++outIdx) {
+        if (!mActiveColorOutputs[passIdx][outIdx]) {
+          continue;
+        }
+        std::string texName = getOutTextureName(colorElems[outIdx].name);
         if (texName.ends_with("Depth")) {
           throw std::runtime_error("You are not allowed to name your texture \"*Depth\"");
         }
-        vk::Format texFormat = getRenderTargetFormat(*mDesc.config, elem.second);
+        vk::Format texFormat = getRenderTargetFormat(*mDesc.config, colorElems[outIdx]);
 
         if (mRenderTargetFormats.find(texName) != mRenderTargetFormats.end()) {
           if (mRenderTargetFormats.at(texName) != texFormat) {

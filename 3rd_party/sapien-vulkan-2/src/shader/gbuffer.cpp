@@ -69,8 +69,12 @@ vk::UniqueRenderPass GbufferPassParser::createRenderPass(
   uint32_t attachmentIndex{0};
 
   auto elems = mTextureOutputLayout->getElementsSorted();
-  for (uint32_t i = 0; i < elems.size(); ++i, ++attachmentIndex) {
-    colorAttachmentRefs.push_back({attachmentIndex, vk::ImageLayout::eColorAttachmentOptimal});
+  for (uint32_t i = 0; i < elems.size(); ++i) {
+    if (colorFormats.at(i) == vk::Format::eUndefined) {
+      colorAttachmentRefs.push_back({VK_ATTACHMENT_UNUSED, vk::ImageLayout::eUndefined});
+      continue;
+    }
+    colorAttachmentRefs.push_back({attachmentIndex++, vk::ImageLayout::eColorAttachmentOptimal});
 
     attachmentDescriptions.push_back(vk::AttachmentDescription(
         {}, colorFormats.at(i), sampleCount,
@@ -83,8 +87,12 @@ vk::UniqueRenderPass GbufferPassParser::createRenderPass(
 
   std::vector<vk::AttachmentReference> resolveAttachmentRefs;
   if (sampleCount != vk::SampleCountFlagBits::e1) {
-    for (uint32_t i = 0; i < elems.size(); ++i, ++attachmentIndex) {
-      resolveAttachmentRefs.push_back({attachmentIndex, vk::ImageLayout::eColorAttachmentOptimal});
+    for (uint32_t i = 0; i < elems.size(); ++i) {
+      if (colorFormats.at(i) == vk::Format::eUndefined) {
+        resolveAttachmentRefs.push_back({VK_ATTACHMENT_UNUSED, vk::ImageLayout::eUndefined});
+        continue;
+      }
+      resolveAttachmentRefs.push_back({attachmentIndex++, vk::ImageLayout::eColorAttachmentOptimal});
 
       attachmentDescriptions.push_back(vk::AttachmentDescription(
           {}, colorFormats.at(i), vk::SampleCountFlagBits::e1, vk::AttachmentLoadOp::eDontCare,

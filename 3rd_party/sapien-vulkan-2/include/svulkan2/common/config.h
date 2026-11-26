@@ -2,6 +2,7 @@
 #include "layout.h"
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -39,6 +40,12 @@ struct RendererConfig {
 
   // when true, a single depth texture is used for all gbuffer passes (incremental rendering)
   bool shareGbufferDepths{true};
+
+  // Optional subset of render targets requested by the consumer (e.g. a RenderCameraGroup).
+  // When non-empty, ShaderPackInstance traces backward through the pass read/write table and
+  // drops unneeded passes and unused color outputs (VK_ATTACHMENT_UNUSED) to save VRAM and
+  // bandwidth. Empty keeps all targets of the shader pack.
+  std::set<std::string> requestedTargets;
 
   bool operator==(RendererConfig const &other) const = default;
 };

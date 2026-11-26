@@ -8,6 +8,12 @@
 #include <mutex>
 struct CUstream_st;
 
+namespace svulkan2 {
+namespace scene {
+struct RasterShadowMaps;
+}
+} // namespace svulkan2
+
 namespace sapien {
 namespace sapien_renderer {
 
@@ -119,9 +125,20 @@ private:
 
   // re-records mCommandBuffer against the cameras' current render target images
   void recordCopyCommands();
+  // records shared shadow passes, all raster camera passes, and target copies into mCommandBuffer
+  void recordGroupedRasterCommands();
   // images referenced by the recorded copy commands; a renderer rebuild replaces the
   // render targets and requires re-recording
   std::vector<vk::Image> mRecordedCopyImages;
+
+  struct GroupedShadowScene {
+    std::shared_ptr<svulkan2::scene::Scene> scene;
+    std::shared_ptr<svulkan2::scene::RasterShadowMaps> shadowMaps;
+    bool wantsPointShadow{false};
+  };
+  bool mAllRaster{false};
+  bool mGroupCommandBufferRecorded{false};
+  std::vector<GroupedShadowScene> mGroupedShadowScenes;
 
   std::unique_ptr<svulkan2::core::CommandPool> mCommandPool;
   vk::UniqueCommandBuffer mCommandBuffer;

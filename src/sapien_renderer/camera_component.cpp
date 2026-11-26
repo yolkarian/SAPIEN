@@ -736,6 +736,8 @@ void SapienRenderCameraComponent::internalReleaseGpuOwnership(void const *owner)
     renderer.setExecutionMode(svulkan2::renderer::RenderExecutionMode::eCpuManaged);
     if (auto raster = dynamic_cast<svulkan2::renderer::Renderer *>(&renderer)) {
       raster->setExternalTransformUpdatesEnabled(false);
+      raster->setGroupedSingleSubmit(false);
+      raster->setRequestedTargets({});
     } else if (auto rt = dynamic_cast<svulkan2::renderer::RTRenderer *>(&renderer)) {
       rt->setExternalCameraUpdatesEnabled(false);
       rt->setExternalTransformUpdatesEnabled(false);

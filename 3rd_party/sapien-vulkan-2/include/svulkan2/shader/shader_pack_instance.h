@@ -66,6 +66,33 @@ public:
     return mRenderTargetFinalLayouts;
   }
 
+  inline bool isPassActive(uint32_t passIndex) const {
+    return passIndex < mActivePasses.size() && mActivePasses[passIndex];
+  }
+  inline bool isColorOutputActive(uint32_t passIndex, uint32_t outputIndex) const {
+    return passIndex < mActiveColorOutputs.size() &&
+           outputIndex < mActiveColorOutputs[passIndex].size() &&
+           mActiveColorOutputs[passIndex][outputIndex];
+  }
+  inline uint32_t getActiveColorOutputCount(uint32_t passIndex) const {
+    if (passIndex >= mActiveColorOutputs.size()) {
+      return 0;
+    }
+    uint32_t count = 0;
+    for (bool active : mActiveColorOutputs[passIndex]) {
+      if (active) {
+        ++count;
+      }
+    }
+    return count;
+  }
+  inline bool needsSceneSet() const { return mNeedsSceneSet; }
+  inline bool needsShadowPass() const { return mNeedsShadowPass; }
+  inline bool needsPostChain() const { return mNeedsPostChain; }
+  inline bool hasRenderTarget(std::string const &name) const {
+    return mRenderTargetFormats.contains(name);
+  }
+
   inline vk::DescriptorSetLayout getSceneDescriptorSetLayout() const {
     return mSceneSetLayout.get();
   }
@@ -110,6 +137,11 @@ private:
   std::unordered_map<std::string, vk::Format> mRenderTargetFormats;
   std::unordered_map<std::string, float> mRenderTargetScales;
   std::unordered_map<std::string, vk::ImageLayout> mRenderTargetFinalLayouts;
+  std::vector<bool> mActivePasses;
+  std::vector<std::vector<bool>> mActiveColorOutputs;
+  bool mNeedsSceneSet{false};
+  bool mNeedsShadowPass{false};
+  bool mNeedsPostChain{false};
 
   std::mutex mLoadingMutex;
   std::atomic<bool> mLoaded{false};
