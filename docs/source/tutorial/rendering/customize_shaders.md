@@ -202,6 +202,11 @@ The default raster shader also applies screen-space ambient occlusion (SSAO) to
 indirect light. Its camera properties can be tuned per camera, or the effect
 can be disabled by setting its strength to zero:
 
+The built-in `default` and `vr_default` packs also run a half-resolution `ao`
+pass (`ao.vert` / `ao.frag`, writing `AmbientOcclusion` at `ceil(W/2) × ceil(H/2)`)
+between `gbuffer` and `deferred` for Ground-Truth Ambient Occlusion (GTAO),
+bilaterally filtered and upsampled by `deferred.frag`.
+
 ```python
 camera.set_property("ambientOcclusionStrength", 0.65)
 camera.set_property("ambientOcclusionRadius", 0.3)  # scene units

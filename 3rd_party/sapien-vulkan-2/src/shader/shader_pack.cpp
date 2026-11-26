@@ -87,6 +87,7 @@ ShaderPack::ShaderPack(std::string const &dirname, ShaderDefines const &defines)
       auto aoPass = std::make_shared<DeferredPassParser>();
       aoPass->setDefines(defines);
       aoPass->setName("AO");
+      aoPass->setResolutionScale(0.5f);
       mNonShadowPasses.push_back(aoPass);
       aoPass->setIndex(mNonShadowPasses.size() - 1);
       futures.push_back(aoPass->loadGLSLFilesAsync(vsFile, fsFile));

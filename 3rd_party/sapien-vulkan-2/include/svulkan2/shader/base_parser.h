@@ -115,11 +115,15 @@ protected:
   std::vector<uint32_t> mGeomSPVCode;
 
   int mIndex{-1};
+  float mResolutionScale{1.f};
   ShaderDefines mDefines;
 
 public:
   /** variant definitions applied to every stage; set before loading */
   void setDefines(ShaderDefines const &defines) { mDefines = defines; }
+
+  inline void setResolutionScale(float scale) { mResolutionScale = scale; }
+  inline float getResolutionScale() const { return mResolutionScale; }
 
   void loadGLSLFiles(std::string const &vertFile, std::string const &fragFile,
                      std::string const &geomFile = "");

@@ -147,18 +147,30 @@ void Renderer::setScene(std::shared_ptr<scene::Scene> scene) {
   mRequiresRecord = true;
 }
 
+static uint32_t scaledExtent(uint32_t dim, float scale) {
+  if (scale == 1.f) {
+    return dim;
+  }
+  return std::max(1u, static_cast<uint32_t>(std::ceil(static_cast<float>(dim) * scale)));
+}
+
 void Renderer::prepareRenderTargets(uint32_t width, uint32_t height) {
   if (!mContext->isVulkanAvailable()) {
     return;
   }
 
+  mRenderTargets.clear();
+  mMultisampledTargets.clear();
+
   auto renderTargetFormats = mShaderPackInstance->getRenderTargetFormats();
+  auto renderTargetScales = mShaderPackInstance->getRenderTargetScales();
 
   for (auto &[name, format] : renderTargetFormats) {
-    float scale = 1.f; // renderTargetScales[name];
+    float scale = renderTargetScales.contains(name) ? renderTargetScales.at(name) : 1.f;
+    uint32_t targetWidth = scaledExtent(width, scale);
+    uint32_t targetHeight = scaledExtent(height, scale);
     mRenderTargets[name] = std::make_shared<resource::SVRenderTarget>(
-        mContext, name, static_cast<uint32_t>(width * scale),
-        static_cast<uint32_t>(height * scale), format, vk::SampleCountFlagBits::e1,
+        mContext, name, targetWidth, targetHeight, format, vk::SampleCountFlagBits::e1,
         hasPostChain() && name == kRasterPostSource);
     mRenderTargets[name]->createDeviceResources();
   }
@@ -166,11 +178,11 @@ void Renderer::prepareRenderTargets(uint32_t width, uint32_t height) {
   // TODO: remove single sample depth target
   if (mConfig->msaa != vk::SampleCountFlagBits::e1) {
     for (auto &[name, format] : renderTargetFormats) {
-      float scale = 1.f;
-      mMultisampledTargets[name];
+      float scale = renderTargetScales.contains(name) ? renderTargetScales.at(name) : 1.f;
+      uint32_t targetWidth = scaledExtent(width, scale);
+      uint32_t targetHeight = scaledExtent(height, scale);
       mMultisampledTargets[name] = std::make_shared<resource::SVRenderTarget>(
-          mContext, name, static_cast<uint32_t>(width * scale),
-          static_cast<uint32_t>(height * scale), format, mConfig->msaa);
+          mContext, name, targetWidth, targetHeight, format, mConfig->msaa);
       mMultisampledTargets[name]->createDeviceResources();
     }
   }
@@ -234,7 +246,9 @@ void Renderer::prepareFramebuffers(uint32_t width, uint32_t height) {
   auto passes = mShaderPack->getNonShadowPasses();
 
   for (uint32_t i = 0; i < passes.size(); ++i) {
-    float scale = 1.0f; // TODO support scale
+    float scale = passes[i]->getResolutionScale();
+    uint32_t fbWidth = scaledExtent(width, scale);
+    uint32_t fbHeight = scaledExtent(height, scale);
     auto names = passes[i]->getColorRenderTargetNames();
     std::vector<vk::ImageView> attachments;
 
@@ -260,8 +274,7 @@ void Renderer::prepareFramebuffers(uint32_t width, uint32_t height) {
 
     vk::FramebufferCreateInfo info(
         {}, mShaderPackInstance->getNonShadowPassResources().at(i).renderPass.get(),
-        attachments.size(), attachments.data(), static_cast<uint32_t>(scale * width),
-        static_cast<uint32_t>(scale * height), 1);
+        attachments.size(), attachments.data(), fbWidth, fbHeight, 1);
     mFramebuffers.push_back(mContext->getDevice().createFramebufferUnique(info));
   }
 }
@@ -596,10 +609,9 @@ void Renderer::recordRenderPasses() {
       }
     }
 
-    float scale = 1.f; // TODO: fix
-    // float scale = pass->getResolutionScale();
-    uint32_t passWidth = static_cast<uint32_t>(mWidth * scale);
-    uint32_t passHeight = static_cast<uint32_t>(mHeight * scale);
+    float scale = pass->getResolutionScale();
+    uint32_t passWidth = scaledExtent(static_cast<uint32_t>(mWidth), scale);
+    uint32_t passHeight = scaledExtent(static_cast<uint32_t>(mHeight), scale);
 
     vk::Viewport viewport{0.f, 0.f, static_cast<float>(passWidth), static_cast<float>(passHeight),
                           0.f, 1.f};
@@ -1078,7 +1090,10 @@ std::vector<std::string> Renderer::getRenderTargetNames() const {
 
   std::unordered_set<std::string> names;
   for (auto pass : mShaderPack->getNonShadowPasses()) {
-    auto depthName = mShaderPackInstance->getDepthRenderTargetName(*pass);
+    std::optional<std::string> depthName =
+        (mConfig->shareGbufferDepths && dynamic_cast<shader::GbufferPassParser const *>(pass.get()))
+            ? std::optional<std::string>("GbufferDepth")
+            : pass->getDepthRenderTargetName();
     if (depthName.has_value()) {
       names.insert(depthName.value());
     }

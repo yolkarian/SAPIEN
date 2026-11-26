@@ -19,66 +19,19 @@ layout (constant_id = 8) const float ambientOcclusionRadius = 0.3;
 #undef SET_NUM
 
 layout(set = 2, binding = 0) uniform sampler2D samplerAlbedo;
-layout(set = 2, binding = 1) uniform sampler2D samplerPositionRaw;
-layout(set = 2, binding = 2) uniform sampler2D samplerSpecular;
-layout(set = 2, binding = 3) uniform sampler2D samplerNormal;
-layout(set = 2, binding = 4) uniform sampler2D samplerEmission;
-layout(set = 2, binding = 5) uniform sampler2D samplerGbufferDepth;
-layout(set = 2, binding = 6) uniform sampler2D samplerCustom;
-layout(set = 2, binding = 7) uniform usampler2D samplerMaterial;
+layout(set = 2, binding = 1) uniform sampler2D samplerSpecular;
+layout(set = 2, binding = 2) uniform sampler2D samplerNormal;
+layout(set = 2, binding = 3) uniform sampler2D samplerEmission;
+layout(set = 2, binding = 4) uniform sampler2D samplerGbufferDepth;
+layout(set = 2, binding = 5) uniform usampler2D samplerMaterial;
+layout(set = 2, binding = 6) uniform sampler2D samplerAmbientOcclusion;
 
 layout(location = 0) in vec2 inUV;
 layout(location = 0) out vec4 outLighting;
 
 #include "../common/environment.glsl"
+#include "../common/gtao.glsl"
 #include "../common/raster_lighting.glsl"
-
-const vec2 AMBIENT_OCCLUSION_SAMPLES[12] = {
-  vec2(0.2500, 0.0000), vec2(-0.3190, 0.2922), vec2(0.0488, -0.5565),
-  vec2(0.4028, 0.5254), vec2(-0.7385, -0.1306), vec2(0.6996, -0.4450),
-  vec2(-0.2331, 0.8673), vec2(-0.4463, -0.8526), vec2(0.9341, 0.3411),
-  vec2(-0.9650, 0.3983), vec2(0.4664, -0.9990), vec2(0.3430, 1.0682)
-};
-
-float computeAmbientOcclusion(vec3 position, vec3 normal) {
-  float radius = max(ambientOcclusionRadius, 0.0);
-  float strength = clamp(ambientOcclusionStrength, 0.0, 1.0);
-  if (radius <= 1e-5 || strength <= 1e-5) {
-    return 1.0;
-  }
-
-  float viewDepth = max(abs(position.z), radius);
-  vec2 projectedRadius = 0.5 *
-      vec2(abs(cameraBuffer.projectionMatrix[0][0]),
-           abs(cameraBuffer.projectionMatrix[1][1])) * radius / viewDepth;
-
-  float occlusion = 0.0;
-  for (int i = 0; i < 12; ++i) {
-    vec2 sampleUV = inUV + AMBIENT_OCCLUSION_SAMPLES[i] * projectedRadius;
-    if (any(lessThanEqual(sampleUV, vec2(0.0))) ||
-        any(greaterThanEqual(sampleUV, vec2(1.0)))) {
-      continue;
-    }
-
-    vec4 neighbor = texture(samplerPositionRaw, sampleUV);
-    if (neighbor.w < 0.5) {
-      continue;
-    }
-
-    vec3 offset = neighbor.xyz - position;
-    float distanceToNeighbor = length(offset);
-    if (distanceToNeighbor <= 1e-5 || distanceToNeighbor >= radius) {
-      continue;
-    }
-
-    float horizon = max(dot(normal, offset / distanceToNeighbor) - 0.08, 0.0);
-    float distanceWeight = 1.0 - smoothstep(0.05 * radius, radius, distanceToNeighbor);
-    occlusion += horizon * distanceWeight;
-  }
-
-  occlusion = clamp(occlusion * (2.5 / 12.0), 0.0, 1.0);
-  return 1.0 - strength * occlusion;
-}
 
 void main() {
   vec3 albedo = texture(samplerAlbedo, inUV).xyz;
@@ -121,8 +74,12 @@ void main() {
   float dotNV = clamp(dot(wnormal, worldCamDir), 0.0, 1.0);
   vec3 environmentFresnel =
       sapienFresnelSchlickRoughness(fresnel, roughness, dotNV);
-  // screen-space ambient occlusion times the material's occlusion texture
-  float ambientOcclusion = computeAmbientOcclusion(csPosition.xyz, normal) * frm.w;
+  // half-resolution GTAO with depth-aware bilateral upsample, times the material's occlusion map
+  float ambientOcclusion =
+      sapienSampleBilateralAO(samplerAmbientOcclusion, samplerGbufferDepth, inUV, csPosition.z,
+                              cameraBuffer.projectionMatrixInverse, ambientOcclusionStrength,
+                              ambientOcclusionRadius) *
+      frm.w;
   vec3 diffuseIndirect = ambientOcclusion *
                          sapienDiffuseIBL((1.0 - environmentFresnel) * diffuseAlbedo, wnormal);
   vec3 specularIndirect = mix(1.0, ambientOcclusion, roughness) *

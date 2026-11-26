@@ -365,8 +365,8 @@ void BatchedCamera::internalGpuInit() {
       int itemsize = getFormatChannelSize(format);
       array.shape = {static_cast<int>(mCameras.size()), static_cast<int>(extent.height),
                      static_cast<int>(extent.width)};
-      array.strides = {static_cast<int>(itemsize * channels * width * height),
-                       static_cast<int>(itemsize * channels * width),
+      array.strides = {static_cast<int>(itemsize * channels * extent.width * extent.height),
+                       static_cast<int>(itemsize * channels * extent.width),
                        static_cast<int>(itemsize * channels)};
       if (channels != 1) {
         array.shape.push_back(channels);

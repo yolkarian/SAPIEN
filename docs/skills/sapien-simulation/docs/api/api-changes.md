@@ -4,6 +4,11 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+Half-resolution GTAO in `default` and `vr_default` rasterization packs:
+
+- **Behavior change:** `default` and `vr_default` replace inline SSAO with a half-resolution `ao` pass (`vulkan_shader/common/gtao.glsl`) plus a 3×3 depth-aware bilateral filter/upsample in `deferred.frag`. Controlled by the existing `ambientOcclusionStrength` (default `0.65`, `0` disables) and `ambientOcclusionRadius` (default `0.3` m) parameters.
+- `camera.get_picture_names()` on `default` / `vr_default` now includes `AmbientOcclusion` (`float32`, half-resolution shape `(ceil(H/2), ceil(W/2))`, raw GTAO visibility in `[0, 1]`).
+
 Rasterization shadow upgrades and scene-owned shared shadow maps:
 
 - **New light softness / radius properties (default `0.0`, real-time):**

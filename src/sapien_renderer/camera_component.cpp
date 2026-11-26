@@ -118,12 +118,13 @@ struct SapienRenderCameraInternal {
     checkHasRenderer("get a picture");
     waitForRender();
     auto &image = mRenderer->getRenderImage(name);
+    auto extent = image.getExtent();
     vk::Format format = image.getFormat();
     uint32_t formatSize = svulkan2::getFormatSize(format);
-    size_t size = mWidth * mHeight * formatSize;
+    size_t size = extent.width * extent.height * formatSize;
     mImageBuffers[name].resize(size);
     image.download(mImageBuffers[name].data(), size);
-    return SapienRenderImageCpu(mWidth, mHeight, format, mImageBuffers[name].data());
+    return SapienRenderImageCpu(extent.width, extent.height, format, mImageBuffers[name].data());
   }
 
   SapienRenderImageCuda getImageCuda(std::string const &name) {
@@ -158,7 +159,7 @@ struct SapienRenderCameraInternal {
     mCommandBuffer->end();
     context->getQueue().submitAndWait(mCommandBuffer.get());
 
-    return SapienRenderImageCuda(mWidth, mHeight, format, buffer->getCudaPtr(),
+    return SapienRenderImageCuda(extent.width, extent.height, format, buffer->getCudaPtr(),
                                  buffer->getCudaDeviceId());
 #else
     throw std::runtime_error("sapien is not copmiled with CUDA support");

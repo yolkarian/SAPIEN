@@ -242,24 +242,24 @@ static vk::Format getRenderTargetFormat(RendererConfig const &config,
   }
 
   if (element.dtype.kind == TypeKind::eFloat) {
-    if (element.dtype.bytes == 1) {
+    if (element.dtype.shape == 1) {
       return config.colorFormat1;
     }
-    if (element.dtype.bytes == 4) {
+    if (element.dtype.shape == 4) {
       return config.colorFormat4;
     }
   } else if (element.dtype.kind == TypeKind::eInt) {
-    if (element.dtype.bytes == 1) {
+    if (element.dtype.shape == 1) {
       return vk::Format::eR32Sint;
     }
-    if (element.dtype.bytes == 4) {
+    if (element.dtype.shape == 4) {
       return vk::Format::eR32G32B32A32Sint;
     }
   } else if (element.dtype.kind == TypeKind::eUint) {
-    if (element.dtype.bytes == 1) {
+    if (element.dtype.shape == 1) {
       return vk::Format::eR32Uint;
     }
-    if (element.dtype.bytes == 4) {
+    if (element.dtype.shape == 4) {
       return vk::Format::eR32G32B32A32Uint;
     }
   }
@@ -424,12 +424,13 @@ std::future<void> ShaderPackInstance::loadAsync() {
       mPointShadowPassResources = std::move(res);
     }
 
-    // generate render target formats
-    std::unordered_map<std::string, vk::Format> formats;
+    // generate render target formats and resolution scales
     for (auto pass : passes) {
+      float scale = pass->getResolutionScale();
       auto depthName = getDepthRenderTargetName(*pass);
       if (depthName.has_value()) {
         mRenderTargetFormats[depthName.value()] = mDesc.config->depthFormat;
+        mRenderTargetScales[depthName.value()] = scale;
       }
       for (auto &elem : pass->getTextureOutputLayout()->elements) {
         std::string texName = getOutTextureName(elem.second.name);
@@ -440,10 +441,14 @@ std::future<void> ShaderPackInstance::loadAsync() {
 
         if (mRenderTargetFormats.find(texName) != mRenderTargetFormats.end()) {
           if (mRenderTargetFormats.at(texName) != texFormat) {
-            std::runtime_error("Inconsistent texture format for \"" + texName + "\"");
+            throw std::runtime_error("Inconsistent texture format for \"" + texName + "\"");
+          }
+          if (mRenderTargetScales.at(texName) != scale) {
+            throw std::runtime_error("Inconsistent resolution scale for \"" + texName + "\"");
           }
         }
         mRenderTargetFormats[texName] = texFormat;
+        mRenderTargetScales[texName] = scale;
       }
     }
 

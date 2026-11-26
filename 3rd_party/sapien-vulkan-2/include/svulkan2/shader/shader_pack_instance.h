@@ -58,6 +58,10 @@ public:
     return mRenderTargetFormats;
   }
 
+  inline std::unordered_map<std::string, float> getRenderTargetScales() const {
+    return mRenderTargetScales;
+  }
+
   inline std::unordered_map<std::string, vk::ImageLayout> getRenderTargetFinalLayouts() const {
     return mRenderTargetFinalLayouts;
   }
@@ -104,6 +108,7 @@ private:
   PipelineResources mPointShadowPassResources;
 
   std::unordered_map<std::string, vk::Format> mRenderTargetFormats;
+  std::unordered_map<std::string, float> mRenderTargetScales;
   std::unordered_map<std::string, vk::ImageLayout> mRenderTargetFinalLayouts;
 
   std::mutex mLoadingMutex;
