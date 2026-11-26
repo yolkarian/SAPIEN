@@ -4,6 +4,14 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+The `rt` path tracer outputs first-batch AOVs:
+
+- New `rt` pictures from `camera.get_picture(name)`:
+  - `Depth` (`float32`, shape `(H, W)`): linear depth in metres along the camera view axis, `0` on sky (matches `rt_batch`).
+  - `MotionVector` (`float32`, shape `(H, W, 2)`): screen-space optical flow `(dx, dy)` in pixels (`curr - prev`, `+x` right, `+y` down), covering moving objects, moving cameras and rotating sky; `0` on the initial frame and after an idle `update_render()`.
+  - `Emission`, `DiffuseDirect`, `SpecularDirect`, `DiffuseIndirect`, `SpecularIndirect` (`float32`, shape `(H, W, 4)`): accumulated over frames; their RGB sum equals `HdrColor` (before denoising) everywhere in the image.
+- Custom RT packs may declare `rg32f`/`rg16f`/`rgba16f` `out<Name>` storage images and bind `PrevTlasInstances` in the scene set (`rt` uses binding 20).
+
 Materials follow the first batch of OpenPBR Surface 1.1:
 
 - **Breaking:** `RenderMaterial(specular=...)` and `.specular` are gone. Use `specular_weight`,

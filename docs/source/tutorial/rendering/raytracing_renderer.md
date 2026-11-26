@@ -122,6 +122,22 @@ config["clampIndirect"] = 10.0   # firefly clamp, 0 disables
 config["lightSampling"] = "mis"  # "mis" | "nee" | "bsdf"
 ```
 
+## Pictures and AOVs
+
+In addition to `Color`, `HdrColor`, `Albedo`, `Normal`, `Position` and `Segmentation`, the `rt`
+pack outputs:
+
+| Picture | Format | Meaning |
+|---|---|---|
+| `Depth` | `r32f` `(H, W)` | Linear depth along the camera view axis in metres (`0` on sky); matches `rt_batch`. |
+| `MotionVector` | `rg32f` `(H, W, 2)` | Screen-space pixel displacement `(dx, dy)` (`curr - prev`, `+x` right, `+y` down) for moving objects, moving cameras and rotating sky. |
+| `Emission` | `rgba32f` `(H, W, 4)` | Primary-hit self-emission and sky background, accumulated over frames. |
+| `DiffuseDirect`, `SpecularDirect` | `rgba32f` `(H, W, 4)` | Direct lighting split into the base diffuse lobe and the specular/coat/fuzz/transmission lobes (`C D L` / `C S L`), accumulated over frames. |
+| `DiffuseIndirect`, `SpecularIndirect` | `rgba32f` `(H, W, 4)` | Multi-bounce indirect lighting split by the primary surface lobe (`C D [DS]+ L` / `C S [DS]+ L`), accumulated over frames. |
+
+Before denoising, `Emission + DiffuseDirect + SpecularDirect + DiffuseIndirect + SpecularIndirect`
+sums to `HdrColor` at every pixel.
+
 ## Materials for ray tracing
 
 Render materials live in `sapien.render` and carry the first batch of the

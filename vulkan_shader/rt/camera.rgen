@@ -14,6 +14,13 @@ layout(set = 0, binding = 2, rgba32f) uniform image2D outNormal;
 layout(set = 0, binding = 3, rgba32ui) uniform uimage2D outSegmentation;
 layout(set = 0, binding = 4, rgba32f) uniform image2D outRadiance;
 layout(set = 0, binding = 5, rgba32f) uniform image2D outPosition;
+layout(set = 0, binding = 6, r32f) uniform image2D outDepth;
+layout(set = 0, binding = 7, rg32f) uniform image2D outMotionVector;
+layout(set = 0, binding = 8, rgba32f) uniform image2D outEmission;
+layout(set = 0, binding = 9, rgba32f) uniform image2D outDiffuseDirect;
+layout(set = 0, binding = 10, rgba32f) uniform image2D outSpecularDirect;
+layout(set = 0, binding = 11, rgba32f) uniform image2D outDiffuseIndirect;
+layout(set = 0, binding = 12, rgba32f) uniform image2D outSpecularIndirect;
 
 layout(set = 1, binding = 0) uniform accelerationStructureEXT tlas;
 
@@ -31,12 +38,18 @@ layout(set = 2, binding = 0) uniform CameraBuffer {
 #include "push_constant.glsl"
 
 void main() {
+  ivec2 px = ivec2(gl_LaunchIDEXT.xy);
   vec2 invScreen = vec2(2.0) / gl_LaunchSizeEXT.xy;
   vec2 pixel = gl_LaunchIDEXT.xy * invScreen - 1.0;
   uint seed = tea(gl_LaunchIDEXT.y * gl_LaunchSizeEXT.x + gl_LaunchIDEXT.x,
                   0x9e3779b9u + uint(frameSeed));
 
   vec3 radiance = vec3(0.0);
+  vec3 emissionSum = vec3(0.0);
+  vec3 diffuseDirectSum = vec3(0.0);
+  vec3 specularDirectSum = vec3(0.0);
+  vec3 diffuseIndirectSum = vec3(0.0);
+  vec3 specularIndirectSum = vec3(0.0);
   float alpha = 0.0;
   float tMin = 0.001f;
   float tMax = 10000.0f;
@@ -66,9 +79,13 @@ void main() {
     ray.direction = normalize(direction.xyz);
     ray.albedo = vec3(0.0);
     ray.normal = vec3(0.0);
-    ray.radiance = vec3(0.0);
+    ray.emission = vec3(0.0);
+    ray.directDiffuse = vec3(0.0);
+    ray.directSpecular = vec3(0.0);
     ray.alpha = 1.0;
     ray.attenuation = vec3(1.0);
+    ray.diffuseAttenuation = vec3(0.0);
+    ray.prevWorldPos = vec3(0.0);
     ray.segmentation = uvec4(0);
     ray.depth = 0;
     ray.isShadow = 0;
@@ -78,54 +95,124 @@ void main() {
     ray.scatterOrigin = origin.xyz;
 
     vec3 attenuation = vec3(1.0);
-    for (ray.depth = 0; ray.depth <= maxDepth; ++ray.depth) {
-      bool first = ray.depth == 0;
+    vec3 attDiffuse = vec3(0.0);
+    vec3 attSpecular = vec3(0.0);
+    for (int bounce = 0; bounce <= maxDepth; ++bounce) {
+      bool first = bounce == 0;
+      ray.depth = uint(bounce);
       traceRayEXT(tlas, gl_RayFlagsNoneEXT, 0xff, 0, 0, 0,
                   ray.origin, tMin, ray.direction, tMax, 0);
 
-      vec3 contribution = ray.radiance * attenuation;
+      vec3 vertexDirect = ray.directDiffuse + ray.directSpecular;
+      vec3 vertexTotal = ray.emission + vertexDirect;
+      vec3 contribution = vertexTotal * attenuation;
       // Indirect-clamp: contributions after the first bounce are clamped by luminance to
       // suppress fireflies. 0 disables it.
+      float clampScale = 1.0;
       if (!first && clampIndirect > 0.0) {
         float peak = max(contribution.x, max(contribution.y, contribution.z));
-        if (peak > clampIndirect) contribution *= clampIndirect / peak;
+        if (peak > clampIndirect) clampScale = clampIndirect / peak;
       }
-      radiance += contribution;
-      attenuation *= ray.attenuation;
+      radiance += contribution * clampScale;
 
       if (first) {
+        emissionSum += ray.emission;
+        diffuseDirectSum += ray.directDiffuse;
+        specularDirectSum += ray.directSpecular;
+        attDiffuse = ray.diffuseAttenuation;
+        attSpecular = ray.attenuation - ray.diffuseAttenuation;
+        attenuation = ray.attenuation;
+
+        bool hit = ray.alpha > 0.0;
         alpha += ray.alpha;
-        imageStore(outNormal, ivec2(gl_LaunchIDEXT.xy), vec4(mat3(cameraBuffer.viewMatrix) * ray.normal, 1.0));
-        imageStore(outAlbedo, ivec2(gl_LaunchIDEXT.xy), vec4(ray.albedo, 1.0));
-        imageStore(outSegmentation, ivec2(gl_LaunchIDEXT.xy), ray.segmentation);
+        imageStore(outNormal, px, vec4(mat3(cameraBuffer.viewMatrix) * ray.normal, 1.0));
+        imageStore(outAlbedo, px, vec4(ray.albedo, 1.0));
+        imageStore(outSegmentation, px, ray.segmentation);
         vec4 position = cameraBuffer.viewMatrix * vec4(ray.origin, 1.0);
         vec4 ndc = cameraBuffer.projectionMatrix * position;
-        imageStore(outPosition, ivec2(gl_LaunchIDEXT.xy), vec4(position.xyz, ndc.z / ndc.w));
+        imageStore(outPosition, px, vec4(position.xyz, ndc.z / ndc.w));
+        imageStore(outDepth, px, vec4(hit ? max(-position.z, 0.0) : 0.0, 0.0, 0.0, 0.0));
+
+        vec2 motion = vec2(0.0);
+        vec4 currClip, prevClip;
+        if (hit) {
+          currClip = ndc;
+          prevClip = cameraBuffer.projectionMatrix *
+                     (cameraBuffer.prevViewMatrix * vec4(ray.prevWorldPos, 1.0));
+        } else {
+          currClip = cameraBuffer.projectionMatrix *
+                     vec4(mat3(cameraBuffer.viewMatrix) * ray.direction, 0.0);
+          prevClip = cameraBuffer.projectionMatrix *
+                     vec4(mat3(cameraBuffer.prevViewMatrix) * ray.direction, 0.0);
+        }
+        if (currClip.w > 1e-6 && prevClip.w > 1e-6) {
+          vec2 currUv = currClip.xy / currClip.w * 0.5 + 0.5;
+          vec2 prevUv = prevClip.xy / prevClip.w * 0.5 + 0.5;
+          motion = (currUv - prevUv) * vec2(cameraBuffer.width, cameraBuffer.height);
+        }
+        imageStore(outMotionVector, px, vec4(motion, 0.0, 0.0));
+      } else {
+        if (bounce == 1) {
+          // Emission / environment hit by the primary BSDF continuation ray is direct light
+          // (C D L / C S L), matching light-sampled direct light across MIS / NEE / BSDF.
+          diffuseDirectSum += (ray.emission * attDiffuse) * clampScale;
+          specularDirectSum += (ray.emission * attSpecular) * clampScale;
+          diffuseIndirectSum += (vertexDirect * attDiffuse) * clampScale;
+          specularIndirectSum += (vertexDirect * attSpecular) * clampScale;
+        } else {
+          diffuseIndirectSum += (vertexTotal * attDiffuse) * clampScale;
+          specularIndirectSum += (vertexTotal * attSpecular) * clampScale;
+        }
+        attDiffuse *= ray.attenuation;
+        attSpecular *= ray.attenuation;
+        attenuation = attDiffuse + attSpecular;
       }
 
-      if (any(isnan(attenuation)) || any(isinf(attenuation)) ||
+      if (ray.depth > uint(maxDepth) || any(isnan(attenuation)) || any(isinf(attenuation)) ||
           max(max(attenuation.x, attenuation.y), attenuation.z) <= 1e-6) {
         attenuation = vec3(0.0);
         break;
       }
-      if (russianRoulette != 0 && ray.depth >= russianRouletteMinBounces) {
+      if (russianRoulette != 0 && bounce >= russianRouletteMinBounces) {
         float continuationProbability =
             clamp(max(max(attenuation.x, attenuation.y), attenuation.z), 0.05, 0.95);
         if (rnd(ray.seed) > continuationProbability) break;
+        attDiffuse /= continuationProbability;
+        attSpecular /= continuationProbability;
         attenuation /= continuationProbability;
       }
     }
   }
-  radiance /= spp;
-  alpha /= spp;
+  float invSpp = 1.0 / float(spp);
+  radiance *= invSpp;
+  emissionSum *= invSpp;
+  diffuseDirectSum *= invSpp;
+  specularDirectSum *= invSpp;
+  diffuseIndirectSum *= invSpp;
+  specularIndirectSum *= invSpp;
+  alpha *= invSpp;
 
   if (frameCount > 0) {
-    vec4 oldColor = imageLoad(outRadiance, ivec2(gl_LaunchIDEXT.xy));
-    vec4 newColor = vec4(mix(oldColor, vec4(radiance, alpha), 1.0 / float(frameCount + 1)));
-    imageStore(outRadiance, ivec2(gl_LaunchIDEXT.xy), newColor);
-    imageStore(outHdrColor, ivec2(gl_LaunchIDEXT.xy), newColor);
+    float w = 1.0 / float(frameCount + 1);
+    vec4 newColor = mix(imageLoad(outRadiance, px), vec4(radiance, alpha), w);
+    imageStore(outRadiance, px, newColor);
+    imageStore(outHdrColor, px, newColor);
+    imageStore(outEmission, px, mix(imageLoad(outEmission, px), vec4(emissionSum, 1.0), w));
+    imageStore(outDiffuseDirect, px,
+               mix(imageLoad(outDiffuseDirect, px), vec4(diffuseDirectSum, 1.0), w));
+    imageStore(outSpecularDirect, px,
+               mix(imageLoad(outSpecularDirect, px), vec4(specularDirectSum, 1.0), w));
+    imageStore(outDiffuseIndirect, px,
+               mix(imageLoad(outDiffuseIndirect, px), vec4(diffuseIndirectSum, 1.0), w));
+    imageStore(outSpecularIndirect, px,
+               mix(imageLoad(outSpecularIndirect, px), vec4(specularIndirectSum, 1.0), w));
   } else {
-    imageStore(outRadiance, ivec2(gl_LaunchIDEXT.xy), vec4(radiance, alpha));
-    imageStore(outHdrColor, ivec2(gl_LaunchIDEXT.xy), vec4(radiance, alpha));
+    imageStore(outRadiance, px, vec4(radiance, alpha));
+    imageStore(outHdrColor, px, vec4(radiance, alpha));
+    imageStore(outEmission, px, vec4(emissionSum, 1.0));
+    imageStore(outDiffuseDirect, px, vec4(diffuseDirectSum, 1.0));
+    imageStore(outSpecularDirect, px, vec4(specularDirectSum, 1.0));
+    imageStore(outDiffuseIndirect, px, vec4(diffuseIndirectSum, 1.0));
+    imageStore(outSpecularIndirect, px, vec4(specularIndirectSum, 1.0));
   }
 }

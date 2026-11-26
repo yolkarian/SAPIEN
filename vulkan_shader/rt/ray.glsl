@@ -5,9 +5,13 @@ struct Ray {
   vec3 direction;
   vec3 albedo;
   vec3 normal;
-  vec3 radiance;        // emission + direct lighting contributed at this vertex
+  vec3 emission;           // self-emission or environment radiance found at this vertex
+  vec3 directDiffuse;      // direct lighting at this vertex through the base diffuse lobe
+  vec3 directSpecular;     // direct lighting at this vertex through specular, coat and fuzz lobes
   float alpha;
-  vec3 attenuation;     // BSDF weight (f cos / pdf) carried into the next segment
+  vec3 attenuation;        // BSDF weight (f cos / pdf) carried into the next segment
+  vec3 diffuseAttenuation; // diffuse lobe's share of attenuation
+  vec3 prevWorldPos;       // hit point's world position in the previous frame
   uvec4 segmentation;
   uint depth;
   uint seed;

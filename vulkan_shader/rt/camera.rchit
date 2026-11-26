@@ -105,6 +105,9 @@ void main() {
     transmission = texture(textures[nonuniformEXT(mat.transmissionTexture)],
                            materialUV(mat.textureTransforms[5], uv)).x;
 
+  vec3 localPos = p0 * b0 + p1 * b1 + p2 * b2;
+  vec3 prevWorldPos = instancePoint(prevTlasInstances.i[gl_InstanceID], localPos);
+
   // A segment inside a translucent body crossed its absorbing medium (transmission_depth).
   vec3 absorbed = isInside ? exp(-openpbrAbsorption(mat) * gl_HitTEXT) : vec3(1.0);
 
@@ -113,11 +116,15 @@ void main() {
   float coverage = clamp(base.a, 0.0, 1.0) * (1.0 - clamp(obj.transparency, 0.0, 1.0));
   if (rnd(ray.seed) >= coverage) {
     ray.origin = worldPosition;
+    ray.prevWorldPos = prevWorldPos;
     ray.attenuation = absorbed;
+    ray.diffuseAttenuation = vec3(0.0);
     ray.normal = worldShadingNormal;
     ray.albedo = base.rgb;
     ray.segmentation = obj.segmentation;
-    ray.radiance = vec3(0.0);
+    ray.emission = vec3(0.0);
+    ray.directDiffuse = vec3(0.0);
+    ray.directSpecular = vec3(0.0);
     return;
   }
 
@@ -146,11 +153,14 @@ void main() {
       ray.bsdfPdf, hitEmissiveLightPdf(instanceId, gl_ObjectToWorldEXT * vec4(p0, 1.0),
                                        gl_ObjectToWorldEXT * vec4(p1, 1.0),
                                        gl_ObjectToWorldEXT * vec4(p2, 1.0), worldPosition));
-  ray.radiance = (emission * openpbrEmissionFactor(m, s.wo.z) * emissionWeight +
-                  estimateDirect(s)) *
-                 absorbed;
+  ray.emission = emission * openpbrEmissionFactor(m, s.wo.z) * emissionWeight * absorbed;
+  DirectLighting dl = estimateDirectSplit(s);
+  ray.directDiffuse = dl.diffuse * absorbed;
+  ray.directSpecular = dl.specular * absorbed;
   sampleBsdf(s);
   ray.attenuation *= absorbed;
+  ray.diffuseAttenuation *= absorbed;
+  ray.prevWorldPos = prevWorldPos;
   ray.normal = worldShadingNormal;
   ray.albedo = base.rgb;
   ray.segmentation = obj.segmentation;

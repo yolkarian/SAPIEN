@@ -407,6 +407,29 @@ void RTRenderer::recordRender() {
                                      mShaderPackInstance->getHitRegion(),
                                      mShaderPackInstance->getCallRegion(), mWidth, mHeight, 1);
 
+  if (mEffectiveExternalTransformUpdates && mScene->getTLAS() &&
+      mScene->hasRTPrevTLASInstanceBuffer()) {
+    // Snapshot external/CUDA instance transforms after tracing so the next frame sees them as
+    // PrevTlasInstances. CPU-managed scenes upload prevWorldModelMatrix directly in updateTLAS().
+    auto &src = mScene->getTLAS()->getInstanceBuffer();
+    auto &dst = mScene->getRTPrevTLASInstanceBuffer();
+    vk::DeviceSize copySize = std::min(src.getSize(), dst.getSize());
+    if (copySize > 0) {
+      vk::MemoryBarrier preCopy(vk::AccessFlagBits::eShaderRead,
+                                vk::AccessFlagBits::eTransferWrite);
+      mRenderCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eRayTracingShaderKHR,
+                                            vk::PipelineStageFlagBits::eTransfer, {}, preCopy, {},
+                                            {});
+      mRenderCommandBuffer->copyBuffer(src.getVulkanBuffer(), dst.getVulkanBuffer(),
+                                       vk::BufferCopy(0, 0, copySize));
+      vk::MemoryBarrier postCopy(vk::AccessFlagBits::eTransferWrite,
+                                 vk::AccessFlagBits::eShaderRead);
+      mRenderCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                                            vk::PipelineStageFlagBits::eRayTracingShaderKHR, {},
+                                            postCopy, {}, {});
+    }
+  }
+
   // make sure ray tracing is done
 
 #ifdef SVULKAN2_CUDA_INTEROP
@@ -445,14 +468,14 @@ void RTRenderer::prepareOutput() {
   }
 
   // create images
-  std::vector<std::shared_ptr<resource::SVStorageImage>> images;
+  std::vector<std::pair<uint32_t, std::shared_ptr<resource::SVStorageImage>>> boundImages;
   for (auto &[bid, binding] : set.bindings) {
     if (binding.type == vk::DescriptorType::eStorageImage && binding.name.starts_with("out")) {
       std::string texName = binding.name.substr(3);
       auto image = mRenderImages[texName] = std::make_shared<resource::SVStorageImage>(
           mContext, texName, mWidth, mHeight, binding.format);
       mRTImages.push_back(image);
-      images.push_back(image);
+      boundImages.emplace_back(bid, image);
       image->createDeviceResources();
     }
   }
@@ -460,7 +483,7 @@ void RTRenderer::prepareOutput() {
   auto pool = mContext->createCommandPool();
   auto commandBuffer = pool->allocateCommandBuffer();
   commandBuffer->begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
-  for (auto image : images) {
+  for (auto &[bid, image] : boundImages) {
     image->getImage().transitionLayout(
         commandBuffer.get(), vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral, {},
         vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
@@ -475,19 +498,21 @@ void RTRenderer::prepareOutput() {
   mOutputPool = std::make_unique<core::DynamicDescriptorPool>(
       mContext->getDevice2(),
       std::vector<vk::DescriptorPoolSize>{
-          {vk::DescriptorType::eStorageImage, static_cast<uint32_t>(images.size())}});
+          {vk::DescriptorType::eStorageImage, static_cast<uint32_t>(boundImages.size())}});
   mOutputSet = mOutputPool->allocateSet(mShaderPackInstance->getOutputSetLayout());
 
   // write descriptor sets
   std::vector<vk::WriteDescriptorSet> writeDescriptorSets;
   std::vector<vk::DescriptorImageInfo> imageInfos;
-  for (auto img : images) {
+  imageInfos.reserve(boundImages.size());
+  for (auto &[bid, img] : boundImages) {
     imageInfos.push_back(
         vk::DescriptorImageInfo(VK_NULL_HANDLE, img->getImageView(), vk::ImageLayout::eGeneral));
   }
-  for (uint32_t binding = 0; binding < imageInfos.size(); ++binding) {
+  for (size_t i = 0; i < boundImages.size(); ++i) {
     writeDescriptorSets.push_back(vk::WriteDescriptorSet(
-        mOutputSet.get(), binding, 0, vk::DescriptorType::eStorageImage, imageInfos.at(binding)));
+        mOutputSet.get(), boundImages[i].first, 0, vk::DescriptorType::eStorageImage,
+        imageInfos.at(i)));
   }
   mContext->getDevice().updateDescriptorSets(writeDescriptorSets, {});
 }
@@ -583,7 +608,8 @@ void RTRenderer::prepareScene() {
       {"EmissiveTriangles", wholeBuffer(*mIntegratorTables.emissiveBuffer)},
       {"EmissiveAlias", wholeBuffer(*mIntegratorTables.emissiveAliasBuffer)},
       {"EmissiveBase", wholeBuffer(*mIntegratorTables.emissiveBaseBuffer)},
-      {"TlasInstances", wholeBuffer(mScene->getTLAS()->getInstanceBuffer())}};
+      {"TlasInstances", wholeBuffer(mScene->getTLAS()->getInstanceBuffer())},
+      {"PrevTlasInstances", wholeBuffer(mScene->getRTPrevTLASInstanceBuffer())}};
 
   for (auto &[bid, binding] : set.bindings) {
     if (binding.name == "tlas") {

@@ -86,3 +86,8 @@ layout(std430, set = SET_NUM, binding = 18) readonly buffer EmissiveBase {
 layout(std430, set = SET_NUM, binding = 19) readonly buffer TlasInstances {
   TlasInstance i[];
 } tlasInstances;
+
+// The previous frame's TLAS instance rows, for screen-space motion vectors.
+layout(std430, set = SET_NUM, binding = 20) readonly buffer PrevTlasInstances {
+  TlasInstance i[];
+} prevTlasInstances;

@@ -167,7 +167,8 @@ void TLAS::createInstanceBuffer(bool external) {
   auto buffer = core::Buffer::Create(
       *mContext,
       sizeof(vk::AccelerationStructureInstanceKHR) * std::max<size_t>(1, mInstances.size()),
-      vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer |
+      vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eTransferDst |
+          vk::BufferUsageFlagBits::eStorageBuffer |
           vk::BufferUsageFlagBits::eShaderDeviceAddress |
           vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR,
       memoryUsage, VmaAllocationCreateFlags{}, external);

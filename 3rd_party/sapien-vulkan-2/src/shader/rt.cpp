@@ -772,8 +772,8 @@ createCameraDescriptorSetLayout(vk::Device device, DescriptorSetDescription cons
 static vk::UniqueDescriptorSetLayout
 createOutputDescriptorSetLayout(vk::Device device, DescriptorSetDescription const &description) {
   std::vector<vk::DescriptorSetLayoutBinding> bindings;
-  for (uint32_t bid = 0; bid < description.bindings.size(); ++bid) {
-    if (description.bindings.at(bid).type != vk::DescriptorType::eStorageImage) {
+  for (auto const &[bid, binding] : description.bindings) {
+    if (binding.type != vk::DescriptorType::eStorageImage) {
       throw std::runtime_error("Only storage images are allowed in the output descriptor set");
     }
     bindings.push_back(

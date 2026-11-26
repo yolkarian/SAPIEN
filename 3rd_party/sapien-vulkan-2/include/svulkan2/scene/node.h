@@ -26,6 +26,9 @@ protected:
   // Set on a node implies set on all its ancestors, except for nodes attached since the last
   // computation: scenes recompute after every topology change regardless of this flag.
   bool mSubtreeDirty{true};
+  // False until worldModelMatrix has been computed once, so prevWorldModelMatrix starts equal
+  // to the initial pose instead of the zero matrix.
+  bool mHasWorldModelMatrix{false};
 
   /** marks this node and its ancestors for the next Scene::updateModelMatrices() */
   void markTransformDirty();

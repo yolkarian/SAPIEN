@@ -182,6 +182,8 @@ public:
   inline vk::Buffer getRTParallelogramLightBuffer() const {
     return mRTParallelogramLightBuffer->getVulkanBuffer();
   }
+  inline bool hasRTPrevTLASInstanceBuffer() const { return mPrevTLASInstanceBuffer != nullptr; }
+  inline core::Buffer &getRTPrevTLASInstanceBuffer() const { return *mPrevTLASInstanceBuffer; }
 
   void registerAccessFence(vk::Fence fence);
   void unregisterAccessFence(vk::Fence fence);
@@ -270,6 +272,7 @@ protected:
   // ray tracing resources
   std::mutex mRTResourcesLock;
   std::unique_ptr<core::TLAS> mTLAS;
+  std::unique_ptr<core::Buffer> mPrevTLASInstanceBuffer;
   std::vector<vk::Buffer> mVertexBuffers;
   std::vector<vk::Buffer> mIndexBuffers;
   std::vector<std::tuple<vk::ImageView, vk::Sampler>> mTextures;

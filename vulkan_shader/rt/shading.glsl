@@ -14,13 +14,21 @@ vec3 traceShadow(vec3 origin, vec3 L, float tMax) {
   return transmittance;
 }
 
-// BSDF times cos(N, L) toward L. Zero below the shading or the geometric surface: light
-// sampling only covers directions above both, BSDF sampling everything else.
-vec3 evalBsdf(Surface s, vec3 L) {
+struct DirectLighting {
+  vec3 diffuse;
+  vec3 specular;
+};
+
+// BSDF times cos(N, L) toward L, split into base diffuse and remaining (specular, coat, fuzz)
+// lobes. Zero below the shading or the geometric surface: light sampling only covers directions
+// above both, BSDF sampling everything else.
+void evalBsdfSplit(Surface s, vec3 L, out vec3 diffuse, out vec3 specular) {
   if (dot(s.N, L) <= 0.0 || dot(s.Ng, L) <= 0.0) {
-    return vec3(0.0);
+    diffuse = vec3(0.0);
+    specular = vec3(0.0);
+    return;
   }
-  return openpbrEvalReflection(s.m, s.wo, surfaceLocal(s, L));
+  openpbrEvalReflectionSplit(s.m, s.wo, surfaceLocal(s, L), diffuse, specular);
 }
 
 // Solid-angle pdf of BSDF sampling producing L above the surface.
@@ -39,23 +47,23 @@ bool isBlack(vec3 c) {
 // Point, directional, spot and parallelogram lights have no geometry: BSDF rays cannot hit
 // them, so they are only light-sampled, with MIS weight 1, in every lightSampling mode.
 // ---------------------------------------------------------------------------------------------
-vec3 tracePointLights(Surface s) {
-  vec3 result = vec3(0.0);
+void tracePointLights(Surface s, inout DirectLighting result) {
   for (int i = 0; i < pointLightCount; ++i) {
     vec3 d = pointLights.l[i].position - s.pos;
     float d2 = max(dot(d, d), 1e-12);
     float dist = sqrt(d2);
     vec3 L = d / dist;
-    vec3 f = evalBsdf(s, L);
-    if (!isBlack(f)) {
-      result += traceShadow(offsetRayOrigin(s.pos, s.Ng), L, dist) * pointLights.l[i].rgb / d2 * f;
+    vec3 fDiff, fSpec;
+    evalBsdfSplit(s, L, fDiff, fSpec);
+    if (!isBlack(fDiff + fSpec)) {
+      vec3 light = traceShadow(offsetRayOrigin(s.pos, s.Ng), L, dist) * pointLights.l[i].rgb / d2;
+      result.diffuse += light * fDiff;
+      result.specular += light * fSpec;
     }
   }
-  return result;
 }
 
-vec3 traceDirectionalLights(Surface s) {
-  vec3 result = vec3(0.0);
+void traceDirectionalLights(Surface s, inout DirectLighting result) {
   for (int i = 0; i < directionalLightCount; ++i) {
     DirectionalLight light = directionalLights.l[i];
     vec3 L = normalize(-light.direction);
@@ -66,16 +74,17 @@ vec3 traceDirectionalLights(Surface s) {
       float angle = 2.0 * SAPIEN_PI * rnd(ray.seed);
       L = normalize(L + radius * (cos(angle) * tangent + sin(angle) * bitangent));
     }
-    vec3 f = evalBsdf(s, L);
-    if (!isBlack(f)) {
-      result += traceShadow(offsetRayOrigin(s.pos, s.Ng), L, 1.0e30) * light.rgb * f;
+    vec3 fDiff, fSpec;
+    evalBsdfSplit(s, L, fDiff, fSpec);
+    if (!isBlack(fDiff + fSpec)) {
+      vec3 li = traceShadow(offsetRayOrigin(s.pos, s.Ng), L, 1.0e30) * light.rgb;
+      result.diffuse += li * fDiff;
+      result.specular += li * fSpec;
     }
   }
-  return result;
 }
 
-vec3 traceSpotLights(Surface s) {
-  vec3 result = vec3(0.0);
+void traceSpotLights(Surface s, inout DirectLighting result) {
   for (int i = 0; i < spotLightCount; ++i) {
     SpotLight light = spotLights.l[i];
     vec3 centerDir = vec3(0.0, 0.0, -1.0) * mat3(light.viewMat);
@@ -86,8 +95,9 @@ vec3 traceSpotLights(Surface s) {
     float cf1 = cos(light.fovInner / 2) + 1e-5;
     float cf2 = cos(light.fovOuter / 2);
     float visibility = clamp((dot(-L, centerDir) - cf2) / (cf1 - cf2), 0.0, 1.0);
-    vec3 f = evalBsdf(s, L);
-    if (visibility <= 0.0 || isBlack(f)) {
+    vec3 fDiff, fSpec;
+    evalBsdfSplit(s, L, fDiff, fSpec);
+    if (visibility <= 0.0 || isBlack(fDiff + fSpec)) {
       continue;
     }
     vec3 texColor = vec3(1.0);
@@ -97,14 +107,14 @@ vec3 traceSpotLights(Surface s) {
       vec2 uv = texcoord.xy * 0.5 + 0.5;
       texColor = texture(textures[nonuniformEXT(light.textureId)], uv).rgb;
     }
-    result += traceShadow(offsetRayOrigin(s.pos, s.Ng), L, dist) * light.rgb / d2 * visibility *
-              texColor * f;
+    vec3 li = traceShadow(offsetRayOrigin(s.pos, s.Ng), L, dist) * light.rgb / d2 * visibility *
+              texColor;
+    result.diffuse += li * fDiff;
+    result.specular += li * fSpec;
   }
-  return result;
 }
 
-vec3 traceParallelogramLights(Surface s) {
-  vec3 result = vec3(0.0);
+void traceParallelogramLights(Surface s, inout DirectLighting result) {
   for (int i = 0; i < parallelogramLightCount; ++i) {
     ParallelogramLight light = parallelogramLights.l[i];
     vec3 d = light.position + rnd(ray.seed) * light.edge0 + rnd(ray.seed) * light.edge1 - s.pos;
@@ -114,15 +124,16 @@ vec3 traceParallelogramLights(Surface s) {
     vec3 lnormal = cross(light.edge0, light.edge1);
     float area = length(lnormal);
     float cosL = dot(lnormal / area, L);
-    vec3 f = evalBsdf(s, L);
-    if (cosL <= 0.0 || isBlack(f)) {
+    vec3 fDiff, fSpec;
+    evalBsdfSplit(s, L, fDiff, fSpec);
+    if (cosL <= 0.0 || isBlack(fDiff + fSpec)) {
       continue;
     }
     // one uniform area sample: Li f cosL area / d^2
-    result += traceShadow(offsetRayOrigin(s.pos, s.Ng), L, dist) * light.rgb * cosL * area / d2 *
-              f;
+    vec3 li = traceShadow(offsetRayOrigin(s.pos, s.Ng), L, dist) * light.rgb * cosL * area / d2;
+    result.diffuse += li * fDiff;
+    result.specular += li * fSpec;
   }
-  return result;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -150,28 +161,28 @@ vec3 envRadiance(vec3 d) {
   return envmap != 0 ? textureLod(samplerEnvironment, d.xzy, 0.0).rgb : ambientLight;
 }
 
-vec3 estimateEnvironment(Surface s) {
-#if defined(LIGHT_SAMPLING_BSDF)
-  return vec3(0.0);
-#else
+void estimateEnvironment(Surface s, inout DirectLighting result) {
+#if !defined(LIGHT_SAMPLING_BSDF)
   float q = lightTechniqueProbability();
   if (envWidth <= 0 || rnd(ray.seed) >= q) {
-    return vec3(0.0);
+    return;
   }
   uint count = uint(envWidth * (envWidth / 2));
   uint cell = min(uint(rnd(ray.seed) * float(count)), count - 1);
   uint chosen = aliasSample(envAlias.e[cell].xy, cell, uint(rnd(ray.seed) * 4294967296.0));
   vec3 L = envCellDirection(chosen, envWidth, rnd(ray.seed), rnd(ray.seed));
   float pdf = q * uintBitsToFloat(envAlias.e[chosen].z);
-  vec3 f = evalBsdf(s, L);
-  if (pdf <= 0.0 || isBlack(f)) {
-    return vec3(0.0);
+  vec3 fDiff, fSpec;
+  evalBsdfSplit(s, L, fDiff, fSpec);
+  if (pdf <= 0.0 || isBlack(fDiff + fSpec)) {
+    return;
   }
-  vec3 c = traceShadow(offsetRayOrigin(s.pos, s.Ng), L, 1.0e30) * envRadiance(L) * f / pdf;
+  vec3 li = traceShadow(offsetRayOrigin(s.pos, s.Ng), L, 1.0e30) * envRadiance(L) / pdf;
 #if defined(LIGHT_SAMPLING_MIS)
-  c *= misPowerHeuristic(pdf, evalBsdfPdf(s, L));
+  li *= misPowerHeuristic(pdf, evalBsdfPdf(s, L));
 #endif
-  return c;
+  result.diffuse += li * fDiff;
+  result.specular += li * fSpec;
 #endif
 }
 
@@ -182,13 +193,11 @@ float emissiveLightPdf(uint index, float d2, float cosL, float area2) {
          (0.5 * area2 * cosL);
 }
 
-vec3 estimateEmissiveTriangles(Surface s) {
-#if defined(LIGHT_SAMPLING_BSDF)
-  return vec3(0.0);
-#else
+void estimateEmissiveTriangles(Surface s, inout DirectLighting result) {
+#if !defined(LIGHT_SAMPLING_BSDF)
   float q = lightTechniqueProbability();
   if (emissiveCount <= 0 || rnd(ray.seed) >= q) {
-    return vec3(0.0);
+    return;
   }
   uint count = uint(emissiveCount);
   uint cell = min(uint(rnd(ray.seed) * float(count)), count - 1);
@@ -200,7 +209,7 @@ vec3 estimateEmissiveTriangles(Surface s) {
   vec3 cr = cross(e1, e2);
   float area2 = length(cr);
   if (area2 <= 0.0) {
-    return vec3(0.0);
+    return;
   }
   // uniform point on the triangle
   float su = sqrt(rnd(ray.seed));
@@ -211,24 +220,34 @@ vec3 estimateEmissiveTriangles(Surface s) {
   float dist = sqrt(d2);
   vec3 L = d / dist;
   float cosL = abs(dot(cr, L)) / area2;
-  vec3 f = evalBsdf(s, L);
-  if (cosL <= 1e-6 || isBlack(f)) {
-    return vec3(0.0);
+  vec3 fDiff, fSpec;
+  evalBsdfSplit(s, L, fDiff, fSpec);
+  if (cosL <= 1e-6 || isBlack(fDiff + fSpec)) {
+    return;
   }
   float pdf = emissiveLightPdf(index, d2, cosL, area2);
   // stop short of the emitter, which would occlude its own sample
-  vec3 c = traceShadow(offsetRayOrigin(s.pos, s.Ng), L, dist * (1.0 - 1e-3)) * tri.emission.rgb *
-           f / pdf;
+  vec3 li = traceShadow(offsetRayOrigin(s.pos, s.Ng), L, dist * (1.0 - 1e-3)) * tri.emission.rgb /
+            pdf;
 #if defined(LIGHT_SAMPLING_MIS)
-  c *= misPowerHeuristic(pdf, evalBsdfPdf(s, L));
+  li *= misPowerHeuristic(pdf, evalBsdfPdf(s, L));
 #endif
-  return c;
+  result.diffuse += li * fDiff;
+  result.specular += li * fSpec;
 #endif
 }
 
-vec3 estimateDirect(Surface s) {
-  return tracePointLights(s) + traceDirectionalLights(s) + traceSpotLights(s) +
-         traceParallelogramLights(s) + estimateEnvironment(s) + estimateEmissiveTriangles(s);
+DirectLighting estimateDirectSplit(Surface s) {
+  DirectLighting result;
+  result.diffuse = vec3(0.0);
+  result.specular = vec3(0.0);
+  tracePointLights(s, result);
+  traceDirectionalLights(s, result);
+  traceSpotLights(s, result);
+  traceParallelogramLights(s, result);
+  estimateEnvironment(s, result);
+  estimateEmissiveTriangles(s, result);
+  return result;
 }
 
 // Store in the payload what the next vertex needs for MIS, for the BSDF direction L sampled
@@ -250,7 +269,9 @@ void sampleBsdf(Surface s) {
   // a reflection must leave above the geometric surface, a transmission below it
   if ((dot(s.Ng, L) > 0.0) == b.transmitted) {
     b.weight = vec3(0.0);
+    b.diffuseWeight = vec3(0.0);
   }
   setContinuation(s, L);
   ray.attenuation = b.weight;
+  ray.diffuseAttenuation = b.diffuseWeight;
 }

@@ -49,12 +49,15 @@ void Node::updateGlobalModelMatrixRecursive() {
   glm::mat4 localMatrix = glm::translate(glm::mat4(1), mTransform.position) *
                           glm::toMat4(mTransform.rotation) *
                           glm::scale(glm::mat4(1), mTransform.scale);
-  mTransform.prevWorldModelMatrix = mTransform.worldModelMatrix;
-  if (!mParent) {
-    mTransform.worldModelMatrix = localMatrix;
+  glm::mat4 worldMatrix = mParent ? (mParent->mTransform.worldModelMatrix * localMatrix)
+                                  : localMatrix;
+  if (!mHasWorldModelMatrix) {
+    mTransform.prevWorldModelMatrix = worldMatrix;
+    mHasWorldModelMatrix = true;
   } else {
-    mTransform.worldModelMatrix = mParent->mTransform.worldModelMatrix * localMatrix;
+    mTransform.prevWorldModelMatrix = mTransform.worldModelMatrix;
   }
+  mTransform.worldModelMatrix = worldMatrix;
   mSubtreeDirty = false;
   for (auto c : mChildren) {
     c->updateGlobalModelMatrixRecursive();

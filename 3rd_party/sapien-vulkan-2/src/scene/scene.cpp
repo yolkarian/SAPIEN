@@ -863,6 +863,28 @@ void Scene::buildAccelerationStructuresLocked(
   }
 }
 
+static std::vector<vk::AccelerationStructureInstanceKHR>
+packPrevTLASInstances(std::vector<Object *> const &objects,
+                      std::vector<PointObject *> const &pointObjects) {
+  std::vector<vk::AccelerationStructureInstanceKHR> rows;
+  rows.reserve(objects.size() + pointObjects.size());
+  auto append = [&](TransformWithCache const &t) {
+    glm::mat4 const &m =
+        t.prevWorldModelMatrix[3][3] != 0.f ? t.prevWorldModelMatrix : t.worldModelMatrix;
+    glm::mat4 transposed = glm::transpose(m);
+    vk::AccelerationStructureInstanceKHR inst{};
+    std::memcpy(&inst.transform.matrix[0][0], &transposed, sizeof(inst.transform));
+    rows.push_back(inst);
+  };
+  for (auto obj : objects) {
+    append(obj->getTransform());
+  }
+  for (auto obj : pointObjects) {
+    append(obj->getTransform());
+  }
+  return rows;
+}
+
 void Scene::updateTLAS(bool useDeviceTransforms) {
   if (!mASUpdateCommandBuffer) {
     mASUpdateCommandBuffer = getCommandPool().allocateCommandBuffer();
@@ -894,6 +916,12 @@ void Scene::updateTLAS(bool useDeviceTransforms) {
     }
 
     mTLAS->recordUpdate(mASUpdateCommandBuffer.get(), transforms);
+    if (mPrevTLASInstanceBuffer) {
+      auto prevRows = packPrevTLASInstances(objects, pointObjects);
+      if (!prevRows.empty()) {
+        mPrevTLASInstanceBuffer->upload(prevRows);
+      }
+    }
   }
   mASUpdateCommandBuffer->end();
   mContext->getQueue().submit(mASUpdateCommandBuffer.get(), {});
@@ -1055,6 +1083,17 @@ void Scene::createRTStorageBuffers(StructDataLayout const &geometryInstanceBuffe
   mRTSpotLightBuffer = lightBuffer(mRTLights.spot);
   mRTParallelogramLightBuffer = lightBuffer(mRTLights.parallelogram);
   writeRTLightBuffers();
+
+  // previous-frame TLAS instance transforms for ray-traced motion vectors
+  auto prevRows = packPrevTLASInstances(objects, pointObjects);
+  mPrevTLASInstanceBuffer = core::Buffer::Create(
+      *mContext,
+      std::max<size_t>(1, prevRows.size()) * sizeof(vk::AccelerationStructureInstanceKHR),
+      vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
+      VMA_MEMORY_USAGE_CPU_TO_GPU);
+  if (!prevRows.empty()) {
+    mPrevTLASInstanceBuffer->upload(prevRows);
+  }
 
   // build textures
   mTextures.clear();

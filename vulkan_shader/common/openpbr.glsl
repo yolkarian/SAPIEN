@@ -250,27 +250,52 @@ vec3 openpbrLayerLobes(OpenPBR m, float cosO, float cosI, float cosH, float cosO
 
 // ---- evaluation ----
 
-// BSDF times cos(wi) for wi above the surface
-vec3 openpbrEvalReflection(OpenPBR m, vec3 wo, vec3 wi) {
-  if (wo.z <= 0.0 || wi.z <= 0.0) {
+// the diffuse lobe alone, times cos(wi), for wi above the surface (the base's Lambertian lobe
+// under the layers; zero inside a body)
+vec3 openpbrEvalDiffuse(OpenPBR m, vec3 wo, vec3 wi) {
+  if (wo.z <= 0.0 || wi.z <= 0.0 || m.interior) {
     return vec3(0.0);
+  }
+  return openpbrUnderLayers(m, wo.z, wi.z) *
+         ((1.0 - m.metallic) * (1.0 - m.transmission) * (1.0 - openpbrFresnel(wo.z, m.eta))) *
+         m.base * (wi.z / OPENPBR_PI);
+}
+
+// BSDF times cos(wi) for wi above the surface, split into the base diffuse lobe and the
+// remaining (specular, coat, fuzz) lobes so callers do not evaluate the layers twice.
+void openpbrEvalReflectionSplit(OpenPBR m, vec3 wo, vec3 wi, out vec3 diffuse,
+                                out vec3 specular) {
+  diffuse = vec3(0.0);
+  specular = vec3(0.0);
+  if (wo.z <= 0.0 || wi.z <= 0.0) {
+    return;
   }
   vec3 h = normalize(wo + wi);
   float oh = max(dot(wo, h), 1e-6);
   float spec = openpbrGgxReflection(wo, wi, h, m.alpha);
   if (m.interior) {
-    return vec3(openpbrFresnel(oh, m.eta) * spec);
+    specular = vec3(openpbrFresnel(oh, m.eta) * spec);
+    return;
   }
+  vec3 under = openpbrUnderLayers(m, wo.z, wi.z);
   vec3 f = openpbrLayerLobes(m, wo.z, wi.z, h.z, oh);
-  vec3 base = m.metallic * openpbrMetalFresnel(oh, m.base, m.specularColor, m.specularWeight) *
-              spec;
+  vec3 baseSpec =
+      m.metallic * openpbrMetalFresnel(oh, m.base, m.specularColor, m.specularWeight) * spec;
   float dielectric = 1.0 - m.metallic;
   if (dielectric > 0.0) {
-    base += dielectric * m.specularColor * (openpbrFresnel(oh, m.eta) * spec);
-    base += dielectric * (1.0 - m.transmission) * (1.0 - openpbrFresnel(wo.z, m.eta)) * m.base *
-            (wi.z / OPENPBR_PI);
+    baseSpec += dielectric * m.specularColor * (openpbrFresnel(oh, m.eta) * spec);
+    diffuse = under *
+              (dielectric * (1.0 - m.transmission) * (1.0 - openpbrFresnel(wo.z, m.eta))) *
+              m.base * (wi.z / OPENPBR_PI);
   }
-  return f + openpbrUnderLayers(m, wo.z, wi.z) * base;
+  specular = f + under * baseSpec;
+}
+
+// BSDF times cos(wi) for wi above the surface
+vec3 openpbrEvalReflection(OpenPBR m, vec3 wo, vec3 wi) {
+  vec3 diffuse, specular;
+  openpbrEvalReflectionSplit(m, wo, wi, diffuse, specular);
+  return diffuse + specular;
 }
 
 // the transmission lobe times |cos(wi)| for wi below the surface, without its lobe weight
@@ -399,14 +424,16 @@ float openpbrPdfTransmission(OpenPBR m, vec3 wo, vec3 wi) {
 
 struct OpenPBRSample {
   vec3 wi;
-  vec3 weight;      // BSDF * |cos(wi)| / pdf; zero when the sample is lost
-  bool transmitted; // wi crossed the surface
+  vec3 weight;        // BSDF * |cos(wi)| / pdf; zero when the sample is lost
+  vec3 diffuseWeight; // the diffuse lobe's part of `weight`
+  bool transmitted;   // wi crossed the surface
 };
 
 // one sample; u in [0, 1)^3
 OpenPBRSample openpbrSample(OpenPBR m, vec3 wo, vec3 u) {
   OpenPBRSample s;
   s.weight = vec3(0.0);
+  s.diffuseWeight = vec3(0.0);
   s.transmitted = false;
   OpenPBRLobes p = openpbrLobes(m, wo);
   float x = u.x;
@@ -441,7 +468,10 @@ OpenPBRSample openpbrSample(OpenPBR m, vec3 wo, vec3 u) {
   }
   float pdf = openpbrPdfReflection(m, p, wo, s.wi);
   if (s.wi.z > 0.0 && pdf > 0.0) {
-    s.weight = openpbrEvalReflection(m, wo, s.wi) / pdf;
+    vec3 diffuse, specular;
+    openpbrEvalReflectionSplit(m, wo, s.wi, diffuse, specular);
+    s.weight = (diffuse + specular) / pdf;
+    s.diffuseWeight = diffuse / pdf;
   }
   return s;
 }

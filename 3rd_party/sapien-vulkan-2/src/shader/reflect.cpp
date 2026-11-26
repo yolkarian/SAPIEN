@@ -185,11 +185,15 @@ vk::Format get_image_format(spv::ImageFormat format) {
 
   case spv::ImageFormat::ImageFormatRgba32f:
     return vk::Format::eR32G32B32A32Sfloat;
+  case spv::ImageFormat::ImageFormatRg32f:
+    return vk::Format::eR32G32Sfloat;
   case spv::ImageFormat::ImageFormatR32f:
     return vk::Format::eR32Sfloat;
 
   case spv::ImageFormat::ImageFormatRgba16f:
     return vk::Format::eR16G16B16A16Sfloat;
+  case spv::ImageFormat::ImageFormatRg16f:
+    return vk::Format::eR16G16Sfloat;
   case spv::ImageFormat::ImageFormatR16f:
     return vk::Format::eR16Sfloat;
 

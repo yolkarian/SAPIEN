@@ -38,8 +38,12 @@ void main() {
   // a sphere's normal is its own geometric normal
   Surface s = makeSurface(worldPosition, wx, wy, worldShadingNormal, worldShadingNormal, V, m);
 
-  ray.radiance = estimateDirect(s);
+  ray.emission = vec3(0.0);
+  DirectLighting dl = estimateDirectSplit(s);
+  ray.directDiffuse = dl.diffuse;
+  ray.directSpecular = dl.specular;
   sampleBsdf(s);
+  ray.prevWorldPos = instancePoint(prevTlasInstances.i[gl_InstanceID], objectPos);
   ray.normal = worldShadingNormal;
   ray.albedo = baseColor;
   ray.segmentation = uvec4(0);
