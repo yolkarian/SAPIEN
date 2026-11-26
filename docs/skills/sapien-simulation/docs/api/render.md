@@ -75,6 +75,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
+| `cast_shadow` | `bool` | Whether the body casts shadows in rasterization and ray tracing (`True` by default). |  |
 | `shading_mode` | `int` |  |  |
 | `visibility` | `float` |  |  |
 

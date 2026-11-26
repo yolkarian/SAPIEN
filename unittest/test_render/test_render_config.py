@@ -17,13 +17,13 @@ SIZE = 48
 BUILTIN_PACKS = {
     "default": {
         "exposure": ("uniform", "float", 1.0, 0.0, None),
-        "toneMapper": ("uniform", "int", 2, 0.0, 2.0),
+        "toneMapper": ("uniform", "int", 2, 0.0, 5.0),
         "ambientOcclusionStrength": ("uniform", "float", 0.65, 0.0, None),
         "ambientOcclusionRadius": ("uniform", "float", 0.3, 0.0, None),
     },
     "vr_default": {
         "exposure": ("uniform", "float", 1.0, 0.0, None),
-        "toneMapper": ("uniform", "int", 2, 0.0, 2.0),
+        "toneMapper": ("uniform", "int", 2, 0.0, 5.0),
         "ambientOcclusionStrength": ("uniform", "float", 0.65, 0.0, None),
         "ambientOcclusionRadius": ("uniform", "float", 0.3, 0.0, None),
     },
@@ -41,7 +41,28 @@ BUILTIN_PACKS = {
         "clampIndirect": ("uniform", "float", 0.0, 0.0, None),
         "lightSampling": ("variant", "enum", "mis", None, None),
         "exposure": ("uniform", "float", 1.0, 0.0, None),
-        "toneMapper": ("uniform", "int", 2, 0.0, 2.0),
+        "toneMapper": ("uniform", "int", 2, 0.0, 5.0),
+        "bloomIntensity": ("uniform", "float", 0.0, 0.0, None),
+        "bloomThreshold": ("uniform", "float", 1.0, 0.0, None),
+        "bloomRadius": ("uniform", "float", 4.0, 0.5, 32.0),
+        "bloomKnee": ("uniform", "float", 0.5, 0.0, 1.0),
+        "exposureEV": ("uniform", "float", 0.0, None, None),
+        "whiteBalanceTemp": ("uniform", "float", 6500.0, 1500.0, 25000.0),
+        "whiteBalanceTint": ("uniform", "float", 0.0, -1.0, 1.0),
+        "contrast": ("uniform", "float", 1.0, 0.0, None),
+        "saturation": ("uniform", "float", 1.0, 0.0, None),
+        "cdlSlope": ("uniform", "float", 1.0, 0.0, None),
+        "cdlOffset": ("uniform", "float", 0.0, None, None),
+        "cdlPower": ("uniform", "float", 1.0, 0.01, None),
+        "lensDistortionK1": ("uniform", "float", 0.0, None, None),
+        "lensDistortionK2": ("uniform", "float", 0.0, None, None),
+        "chromaticAberration": ("uniform", "float", 0.0, None, None),
+        "vignetteStrength": ("uniform", "float", 0.0, 0.0, None),
+        "vignetteSmoothness": ("uniform", "float", 0.5, 0.01, 2.0),
+        "filmGrain": ("uniform", "float", 0.0, 0.0, None),
+        "sensorReadNoise": ("uniform", "float", 0.0, 0.0, None),
+        "sensorShotNoise": ("uniform", "float", 0.0, 0.0, None),
+        "noiseSeed": ("uniform", "int", 0, None, None),
     },
     "shadow_catcher": {
         "spp": ("uniform", "int", 32, 1.0, None),
@@ -51,11 +72,11 @@ BUILTIN_PACKS = {
         "russianRoulette": ("uniform", "bool", True, None, None),
         "russianRouletteMinBounces": ("uniform", "int", 2, 0.0, None),
         "exposure": ("uniform", "float", 1.0, 0.0, None),
-        "toneMapper": ("uniform", "int", 2, 0.0, 2.0),
+        "toneMapper": ("uniform", "int", 2, 0.0, 5.0),
     },
     "rt_batch": {
         "exposure": ("uniform", "float", 1.0, 0.0, None),
-        "toneMapper": ("uniform", "int", 0, 0.0, 2.0),
+        "toneMapper": ("uniform", "int", 0, 0.0, 5.0),
         "spp": ("uniform", "int", 1, 1.0, 32.0),
         "shading": ("variant", "enum", "lambert", None, None),
         "shadows": ("variant", "bool", False, None, None),
@@ -201,7 +222,7 @@ class TestAssignmentValidation(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "spp.*minimum"):
             config["spp"] = 0
         with self.assertRaisesRegex(RuntimeError, "toneMapper.*maximum"):
-            config["toneMapper"] = 3
+            config["toneMapper"] = 6
         self.assertNotIn("spp", config)
 
     def test_int_is_accepted_for_a_float_parameter_and_stored_as_float(self) -> None:

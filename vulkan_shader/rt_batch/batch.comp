@@ -321,7 +321,7 @@ Surface traceScene(int envIndex, vec3 origin, vec3 direction, float tMin) {
 
   const float tMax = 10000.0;
   rayQueryEXT query;
-  rayQueryInitializeEXT(query, tlas[nonuniformEXT(envIndex)], gl_RayFlagsNoneEXT, 0xff, origin,
+  rayQueryInitializeEXT(query, tlas[nonuniformEXT(envIndex)], gl_RayFlagsNoneEXT, 0x01, origin,
                         tMin, direction, tMax);
 
   while (rayQueryProceedEXT(query)) {
@@ -487,7 +487,7 @@ Surface traceScene(int envIndex, vec3 origin, vec3 direction, float tMin) {
 float lit(int envIndex, vec3 origin, vec3 direction, float tMax) {
   rayQueryEXT query;
   rayQueryInitializeEXT(query, tlas[nonuniformEXT(envIndex)],
-                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0xff, origin,
+                        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT, 0x02, origin,
                         0.001, direction, tMax);
   while (rayQueryProceedEXT(query)) {
   }

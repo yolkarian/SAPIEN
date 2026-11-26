@@ -4,6 +4,12 @@ Migration-sensitive additions, removals, and behavior changes only, newest first
 
 ## Unreleased
 
+`RenderBodyComponent.cast_shadow` and full post-processing passes:
+
+- `RenderBodyComponent.cast_shadow` (default `True`): controls shadow casting in rasterization, `rt`, `shadow_catcher` and `rt_batch` (via TLAS instance mask bit `0x02`). Setting it to `False` keeps the body visible to camera rays while skipping shadow rays and shadow maps.
+- `toneMapper` now accepts `0..5` across built-in packs: `0` gamma 2.2, `1` sRGB, `2` ACES (default), `3` Khronos PBR Neutral, `4` AgX, `5` Filmic (Hable).
+- Built-in `vulkan_shader/post/` adds `bloom`, `color_grade`, `lens` and `fxaa`. The `rt` pack runs `["bloom", "color_grade", "tonemap", "lens"]` (identity defaults; all parameters settable via `RenderConfig` and `camera.set_property` without resetting accumulation) and declares presets `"preview"` (`spp=4, maxDepth=4`) and `"production"` (`spp=64, maxDepth=12, clampIndirect=10.0`).
+
 The `rt` path tracer outputs first-batch AOVs:
 
 - New `rt` pictures from `camera.get_picture(name)`:

@@ -88,7 +88,7 @@ void main() {
 
       traceRayEXT(tlas,
                   rayFlags,
-                  0xff,
+                  0x01,
                   0,
                   0,
                   0,

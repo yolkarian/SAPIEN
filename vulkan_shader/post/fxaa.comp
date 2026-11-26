@@ -1,0 +1,118 @@
+#version 450
+
+// Post-processing pass: FXAA 3.11 quality edge smoothing on display-referred [0, 1] RGB.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba32f) uniform readonly image2D inColor;
+layout(set = 0, binding = 1, rgba32f) uniform writeonly image2D outColor;
+
+layout(push_constant) uniform Parameters {
+  float fxaaEdgeThreshold;  // relative local contrast threshold, default 0.125
+  float fxaaSubpix;         // subpixel aliasing removal strength [0, 1], default 0.75
+};
+
+float luma(vec3 rgb) {
+  return dot(rgb, vec3(0.299, 0.587, 0.114));
+}
+
+vec3 loadClamped(ivec2 p, ivec2 size) {
+  return imageLoad(inColor, clamp(p, ivec2(0), size - ivec2(1))).rgb;
+}
+
+vec3 sampleLinear(vec2 pos, ivec2 size) {
+  ivec2 p0 = ivec2(floor(pos));
+  vec2 f = fract(pos);
+  vec3 c00 = loadClamped(p0, size);
+  vec3 c10 = loadClamped(p0 + ivec2(1, 0), size);
+  vec3 c01 = loadClamped(p0 + ivec2(0, 1), size);
+  vec3 c11 = loadClamped(p0 + ivec2(1, 1), size);
+  return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+}
+
+void main() {
+  ivec2 size = imageSize(outColor);
+  ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+  if (any(greaterThanEqual(p, size))) {
+    return;
+  }
+
+  vec4 center = imageLoad(inColor, p);
+  float lM = luma(center.rgb);
+  float lN = luma(loadClamped(p + ivec2(0, -1), size));
+  float lS = luma(loadClamped(p + ivec2(0,  1), size));
+  float lW = luma(loadClamped(p + ivec2(-1, 0), size));
+  float lE = luma(loadClamped(p + ivec2( 1, 0), size));
+
+  float lMin = min(lM, min(min(lN, lS), min(lW, lE)));
+  float lMax = max(lM, max(max(lN, lS), max(lW, lE)));
+  float range = lMax - lMin;
+
+  if (range < max(0.0312, lMax * fxaaEdgeThreshold)) {
+    imageStore(outColor, p, center);
+    return;
+  }
+
+  float lNW = luma(loadClamped(p + ivec2(-1, -1), size));
+  float lNE = luma(loadClamped(p + ivec2( 1, -1), size));
+  float lSW = luma(loadClamped(p + ivec2(-1,  1), size));
+  float lSE = luma(loadClamped(p + ivec2( 1,  1), size));
+
+  float lNS = lN + lS;
+  float lWE = lW + lE;
+  float subpixAvg = (2.0 * (lNS + lWE) + lNW + lNE + lSW + lSE) / 12.0;
+  float subpixOffset = clamp(abs(subpixAvg - lM) / range, 0.0, 1.0);
+  subpixOffset = (-2.0 * subpixOffset + 3.0) * subpixOffset * subpixOffset;
+  float subpixBlend = subpixOffset * subpixOffset * clamp(fxaaSubpix, 0.0, 1.0);
+
+  float edgeHoriz = abs(-2.0 * lW + lNW + lSW) + 2.0 * abs(-2.0 * lM + lN + lS) +
+                    abs(-2.0 * lE + lNE + lSE);
+  float edgeVert = abs(-2.0 * lN + lNW + lNE) + 2.0 * abs(-2.0 * lM + lW + lE) +
+                   abs(-2.0 * lS + lSW + lSE);
+  bool isHoriz = edgeHoriz >= edgeVert;
+
+  float lNeg = isHoriz ? lN : lW;
+  float lPos = isHoriz ? lS : lE;
+  float gradNeg = abs(lNeg - lM);
+  float gradPos = abs(lPos - lM);
+  bool negSteeper = gradNeg >= gradPos;
+  float stepSign = negSteeper ? -1.0 : 1.0;
+  float gradScaled = 0.25 * max(gradNeg, gradPos);
+  float lEdge = 0.5 * (lM + (negSteeper ? lNeg : lPos));
+
+  vec2 perpDir = isHoriz ? vec2(0.0, stepSign) : vec2(stepSign, 0.0);
+  vec2 tangDir = isHoriz ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+  vec2 edgePos = vec2(p) + 0.5 * perpDir;
+
+  vec2 posN = edgePos - tangDir;
+  vec2 posP = edgePos + tangDir;
+  float endN = luma(sampleLinear(posN, size)) - lEdge;
+  float endP = luma(sampleLinear(posP, size)) - lEdge;
+  bool doneN = abs(endN) >= gradScaled;
+  bool doneP = abs(endP) >= gradScaled;
+
+  for (int i = 0; i < 6 && (!doneN || !doneP); ++i) {
+    if (!doneN) {
+      posN -= tangDir;
+      endN = luma(sampleLinear(posN, size)) - lEdge;
+      doneN = abs(endN) >= gradScaled;
+    }
+    if (!doneP) {
+      posP += tangDir;
+      endP = luma(sampleLinear(posP, size)) - lEdge;
+      doneP = abs(endP) >= gradScaled;
+    }
+  }
+
+  float distN = isHoriz ? (float(p.x) - posN.x) : (float(p.y) - posN.y);
+  float distP = isHoriz ? (posP.x - float(p.x)) : (posP.y - float(p.y));
+  bool closerN = distN < distP;
+  float distMin = min(distN, distP);
+  float span = max(distN + distP, 1e-4);
+  bool goodSpan = ((closerN ? endN : endP) < 0.0) != ((lM - lEdge) < 0.0);
+  float edgeBlend = goodSpan ? (0.5 - distMin / span) : 0.0;
+
+  float finalBlend = max(edgeBlend, subpixBlend);
+  vec3 result = sampleLinear(vec2(p) + perpDir * finalBlend, size);
+  imageStore(outColor, p, vec4(result, center.a));
+}

@@ -7,7 +7,7 @@
 vec3 traceShadow(vec3 origin, vec3 L, float tMax) {
   ray.isShadow = 1;
   ray.transmittance = vec3(1.0);
-  traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT, 0xff,
+  traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT, 0x02,
               0, 0, 1, origin, 0.0, L, tMax, 0);
   vec3 transmittance = ray.isShadow == 0 ? ray.transmittance : vec3(0.0);
   ray.isShadow = 0;

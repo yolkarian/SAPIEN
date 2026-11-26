@@ -72,9 +72,166 @@
       "type": "int",
       "default": 2,
       "minimum": 0,
-      "maximum": 2,
-      "description": "Tone mapping curve: 0 gamma 2.2, 1 sRGB, 2 ACES filmic."
+      "maximum": 5,
+      "description": "Tone mapping curve: 0 gamma 2.2, 1 sRGB, 2 ACES, 3 PBR Neutral, 4 AgX, 5 Filmic."
+    },
+    "bloomIntensity": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "minimum": 0,
+      "description": "Strength of the HDR bloom glow added before tone mapping; 0 disables bloom."
+    },
+    "bloomThreshold": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 1.0,
+      "minimum": 0,
+      "description": "Linear radiance threshold above which pixels contribute to bloom."
+    },
+    "bloomRadius": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 4.0,
+      "minimum": 0.5,
+      "maximum": 32.0,
+      "description": "Bloom gather radius in pixels."
+    },
+    "bloomKnee": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.5,
+      "minimum": 0,
+      "maximum": 1.0,
+      "description": "Soft transition width around the bloom threshold."
+    },
+    "exposureEV": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "description": "Photographic exposure offset in stops (multiplies radiance by 2^exposureEV)."
+    },
+    "whiteBalanceTemp": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 6500.0,
+      "minimum": 1500.0,
+      "maximum": 25000.0,
+      "description": "White balance colour temperature in Kelvin (6500 is neutral D65)."
+    },
+    "whiteBalanceTint": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "minimum": -1.0,
+      "maximum": 1.0,
+      "description": "Green-magenta white balance tint offset (0 is neutral)."
+    },
+    "contrast": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 1.0,
+      "minimum": 0.0,
+      "description": "Photographic contrast pivoted around 18% middle grey (1 is neutral)."
+    },
+    "saturation": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 1.0,
+      "minimum": 0.0,
+      "description": "Colour saturation multiplier (0 is greyscale, 1 is neutral)."
+    },
+    "cdlSlope": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 1.0,
+      "minimum": 0.0,
+      "description": "ASC CDL slope multiplier (1 is neutral)."
+    },
+    "cdlOffset": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "description": "ASC CDL additive offset (0 is neutral)."
+    },
+    "cdlPower": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 1.0,
+      "minimum": 0.01,
+      "description": "ASC CDL power exponent (1 is neutral)."
+    },
+    "lensDistortionK1": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "description": "Primary radial Brown-Conrady lens distortion coefficient (0 is none)."
+    },
+    "lensDistortionK2": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "description": "Secondary radial Brown-Conrady lens distortion coefficient (0 is none)."
+    },
+    "chromaticAberration": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "description": "Radial red/blue channel UV offset for lateral chromatic aberration (0 is none)."
+    },
+    "vignetteStrength": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "minimum": 0.0,
+      "description": "Radial edge darkening strength (0 disables vignette)."
+    },
+    "vignetteSmoothness": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.5,
+      "minimum": 0.01,
+      "maximum": 2.0,
+      "description": "Exponent controlling the vignette falloff curve."
+    },
+    "filmGrain": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "minimum": 0.0,
+      "description": "Midtone-weighted film grain standard deviation (0 disables)."
+    },
+    "sensorReadNoise": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "minimum": 0.0,
+      "description": "Additive Gaussian sensor read noise standard deviation (0 disables)."
+    },
+    "sensorShotNoise": {
+      "kind": "uniform",
+      "type": "float",
+      "default": 0.0,
+      "minimum": 0.0,
+      "description": "Signal-dependent Poisson-Gaussian sensor shot noise scale (0 disables)."
+    },
+    "noiseSeed": {
+      "kind": "uniform",
+      "type": "int",
+      "default": 0,
+      "description": "Deterministic integer seed for film grain and sensor noise."
     }
   },
-  "post": ["tonemap"]
+  "presets": {
+    "preview": {
+      "spp": 4,
+      "maxDepth": 4
+    },
+    "production": {
+      "spp": 64,
+      "maxDepth": 12,
+      "clampIndirect": 10.0
+    }
+  },
+  "post": ["bloom", "color_grade", "tonemap", "lens"]
 }

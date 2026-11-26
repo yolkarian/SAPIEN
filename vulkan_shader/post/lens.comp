@@ -1,0 +1,126 @@
+#version 450
+
+// Post-processing pass: lens distortion, chromatic aberration, vignette, film grain and
+// Poisson-Gaussian sensor noise. Runs in display-referred [0, 1] space after tone mapping.
+// Bit-exact identity when all effect strengths are zero.
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba32f) uniform readonly image2D inColor;
+layout(set = 0, binding = 1, rgba32f) uniform writeonly image2D outColor;
+
+layout(push_constant) uniform Parameters {
+  float lensDistortionK1;
+  float lensDistortionK2;
+  float chromaticAberration;
+  float vignetteStrength;
+  float vignetteSmoothness;
+  float filmGrain;
+  float sensorReadNoise;
+  float sensorShotNoise;
+  int noiseSeed;
+};
+
+vec4 sampleBilinear(vec2 uv, ivec2 size) {
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0) {
+    return vec4(0.0, 0.0, 0.0, 1.0);
+  }
+  vec2 pos = uv * vec2(size) - 0.5;
+  ivec2 p0 = ivec2(floor(pos));
+  vec2 f = fract(pos);
+  ivec2 maxP = size - ivec2(1);
+  vec4 c00 = imageLoad(inColor, clamp(p0, ivec2(0), maxP));
+  vec4 c10 = imageLoad(inColor, clamp(p0 + ivec2(1, 0), ivec2(0), maxP));
+  vec4 c01 = imageLoad(inColor, clamp(p0 + ivec2(0, 1), ivec2(0), maxP));
+  vec4 c11 = imageLoad(inColor, clamp(p0 + ivec2(1, 1), ivec2(0), maxP));
+  return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
+}
+
+vec2 distortUv(vec2 uv) {
+  vec2 p = uv * 2.0 - 1.0;
+  float r2 = dot(p, p);
+  float scale = 1.0 + lensDistortionK1 * r2 + lensDistortionK2 * r2 * r2;
+  return (p * scale) * 0.5 + 0.5;
+}
+
+uint pcgHash(uint v) {
+  uint state = v * 747796405u + 2891336453u;
+  uint word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+  return (word >> 22u) ^ word;
+}
+
+float randUniform(inout uint state) {
+  state = pcgHash(state);
+  return float(state & 0x00ffffffu) / 16777216.0;
+}
+
+float randNormal(inout uint state) {
+  float u1 = max(randUniform(state), 1e-6);
+  float u2 = randUniform(state);
+  return sqrt(-2.0 * log(u1)) * cos(6.28318530718 * u2);
+}
+
+void main() {
+  ivec2 size = imageSize(outColor);
+  ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+  if (any(greaterThanEqual(pixel, size))) {
+    return;
+  }
+
+  if (lensDistortionK1 == 0.0 && lensDistortionK2 == 0.0 && chromaticAberration == 0.0 &&
+      vignetteStrength == 0.0 && filmGrain == 0.0 && sensorReadNoise == 0.0 &&
+      sensorShotNoise == 0.0) {
+    imageStore(outColor, pixel, imageLoad(inColor, pixel));
+    return;
+  }
+
+  vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
+  vec2 p = uv * 2.0 - 1.0;
+  vec4 color;
+
+  if (lensDistortionK1 != 0.0 || lensDistortionK2 != 0.0 || chromaticAberration != 0.0) {
+    vec2 uvG = distortUv(uv);
+    vec4 gSample = sampleBilinear(uvG, size);
+    if (chromaticAberration != 0.0) {
+      vec2 uvR = distortUv(uv + p * chromaticAberration);
+      vec2 uvB = distortUv(uv - p * chromaticAberration);
+      color = vec4(sampleBilinear(uvR, size).r, gSample.g, sampleBilinear(uvB, size).b, gSample.a);
+    } else {
+      color = gSample;
+    }
+  } else {
+    color = imageLoad(inColor, pixel);
+  }
+
+  if (vignetteStrength > 0.0) {
+    float r2 = dot(p, p);
+    float vig = pow(clamp(1.0 - vignetteStrength * r2 * 0.5, 0.0, 1.0),
+                    max(vignetteSmoothness, 0.01));
+    color.rgb *= vig;
+  }
+
+  if (filmGrain > 0.0 || sensorReadNoise > 0.0 || sensorShotNoise > 0.0) {
+    uint rng = pcgHash(uint(pixel.x) * 1973u ^ uint(pixel.y) * 9277u ^
+                       uint(noiseSeed) * 26699u ^ 0x9e3779b9u);
+    if (filmGrain > 0.0) {
+      float luma = dot(color.rgb, vec3(0.2126, 0.7152, 0.0722));
+      float midtone = 4.0 * clamp(luma, 0.0, 1.0) * (1.0 - clamp(luma, 0.0, 1.0));
+      float grain = randNormal(rng) * filmGrain * (0.25 + 0.75 * midtone);
+      color.rgb += vec3(grain);
+    }
+    if (sensorShotNoise > 0.0) {
+      vec3 sigma = sensorShotNoise * sqrt(max(color.rgb, vec3(0.0)));
+      color.r += randNormal(rng) * sigma.r;
+      color.g += randNormal(rng) * sigma.g;
+      color.b += randNormal(rng) * sigma.b;
+    }
+    if (sensorReadNoise > 0.0) {
+      color.r += randNormal(rng) * sensorReadNoise;
+      color.g += randNormal(rng) * sensorReadNoise;
+      color.b += randNormal(rng) * sensorReadNoise;
+    }
+  }
+
+  color.rgb = clamp(color.rgb, 0.0, 1.0);
+  imageStore(outColor, pixel, color);
+}

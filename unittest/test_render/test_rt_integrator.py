@@ -279,6 +279,68 @@ class Shadows(unittest.TestCase):
         blocked = self.shadow(None, cloud=True)
         np.testing.assert_allclose(blocked, 0.0, atol=1e-3 * float(lit.mean()))
 
+    def test_cast_shadow_false_disables_shadows_in_rt_and_raster(self) -> None:
+        """A render body with cast_shadow=False stays visible to camera rays while casting no
+        shadow in both `rt` and `default` rasterization, and toggling it back restores the shadow."""
+        for pack in ("rt", "default"):
+            with self.subTest(pack=pack), sapien.Scene() as scene:
+                scene.set_ambient_light([0.0, 0.0, 0.0])
+                scene.add_ground(
+                    0.0,
+                    render_material=sapien.render.RenderMaterial(
+                        base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0
+                    ),
+                )
+                light = scene.add_directional_light(
+                    [0.7071068, 0.0, -0.7071068], [2.0, 2.0, 2.0], shadow=True
+                )
+                light.shadow_half_size = 2.0
+                builder = scene.create_actor_builder()
+                builder.add_box_visual(
+                    half_size=[0.4, 0.4, 0.05],
+                    material=sapien.render.RenderMaterial(base_color=[1, 0, 0, 1]),
+                )
+                occluder = builder.build_kinematic()
+                occluder.set_pose(sapien.Pose([-0.5, 0.0, 0.5]))
+                body = occluder.find_component_by_type(sapien.render.RenderBodyComponent)
+                self.assertTrue(body.cast_shadow)
+
+                cfg = config(spp=4, depth=0) if pack == "rt" else sapien.render.RenderConfig("default")
+                cfg["toneMapper"] = 1
+                # Camera looking at shadow centre on the floor
+                cam = scene.add_camera("cam", SIZE, SIZE, 0.3, 0.1, 20.0, render_config=cfg)
+                cam.entity.pose = sapien.Pose([0.0, 0.0, 2.0], [0.7071068, 0.0, 0.7071068, 0.0])
+                # Second camera looking directly at the occluder to verify it remains visible
+                vis_cam = scene.add_camera("vis", SIZE, SIZE, 0.8, 0.1, 20.0, render_config=cfg)
+                vis_cam.entity.pose = sapien.Pose([-2.0, 0.0, 0.5])
+
+                pic = "HdrColor" if pack == "rt" else "Lighting"
+                centre = np.s_[SIZE // 2 - 3 : SIZE // 2 + 3, SIZE // 2 - 3 : SIZE // 2 + 3]
+
+                scene.update_render()
+                cam.take_picture()
+                shadowed = float(cam.get_picture(pic)[centre][..., :3].mean())
+
+                body.cast_shadow = False
+                self.assertFalse(body.cast_shadow)
+                scene.update_render()
+                cam.take_picture()
+                vis_cam.take_picture()
+                unshadowed = float(cam.get_picture(pic)[centre][..., :3].mean())
+                occluder_seg = vis_cam.get_picture("Segmentation")[..., 1]
+
+                self.assertGreater(unshadowed, 0.2)
+                self.assertLess(shadowed, 0.05 * unshadowed)
+                # Occluder is still visible to camera rays
+                self.assertTrue(np.any(occluder_seg == occluder.per_scene_id))
+
+                # Re-enabling restores the shadow
+                body.cast_shadow = True
+                scene.update_render()
+                cam.take_picture()
+                restored = float(cam.get_picture(pic)[centre][..., :3].mean())
+                self.assertLess(restored, 0.05 * unshadowed)
+
 
 class Transmission(unittest.TestCase):
     """A clear box of half size 0.5 at the origin, seen face-on from x = -3 in front of a white

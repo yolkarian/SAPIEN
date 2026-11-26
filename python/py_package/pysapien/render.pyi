@@ -9,6 +9,7 @@ __all__ = ['RenderBodyComponent', 'RenderConfig', 'RenderCameraComponent', 'Rend
 M = typing.TypeVar("M", bound=int)
 N = typing.TypeVar("N", bound=int)
 class RenderBodyComponent(sapien.pysapien.Component):
+    cast_shadow: bool
     shading_mode: int
     visibility: float
     def __init__(self) -> None:

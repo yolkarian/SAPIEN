@@ -787,8 +787,10 @@ core::TLAS *Scene::createTLAS(bool externalInstanceBuffer) {
     static_assert(sizeof(mat) == sizeof(float) * 12);
     std::memcpy(&mat.matrix[0][0], &modelTranspose, sizeof(mat));
 
+    // Instance mask bit 0: primary/path visibility; bit 1: shadow casting.
+    uint32_t mask = obj->getCastShadow() ? 0x03u : 0x01u;
     vk::AccelerationStructureInstanceKHR inst(
-        mat, instanceIndex, 0xff, 0, vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable,
+        mat, instanceIndex, mask, 0, vk::GeometryInstanceFlagBitsKHR::eTriangleFacingCullDisable,
         obj->getModel()->getBLAS(*mContext)->getAddress());
 
     instanceIndex += obj->getModel()->getShapes().size();
@@ -803,7 +805,7 @@ core::TLAS *Scene::createTLAS(bool externalInstanceBuffer) {
     std::memcpy(&mat.matrix[0][0], &modelTranspose, sizeof(mat));
 
     vk::AccelerationStructureInstanceKHR inst(
-        mat, instanceIndex, 0xff, 1, {}, obj->getPointSet()->getBLAS(*mContext)->getAddress());
+        mat, instanceIndex, 0x03u, 1, {}, obj->getPointSet()->getBLAS(*mContext)->getAddress());
     instanceIndex++;
     instances.push_back(inst);
   }

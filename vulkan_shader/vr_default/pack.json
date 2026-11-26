@@ -12,8 +12,8 @@
       "type": "int",
       "default": 2,
       "minimum": 0,
-      "maximum": 2,
-      "description": "Tone mapping curve: 0 gamma 2.2, 1 sRGB, 2 ACES filmic."
+      "maximum": 5,
+      "description": "Tone mapping curve: 0 gamma 2.2, 1 sRGB, 2 ACES, 3 PBR Neutral, 4 AgX, 5 Filmic."
     },
     "ambientOcclusionStrength": {
       "kind": "uniform",

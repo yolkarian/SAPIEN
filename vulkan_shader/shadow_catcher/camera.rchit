@@ -122,7 +122,7 @@ vec3 traceDirectionalLights(vec3 pos, OpenPBR m, mat3 frame, vec3 wo, out vec3 r
     shadowRay.shadowed = true;
     traceRayEXT(tlas,
                 flags,
-                0xff,
+                0x02,
                 0,
                 0,
                 1,  // miss index
@@ -165,7 +165,7 @@ vec3 traceParallelogramLights(vec3 pos, OpenPBR m, mat3 frame, vec3 wo, out vec3
       shadowRay.shadowed = true;
       traceRayEXT(tlas,
                   flags,
-                  0xff,
+                  0x02,
                   0,
                   0,
                   1,  // miss index
@@ -202,7 +202,7 @@ vec3 tracePointLights(vec3 pos, OpenPBR m, mat3 frame, vec3 wo, out vec3 resultN
     shadowRay.shadowed = true;
     traceRayEXT(tlas,
                 flags,
-                0xff,
+                0x02,
                 0,
                 0,
                 1,  // miss index
@@ -257,7 +257,7 @@ vec3 traceSpotLights(vec3 pos, OpenPBR m, mat3 frame, vec3 wo, out vec3 resultNo
       shadowRay.shadowed = true;
       traceRayEXT(tlas,
                   flags,
-                  0xff,
+                  0x02,
                   0,
                   0,
                   1,  // miss index
@@ -423,7 +423,7 @@ void main() {
     shadowRay.shadowed = true;
     traceRayEXT(tlas,
                 flags,
-                0xff,
+                0x02,
                 0,
                 0,
                 1,  // miss index

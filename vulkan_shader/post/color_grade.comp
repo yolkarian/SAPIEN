@@ -1,0 +1,122 @@
+#version 450
+
+// Post-processing pass: EV exposure, white balance, ASC CDL, contrast and saturation.
+// Operates in linear scene-referred HDR space before tone mapping.
+// Bit-exact identity when all parameters are at their defaults.
+
+#include "../common/tonemapping.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba32f) uniform readonly image2D inColor;
+layout(set = 0, binding = 1, rgba32f) uniform writeonly image2D outColor;
+
+layout(push_constant) uniform Parameters {
+  float exposureEV;
+  float whiteBalanceTemp;  // Kelvin; 6500 = neutral D65
+  float whiteBalanceTint;  // [-1, 1]; 0 = neutral
+  float contrast;          // 1 = neutral, pivoted around 0.18
+  float saturation;        // 1 = neutral
+  float cdlSlope;          // ASC CDL slope, 1 = neutral
+  float cdlOffset;         // ASC CDL offset, 0 = neutral
+  float cdlPower;          // ASC CDL power, 1 = neutral
+};
+
+// CIE D-illuminant / Planckian chromaticity (x, y) for Kelvin temperature T in [1500, 25000].
+vec2 kelvinToChromaticity(float T) {
+  float t = clamp(T, 1500.0, 25000.0);
+  float x;
+  if (t <= 4000.0) {
+    float invT = 1e3 / t;
+    x = ((-0.2661239 * invT - 0.2343589) * invT + 0.8776956) * invT + 0.179910;
+  } else {
+    float invT = 1e3 / t;
+    x = ((-3.0258469 * invT + 2.1070379) * invT + 0.2226347) * invT + 0.240390;
+  }
+  float y;
+  if (t <= 2222.0) {
+    y = ((-1.1063814 * x - 1.34811020) * x + 2.18555832) * x - 0.20219683;
+  } else if (t <= 4000.0) {
+    y = ((-0.9549476 * x - 1.37418593) * x + 2.09137015) * x - 0.16748867;
+  } else {
+    y = ((3.0817580 * x - 5.87338670) * x + 3.75112997) * x - 0.37001483;
+  }
+  return vec2(x, max(y, 1e-4));
+}
+
+// Bradford chromatic adaptation from D65 to target (temp, tint) in linear Rec.709 RGB.
+vec3 applyWhiteBalance(vec3 rgb, float temp, float tint) {
+  // Linear Rec.709 -> Bradford LMS (column-major GLSL matrices)
+  const mat3 rgbToLms = mat3(
+      0.31399022, 0.15537241, 0.01775239,
+      0.63951294, 0.75789446, 0.10944209,
+      0.04649755, 0.08670142, 0.87256922);
+  const mat3 lmsToRgb = mat3(
+       5.47221206, -1.12524190,  0.02980165,
+      -4.64196010,  2.29317094, -0.19318073,
+       0.16963708, -0.16789520,  1.16364789);
+  const mat3 xyzToLms = mat3(
+       0.8951000, -0.7502000,  0.0389000,
+       0.2664000,  1.7135000, -0.0685000,
+      -0.1614000,  0.0367000,  1.0296000);
+
+  vec2 xyRef = kelvinToChromaticity(6500.0);
+  vec2 xyDst = kelvinToChromaticity(temp);
+  // Tint shifts green/magenta along y (negative tint = greener, positive = more magenta).
+  xyDst.y = clamp(xyDst.y - tint * 0.05, 0.05, 0.85);
+
+  vec3 xyzRef = vec3(xyRef.x / xyRef.y, 1.0, (1.0 - xyRef.x - xyRef.y) / xyRef.y);
+  vec3 xyzDst = vec3(xyDst.x / xyDst.y, 1.0, (1.0 - xyDst.x - xyDst.y) / xyDst.y);
+
+  vec3 lmsRef = xyzToLms * xyzRef;
+  vec3 lmsDst = xyzToLms * xyzDst;
+  // Warmer temp (>6500K) warms the image: scale by lmsRef / lmsDst when compensating a cooler
+  // illuminant, or lmsDst / lmsRef? Interpreting whiteBalanceTemp as the camera's white-point
+  // Kelvin setting (like a DSLR / UE5): raising Temp above 6500K makes the image warmer (redder).
+  vec3 scale = lmsRef / max(lmsDst, vec3(1e-4));
+  // Note: for higher Kelvin, xyDst has smaller x (bluer), so lmsDst.z > lmsRef.z and
+  // lmsRef.z / lmsDst.z < 1 (less blue -> warmer image), matching standard camera WB!
+  vec3 lms = rgbToLms * rgb;
+  return max(lmsToRgb * (lms * scale), vec3(0.0));
+}
+
+void main() {
+  ivec2 size = imageSize(outColor);
+  ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+  if (any(greaterThanEqual(pixel, size))) {
+    return;
+  }
+  vec4 color = imageLoad(inColor, pixel);
+  if (exposureEV == 0.0 && whiteBalanceTemp == 6500.0 && whiteBalanceTint == 0.0 &&
+      contrast == 1.0 && saturation == 1.0 && cdlSlope == 1.0 && cdlOffset == 0.0 &&
+      cdlPower == 1.0) {
+    imageStore(outColor, pixel, color);
+    return;
+  }
+
+  vec3 c = sapienSanitizeRadiance(color.rgb);
+  if (exposureEV != 0.0) {
+    c *= exp2(exposureEV);
+  }
+  if (whiteBalanceTemp != 6500.0 || whiteBalanceTint != 0.0) {
+    c = applyWhiteBalance(c, whiteBalanceTemp, whiteBalanceTint);
+  }
+  // ASC CDL
+  if (cdlSlope != 1.0 || cdlOffset != 0.0 || cdlPower != 1.0) {
+    c = pow(max(c * cdlSlope + vec3(cdlOffset), vec3(0.0)), vec3(max(cdlPower, 1e-4)));
+  }
+  // Contrast pivoted around 18% middle grey in log space
+  if (contrast != 1.0) {
+    const float pivot = 0.18;
+    vec3 positive = max(c, vec3(1e-6));
+    vec3 contrasted = exp2(log2(positive / pivot) * contrast) * pivot;
+    c = mix(vec3(0.0), contrasted, greaterThan(c, vec3(0.0)));
+  }
+  // Saturation using Rec.709 luminance
+  if (saturation != 1.0) {
+    float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    c = max(mix(vec3(luma), c, saturation), vec3(0.0));
+  }
+
+  imageStore(outColor, pixel, vec4(c, color.a));
+}

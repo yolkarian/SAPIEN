@@ -1,0 +1,68 @@
+#version 450
+
+// Post-processing pass: HDR soft-knee thresholded Gaussian bloom.
+// inColor / outColor are linear HDR radiance. Identity when bloomIntensity <= 0.
+
+#include "../common/tonemapping.glsl"
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(set = 0, binding = 0, rgba32f) uniform readonly image2D inColor;
+layout(set = 0, binding = 1, rgba32f) uniform writeonly image2D outColor;
+
+layout(push_constant) uniform Parameters {
+  float bloomIntensity;
+  float bloomThreshold;
+  float bloomRadius;
+  float bloomKnee;
+};
+
+vec3 bloomExtract(vec3 rgb) {
+  rgb = sapienSanitizeRadiance(rgb);
+  float brightness = max(rgb.r, max(rgb.g, rgb.b));
+  float knee = max(bloomThreshold * clamp(bloomKnee, 0.0, 1.0), 1e-5);
+  float soft = brightness - bloomThreshold + knee;
+  soft = clamp(soft, 0.0, 2.0 * knee);
+  soft = soft * soft / (4.0 * knee);
+  float contribution = max(soft, brightness - bloomThreshold);
+  return brightness > 1e-6 ? rgb * (contribution / brightness) : vec3(0.0);
+}
+
+void main() {
+  ivec2 size = imageSize(outColor);
+  ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+  if (any(greaterThanEqual(pixel, size))) {
+    return;
+  }
+  vec4 center = imageLoad(inColor, pixel);
+  if (bloomIntensity <= 0.0) {
+    imageStore(outColor, pixel, center);
+    return;
+  }
+
+  float radius = max(bloomRadius, 0.5);
+  float sigma = 0.45 * radius;
+  float inv2Sigma2 = 0.5 / max(sigma * sigma, 1e-4);
+
+  vec3 accum = bloomExtract(center.rgb);
+  float weightSum = 1.0;
+
+  // Two concentric rings (12 taps each) plus center for smooth isotropic gather.
+  const int TAPS = 12;
+  const float TWO_PI = 6.28318530718;
+  for (int ring = 1; ring <= 2; ++ring) {
+    float r = radius * (ring == 1 ? 0.5 : 1.0);
+    float w = exp(-r * r * inv2Sigma2);
+    float angleOffset = ring == 1 ? 0.0 : (TWO_PI / float(2 * TAPS));
+    for (int i = 0; i < TAPS; ++i) {
+      float a = angleOffset + TWO_PI * float(i) / float(TAPS);
+      ivec2 offset = ivec2(round(vec2(cos(a), sin(a)) * r));
+      ivec2 p = clamp(pixel + offset, ivec2(0), size - ivec2(1));
+      accum += bloomExtract(imageLoad(inColor, p).rgb) * w;
+      weightSum += w;
+    }
+  }
+
+  vec3 bloom = accum / weightSum;
+  imageStore(outColor, pixel, vec4(center.rgb + bloomIntensity * bloom, center.a));
+}

@@ -47,6 +47,9 @@ public:
   void setShadingMode(int mode);
   int getShadingMode() const;
 
+  void setCastShadow(bool castShadow);
+  bool getCastShadow() const;
+
   void setProperty(std::string const &name, int value);
   void setProperty(std::string const &name, float value);
   void setProperty(std::string const &name, Vec3 const &value);
@@ -72,6 +75,7 @@ private:
 
   float mVisibility{1.f};
   int mShadingMode{0};
+  bool mCastShadow{true};
 
   bool mRenderIdDisabled{false};
   uint32_t mGpuPoseSourceRefCount{0};

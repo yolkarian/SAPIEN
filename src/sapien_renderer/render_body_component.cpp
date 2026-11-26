@@ -60,6 +60,8 @@ void SapienRenderBodyComponent::onAddToScene(Scene &scene) {
 
     obj.setSegmentation({id, getEntity()->getPerSceneId(), scene.getId(), 0});
     obj.setTransparency(1.f - mVisibility);
+    obj.setShadingMode(mShadingMode);
+    obj.setCastShadow(mCastShadow);
   }
 
   // register
@@ -104,6 +106,18 @@ void SapienRenderBodyComponent::setShadingMode(int mode) {
   }
 }
 int SapienRenderBodyComponent::getShadingMode() const { return mShadingMode; }
+
+void SapienRenderBodyComponent::setCastShadow(bool castShadow) {
+  mCastShadow = castShadow;
+  if (mNode) {
+    for (auto c : mNode->getChildren()) {
+      if (auto o = dynamic_cast<svulkan2::scene::Object *>(c)) {
+        o->setCastShadow(castShadow);
+      }
+    }
+  }
+}
+bool SapienRenderBodyComponent::getCastShadow() const { return mCastShadow; }
 
 void SapienRenderBodyComponent::setProperty(std::string const &name, int value) {
   if (!mNode) {
@@ -242,6 +256,7 @@ std::shared_ptr<SapienRenderBodyComponent> SapienRenderBodyComponent::clone() co
   }
   body->setVisibility(getVisibility());
   body->setShadingMode(getShadingMode());
+  body->setCastShadow(getCastShadow());
   body->mRenderIdDisabled = mRenderIdDisabled;
   // TODO copy properties
   return body;

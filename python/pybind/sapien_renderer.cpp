@@ -1387,6 +1387,8 @@ version moved; an unchanged version means zero per-frame light uploads.)doc")
 
       .def_property("shading_mode", &SapienRenderBodyComponent::getShadingMode,
                     &SapienRenderBodyComponent::setShadingMode)
+      .def_property("cast_shadow", &SapienRenderBodyComponent::getCastShadow,
+                    &SapienRenderBodyComponent::setCastShadow)
 
       .def("compute_global_aabb_tight", &SapienRenderBodyComponent::computeGlobalAABBTight)
       .def("get_global_aabb_fast", &SapienRenderBodyComponent::getGlobalAABBFast)

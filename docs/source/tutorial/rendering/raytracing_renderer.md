@@ -108,7 +108,9 @@ camera.
 - **Shadows.** A shadow ray crossing a surface keeps the part the surface lets through: the
   part its base-colour alpha and the object's `transparency` leave uncovered, plus the
   covered part's `transmission`, tinted by the base colour. A sheer or transmissive occluder
-  casts a lighter, possibly coloured shadow; point clouds block light.
+  casts a lighter, possibly coloured shadow; point clouds block light. Set
+  `body.cast_shadow = False` on a `RenderBodyComponent` to keep an object visible without
+  casting shadows (in both ray tracing and rasterization).
 - **Russian roulette** (`russianRoulette`) is on by default: after
   `russianRouletteMinBounces` bounces, paths of low weight end at random and the survivors
   are weighted up, which keeps the image unbiased.
@@ -137,6 +139,25 @@ pack outputs:
 
 Before denoising, `Emission + DiffuseDirect + SpecularDirect + DiffuseIndirect + SpecularIndirect`
 sums to `HdrColor` at every pixel.
+
+## Post-processing and presets
+
+The `rt` pack runs the built-in post-processing chain `["bloom", "color_grade", "tonemap", "lens"]`
+on `HdrColor` to produce `Color`. All new effects default to identity (off) and can be adjusted at
+runtime via `camera.set_property(...)` without resetting path-tracing accumulation:
+
+- **Bloom**: `bloomIntensity` (default `0`), `bloomThreshold`, `bloomRadius`, `bloomKnee`.
+- **Color grading**: `exposureEV` (stops), `whiteBalanceTemp` (Kelvin, default `6500`),
+  `whiteBalanceTint`, `contrast`, `saturation`, and ASC CDL (`cdlSlope`, `cdlOffset`, `cdlPower`).
+- **Tone mapping**: `exposure` and `toneMapper` (`0` gamma 2.2, `1` sRGB, `2` ACES, `3` Khronos
+  PBR Neutral, `4` AgX, `5` Filmic).
+- **Lens & sensor**: `lensDistortionK1`, `lensDistortionK2`, `chromaticAberration`,
+  `vignetteStrength`, `vignetteSmoothness`, `filmGrain`, `sensorReadNoise`, `sensorShotNoise`,
+  `noiseSeed`.
+
+Built-in `rt` presets: `RenderConfig("rt", preset="preview")` (`spp=4, maxDepth=4`) and
+`RenderConfig("rt", preset="production")` (`spp=64, maxDepth=12, clampIndirect=10.0`). A standalone
+`fxaa` pass (`vulkan_shader/post/fxaa.comp`) is also available for custom `"post"` chains.
 
 ## Materials for ray tracing
 

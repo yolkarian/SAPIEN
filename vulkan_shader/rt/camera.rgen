@@ -100,7 +100,7 @@ void main() {
     for (int bounce = 0; bounce <= maxDepth; ++bounce) {
       bool first = bounce == 0;
       ray.depth = uint(bounce);
-      traceRayEXT(tlas, gl_RayFlagsNoneEXT, 0xff, 0, 0, 0,
+      traceRayEXT(tlas, gl_RayFlagsNoneEXT, 0x01, 0, 0, 0,
                   ray.origin, tMin, ray.direction, tMax, 0);
 
       vec3 vertexDirect = ray.directDiffuse + ray.directSpecular;
