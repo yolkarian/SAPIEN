@@ -181,7 +181,7 @@ void SceneGroup::uploadObjectTransforms() {
 
   size_t totalSize{0};
   size_t step = getGpuTransformBufferSize();
-  uint8_t *buffer = reinterpret_cast<uint8_t *>(mTransformBufferCpu->map());
+  uint8_t *buffer = mapTransformStaging();
 
   auto writeMatrix = [&](glm::mat4 const &mat) {
     std::memcpy(buffer + totalSize, &mat, sizeof(glm::mat4));
@@ -224,37 +224,7 @@ void SceneGroup::uploadObjectTransforms() {
   for (auto obj : pointObjects) {
     writeMatrix(obj->getTransform().worldModelMatrix);
   }
-  mTransformBufferCpu->unmap();
-
-  // rendering empty scene
-  if (totalSize == 0) {
-    return;
-  }
-
-  if (!mTransformUpdateCommandBuffer) {
-    mTransformUpdateCommandBuffer = getCommandPool().allocateCommandBuffer();
-  }
-  mTransformUpdateCommandBuffer->reset();
-  mTransformUpdateCommandBuffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-
-  vk::BufferCopy region(0, 0, totalSize);
-  mTransformUpdateCommandBuffer->copyBuffer(mTransformBufferCpu->getVulkanBuffer(),
-                                            mTransformBuffer->getVulkanBuffer(), region);
-
-  vk::MemoryBarrier barrier(vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead);
-  // vk::BufferMemoryBarrier barrier(
-  //     vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead,
-  //     VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED, mTransformBuffer->getVulkanBuffer(), 0,
-  //     VK_WHOLE_SIZE);
-  mTransformUpdateCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                                                 vk::PipelineStageFlagBits::eVertexShader |
-                                                     vk::PipelineStageFlagBits::eFragmentShader,
-                                                 {}, barrier, {}, {});
-
-  mTransformUpdateCommandBuffer->end();
-
-  mContext->getQueue().submit(mTransformUpdateCommandBuffer.get(), {});
-
+  submitTransformUpload(totalSize);
   mTransformBufferRenderVersion = mRenderVersion;
 }
 

@@ -313,6 +313,13 @@ protected:
   std::shared_ptr<core::Buffer> mTransformBuffer;
   vk::UniqueCommandBuffer mTransformUpdateCommandBuffer;
   vk::UniqueFence mTransformUpdateFence{};
+  /** Map the staging buffer once the previous upload has run: another camera's frame may still
+   *  be queued behind that upload, whose copy reads the staging buffer and whose command buffer
+   *  is reused here. */
+  uint8_t *mapTransformStaging();
+  /** Unmap the staging buffer and, unless `size` is 0, copy its first `size` bytes to the device
+   *  buffer after every earlier draw and before every later one. */
+  void submitTransformUpload(size_t size);
 
   // ray tracing helpers
   /** wait until no renderer uses the scene, then drop removed objects; requires

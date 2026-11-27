@@ -928,7 +928,7 @@ void Scene::uploadObjectTransforms() {
   auto pointObjects = getPointObjects();
 
   size_t totalSize{0};
-  uint8_t *buffer = reinterpret_cast<uint8_t *>(mTransformBufferCpu->map());
+  uint8_t *buffer = mapTransformStaging();
   size_t step = getGpuTransformBufferSize();
   for (auto obj : objects) {
     auto mat = obj->getTransform().worldModelMatrix;
@@ -945,45 +945,45 @@ void Scene::uploadObjectTransforms() {
     std::memcpy(buffer + totalSize, &mat, sizeof(glm::mat4));
     totalSize += step;
   }
-  mTransformBufferCpu->unmap();
+  submitTransformUpload(totalSize);
+  mTransformBufferRenderVersion = mRenderVersion;
+}
 
-  // rendering empty scene
-  if (totalSize == 0) {
-    return;
-  }
-
+uint8_t *Scene::mapTransformStaging() {
+  auto device = mContext->getDevice();
   if (!mTransformUpdateCommandBuffer) {
     mTransformUpdateCommandBuffer = getCommandPool().allocateCommandBuffer();
+    mTransformUpdateFence = device.createFenceUnique({vk::FenceCreateFlagBits::eSignaled});
   }
-
-  mTransformUpdateCommandBuffer->reset();
-  mTransformUpdateCommandBuffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-  {
-    // make sure transfer happens after previous reads
-    mTransformUpdateCommandBuffer->pipelineBarrier(
-        vk::PipelineStageFlagBits::eVertexShader | vk::PipelineStageFlagBits::eFragmentShader,
-        vk::PipelineStageFlagBits::eTransfer, {}, {}, {}, {});
+  if (device.waitForFences(mTransformUpdateFence.get(), VK_TRUE, UINT64_MAX) !=
+      vk::Result::eSuccess) {
+    throw std::runtime_error("failed to wait for the previous object transform upload");
   }
+  return reinterpret_cast<uint8_t *>(mTransformBufferCpu->map());
+}
 
-  vk::BufferCopy region(0, 0, totalSize);
-  mTransformUpdateCommandBuffer->copyBuffer(mTransformBufferCpu->getVulkanBuffer(),
-                                            mTransformBuffer->getVulkanBuffer(), region);
-  {
-    // wait for transfer write to be available, make visible to shader read
-    vk::MemoryBarrier barrier(vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead);
-
-    // TODO: more shader stages required?
-    mTransformUpdateCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                                                   vk::PipelineStageFlagBits::eVertexShader |
-                                                       vk::PipelineStageFlagBits::eFragmentShader,
-                                                   {}, barrier, {}, {});
+void Scene::submitTransformUpload(size_t size) {
+  mTransformBufferCpu->unmap();
+  if (size == 0) {
+    return;
   }
-
-  mTransformUpdateCommandBuffer->end();
-
-  mContext->getQueue().submit(mTransformUpdateCommandBuffer.get(), {});
-
-  mTransformBufferRenderVersion = mRenderVersion;
+  auto &cb = mTransformUpdateCommandBuffer;
+  cb->reset();
+  cb->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+  // the copy overwrites transforms that earlier draws may still read
+  cb->pipelineBarrier(vk::PipelineStageFlagBits::eVertexShader |
+                          vk::PipelineStageFlagBits::eFragmentShader,
+                      vk::PipelineStageFlagBits::eTransfer, {}, {}, {}, {});
+  cb->copyBuffer(mTransformBufferCpu->getVulkanBuffer(), mTransformBuffer->getVulkanBuffer(),
+                 vk::BufferCopy(0, 0, size));
+  vk::MemoryBarrier barrier(vk::AccessFlagBits::eTransferWrite, vk::AccessFlagBits::eShaderRead);
+  cb->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                      vk::PipelineStageFlagBits::eVertexShader |
+                          vk::PipelineStageFlagBits::eFragmentShader,
+                      {}, barrier, {}, {});
+  cb->end();
+  mContext->getDevice().resetFences(mTransformUpdateFence.get());
+  mContext->getQueue().submit(cb.get(), mTransformUpdateFence.get());
 }
 
 core::CommandPool &Scene::getCommandPool() {

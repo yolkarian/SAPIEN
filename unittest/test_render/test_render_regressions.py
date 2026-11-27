@@ -678,5 +678,79 @@ class TestIdleSceneUpdates(unittest.TestCase):
             self.assertGreater(center(), 0.1)
 
 
+class TestObjectTransformUploads(unittest.TestCase):
+    def test_a_move_waits_for_another_cameras_queued_upload(self) -> None:
+        """Camera C draws 4 million triangles; camera B's frame and its upload of the box's
+        transform queue behind it (the copy waits for earlier draws). Meanwhile the box moves
+        again and camera A uploads. B must still show the box where it was for its frame: the
+        scene's one staging buffer and command buffer were rewritten without waiting, so B's
+        queued copy carried A's transform."""
+        before, after, elsewhere = [0.0, -0.4, 0.0], [0.0, 0.4, 0.0], [0.0, 0.0, 0.4]
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([0.6, 0.6, 0.6])
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(
+                half_size=[0.2, 0.2, 0.2],
+                material=sapien.render.RenderMaterial(base_color=[1.0, 0.0, 0.0, 1.0]),
+            )
+            box = builder.build_kinematic()
+            # a 1000 x 1000 grid of tiny triangles, both windings, 10 m behind the box cameras
+            xs = np.linspace(-1.0, 1.0, 1001, dtype=np.float32)
+            gy, gz = np.meshgrid(xs, xs, indexing="ij")
+            vertices = np.stack([np.full(gy.size, 10.0, np.float32), gy.ravel(), gz.ravel()], -1)
+            index = np.arange(gy.size).reshape(gy.shape)
+            a, b, c, d = index[:-1, :-1], index[1:, :-1], index[1:, 1:], index[:-1, 1:]
+            triangles = np.concatenate(
+                [np.stack([a, b, c], -1).reshape(-1, 3), np.stack([a, c, d], -1).reshape(-1, 3)]
+            ).astype(np.uint32)
+            triangles = np.ascontiguousarray(np.concatenate([triangles, triangles[:, ::-1]]))
+            body = sapien.render.RenderBodyComponent()
+            body.attach(
+                sapien.render.RenderShapeTriangleMesh(
+                    vertices,
+                    triangles,
+                    np.zeros((0, 3), np.float32),
+                    np.zeros((0, 2), np.float32),
+                    sapien.render.RenderMaterial(base_color=[1.0, 1.0, 1.0, 1.0]),
+                )
+            )
+            grid = sapien.Entity()
+            grid.add_component(body)
+            scene.add_entity(grid)
+            heavy = scene.add_camera("C", 1024, 1024, 0.4, 0.1, 20.0)
+            heavy.entity.pose = sapien.Pose([5.0, 0.0, 0.0])
+            cameras = []
+            for name in ("B", "A"):
+                camera = scene.add_camera(name, SIZE, SIZE, 1.0, 0.1, 5.0)
+                camera.entity.pose = sapien.Pose([-2.0, 0.0, 0.0])
+                cameras.append(camera)
+            camera_b, camera_a = cameras
+
+            def picture(camera: sapien.render.RenderCameraComponent, position) -> np.ndarray:
+                box.set_pose(sapien.Pose(position))
+                scene.update_render()
+                camera.take_picture()
+                return camera.get_picture("Color")[..., :3].copy()
+
+            for camera in (heavy, camera_b, camera_a):
+                picture(camera, before)
+            reference = picture(camera_b, after)
+            # the scene is meaningful only if the box shows where it is
+            self.assertGreater(float(np.abs(picture(camera_b, elsewhere) - reference).max()), 0.3)
+
+            box.set_pose(sapien.Pose(before))
+            scene.update_render()
+            heavy.take_picture()
+            box.set_pose(sapien.Pose(after))
+            scene.update_render()
+            camera_b.take_picture()  # its transform copy queues behind C's draws
+            box.set_pose(sapien.Pose(elsewhere))
+            scene.update_render()
+            camera_a.take_picture()
+            np.testing.assert_allclose(
+                camera_b.get_picture("Color")[..., :3], reference, atol=0.02
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
