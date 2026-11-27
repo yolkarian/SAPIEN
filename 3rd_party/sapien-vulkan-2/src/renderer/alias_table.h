@@ -1,5 +1,5 @@
 #pragma once
-/* C interface of src/sapien_renderer/alias_table.zig: CPU construction of an alias table for
+/* C interface of alias_table.zig next to it: CPU construction of an alias table for
  * discrete importance sampling. The renderer builds one for environment-map texels
  * (weight = luminance x solid angle) and one for emissive triangles (weight = area x emission
  * luminance), and copies `entries` plus `total` into a GPU storage buffer.

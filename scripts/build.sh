@@ -58,7 +58,7 @@ function test_zig() {
   echo "Testing Zig modules"
   local cache=docker_sapien_build/zig-test-cache
   local module
-  for module in $(find src -name '*.zig' | sort); do
+  for module in $(find src 3rd_party/sapien-vulkan-2/src -name '*.zig' | sort); do
     zig test "${module}" --cache-dir "${cache}" --global-cache-dir "${cache}/global"
   done
 }

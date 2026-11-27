@@ -124,8 +124,9 @@ The `rt` path tracer samples its lights:
 - Shadow rays pass transparent and transmissive occluders with the light they let through
   (base-colour alpha, object `transparency`, `transmission` tinted by the base colour)
   instead of being blocked by them.
-- Building needs the Zig module `src/sapien_renderer/alias_table.zig` (linked into the
-  renderer like `pack_manifest.zig`; wheels and the SDK need no Zig at run time).
+- Building needs the Zig module `3rd_party/sapien-vulkan-2/src/renderer/alias_table.zig`
+  (linked into svulkan2, whose `cmake/zig.cmake` SAPIEN shares; wheels and the SDK need no Zig
+  at run time).
 
 Shader packs declare their parameters in `pack.json`:
 

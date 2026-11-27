@@ -10,7 +10,7 @@
 #include "svulkan2/scene/object.h"
 #include "svulkan2/scene/scene.h"
 
-#include "../../../../src/sapien_renderer/alias_table.h"
+#include "alias_table.h"
 
 #include <algorithm>
 #include <cmath>

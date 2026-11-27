@@ -54,7 +54,8 @@ include(physx5)
 include(zlib)
 include(eigen)
 include(vulkan)
-include(zig)
+# Zig is svulkan2's (its alias tables) and SAPIEN's (pack.json): one helper and version pin
+include("${CMAKE_CURRENT_SOURCE_DIR}/3rd_party/sapien-vulkan-2/cmake/zig.cmake")
 
 if (${SAPIEN_DEBUG_VIEWER})
     add_definitions(_DEBUG_VIEWER)

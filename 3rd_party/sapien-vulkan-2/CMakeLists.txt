@@ -11,6 +11,10 @@ option(SVULKAN2_SHARED "Force svulkan2 to be shared" ON)
 option(SVULKAN2_PROFILE "Build with profiler" OFF)
 option(SVULKAN2_BUILD_TEST "Build with unit test" OFF)
 option(SVULKAN2_CUDA_INTEROP "Allow CUDA to use Vulkan buffer" ON)
+# The dependencies below are linked privately into svulkan2, statically as in SAPIEN, which sets
+# this option first. Some of them (assimp, OpenEXR, Imath) default it to ON otherwise, and a shared
+# private dependency would have to join svulkan2's install export.
+option(BUILD_SHARED_LIBS "Build using shared libraries" OFF)
 
 add_compile_options("-Wall"
     "$<$<CONFIG:Debug>:-g3>" "$<$<CONFIG:Debug>:-O0>"
@@ -32,6 +36,7 @@ include(spirv-cross)
 include(imgui)
 include(openexr)
 include(openvr)
+include(zig)
 
 file(GLOB_RECURSE SVULKAN2_SRC "src/*.cpp")
 
@@ -44,9 +49,8 @@ endif()
 set_target_properties(svulkan2 PROPERTIES POSITION_INDEPENDENT_CODE TRUE)
 
 # The rt path tracer builds its environment/emissive alias tables in C++ (rt_integrator_tables.cpp)
-# but the pure CPU table construction is a Zig module from the parent SAPIEN tree. Compile it in
-# this directory's scope so the generated object is a source of the svulkan2 target here.
-sapien_add_zig_module(svulkan2 ../../src/sapien_renderer/alias_table.zig)
+# on the pure CPU table construction of a Zig module.
+sapien_add_zig_module(svulkan2 src/renderer/alias_table.zig)
 
 target_compile_definitions(imgui PRIVATE VK_NO_PROTOTYPES)
 target_compile_definitions(svulkan2 PUBLIC VK_NO_PROTOTYPES)

@@ -1,6 +1,9 @@
 # Zig modules: one Zig source each, compiled to an object with a C interface and linked into a
 # CMake target, so programs using SAPIEN never need Zig. The version is pinned to the one in the
 # build image (docker/Dockerfile); Zig is pre-1.0 and breaks its standard library in every release.
+# svulkan2 owns this file so that it builds on its own; SAPIEN includes it from here before adding
+# svulkan2, whose own include is then skipped.
+include_guard(GLOBAL)
 set(SAPIEN_ZIG_VERSION 0.17.1)
 
 find_program(ZIG_EXECUTABLE zig REQUIRED)

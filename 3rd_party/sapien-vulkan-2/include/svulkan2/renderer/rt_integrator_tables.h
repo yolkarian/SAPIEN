@@ -17,7 +17,7 @@ namespace renderer {
 
 /** Light-sampling tables of the rt path tracer (vulkan_shader/rt/scene_set.glsl), rebuilt with
  *  its scene descriptor set: the environment map over an equal-solid-angle grid, and the
- *  triangles of emissive meshes. Their alias tables come from src/sapien_renderer/alias_table.zig.
+ *  triangles of emissive meshes. Their alias tables come from src/renderer/alias_table.zig.
  */
 struct IntegratorTables {
   // EnvAlias: one uvec4 per grid cell, (alias, threshold, pdf bits, 0)
