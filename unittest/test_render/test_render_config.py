@@ -3,6 +3,8 @@ presets and the shader variants of pack.json."""
 
 import json
 import shutil
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -92,6 +94,10 @@ CAMERA_PACKS = ["default", "vr_default", "point", "minimal", "trivial", "vertex_
 SHADING_PACKS = ["default", "vr_default", "rt"]
 # packs no per-camera renderer exists for
 NON_CAMERA_PACKS = ["rt_batch"]
+# packs whose vertex inputs differ from the others' (`vertex_color` adds `color`): one render
+# engine holds one vertex layout, and the engine outlives a scene whenever something keeps it,
+# such as the default ground texture cached by `Scene.add_ground`, so they render in a new process
+FRESH_ENGINE_PACKS = ["vertex_color"]
 
 
 def build_box_scene(scene: sapien.Scene) -> None:
@@ -104,6 +110,20 @@ def build_box_scene(scene: sapien.Scene) -> None:
         material=sapien.render.RenderMaterial(base_color=[1.0, 0.0, 0.0, 1.0]),
     )
     builder.build_kinematic(name="box")
+
+
+def render_defaults(pack: str) -> np.ndarray:
+    """`Color` of the box scene seen by a camera of `pack` with the pack's defaults."""
+    config = sapien.render.RenderConfig(pack)
+    if config.is_ray_tracing:
+        config.denoiser = "none"
+    with sapien.Scene() as scene:
+        build_box_scene(scene)
+        camera = scene.add_camera("camera", SIZE, SIZE, 1.0, 0.1, 20.0, render_config=config)
+        camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+        scene.update_render()
+        camera.take_picture()
+        return camera.get_picture("Color")
 
 
 def copy_trivial_pack(directory: str, manifest: dict | None = None) -> Path:
@@ -167,23 +187,29 @@ class TestPackParameters(unittest.TestCase):
         defaults instead of raising about an undeclared uniform."""
         for pack in CAMERA_PACKS:
             with self.subTest(pack=pack):
-                config = sapien.render.RenderConfig(pack)
-                if config.is_ray_tracing:
-                    config.denoiser = "none"
-                with sapien.Scene() as scene:
-                    build_box_scene(scene)
-                    camera = scene.add_camera(
-                        "camera", SIZE, SIZE, 1.0, 0.1, 20.0, render_config=config
+                if pack in FRESH_ENGINE_PACKS:
+                    script = (
+                        "import numpy as np\n"
+                        "from test_render.test_render_config import SIZE, render_defaults\n"
+                        f"picture = render_defaults({pack!r})\n"
+                        "assert picture.shape == (SIZE, SIZE, 4), picture.shape\n"
+                        "assert np.all(np.isfinite(picture))\n"
                     )
-                    camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
-                    scene.update_render()
-                    camera.take_picture()
-                    picture = camera.get_picture("Color")
-                    self.assertEqual(picture.shape, (SIZE, SIZE, 4))
-                    self.assertTrue(np.all(np.isfinite(picture)))
-                    if pack in SHADING_PACKS:
-                        center = picture[SIZE // 2, SIZE // 2, :3]
-                        self.assertGreater(float(center[0]), 0.1)
+                    result = subprocess.run(
+                        [sys.executable, "-c", script],
+                        cwd=Path(__file__).resolve().parents[1],
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    continue
+                picture = render_defaults(pack)
+                self.assertEqual(picture.shape, (SIZE, SIZE, 4))
+                self.assertTrue(np.all(np.isfinite(picture)))
+                if pack in SHADING_PACKS:
+                    center = picture[SIZE // 2, SIZE // 2, :3]
+                    self.assertGreater(float(center[0]), 0.1)
 
     def test_a_batch_pack_has_no_per_camera_renderer(self) -> None:
         for pack in NON_CAMERA_PACKS:
