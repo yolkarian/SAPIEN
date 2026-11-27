@@ -113,6 +113,10 @@ int getCudaCurrentDevice() {
 }
 
 int getCudaPtrDevice(void *ptr) {
+  // With no context current on this thread, as on one that only entered SAPIEN's driver-API
+  // scopes, the runtime reports every device pointer as unregistered: query from the current
+  // device's primary context.
+  CudaDeviceScope scope(getCudaCurrentDevice());
   cudaPointerAttributes attr{};
   checkCudaErrors(cudaPointerGetAttributes(&attr, ptr));
   if (!attr.devicePointer) {

@@ -1,4 +1,7 @@
 import gc
+import subprocess
+import sys
+import textwrap
 import unittest
 
 import sapien
@@ -159,3 +162,40 @@ class TestCudaArray(unittest.TestCase):
             array.torch().__cuda_array_interface__["data"],
             array.__cuda_array_interface__["data"],
         )
+
+    def test_interface_pointer_in_a_fresh_process(self) -> None:
+        """Wrap a device pointer of PhysX through __cuda_array_interface__ before any library
+        has made a CUDA context current on the Python thread. The pointer query ran without a
+        current context there and called every device pointer invalid; earlier tests that use
+        Torch made the context current and hid it, so this runs in a new interpreter."""
+        script = textwrap.dedent(
+            """
+            import sapien
+
+            sapien.physx.enable_gpu()
+            physx = sapien.physx.PhysxGpuSystem(sapien.Device("cuda"))
+            scene = sapien.Scene([physx])
+            builder = scene.create_actor_builder()
+            builder.add_box_collision(half_size=[0.1, 0.1, 0.1])
+            builder.build()
+            physx.gpu_init()
+            data = physx.cuda_rigid_body_data
+
+            class View:
+                __cuda_array_interface__ = {
+                    "shape": tuple(data.shape),
+                    "strides": tuple(data.strides),
+                    "typestr": "<f4",
+                    "data": (data.ptr, False),
+                    "version": 2,
+                }
+
+            array = sapien.CudaArray(View())
+            assert array.ptr == data.ptr and array.cuda_id == data.cuda_id
+            del array, data
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, timeout=300
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)

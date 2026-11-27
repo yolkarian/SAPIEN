@@ -332,6 +332,9 @@ CUDA interop and threads (JAX/Torch handoff without host synchronization):
   CAI object, `sapien.CudaArray`) into a SAPIEN buffer on its owner's stream after the
   producer finished it; the producer stays alive until the copy ran. This is how JAX writes
   actions into e.g. `cuda_articulation_target_qpos` before an apply.
+- `sapien.CudaArray(obj)` accepts a device pointer given through `__cuda_array_interface__` on
+  a thread where no CUDA context is current yet (no Torch/CuPy/JAX call before it); it used to
+  raise "invalid cuda pointer" there.
 - New `PhysxGpuSystem.gpu_get_cuda_stream()` and `PhysxGpuSystem.gpu_wait_for(array)` (make
   the system's stream wait for a JAX/Torch/CuPy array without blocking the host).
 - Indexed GPU calls accept any `__dlpack__` producer, JAX arrays included, order the system's
