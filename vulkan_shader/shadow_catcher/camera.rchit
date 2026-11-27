@@ -419,11 +419,14 @@ void main() {
     + traceParallelogramLights(worldPosition, m, tbn, wo, alNoShadow);
 
   {
+    // This ray also decides whether the path goes on. Only the catcher ignores bodies that cast
+    // no shadow (instance mask 0x01 without 0x02); every other surface must still see them in
+    // its reflections and refractions.
     uint flags = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT;
     shadowRay.shadowed = true;
     traceRayEXT(tlas,
                 flags,
-                0x02,
+                obj.segmentation.x == 1 ? 0x02u : 0x01u,
                 0,
                 0,
                 1,  // miss index

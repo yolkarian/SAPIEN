@@ -189,6 +189,68 @@ class TestRasterGTAO(unittest.TestCase):
                 f"(ring_min={ring_min:.3f}, far_bg={far_med:.3f})",
             )
 
+    def test_dark_background_ao_stays_off_foreground_edges(self) -> None:
+        """The gaps of a ridged far wall are dark in the AO target, and a flat box in front of
+        it is not. The 3x3 upsample must weight its taps by depth: a plain blur darkens the
+        box's silhouette with the background's AO. At even sizes the GTAO pass and the
+        upsample must also read the same full-resolution depth texel for an AO texel; a float
+        mismatch between the two darkened the silhouette at 10 of these 33 sizes on an
+        RTX 3090."""
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([1.0, 1.0, 1.0])
+            material = sapien.render.RenderMaterial(
+                base_color=[1.0, 1.0, 1.0, 1.0], specular_weight=0.0, roughness=1.0
+            )
+            # a wall at x = 3.4 behind a grid of 0.2 m cubes with 0.1 m gaps between them
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(sapien.Pose([3.4, 0.0, 0.0]), [0.05, 2.0, 2.0], material)
+            for y in np.arange(-1.2, 1.21, 0.3):
+                for z in np.arange(-1.2, 1.21, 0.3):
+                    builder.add_box_visual(
+                        sapien.Pose([3.25, float(y), float(z)]), [0.1, 0.1, 0.1], material
+                    )
+            ridged = builder.build_kinematic()
+            fg_box = add_white_box(scene, [0.08, 0.18, 0.18], sapien.Pose([1.2, 0.05, 0.05]))
+
+            cfg = sapien.render.RenderConfig("default")
+            cfg["ambientOcclusionStrength"] = 1.0
+            cfg["ambientOcclusionRadius"] = 0.35
+            for size in range(96, 161, 2):
+                with self.subTest(size=size):
+                    cam = scene.add_camera(
+                        f"cam{size}", size, size, 0.9, 0.1, 20.0, render_config=cfg
+                    )
+                    scene.update_render()
+                    cam.take_picture()
+
+                    # the scene is meaningful only if the background's AO is dark somewhere
+                    seg = cam.get_picture("Segmentation")[..., 1]
+                    self.assertLess(float(cam.get_picture("AmbientOcclusion").min()), 0.7)
+                    self.assertGreater(int((seg == ridged.per_scene_id).sum()), size * size // 4)
+
+                    fg_mask = seg == fg_box.per_scene_id
+                    eroded = fg_mask.copy()
+                    for _ in range(2):
+                        e = eroded.copy()
+                        e[1:, :] &= eroded[:-1, :]
+                        e[:-1, :] &= eroded[1:, :]
+                        e[:, 1:] &= eroded[:, :-1]
+                        e[:, :-1] &= eroded[:, 1:]
+                        eroded = e
+                    edge = fg_mask & ~eroded
+                    self.assertGreater(int(edge.sum()), 50)
+                    self.assertGreater(int(eroded.sum()), 100)
+
+                    lum = cam.get_picture("Lighting")[..., :3].mean(axis=-1)
+                    edge_min = float(lum[edge].min())
+                    inner = float(np.median(lum[eroded]))
+                    self.assertGreater(
+                        edge_min,
+                        0.97 * inner,
+                        f"background AO bled onto the foreground edge (edge_min={edge_min:.3f}, "
+                        f"inner={inner:.3f})",
+                    )
+
     def test_vr_default_and_orthographic_camera(self) -> None:
         """Both vr_default and orthographic cameras run the half-res GTAO pass cleanly."""
         scene, wall = make_corner_scene()

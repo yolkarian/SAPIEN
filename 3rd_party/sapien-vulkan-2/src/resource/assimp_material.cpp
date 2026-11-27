@@ -15,6 +15,9 @@ namespace fs = std::filesystem;
 namespace svulkan2 {
 namespace resource {
 
+// glTF's infinite index of refraction (KHR_materials_ior 0): normal reflectance rounds to 1
+static constexpr float kInfiniteIor = 1e4f;
+
 static std::vector<uint8_t> loadCompressedTexture(aiTexture const *texture, int &width,
                                                   int &height, int &channels,
                                                   int desiredChannels = 0) {
@@ -191,19 +194,34 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
     }
     material->setRoughness(roughness);
 
-    // KHR_materials_specular is OpenPBR's specular_weight and specular_color
+    // KHR_materials_specular is OpenPBR's specular_weight and specular_color, with two
+    // differences: the extension leaves the metal BRDF alone, and its colour may exceed 1 (the
+    // excess moves into the weight, which then raises the dielectric reflectance the same way)
     float specularFactor = 1.f;
-    if (m->Get(AI_MATKEY_SPECULAR_FACTOR, specularFactor) == AI_SUCCESS) {
+    bool metal = metallic >= 1.f && m->GetTextureCount(aiTextureType_METALNESS) == 0;
+    if (m->Get(AI_MATKEY_SPECULAR_FACTOR, specularFactor) == AI_SUCCESS && !metal) {
       aiColor3D specularColor{1, 1, 1};
       m->Get(AI_MATKEY_COLOR_SPECULAR, specularColor);
+      glm::vec3 color{specularColor.r, specularColor.g, specularColor.b};
+      float peak = std::max({color.r, color.g, color.b});
+      if (peak > 1.f) {
+        specularFactor *= peak;
+        color /= peak;
+      }
       material->setSpecularWeight(specularFactor);
-      material->setSpecularColor({specularColor.r, specularColor.g, specularColor.b});
+      material->setSpecularColor(color);
     }
 
-    // an index of refraction of 1 (OBJ exporters write "Ni 1") would remove every reflection
+    // KHR_materials_ior: 0 is the specular-glossiness compatibility mode, an infinite index
+    // whose reflectance is 1; 1 is legal and reflects nothing. Other formats write "Ni 1" for
+    // "unset", and an index of 1 would remove every reflection, so they fall back to 1.5.
     float ior = 1.5f;
-    if (m->Get(AI_MATKEY_REFRACTI, ior) != AI_SUCCESS || ior <= 1.001f) {
-      ior = 1.5f;
+    if (m->Get(AI_MATKEY_REFRACTI, ior) == AI_SUCCESS) {
+      if (gltf && ior == 0.f) {
+        ior = kInfiniteIor;
+      } else if (gltf ? ior < 1.f : ior <= 1.001f) {
+        ior = 1.5f;
+      }
     }
     material->setIor(ior);
 
@@ -212,7 +230,9 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
     material->setTransmission(transmission);
 
     // KHR_materials_volume: a thickness makes the body solid; the attenuation colour is reached
-    // at the attenuation distance (OpenPBR's transmission_color at transmission_depth)
+    // at the attenuation distance (OpenPBR's transmission_color at transmission_depth). Without
+    // one, KHR_materials_transmission tints the transmitted light by the base colour at the
+    // surface: transmission_color at depth 0.
     float thickness = 0.f;
     bool volume = m->Get(AI_MATKEY_VOLUME_THICKNESS_FACTOR, thickness) == AI_SUCCESS;
     material->setThinWalled(transmission > 0.f && (volume ? thickness <= 0.f : gltf));
@@ -223,6 +243,8 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
         m->Get(AI_MATKEY_VOLUME_ATTENUATION_COLOR, attenuationColor) == AI_SUCCESS) {
       material->setTransmissionDepth(attenuationDistance);
       material->setTransmissionColor({attenuationColor.r, attenuationColor.g, attenuationColor.b});
+    } else if (gltf && transmission > 0.f) {
+      material->setTransmissionColor({diffuse.r, diffuse.g, diffuse.b});
     }
 
     // KHR_materials_clearcoat is the coat (its IOR is fixed at 1.5)
@@ -286,8 +308,15 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
     loadTexture(aiTextureType_EMISSIVE, SVMetallicMaterial::eEmission, true);
     loadTexture(aiTextureType_DIFFUSE_ROUGHNESS, SVMetallicMaterial::eRoughness, false);
     loadTexture(aiTextureType_TRANSMISSION, SVMetallicMaterial::eTransmission, false);
-    // glTF's occlusion texture arrives as a light map
-    loadTexture(aiTextureType_LIGHTMAP, SVMetallicMaterial::eOcclusion, false);
+    // glTF's occlusion texture arrives as a light map with its strength; other formats' light
+    // maps are not occlusion (Collada's ambient texture is one)
+    if (gltf) {
+      loadTexture(aiTextureType_LIGHTMAP, SVMetallicMaterial::eOcclusion, false);
+      float strength = 1.f;
+      if (m->Get("$tex.file.strength", aiTextureType_LIGHTMAP, 0, strength) == AI_SUCCESS) {
+        material->setOcclusionStrength(strength);
+      }
+    }
     loadTexture(aiTextureType_AMBIENT_OCCLUSION, SVMetallicMaterial::eOcclusion, false);
 
     // glTF's metallic-roughness texture: one image, roughness in green and metallic in blue

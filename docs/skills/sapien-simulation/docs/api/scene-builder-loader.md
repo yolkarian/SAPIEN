@@ -35,12 +35,12 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 |---|---|---|---|---|
 | `add_area_light_for_ray_tracing` | method | `add_area_light_for_ray_tracing(self, pose: sapien.Pose, color, half_width: float, half_height: float)` |  |  |
 | `add_camera` | method | `add_camera(self, name, width: int, height: int, fovy: float, near: float, far: float) -> RenderCameraComponent` | Create a free camera entity/component. |  |
-| `add_directional_light` | method | `add_directional_light(self, direction, color, shadow=False, position=[0, 0, 0], shadow_scale=10.0, shadow_near=-10.0, shadow_far=10.0, shadow_map_size=2048)` |  |  |
+| `add_directional_light` | method | `add_directional_light(self, direction, color, shadow=False, position=[0, 0, 0], shadow_scale=10.0, shadow_near=-10.0, shadow_far=10.0, shadow_map_size=2048, softness=0.0)` |  | `softness`: angular softness of raster PCSS and RT shadows. |
 | `add_ground` | method | `add_ground(self, altitude, render=True, material=None, render_material=None, render_half_size=[10, 10])` | Build a static ground actor. | Infinite plane. In a `PhysxGpuSystem` whose scenes have no environment IDs, add it once for all scenes, not per scene: `set_scene_offset()` cannot separate planes. |
 | `add_heightfield` | method | `add_heightfield(self, height_field, row_scale: float, column_scale: float \| None=None, height_scale: float=1.0, pose=None, render=True, material=None, render_material=None, name='heightfield')` | Add static z-up height-field terrain with optional render mesh. | `height_field` is 2D int16-compatible; public coordinates map rows to +x, columns to +y, samples to +z; add before `gpu_init()` in GPU workflows. |
 | `add_mounted_camera` | method | `add_mounted_camera(self, name, mount, pose, width, height, fovy, near, far) -> RenderCameraComponent` | Attach a camera component to an existing entity. |  |
-| `add_point_light` | method | `add_point_light(self, position, color, shadow=False, shadow_near=0.1, shadow_far=10.0, shadow_map_size=2048)` |  |  |
-| `add_spot_light` | method | `add_spot_light(self, position, direction, inner_fov: float, outer_fov: float, color, shadow=False, shadow_near=0.1, shadow_far=10.0, shadow_map_size=2048)` |  |  |
+| `add_point_light` | method | `add_point_light(self, position, color, shadow=False, shadow_near=0.1, shadow_far=10.0, shadow_map_size=2048, radius=0.0)` |  | `radius`: emitter radius in metres for raster PCSS and RT soft shadows. |
+| `add_spot_light` | method | `add_spot_light(self, position, direction, inner_fov: float, outer_fov: float, color, shadow=False, shadow_near=0.1, shadow_far=10.0, shadow_map_size=2048, radius=0.0)` |  | `radius`: emitter radius in metres for raster PCSS and RT soft shadows. |
 | `ambient_light` | property | `ambient_light(self)<br>ambient_light(self, color)` |  |  |
 | `create_actor_builder` | method | `create_actor_builder(self)` | Create and bind an ActorBuilder to the current Scene. |  |
 | `create_articulation_builder` | method | `create_articulation_builder(self)` | Create and bind an ArticulationBuilder to the current Scene. |  |

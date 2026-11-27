@@ -80,6 +80,29 @@ class RasterLights(unittest.TestCase):
         self.assertGreater(one, 1e-3)
         self.assertAlmostEqual(sixteen / one, 16, delta=0.016)
 
+    def test_too_many_lights_raise_and_the_camera_recovers(self) -> None:
+        """More spot lights than one uniform buffer holds raise. The failed rebuild used to clear
+        the renderer's rebuild flags and the camera's frame counter, so the next frame drew with
+        unwritten descriptors or waited forever."""
+        with sapien.Scene() as scene:
+            camera = ground_camera(scene, "default")
+            unlit = radiance(scene, camera, "default")
+            # 400 records of 176 bytes exceed the 65536-byte range of NVIDIA devices
+            lights = [
+                scene.add_spot_light([0.0, 0.0, 1.0], [0.0, 0.0, -1.0], 2.0, 2.5, [0.05] * 3)
+                for _ in range(400)
+            ]
+            try:
+                radiance(scene, camera, "default")
+            except RuntimeError as error:
+                self.assertIn("exceeds the device limit", str(error))
+            else:
+                self.skipTest("this device's uniform-buffer range holds 400 spot lights")
+            for light in lights[1:]:
+                scene.remove_entity(light.entity)
+            lit = float((radiance(scene, camera, "default") - unlit).mean())
+        self.assertAlmostEqual(lit, direct_light("default", "spot", 1), delta=1e-4)
+
 
 if __name__ == "__main__":
     unittest.main()

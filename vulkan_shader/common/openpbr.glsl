@@ -26,6 +26,8 @@ struct OpenPBR {
   vec3 specularColor;
   float specularWeight;   // metal Fresnel scale (the dielectric one is folded into eta)
   float eta;              // dielectric IOR ratio across the interface, inside over the side of wo
+  float baseEta;          // the ratio the base's Fresnel uses: against the coat, never below 1
+                          // outside a body (no total internal reflection at the base)
   vec2 alpha;             // GGX alpha along tangent and bitangent of the base
   float transmission;
   vec3 transmissionTint;  // tint of light entering through the interface
@@ -67,14 +69,21 @@ float openpbrModulatedEta(float eta, float weight) {
   return (1.0 + e) / (1.0 - e);
 }
 
-// F82-tint metal Fresnel: Schlick from F0 = base, pulled toward `tint` times Schlick near 82 deg
+// keep the ratio of a refraction away from 1, where the half vector wo + eta * wi vanishes
+float openpbrRefractionEta(float eta) {
+  return abs(eta - 1.0) < 1e-4 ? 1.0001 : eta;
+}
+
+// F82-tint metal Fresnel: Schlick from F0 = base, pulled toward `tint` times Schlick near 82 deg.
+// The weight is in [0, 1] for metals: above 1 the lobe would reflect more than it receives.
 vec3 openpbrMetalFresnel(float mu, vec3 f0, vec3 tint, float weight) {
   const float muBar = 1.0 / 7.0;
   const float barWeight = muBar * 0.39656; // muBar * (1 - muBar)^6
   vec3 schlick = f0 + (1.0 - f0) * openpbrPow5(1.0 - mu);
   vec3 schlickBar = f0 + (1.0 - f0) * openpbrPow5(1.0 - muBar);
-  float k = mu * pow(1.0 - mu, 6.0) / barWeight;
-  return weight * clamp(schlick - k * (schlickBar - tint * schlickBar), 0.0, 1.0);
+  // mu can reach 1 + eps: pow of a negative base is undefined
+  float k = mu * pow(max(1.0 - mu, 0.0), 6.0) / barWeight;
+  return clamp(weight, 0.0, 1.0) * clamp(schlick - k * (schlickBar - tint * schlickBar), 0.0, 1.0);
 }
 
 // ---- anisotropic GGX ----
@@ -238,7 +247,7 @@ vec3 openpbrEmissionFactor(OpenPBR m, float muO) {
 vec3 openpbrLayerLobes(OpenPBR m, float cosO, float cosI, float cosH, float cosOH) {
   vec3 f = vec3(0.0);
   if (m.fuzzWeight > 0.0) {
-    f += m.fuzzWeight * m.fuzzColor * openpbrFuzz(cosO, cosI, cosH, m.fuzzRoughness) * cosI;
+    f += m.fuzzWeight * m.fuzzColor * openpbrFuzz(cosO, cosI, cosH, m.fuzzRoughness);
   }
   if (m.coatWeight > 0.0) {
     float fuzzAbove = 1.0 - m.fuzzWeight * openpbrFuzzAlbedo(cosO, m.fuzzRoughness);
@@ -257,7 +266,7 @@ vec3 openpbrEvalDiffuse(OpenPBR m, vec3 wo, vec3 wi) {
     return vec3(0.0);
   }
   return openpbrUnderLayers(m, wo.z, wi.z) *
-         ((1.0 - m.metallic) * (1.0 - m.transmission) * (1.0 - openpbrFresnel(wo.z, m.eta))) *
+         ((1.0 - m.metallic) * (1.0 - m.transmission) * (1.0 - openpbrFresnel(wo.z, m.baseEta))) *
          m.base * (wi.z / OPENPBR_PI);
 }
 
@@ -283,9 +292,9 @@ void openpbrEvalReflectionSplit(OpenPBR m, vec3 wo, vec3 wi, out vec3 diffuse,
       m.metallic * openpbrMetalFresnel(oh, m.base, m.specularColor, m.specularWeight) * spec;
   float dielectric = 1.0 - m.metallic;
   if (dielectric > 0.0) {
-    baseSpec += dielectric * m.specularColor * (openpbrFresnel(oh, m.eta) * spec);
+    baseSpec += dielectric * m.specularColor * (openpbrFresnel(oh, m.baseEta) * spec);
     diffuse = under *
-              (dielectric * (1.0 - m.transmission) * (1.0 - openpbrFresnel(wo.z, m.eta))) *
+              (dielectric * (1.0 - m.transmission) * (1.0 - openpbrFresnel(wo.z, m.baseEta))) *
               m.base * (wi.z / OPENPBR_PI);
   }
   specular = f + under * baseSpec;
@@ -304,7 +313,8 @@ float openpbrTransmissionLobe(OpenPBR m, vec3 wo, vec3 wi) {
     // a thin sheet: the rough reflection mirrored through the surface, no refraction
     vec3 wr = vec3(wi.xy, -wi.z);
     vec3 h = normalize(wo + wr);
-    return (1.0 - openpbrFresnel(dot(wo, h), m.eta)) * openpbrGgxReflection(wo, wr, h, m.alpha);
+    return (1.0 - openpbrFresnel(dot(wo, h), m.baseEta)) *
+           openpbrGgxReflection(wo, wr, h, m.alpha);
   }
   vec3 h = normalize(wo + wi * m.eta);
   h = h.z < 0.0 ? -h : h;
@@ -356,7 +366,7 @@ OpenPBRLobes openpbrLobes(OpenPBR m, vec3 wo) {
   vec3 coatThrough = openpbrCoatTransmittance(m.coatColor, m.coatEta, wo.z);
   float under = (1.0 - fuzzE) *
                 mix(1.0, openpbrLuminance(coatThrough) * (1.0 - fc), m.coatWeight);
-  float fd = openpbrFresnel(wo.z, m.eta);
+  float fd = openpbrFresnel(wo.z, m.baseEta);
   float dielectric = 1.0 - m.metallic;
   p.fuzz = fuzzE * openpbrLuminance(m.fuzzColor);
   p.coat = (1.0 - fuzzE) * m.coatWeight * fc;
@@ -505,10 +515,21 @@ OpenPBR openpbrSurface(Material mat, vec3 base, float metallic, float roughness,
   r = mix(r, pow(min(1.0, r * r * r * r + 2.0 * c4), 0.25), m.coatWeight);
   m.alpha = openpbrAlpha(r, clamp(mat.specularAnisotropy, 0.0, 1.0));
 
-  // the IOR ratio against the medium above the base: the coat where it covers the base
-  float eta = max(mat.ior, 1.0) / mix(1.0, m.coatEta, m.coatWeight);
-  eta = openpbrModulatedEta(eta, m.specularWeight);
-  m.eta = m.interior ? 1.0 / eta : eta;
+  // The base's IOR ratio against the medium above it: against the coat where the coat covers the
+  // base (OpenPBR's specular_ior_ratio). A coat denser than the base would make the base's
+  // Fresnel total-internal-reflect, which no ray entering through the coat can do: the spec
+  // inverts that ratio instead of showing the bright ring it would otherwise produce.
+  float n = max(mat.ior, 1.0);
+  float ratio = n / m.coatEta;
+  ratio = ratio < 1.0 ? 1.0 / ratio : ratio;
+  m.baseEta = openpbrModulatedEta(mix(n, ratio, m.coatWeight), m.specularWeight);
+  // Refraction and the 1 / eta^2 radiance scaling must use the same ratio entering and leaving a
+  // body, or a round trip through it gains energy; the coat's ratio stays out of it.
+  float refraction = openpbrRefractionEta(openpbrModulatedEta(n, m.specularWeight));
+  m.eta = m.interior ? 1.0 / refraction : refraction;
+  if (m.interior) {
+    m.baseEta = m.eta; // the bare interface seen from inside the body
+  }
 
   // transmission_depth 0 (or a thin wall) tints at the surface; otherwise the medium absorbs
   m.transmissionTint = (m.thinWalled || mat.transmissionDepth <= 0.0)
@@ -524,7 +545,8 @@ OpenPBR openpbrDielectric(vec3 base, float roughness, float ior, float transmiss
   m.metallic = 0.0;
   m.specularColor = vec3(1.0);
   m.specularWeight = 1.0;
-  m.eta = max(ior, 1.0);
+  m.eta = openpbrRefractionEta(max(ior, 1.0));
+  m.baseEta = m.eta;
   m.alpha = openpbrAlpha(clamp(roughness, 0.0, 1.0), 0.0);
   m.transmission = clamp(transmission, 0.0, 1.0);
   m.transmissionTint = vec3(1.0);

@@ -71,6 +71,40 @@ class TestRasterLayers(unittest.TestCase):
                 self.assertGreater(float(tinted[0]), 0.1, str(tinted))
                 self.assertLess(float(abs(tinted[1:]).max()), 0.05 * float(tinted[0]), str(tinted))
 
+    def test_direct_fuzz_is_not_dimmed_by_a_second_cosine(self) -> None:
+        """The fuzz lobe already returns f * cos(wi), so a directional light must see it as is. For
+        fuzz roughness 0.5 with the camera on the face normal, the lobe at 85 degrees is 0.37 of
+        the one at 60 degrees; a second cosine makes that 0.065, and 0.29 instead of 0.64 in the
+        `minimal` pack's gamma-encoded `Color`."""
+        oblique = (0.5, 0.0, -0.8660254)  # light 60 degrees off the face normal
+        grazing = (0.0871557, 0.0, -0.9961947)  # and 85 degrees
+        fuzz = dict(fuzz_weight=1.0, fuzz_color=[1.0, 1.0, 1.0], fuzz_roughness=0.5)
+        for pack in PACKS:
+            with self.subTest(pack=pack):
+                near = float(centre(pack, black(**fuzz), oblique).mean())
+                far = float(centre(pack, black(**fuzz), grazing).mean())
+                self.assertGreater(near, 0.02, str(near))
+                ratio = far / near
+                if PICTURE[pack] == "Color":  # only `minimal` is gamma encoded
+                    ratio = ratio ** 2.2
+                self.assertAlmostEqual(ratio, 0.37, delta=0.12, msg=str((near, far)))
+
+    def test_metal_specular_weight_above_one_is_clamped(self) -> None:
+        """A metal's F0 is `base_color * specular_weight`, and the spec's range for that weight is
+        [0, 1]: the documented `specular_weight = 2 * specular` migration gave 2, which forward
+        raster used to scale a metal's reflectance by 1.8 where the deferred pack clamped it at
+        pack time. A rough metal with the light behind the camera puts the lobe's peak on the
+        centre pixel (0.43 of the light's radiance at 8-bit 173; unclamped 0.86 and 238)."""
+        for pack in PACKS:
+            with self.subTest(pack=pack):
+                def metal(weight: float) -> np.ndarray:
+                    return centre(pack, sapien.render.RenderMaterial(
+                        base_color=[0.9, 0.9, 0.9, 1], metallic=1.0, specular_weight=weight,
+                        roughness=1.0))
+                one = metal(1.0)
+                self.assertGreater(float(one.min()), 0.05, str(one))
+                np.testing.assert_allclose(metal(2.0), one, atol=1e-3, err_msg=str(one))
+
     def test_the_occlusion_texture_darkens_ambient_light_only(self) -> None:
         pixels = np.full((2, 2, 4), 64, np.uint8)
         pixels[..., 3] = 255

@@ -85,6 +85,12 @@ def disk(radius_fraction: float) -> np.ndarray:
     return x * x + y * y < (radius_fraction * SIZE / 2) ** 2
 
 
+def annulus(inner: float, outer: float) -> np.ndarray:
+    """Pixels between radius_fraction inner and outer * SIZE / 2 of the image centre: the rim of
+    a sphere of radius 1 seen from x = -3 at SIZE, fovy 1 spans 0.58 to 0.65."""
+    return disk(outer) & ~disk(inner)
+
+
 class EnvironmentLighting(unittest.TestCase):
     """A sphere at the origin, seen from x = -3, lit only by an environment map."""
 
@@ -132,6 +138,64 @@ class EnvironmentLighting(unittest.TestCase):
         self.assertLess(mean, 2.0 * 1.01)
         self.assertGreater(mean, 2.0 * 0.9)
 
+    def test_the_fuzz_conserves_the_white_furnace(self) -> None:
+        """A white base under white fuzz of any weight reflects exactly the environment's
+        radiance in a uniform environment: the sheen's directional albedo, which is tabulated,
+        plus the base dimmed by exactly that albedo add up to one. Multiplying the sheen lobe by
+        an extra cosine loses 10 to 40% of the tabulated albedo away from normal incidence, so
+        the sphere would come out 7% dark (and the base is not compensated)."""
+        environment = self.environment(np.full((32, 64, 3), 2.0, np.float32))
+        plain = sapien.render.RenderMaterial(base_color=[1, 1, 1, 1], specular_weight=0.0,
+                                            roughness=0.5)
+        fuzzy = sapien.render.RenderMaterial(base_color=[1, 1, 1, 1], specular_weight=0.0,
+                                            roughness=0.5)
+        fuzzy.fuzz_weight = 1.0
+        fuzzy.fuzz_roughness = 0.5  # the tabulated albedo spreads most around this roughness
+        cfg = config("mis", spp=32)
+        bare = float(self.sphere(environment, plain, cfg, frames=24)[disk(0.5)].mean())
+        sheen = float(self.sphere(environment, fuzzy, cfg, frames=24)[disk(0.5)].mean())
+        self.assertAlmostEqual(sheen / bare, 1.0, delta=0.025, msg=str((bare, sheen)))
+
+    def test_a_denser_coat_does_not_brighten_the_grazing_rim(self) -> None:
+        """A near-black sphere in a uniform environment: at the rim the coat's Fresnel alone
+        reflects (0.372 of the environment's radiance over the annulus at cos 0.28-0.42), and the
+        base adds little. Entering the base with the coat's own ratio (1.5 / 1.6 < 1) made its
+        Fresnel total-internal-reflect, so the rim went to 1.051 while the base behind it should
+        stay dark -- the spec's bright ring."""
+        environment = self.environment(np.full((32, 64, 3), 2.0, np.float32))
+        dark = sapien.render.RenderMaterial(base_color=[0.05, 0.05, 0.05, 1], roughness=0.3)
+        coated = sapien.render.RenderMaterial(base_color=[0.05, 0.05, 0.05, 1], roughness=0.3)
+        coated.coat_weight = 1.0
+        coated.coat_roughness = 0.3  # the default coat_ior 1.6 sits above ior 1.5
+        bare = self.sphere(environment, dark, config("mis", spp=16), frames=16)
+        with_coat = self.sphere(environment, coated, config("mis", spp=16), frames=16)
+        # the annulus just inside the silhouette: view cosines 0.28 to 0.42 for SIZE = 48 at
+        # x = -3 with fovy 1; disk(0.5) only reaches cosine 0.62 and never shows the ring
+        rim = annulus(0.58, 0.62)
+        base = float(bare[rim].mean())
+        sheen = float(with_coat[rim].mean())
+        # the coat's own reflection is all the annulus may gain: per pixel 1.22 to 1.37 times the
+        # bare sphere (0.32-0.45 against 0.25-0.37 of the environment's radiance). The
+        # total-internal-reflection ring made it 2.0 to 3.4 times (0.63 to 1.54).
+        self.assertGreater(base, 0.15, str(base))
+        self.assertGreater(sheen, 1.1 * base, str((base, sheen)))
+        self.assertLess(sheen, 1.7 * base, str((base, sheen)))
+
+    def test_metal_specular_weight_above_one_is_clamped(self) -> None:
+        """The spec's metal range is [0, 1]; the documented migration `specular_weight = 2 *
+        specular` produced 2. A metal sphere of albedo 0.9 must reflect the same radiance at
+        weight 2 as at weight 1 (0.878 of the environment's, over the disk at cos 0.62-1);
+        unclamped, the F82 Fresnel doubles it to 1.76."""
+        environment = self.environment(np.full((32, 64, 3), 2.0, np.float32))
+        def sphere(weight: float) -> float:
+            metal = sapien.render.RenderMaterial(base_color=[0.9, 0.9, 0.9, 1], metallic=1.0,
+                                                 specular_weight=weight, roughness=0.35)
+            image = self.sphere(environment, metal, config("bsdf", spp=16), frames=16)
+            return float(image[disk(0.5)].mean())
+        one = sphere(1.0)
+        self.assertGreater(one, 1.0, str(one))  # 2 * 0.878
+        self.assertAlmostEqual(sphere(2.0), one, delta=0.05 * one, msg=str(one))
+
     def test_small_bright_environment_region(self) -> None:
         """A bright band on a dim sky: the strategies agree on a glossy sphere (the MIS weights
         use the pdf of the whole lobe mixture), and light sampling cuts the noise."""
@@ -176,6 +240,57 @@ class EmissiveMeshLighting(unittest.TestCase):
             if emission_to is not None:
                 material.emission = emission_to
             return render(scene, camera, frames)
+
+    def test_a_material_edit_moves_the_emitter_off_the_light_table(self) -> None:
+        """Giving the emitter a coat (or a partly transparent base) dims its visible emission, so
+        the emissive table must drop it at the next frame even though emission itself did not
+        change and no update_render ran. A stale table makes light sampling use the raw radiance
+        while the BSDF hit applies the emission factor: nee and bsdf then disagree."""
+        def pictures(edit) -> dict[str, np.ndarray]:
+            """Two frames per mode: the bare emitter, then the same emitter after `edit`."""
+            with sapien.Scene() as scene:
+                scene.set_ambient_light([0.0, 0.0, 0.0])
+                scene.add_ground(0.0, render_material=sapien.render.RenderMaterial(
+                    base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0))
+                builder = scene.create_actor_builder()
+                material = sapien.render.RenderMaterial(
+                    emission=[20.0, 20.0, 20.0, 1.0], base_color=[0, 0, 0, 1],
+                    specular_weight=0.0)
+                builder.add_sphere_visual(radius=0.3, material=material)
+                builder.build_kinematic().set_pose(sapien.Pose([1.2, 0.0, 0.6]))
+                cameras = {}
+                for mode in ("nee", "bsdf"):
+                    camera = scene.add_camera(mode, SIZE, SIZE, 0.6, 0.1, 20.0,
+                                              render_config=config(mode, spp=16, depth=1))
+                    camera.entity.pose = sapien.Pose([0.0, 0.0, 3.0],
+                                                     [0.7071068, 0.0, 0.7071068, 0.0])
+                    cameras[mode] = camera
+                result = {mode: [render(scene, camera, 8).mean(axis=-1)]
+                          for mode, camera in cameras.items()}
+                edit(material)
+                for mode, camera in cameras.items():
+                    result[mode].append(render(scene, camera, 8).mean(axis=-1))
+                return result
+
+        def coat(material: sapien.render.RenderMaterial) -> None:
+            material.coat_weight = 1.0
+            material.coat_color = [0.6, 0.6, 0.6]
+            material.coat_roughness = 0.3
+
+        def coverage(material: sapien.render.RenderMaterial) -> None:
+            material.base_color = [0, 0, 0, 0.5]
+
+        for name, edit in (("coat", coat), ("coverage", coverage)):
+            with self.subTest(edit=name):
+                result = pictures(edit)
+                for index in (0, 1):
+                    nee = float(result["nee"][index].mean())
+                    bsdf = float(result["bsdf"][index].mean())
+                    self.assertAlmostEqual(nee, bsdf, delta=0.05 * bsdf,
+                                           msg=f"{name} frame {index}: {nee} vs {bsdf}")
+                # the edit dims the emitter: the floor must darken
+                self.assertLess(float(result["bsdf"][1].mean()),
+                                0.95 * float(result["bsdf"][0].mean()), name)
 
     def test_strategies_agree_and_light_sampling_cuts_noise(self) -> None:
         means, noises = {}, {}
@@ -228,6 +343,50 @@ class EmissiveMeshLighting(unittest.TestCase):
         for mode in ("mis", "nee"):
             self.assertAlmostEqual(means[mode], means["bsdf"], delta=0.05 * means["bsdf"], msg=str(means))
 
+    def test_a_modulated_emitter_is_not_light_sampled(self) -> None:
+        """A coat or a partly transparent base dims an emitter's visible emission below its raw
+        radiance, so such a mesh must stay out of the emissive light-sampling table, exactly like
+        an emission-textured one: its BSDF hits then carry MIS weight 1 and NEE does not sample
+        it, which keeps mis, nee and bsdf on the same image."""
+        def lit(modulated: str | None) -> dict[str, float]:
+            def floor(cfg) -> np.ndarray:
+                with sapien.Scene() as scene:
+                    scene.set_ambient_light([0.0, 0.0, 0.0])
+                    scene.add_ground(0.0, render_material=sapien.render.RenderMaterial(
+                        base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0))
+                    builder = scene.create_actor_builder()
+                    material = sapien.render.RenderMaterial(
+                        emission=[20.0, 20.0, 20.0, 1.0], base_color=[0, 0, 0, 1],
+                        specular_weight=0.0)
+                    if modulated == "coat":
+                        material.coat_weight = 1.0
+                        material.coat_color = [0.6, 0.6, 0.6]
+                        material.coat_roughness = 0.3
+                    elif modulated == "coverage":
+                        material.base_color = [0, 0, 0, 0.5]
+                    builder.add_sphere_visual(radius=0.3, material=material)
+                    builder.build_kinematic().set_pose(sapien.Pose([1.2, 0.0, 0.6]))
+                    camera = scene.add_camera("camera", SIZE, SIZE, 0.6, 0.1, 20.0,
+                                              render_config=cfg)
+                    camera.entity.pose = sapien.Pose([0.0, 0.0, 3.0],
+                                                     [0.7071068, 0.0, 0.7071068, 0.0])
+                    return render(scene, camera, 16).mean(axis=-1)
+            return {mode: float(floor(config(mode, spp=16, depth=1)).mean())
+                    for mode in ("mis", "nee", "bsdf")}
+
+        bare = lit(None)
+        self.assertGreater(bare["bsdf"], 0.02, str(bare))
+        for case in ("coat", "coverage"):
+            with self.subTest(case=case):
+                means = lit(case)
+                # the three techniques must estimate one image: NEE sampling the raw radiance of
+                # an emitter whose visible emission is modulated would double it
+                for mode in ("mis", "nee", "bsdf"):
+                    self.assertAlmostEqual(means[mode], means["bsdf"],
+                                           delta=0.05 * means["bsdf"], msg=str(means))
+                # and the modulation is visible: the emitter is dimmer than the bare one
+                self.assertLess(means["bsdf"], 0.95 * bare["bsdf"], str((bare, means)))
+
 
 class Shadows(unittest.TestCase):
     """Direct light (maxDepth 0) on a white floor beside an occluder: the camera looks straight
@@ -278,6 +437,42 @@ class Shadows(unittest.TestCase):
         lit = self.shadow(None)
         blocked = self.shadow(None, cloud=True)
         np.testing.assert_allclose(blocked, 0.0, atol=1e-3 * float(lit.mean()))
+
+    def test_a_transparent_bead_passes_its_background(self) -> None:
+        """A bead's alpha is its transmission. Camera rays only ever meet the near surface of a
+        bead (its intersection shader reports the near root), so the 1 / eta^2 factor of the
+        refraction has no exit to cancel it: a clear bead over a white background must still
+        pass that background, not the 1 / 1.2^2 = 0.69 of it."""
+        def centre(alpha: float) -> float:
+            with sapien.Scene() as scene:
+                scene.set_ambient_light([0.0, 0.0, 0.0])
+                builder = scene.create_actor_builder()
+                builder.add_box_visual(sapien.Pose([2.0, 0.0, 0.0]), half_size=[0.05, 2.0, 2.0],
+                                       material=sapien.render.RenderMaterial(
+                                           emission=[1, 1, 1, 1], base_color=[0, 0, 0, 1],
+                                           specular_weight=0.0))
+                builder.build_kinematic()
+                points = sapien.render.RenderPointCloudComponent(1)
+                points.set_vertices(np.array([[0.0, 0.0, 0.0]], np.float32))
+                points.set_attribute("scale", np.array([0.5], np.float32))
+                points.set_attribute("color",
+                                     np.array([[1.0, 1.0, 1.0, alpha]], np.float32))
+                entity = sapien.Entity()
+                entity.add_component(points)
+                scene.add_entity(entity)
+                camera = scene.add_camera("camera", SIZE, SIZE, 0.2, 0.1, 20.0,
+                                          render_config=config("bsdf", spp=16, depth=2))
+                camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+                centre = np.s_[SIZE // 2 - 2:SIZE // 2 + 2, SIZE // 2 - 2:SIZE // 2 + 2]
+                return float(render(scene, camera, 4)[centre].mean())
+
+        clear = centre(0.0)
+        self.assertGreater(clear, 0.8, str(clear))
+        # alpha 0.5 leaves half the light transmitted; the bead reflects the black sky with the
+        # rest, so the centre keeps about half the background and, before the fix, a third
+        half = centre(0.5)
+        self.assertGreater(half, 0.45 * clear, str((clear, half)))
+        self.assertLess(half, 0.6 * clear, str((clear, half)))
 
     def test_cast_shadow_false_disables_shadows_in_rt_and_raster(self) -> None:
         """A render body with cast_shadow=False stays visible to camera rays while casting no
@@ -362,6 +557,49 @@ class Transmission(unittest.TestCase):
             camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
             centre = np.s_[SIZE // 2 - 2:SIZE // 2 + 2, SIZE // 2 - 2:SIZE // 2 + 2]
             return render(scene, camera, 4)[centre].mean(axis=(0, 1))
+
+    def test_a_coat_never_brightens_the_transmitted_light(self) -> None:
+        """A coat on a glass slab only adds its own reflection and absorbs: the radiance
+        transmitted through the slab must not grow with the coat. At coat_ior 1.6 over ior 1.5
+        the coat's ratio is below 1, and entering the body with it made a round trip through the
+        slab gain a factor (ior / eta)^2 -- 1.55 at coat 0.5, 2.30 at coat 1."""
+        def glass(**fields) -> sapien.render.RenderMaterial:
+            material = sapien.render.RenderMaterial(base_color=[1, 1, 1, 1], roughness=0.0,
+                                                    transmission=1.0)
+            for name, value in fields.items():
+                setattr(material, name, value)
+            return material
+
+        bare = float(self.centre(glass()).mean())
+        self.assertGreater(bare, 0.5)
+        for coat in (0.5, 1.0):
+            with self.subTest(coat=coat):
+                coated = float(self.centre(glass(coat_weight=coat, coat_roughness=0.05)).mean())
+                self.assertLess(coated, 1.02 * bare, str((bare, coated)))
+
+    def test_clear_glass_without_specular_transmits(self) -> None:
+        """specular_weight 0 at ior 1, and a coat whose IOR equals the base's, both put the
+        base's IOR ratio at exactly 1. There the refraction half vector wo + eta * wi vanishes,
+        which made the transmission weight zero: the slab must still pass its background."""
+        def glass(**fields) -> sapien.render.RenderMaterial:
+            material = sapien.render.RenderMaterial(base_color=[1, 1, 1, 1], roughness=0.0,
+                                                    transmission=1.0)
+            for name, value in fields.items():
+                setattr(material, name, value)
+            return material
+
+        reference = float(self.centre(glass()).mean())
+        self.assertGreater(reference, 0.5)
+        clear = [glass(specular_weight=0.0), glass(ior=1.0)]
+        for index, material in enumerate(clear):
+            with self.subTest(case=index):
+                picture = float(self.centre(material).mean())
+                # no reflectance at the interface: more light than through the plain glass slab
+                self.assertGreater(picture, 1.02 * reference, str((reference, picture)))
+                self.assertLess(picture, 1.25 * reference, str((reference, picture)))
+        # the coat still reflects on both sides, so this slab passes less, but not nothing
+        coated = float(self.centre(glass(coat_weight=1.0, coat_ior=1.5)).mean())
+        self.assertGreater(coated, 0.7 * reference, str((reference, coated)))
 
     def test_transmission_colour_where_it_is_reached(self) -> None:
         def glass(**fields) -> sapien.render.RenderMaterial:
@@ -454,6 +692,28 @@ class MaterialEdits(unittest.TestCase):
         # textures[] grows: the first camera rebuilds the scene's tables, the second rebinds them
         for camera in cameras:
             np.testing.assert_allclose(self.centre(camera), [0, 1, 0], atol=0.02)
+
+    def test_an_edit_waits_for_another_cameras_frame_in_flight(self) -> None:
+        """Camera B's long frame is still tracing when the emission turns blue and camera A of
+        the same scene renders, rewriting the scene's material table. B's frame must stay red:
+        frames of the timeline render path signalled no access fence, so the table changed
+        mid-trace and the rays traced after the write saw blue."""
+        material = sapien.render.RenderMaterial(emission=[1, 0, 0, 1], base_color=[0, 0, 0, 1])
+        (quick,) = self.box(material)
+        scene = quick.entity.scene
+        heavy = scene.add_camera("heavy", 256, 256, 1.0, 0.1, 10.0,
+                                 render_config=config(spp=1024, depth=1))
+        heavy.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+        scene.update_render()
+        for camera in (heavy, quick):
+            camera.take_picture()
+            camera.get_picture("HdrColor")
+        heavy.take_picture()  # about 0.1 s of tracing on an RTX 3090
+        material.emission = [0, 0, 1, 1]
+        quick.take_picture()
+        self.assertLess(float(heavy.get_picture("HdrColor")[..., 2].max()), 0.01)
+        np.testing.assert_allclose(
+            quick.get_picture("HdrColor")[SIZE // 2, SIZE // 2, :3], [0, 0, 1], atol=0.02)
 
 
 class Defaults(unittest.TestCase):

@@ -427,6 +427,66 @@ class TestBatchLighting(unittest.TestCase):
                              "a shadow ray only removes light")
 
 
+class TestBatchNormalMaps(unittest.TestCase):
+    """A 30-degree tilt of the shading normal must shade like the same tilt of the geometry: the
+    BSDF is evaluated in the (tangent, bitangent, normal) frame, which has to stay orthonormal
+    around the mapped normal."""
+
+    TILT = np.radians(30.0)
+    # the -x face of the cube, whose tangent is (0, -1, 0): the mapped normal tilts toward -y,
+    # as the face's own normal does when the box turns +30 degrees about +z. The camera's centre
+    # ray (along +x from y = z = -0.3) lands in that face either way.
+    CAMERA = sapien.Pose([-3.0, -0.3, -0.3])
+    # travelling 60 degrees off the face normal: the half vector with the camera direction is the
+    # tilted normal, so the highlight peaks there
+    LIGHT = [np.cos(np.radians(60.0)), np.sin(np.radians(60.0)), 0.0]
+
+    def shade(self, turn_box: bool) -> np.ndarray:
+        """Centre pixel of a glossy metal box face. With `turn_box` the box itself is turned 30
+        degrees about +z; otherwise it faces the camera and a constant normal map supplies the
+        same tilt of the shading normal. The light and the camera stay put, so the centre ray,
+        the light and the shading frame agree exactly between the two."""
+        angle = self.TILT if turn_box else 0.0
+        scene = make_scene(ambient=0.0)
+        material = sapien.render.RenderMaterial(base_color=[0.9, 0.9, 0.9, 1], metallic=1.0,
+                                                roughness=0.3)
+        if not turn_box:
+            # the texel (sin, 0, cos) tilts the mapped normal 30 degrees along the tangent (8-bit
+            # quantization moves it by under 0.3 degrees)
+            normal = [0.5 + 0.5 * np.sin(self.TILT), 0.5, 0.5 * (1.0 + np.cos(self.TILT)), 1.0]
+            texel = np.round(np.array([[normal]]) * 255.0).astype(np.uint8)
+            material.normal_texture = sapien.render.RenderTexture2D(texel, "R8G8B8A8Unorm",
+                                                                    filter_mode="nearest")
+        builder = scene.create_actor_builder()
+        builder.add_box_visual(half_size=[1.0] * 3, material=material)
+        actor = builder.build_kinematic()
+        actor.set_pose(
+            sapien.Pose([0.0, 0.0, 0.0], [np.cos(angle / 2), 0.0, 0.0, np.sin(angle / 2)]))
+        scene.add_directional_light(self.LIGHT, [0.02, 0.02, 0.02], shadow=False)
+        camera = scene.add_camera("camera", SIZE, SIZE, 1.0, 0.05, 20.0,
+                                  render_config=sapien.render.RenderConfig("rt_batch",
+                                                                           preset="pbr"))
+        camera.entity.pose = self.CAMERA
+        group, camera_group = render_group([camera], ["Color"])
+        try:
+            group.update_render()
+            camera_group.take_picture()
+            return picture(camera_group, "Color")[0, SIZE // 2, SIZE // 2, :3].astype(np.float32)
+        finally:
+            group.close()
+            scene.close()
+
+    def test_a_normal_map_shades_like_the_tilted_geometry(self) -> None:
+        """With the frame re-orthogonalized the mapped normal gives the highlight of the turned
+        box (8-bit 124 here; the untilted face is 5). Evaluating the tilted BSDF on the untilted
+        tangent frame -- the tangent stays half inside the mapped normal's tangent plane -- put
+        that highlight about 600 times too dark."""
+        mapped = self.shade(turn_box=False)
+        turned = self.shade(turn_box=True)
+        self.assertGreater(float(turned.mean()), 20.0, str(turned))
+        np.testing.assert_allclose(mapped, turned, atol=6.0, err_msg=str((mapped, turned)))
+
+
 class TestBatchFormats(unittest.TestCase):
     def test_default_color_is_uint8_and_float_is_available(self) -> None:
         scene = make_scene(ambient=1.0)

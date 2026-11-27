@@ -275,6 +275,11 @@ def build_material_scene(
         half_height=0.7,
     )
 
+    glass = sapien.render.RenderMaterial(
+        base_color=[1.0, 1.0, 1.0, 1.0], roughness=0.03, transmission=1.0, ior=1.45
+    )
+    # base-colour alpha is coverage: glass gets its tint from transmission_color
+    glass.transmission_color = [0.72, 0.90, 1.0]
     materials = (
         sapien.render.RenderMaterial(
             base_color=[0.72, 0.08, 0.05, 1.0], roughness=0.32
@@ -282,12 +287,7 @@ def build_material_scene(
         sapien.render.RenderMaterial(
             base_color=[0.95, 0.72, 0.25, 1.0], roughness=0.13, metallic=1.0
         ),
-        sapien.render.RenderMaterial(
-            base_color=[0.72, 0.90, 1.0, 0.28],
-            roughness=0.03,
-            transmission=0.92,
-            ior=1.45,
-        ),
+        glass,
     )
     positions = ([-0.72, 0.0, 0.38], [0.0, 0.0, 0.38], [0.72, 0.0, 0.38])
     for index, (material, position) in enumerate(zip(materials, positions)):

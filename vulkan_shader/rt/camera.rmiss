@@ -24,4 +24,6 @@ void main() {
   ray.depth = maxDepth + 1;
   ray.origin = vec3(0.0);
   ray.alpha = 0.0;
+  // nothing was hit: the path ended without a scattering event here
+  ray.scattered = 0;
 }

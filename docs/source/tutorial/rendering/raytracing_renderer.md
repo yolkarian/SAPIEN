@@ -104,13 +104,16 @@ camera.
   at their real strength.
 - **Emissive meshes.** Their triangles are sampled in proportion to area times emitted
   luminance, at the mesh's current pose, so moving an emitter needs no rebuild. Meshes with
-  an emission texture are left to BSDF sampling.
+  an emission texture, or whose emission a coat, fuzz or base-colour alpha below 1 alters on
+  the way out, are left to BSDF sampling.
 - **Shadows.** A shadow ray crossing a surface keeps the part the surface lets through: the
   part its base-colour alpha and the object's `transparency` leave uncovered, plus the
-  covered part's `transmission`, tinted by the base colour. A sheer or transmissive occluder
-  casts a lighter, possibly coloured shadow; point clouds block light. Set
-  `body.cast_shadow = False` on a `RenderBodyComponent` to keep an object visible without
-  casting shadows (in both ray tracing and rasterization).
+  covered part's `transmission`, tinted by `transmission_color`. A sheer or transmissive
+  occluder casts a lighter, possibly coloured shadow; point clouds block light. Set
+  `body.cast_shadow = False` on a `RenderBodyComponent` to make shadow rays and shadow maps
+  ignore an object (in both ray tracing and rasterization). It stays visible, also in
+  reflections and through glass, and paths that bounce into it still hit it, so it still
+  darkens ambient light and the BSDF-sampled part of environment light.
 - **Russian roulette** (`russianRoulette`) is on by default: after
   `russianRouletteMinBounces` bounces, paths of low weight end at random and the survivors
   are weighted up, which keeps the image unbiased.
@@ -173,7 +176,8 @@ the emission strength affect ray-traced reflection, refraction and shading.
 transparency: glass is made with `transmission`, and `transmission_color` with
 `transmission_depth` tints light over distance. `specular_weight` scales the
 normal-incidence reflectance of `ior`; the removed `specular` parameter s is
-`2*s` here at `ior=1.5`.
+`2*s` here at `ior=1.5` for dielectrics, while metals keep `specular_weight=1`
+(their reflectance is `base_color` scaled by `specular_weight`, at most 1).
 
 ```python
 glass = sapien.render.RenderMaterial(
@@ -181,9 +185,9 @@ glass = sapien.render.RenderMaterial(
    roughness=0.02,
    metallic=0.0,
    transmission=1.0,
-   transmission_color=[0.8, 0.9, 1.0],
    ior=1.45,
 )
+glass.transmission_color = [0.8, 0.9, 1.0]
 
 metal = sapien.render.RenderMaterial(
    base_color=[0.9, 0.75, 0.5, 1.0],

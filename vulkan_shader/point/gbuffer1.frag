@@ -133,7 +133,7 @@ void main() {
   // the material's occlusion texture darkens the indirect light
   float occlusion = 1.0;
   if (material.occlusionTexture >= 0) {
-    occlusion = texture(textures[nonuniformEXT(material.occlusionTexture)], materialUV(material.textureTransforms[6], inUV)).r;
+    occlusion = mix(1.0, texture(textures[nonuniformEXT(material.occlusionTexture)], materialUV(material.textureTransforms[6], inUV)).r, material.occlusionStrength);
   }
   vec3 wnormal = mat3(cameraBuffer.viewMatrixInverse) * normal;
   vec3 worldCamDir = mat3(cameraBuffer.viewMatrixInverse) * camDir;

@@ -65,7 +65,9 @@ public:
     float coatIor{1.6f};
     float fuzzRoughness{0.5f};
     int thinWalled{0};
-    int padding[2]{};
+    // glTF occlusionTexture.strength: occlusion = mix(1, texture, strength)
+    float occlusionStrength{1};
+    int padding{};
     // offset xy, scale zw of the UVs of each texture slot
     std::array<glm::vec4, eTextureSlotCount> textureTransforms{
         glm::vec4{0, 0, 1, 1}, glm::vec4{0, 0, 1, 1}, glm::vec4{0, 0, 1, 1},
@@ -75,6 +77,7 @@ public:
   static_assert(sizeof(Buffer) == 256, "Material Buffer layout");
   static_assert(offsetof(Buffer, baseWeight) == 96, "Material Buffer layout");
   static_assert(offsetof(Buffer, textureTransforms) == 144, "Material Buffer layout");
+  static_assert(offsetof(Buffer, occlusionStrength) == 136, "Material Buffer layout");
 
   SVMetallicMaterial() = default;
 
@@ -123,6 +126,8 @@ public:
 
   void setThinWalled(bool thinWalled);
   bool getThinWalled() const { return mBuffer.thinWalled != 0; }
+  void setOcclusionStrength(float strength);
+  float getOcclusionStrength() const { return mBuffer.occlusionStrength; }
 
   void setTexture(TextureSlot slot, std::shared_ptr<SVTexture> texture);
   std::shared_ptr<SVTexture> getTexture(TextureSlot slot) const { return mTextures.at(slot); }

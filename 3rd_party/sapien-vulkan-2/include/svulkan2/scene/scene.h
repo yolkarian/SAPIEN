@@ -168,6 +168,18 @@ public:
    *  without submitting; true when anything was recorded. The caller owns submission, the
    *  barriers, and the TLAS refit (core::TLAS::RecordUpdates). Requires built RT resources. */
   bool recordBLASRefits(vk::CommandBuffer commandBuffer);
+  /** once per render version: PrevTlasInstances <- LastTlasInstances, then the TLAS instance
+   *  rows of this version -> LastTlasInstances, so every camera of the scene and every render
+   *  call of one version read the same previous-frame transforms; the first snapshot after the
+   *  tables were built seeds Last with this version's rows, so that frame reports no motion.
+   *  Record it into the command buffer of a frame that is submitted right away, after the
+   *  instance buffer holds the frame's rows; true when anything was recorded. */
+  bool recordPrevTLASSnapshot(vk::CommandBuffer commandBuffer);
+  /** recordPrevTLASSnapshot() in a command buffer of its own, submitted to the queue at once:
+   *  call it right before submitting a trace. Preparing resources records no snapshot, so rows
+   *  written before the first rendered frame (the CPU state at gpu_init()) never become its
+   *  previous frame. */
+  void submitPrevTLASSnapshot();
 
   // ray tracing
   /** one scene of BuildAccelerationStructures */
@@ -232,7 +244,6 @@ public:
   inline vk::Buffer getRTParallelogramLightBuffer() const {
     return mRTParallelogramLightBuffer->getVulkanBuffer();
   }
-  inline bool hasRTPrevTLASInstanceBuffer() const { return mPrevTLASInstanceBuffer != nullptr; }
   inline core::Buffer &getRTPrevTLASInstanceBuffer() const { return *mPrevTLASInstanceBuffer; }
 
   void registerAccessFence(vk::Fence fence);
@@ -328,6 +339,12 @@ protected:
   std::mutex mRTResourcesLock;
   std::unique_ptr<core::TLAS> mTLAS;
   std::unique_ptr<core::Buffer> mPrevTLASInstanceBuffer;
+  // the TLAS instance rows of the last render version, the source of the next prev snapshot
+  std::unique_ptr<core::Buffer> mLastTLASInstanceBuffer;
+  // render version mPrevTLASInstanceBuffer already holds the predecessor of
+  uint64_t mTLASSnapshotRenderVersion{0};
+  // false until the buffers hold rows of a rendered frame; the first snapshot seeds both
+  bool mTLASSnapshotInitialized{false};
   std::vector<vk::Buffer> mVertexBuffers;
   std::vector<vk::Buffer> mIndexBuffers;
   std::vector<std::tuple<vk::ImageView, vk::Sampler>> mTextures;
@@ -345,7 +362,10 @@ protected:
   RTMaterialVersions mRTMaterialVersions;      // bumped when mRTMaterialRecords changes
   uint64_t mRTTablesVersion{};                 // bumped by createRTStorageBuffers
   LightTable mRTLights;
-  std::unordered_map<resource::SVTexture const *, int> mRTTextureSlots;
+  // textures index mTextures through mRTTextureSlots. The keys own the textures: mTextures holds
+  // only image views, and a raw-pointer key would let a freed texture's address be reused by a
+  // new one, silently reusing a stale slot and its destroyed image view.
+  std::unordered_map<std::shared_ptr<resource::SVTexture>, int> mRTTextureSlots;
   void writeRTLightBuffers();
 
   std::unique_ptr<core::Buffer> mRTPointLightBuffer;
@@ -363,6 +383,9 @@ protected:
 
   // used to update AS
   vk::UniqueCommandBuffer mASUpdateCommandBuffer;
+  // records and submits submitPrevTLASSnapshot(); signalled when the last one finished
+  vk::UniqueCommandBuffer mPrevTLASSnapshotCommandBuffer;
+  vk::UniqueFence mPrevTLASSnapshotFence;
 };
 
 } // namespace scene

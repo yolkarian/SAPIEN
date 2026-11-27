@@ -40,9 +40,10 @@ OpenPBR sapienUnpackMaterial(uvec4 packed, vec3 base, float metallic, float roug
 }
 
 // the base's F0: the dielectric reflectance `specular` tinted by specular_color, or the base
-// colour scaled by specular_weight for metals
+// colour scaled by specular_weight for metals (whose weight is at most 1)
 vec3 sapienBaseFresnel(OpenPBR m, vec3 albedo, float specular, float metallic) {
-  return specular * m.specularColor * (1.0 - metallic) + albedo * (m.specularWeight * metallic);
+  return specular * m.specularColor * (1.0 - metallic) +
+         albedo * (min(m.specularWeight, 1.0) * metallic);
 }
 
 // the base roughness the raster BRDF uses: the material's, or the OpenPBR one where the coat

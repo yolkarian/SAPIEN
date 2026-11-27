@@ -6,6 +6,7 @@ import shutil
 import struct
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 
 import numpy as np
@@ -49,6 +50,81 @@ def write_constant_exr(path: Path, width: int, height: int, value: float) -> Non
             file.write(struct.pack("<Q", data_start + y * line_size))
         for y in range(height):
             file.write(struct.pack("<ii", y, len(row)) + row)
+
+
+def png_1x1(rgba: list[int]) -> bytes:
+    """A 1x1 RGBA8 PNG image of colour `rgba`."""
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return struct.pack(">I", len(data)) + tag + data + struct.pack(">I", zlib.crc32(tag + data))
+
+    header = struct.pack(">IIBBBBB", 1, 1, 8, 6, 0, 0, 0)
+    pixels = zlib.compress(b"\0" + bytes(rgba))  # one scanline, filter type 0
+    return (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", pixels)
+            + chunk(b"IEND", b""))
+
+
+# a Collada triangle whose Phong effect has a grey diffuse colour and an ambient texture
+COLLADA_AMBIENT_TEXTURE = """<?xml version="1.0" encoding="utf-8"?>
+<COLLADA xmlns="http://www.collada.org/2005/11/COLLADASchema" version="1.4.1">
+  <asset><up_axis>Z_UP</up_axis></asset>
+  <library_images><image id="ambient-image"><init_from>ambient.png</init_from></image></library_images>
+  <library_effects>
+    <effect id="effect">
+      <profile_COMMON>
+        <newparam sid="ambient-surface">
+          <surface type="2D"><init_from>ambient-image</init_from></surface>
+        </newparam>
+        <newparam sid="ambient-sampler">
+          <sampler2D><source>ambient-surface</source></sampler2D>
+        </newparam>
+        <technique sid="common">
+          <phong>
+            <ambient><texture texture="ambient-sampler" texcoord="UVMap"/></ambient>
+            <diffuse><color>0.5 0.5 0.5 1</color></diffuse>
+          </phong>
+        </technique>
+      </profile_COMMON>
+    </effect>
+  </library_effects>
+  <library_materials>
+    <material id="material"><instance_effect url="#effect"/></material>
+  </library_materials>
+  <library_geometries>
+    <geometry id="mesh">
+      <mesh>
+        <source id="positions">
+          <float_array id="positions-array" count="9">0 0 0 1 0 0 0 1 0</float_array>
+          <technique_common>
+            <accessor source="#positions-array" count="3" stride="3">
+              <param name="X" type="float"/><param name="Y" type="float"/><param name="Z" type="float"/>
+            </accessor>
+          </technique_common>
+        </source>
+        <vertices id="vertices"><input semantic="POSITION" source="#positions"/></vertices>
+        <triangles material="material" count="1">
+          <input semantic="VERTEX" source="#vertices" offset="0"/>
+          <p>0 1 2</p>
+        </triangles>
+      </mesh>
+    </geometry>
+  </library_geometries>
+  <library_visual_scenes>
+    <visual_scene id="scene">
+      <node id="node">
+        <instance_geometry url="#mesh">
+          <bind_material>
+            <technique_common>
+              <instance_material symbol="material" target="#material"/>
+            </technique_common>
+          </bind_material>
+        </instance_geometry>
+      </node>
+    </visual_scene>
+  </library_visual_scenes>
+  <scene><instance_visual_scene url="#scene"/></scene>
+</COLLADA>
+"""
 
 
 class RayTracingCase(unittest.TestCase):
@@ -219,7 +295,8 @@ class TestShaderReload(unittest.TestCase):
         shutil.copytree(shader_root / "common", Path(self.directory.name) / "common")
         self.addCleanup(sapien.render.clear_cache, False, False, True)
 
-    def _center_color(self) -> np.ndarray:
+    def _picture(self, name: str) -> np.ndarray:
+        """Render a red box with the private pack and return its picture `name`."""
         with sapien.Scene() as scene:
             camera = scene.add_camera(
                 "camera",
@@ -239,7 +316,10 @@ class TestShaderReload(unittest.TestCase):
             builder.build_kinematic(name="box")
             scene.update_render()
             camera.take_picture()
-            return camera.get_picture("Color")[SIZE // 2, SIZE // 2, :3].copy()
+            return camera.get_picture(name).copy()
+
+    def _center_color(self) -> np.ndarray:
+        return self._picture("Color")[SIZE // 2, SIZE // 2, :3]
 
     def test_edited_shader_is_used_after_clearing_the_shader_cache(self) -> None:
         np.testing.assert_allclose(self._center_color(), [1.0, 0.0, 0.0], atol=1e-3)
@@ -263,10 +343,71 @@ class TestShaderReload(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, rf"gbuffer\.frag:{line + 1}: 'notDeclared'"):
             self._center_color()
 
+    def test_scalar_integer_output_renders(self) -> None:
+        """A scalar uint output got the R32Uint format, which render targets did not accept."""
+        shader = self.pack / "gbuffer.frag"
+        text = shader.read_text()
+        declaration = "layout(location = 2) out uvec4 outSegmentation;"
+        assignment = "outSegmentation = inSeg;"
+        self.assertIn(declaration, text)
+        self.assertIn(assignment, text)
+        text = text.replace(declaration, declaration + "\nlayout(location = 3) out uint outLabel;")
+        shader.write_text(text.replace(assignment, assignment + "\n  outLabel = 7u;"))
+
+        label = self._picture("Label")
+        self.assertEqual(label.dtype, np.uint32)
+        self.assertEqual(label.shape, (SIZE, SIZE))
+        self.assertEqual(int(label[SIZE // 2, SIZE // 2]), 7)
+        self.assertEqual(int(label[0, 0]), 0)
+
+
+class TestShadowCatcher(unittest.TestCase):
+    def test_bodies_without_shadows_stay_visible_through_glass(self) -> None:
+        """The ray that decides whether a shadow_catcher path goes on traced only shadow
+        casters, so a body with cast_shadow=False vanished behind glass and from reflections."""
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([0.5, 0.5, 0.5])
+            scene.add_ground(0.0)  # the first render shape, id 1, is the catcher
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(
+                half_size=[0.3, 0.3, 0.3],
+                material=sapien.render.RenderMaterial(
+                    base_color=[1.0, 0.0, 0.0, 1.0], specular_weight=0.0, roughness=1.0
+                ),
+            )
+            red = builder.build_kinematic()
+            red.set_pose(sapien.Pose([1.5, 0.0, 0.4]))
+            red.find_component_by_type(sapien.render.RenderBodyComponent).cast_shadow = False
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(
+                half_size=[0.02, 1.0, 1.0],
+                material=sapien.render.RenderMaterial(
+                    base_color=[1.0, 1.0, 1.0, 1.0], roughness=0.0, transmission=1.0
+                ),
+            )
+            builder.build_kinematic().set_pose(sapien.Pose([0.6, 0.0, 0.4]))
+
+            config = sapien.render.RenderConfig("shadow_catcher")
+            config["spp"] = 16
+            config.denoiser = "none"
+            camera = scene.add_camera("camera", SIZE, SIZE, 0.6, 0.1, 20.0, render_config=config)
+            camera.entity.pose = sapien.Pose([-0.5, 0.0, 0.4])
+            scene.update_render()
+            camera.take_picture()
+            centre = camera.get_picture("HdrColor")[
+                SIZE // 2 - 3 : SIZE // 2 + 3, SIZE // 2 - 3 : SIZE // 2 + 3, :3
+            ].mean(axis=(0, 1))
+        # the red box seen through the glass, not the grey ambient light behind it
+        self.assertGreater(float(centre[0]), 0.2)
+        self.assertGreater(float(centre[0]), 3.0 * float(centre[1]))
+
 
 class TestGltfMaterialImport(unittest.TestCase):
-    def _triangle_gltf(self, directory: Path, material: dict) -> Path:
-        """Write a one-triangle glTF file whose only material is `material`."""
+    def _triangle_gltf(
+        self, directory: Path, material: dict, image: bytes | None = None
+    ) -> Path:
+        """Write a one-triangle glTF file whose only material is `material`; `image` (PNG
+        bytes) becomes texture 0."""
         positions = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], np.float32).tobytes()
         uri = "data:application/octet-stream;base64," + base64.b64encode(positions).decode()
         document = {
@@ -284,9 +425,22 @@ class TestGltfMaterialImport(unittest.TestCase):
                 "min": [0, 0, 0], "max": [1, 1, 0],
             }],
         }
+        if image is not None:
+            document["images"] = [
+                {"uri": "data:image/png;base64," + base64.b64encode(image).decode()}
+            ]
+            document["textures"] = [{"source": 0}]
         path = directory / "triangle.gltf"
         path.write_text(json.dumps(document))
         return path
+
+    def _import(self, material: dict, image: bytes | None = None) -> sapien.render.RenderMaterial:
+        """The material of a one-triangle glTF file whose only material is `material`."""
+        with tempfile.TemporaryDirectory() as directory:
+            path = self._triangle_gltf(Path(directory), material, image)
+            parts = sapien.render.RenderShapeTriangleMesh(str(path)).parts
+            self.assertEqual(len(parts), 1)
+            return parts[0].material
 
     def test_metallic_roughness_and_specular_extension(self) -> None:
         """The specular colour used to be read into the factor and the level computed from an
@@ -301,7 +455,7 @@ class TestGltfMaterialImport(unittest.TestCase):
             "extensions": {
                 "KHR_materials_specular": {
                     "specularFactor": 0.5,
-                    "specularColorFactor": [1.0, 1.0, 1.0],
+                    "specularColorFactor": [0.2, 0.5, 0.9],
                 }
             },
         }
@@ -317,7 +471,7 @@ class TestGltfMaterialImport(unittest.TestCase):
             self.assertAlmostEqual(imported.roughness, 0.7, places=6)
             # KHR_materials_specular maps to OpenPBR specular_weight and specular_color directly
             self.assertAlmostEqual(imported.specular_weight, 0.5, places=6)
-            np.testing.assert_allclose(imported.specular_color, [1.0, 1.0, 1.0], atol=1e-6)
+            np.testing.assert_allclose(imported.specular_color, [0.2, 0.5, 0.9], atol=1e-6)
 
             # load_scene imports materials through the same code
             node = sapien.render.load_scene(str(path))
@@ -332,6 +486,123 @@ class TestGltfMaterialImport(unittest.TestCase):
             from_scene = meshes[0].parts[0].material
             np.testing.assert_allclose(from_scene.base_color, [0.2, 0.4, 0.6, 1.0], atol=1e-6)
             self.assertAlmostEqual(from_scene.specular_weight, 0.5, places=6)
+
+    def test_specular_extension_spares_metals_and_folds_bright_colours(self) -> None:
+        """KHR_materials_specular leaves the metal BRDF alone, which OpenPBR's specular_weight
+        scales; a colour above 1 moves its excess into the weight."""
+        metal = self._import({
+            "pbrMetallicRoughness": {"metallicFactor": 1.0},
+            "extensions": {
+                "KHR_materials_specular": {
+                    "specularFactor": 0.2,
+                    "specularColorFactor": [0.5, 0.5, 0.5],
+                }
+            },
+        })
+        self.assertAlmostEqual(metal.specular_weight, 1.0, places=6)
+        np.testing.assert_allclose(metal.specular_color, [1.0, 1.0, 1.0], atol=1e-6)
+
+        bright = self._import({
+            "pbrMetallicRoughness": {"metallicFactor": 0.0},
+            "extensions": {
+                "KHR_materials_specular": {
+                    "specularFactor": 0.5,
+                    "specularColorFactor": [2.0, 1.0, 0.5],
+                }
+            },
+        })
+        self.assertAlmostEqual(bright.specular_weight, 1.0, places=6)
+        np.testing.assert_allclose(bright.specular_color, [1.0, 0.5, 0.25], atol=1e-6)
+
+    def test_ior_extension(self) -> None:
+        """0 is the specular-glossiness mode's infinite index and 1 is a legal index; both used
+        to become 1.5."""
+        def ior(value: float) -> float:
+            return self._import({"extensions": {"KHR_materials_ior": {"ior": value}}}).ior
+
+        self.assertGreater(ior(0.0), 1000.0)
+        self.assertAlmostEqual(ior(1.0), 1.0, places=6)
+        self.assertAlmostEqual(ior(1.33), 1.33, places=5)
+
+    def test_transmission_takes_the_base_colour_tint(self) -> None:
+        """KHR_materials_transmission tints by the base colour, which OpenPBR does through
+        transmission_color; a volume's attenuation colour takes its place."""
+        thin = self._import({
+            "pbrMetallicRoughness": {"baseColorFactor": [1.0, 0.8, 0.1, 1.0]},
+            "extensions": {"KHR_materials_transmission": {"transmissionFactor": 1.0}},
+        })
+        self.assertTrue(thin.thin_walled)
+        np.testing.assert_allclose(thin.transmission_color, [1.0, 0.8, 0.1], atol=1e-6)
+        self.assertEqual(thin.transmission_depth, 0.0)
+
+        solid = self._import({
+            "pbrMetallicRoughness": {"baseColorFactor": [1.0, 0.8, 0.1, 1.0]},
+            "extensions": {
+                "KHR_materials_transmission": {"transmissionFactor": 1.0},
+                "KHR_materials_volume": {
+                    "thicknessFactor": 0.1,
+                    "attenuationDistance": 0.5,
+                    "attenuationColor": [0.2, 0.4, 0.9],
+                },
+            },
+        })
+        self.assertFalse(solid.thin_walled)
+        np.testing.assert_allclose(solid.transmission_color, [0.2, 0.4, 0.9], atol=1e-6)
+        self.assertAlmostEqual(solid.transmission_depth, 0.5, places=6)
+
+    def test_occlusion_texture_strength(self) -> None:
+        imported = self._import(
+            {"occlusionTexture": {"index": 0, "strength": 0.3}}, png_1x1([0, 0, 0, 255])
+        )
+        self.assertIsNotNone(imported.occlusion_texture)
+        self.assertAlmostEqual(imported.occlusion_strength, 0.3, places=6)
+
+    def test_collada_ambient_texture_is_not_occlusion(self) -> None:
+        """Collada's ambient texture arrives as a light map, which only glTF uses for
+        occlusion."""
+        with tempfile.TemporaryDirectory() as directory:
+            (Path(directory) / "ambient.png").write_bytes(png_1x1([255, 0, 0, 255]))
+            path = Path(directory) / "triangle.dae"
+            path.write_text(COLLADA_AMBIENT_TEXTURE)
+            parts = sapien.render.RenderShapeTriangleMesh(str(path)).parts
+            self.assertEqual(len(parts), 1)
+            material = parts[0].material
+        np.testing.assert_allclose(material.base_color, [0.5, 0.5, 0.5, 1.0], atol=1e-6)
+        self.assertIsNone(material.occlusion_texture)
+
+
+class TestOcclusionStrength(unittest.TestCase):
+    def test_strength_scales_the_occlusion_of_ambient_light(self) -> None:
+        black = sapien.render.RenderTexture2D(
+            np.tile(np.array([0, 0, 0, 255], np.uint8), (2, 2, 1)), "R8G8B8A8Unorm"
+        )
+
+        def centre(strength: float | None) -> float:
+            material = sapien.render.RenderMaterial(
+                base_color=[1.0, 1.0, 1.0, 1.0], specular_weight=0.0, roughness=1.0
+            )
+            if strength is not None:
+                material.occlusion_texture = black
+                material.occlusion_strength = strength
+            with sapien.Scene() as scene:
+                scene.set_ambient_light([0.5, 0.5, 0.5])
+                builder = scene.create_actor_builder()
+                builder.add_box_visual(half_size=[0.5] * 3, material=material)
+                builder.build_kinematic()
+                config = sapien.render.RenderConfig("default")
+                config["ambientOcclusionStrength"] = 0.0
+                camera = scene.add_camera("camera", SIZE, SIZE, 1.0, 0.05, 10.0,
+                                          render_config=config)
+                camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+                scene.update_render()
+                camera.take_picture()
+                return float(camera.get_picture("Lighting")[SIZE // 2, SIZE // 2, :3].mean())
+
+        plain = centre(None)
+        self.assertGreater(plain, 0.1)
+        self.assertAlmostEqual(centre(1.0) / plain, 0.0, delta=0.02)
+        self.assertAlmostEqual(centre(0.5) / plain, 0.5, delta=0.03)
+        self.assertAlmostEqual(centre(0.0) / plain, 1.0, delta=0.02)
 
 
 class TestIdleSceneUpdates(unittest.TestCase):

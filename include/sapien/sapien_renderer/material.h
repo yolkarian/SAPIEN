@@ -70,6 +70,8 @@ public:
   [[nodiscard]] std::shared_ptr<SapienRenderTexture2D> getTransmissionTexture() const;
   void setOcclusionTexture(std::shared_ptr<SapienRenderTexture2D> texture);
   [[nodiscard]] std::shared_ptr<SapienRenderTexture2D> getOcclusionTexture() const;
+  void setOcclusionStrength(float strength);
+  [[nodiscard]] float getOcclusionStrength() const;
 
   [[nodiscard]] std::shared_ptr<svulkan2::resource::SVMetallicMaterial> getMaterial() const {
     return mMaterial;

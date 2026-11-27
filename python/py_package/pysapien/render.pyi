@@ -438,6 +438,11 @@ class RenderMaterial:
     """OpenPBR base_metalness."""
     metallic_texture: RenderTexture2D
     normal_texture: RenderTexture2D
+    occlusion_strength: float
+    """
+    How much the occlusion texture darkens ambient and image-based light: occlusion = mix(1,
+    texel, strength), glTF's occlusionTexture.strength.
+    """
     occlusion_texture: RenderTexture2D | None
     roughness: float
     """OpenPBR specular_roughness."""
@@ -449,7 +454,8 @@ class RenderMaterial:
     specular_weight: float
     """
     OpenPBR specular_weight: scales the normal-incidence reflectance of `ior`. A previous
-    specular value s maps to specular_weight 2*s at ior 1.5.
+    specular value s maps to specular_weight 2*s at ior 1.5 for dielectrics; metals keep 1,
+    since their reflectance is base_color scaled by specular_weight (at most 1).
     """
     thin_walled: bool
     """OpenPBR geometry_thin_walled: a closed thin shell rather than a solid."""
@@ -498,6 +504,8 @@ class RenderMaterial:
     def get_metallic_texture(self) -> RenderTexture2D:
         ...
     def get_normal_texture(self) -> RenderTexture2D:
+        ...
+    def get_occlusion_strength(self) -> float:
         ...
     def get_occlusion_texture(self) -> RenderTexture2D:
         ...
@@ -552,6 +560,8 @@ class RenderMaterial:
     def set_metallic_texture(self, texture: RenderTexture2D) -> None:
         ...
     def set_normal_texture(self, texture: RenderTexture2D) -> None:
+        ...
+    def set_occlusion_strength(self, strength: float) -> None:
         ...
     def set_occlusion_texture(self, texture: RenderTexture2D) -> None:
         ...

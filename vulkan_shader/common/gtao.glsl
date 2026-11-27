@@ -19,19 +19,25 @@ float sapienGtaoIntegrateArc(float h, float gamma) {
   return 0.25 * (-cos(2.0 * h - gamma) + cos(gamma) + 2.0 * h * sin(gamma));
 }
 
-// Compute raw GTAO visibility in [0, 1] at a half-resolution pixel.
-float sapienComputeGTAO(sampler2D depthTex, sampler2D normalTex, vec2 uv, vec2 fragCoord,
-                        mat4 proj, mat4 invProj, float radius, float strength) {
+// The AO pass renders at half resolution (shader_pack.cpp sets its scale to 0.5): AO texel j
+// covers full-resolution texels 2j and 2j + 1 and reads the first. The pass and the upsample
+// both derive it from integer texel indices, so they read the same depth at every size.
+vec2 sapienGtaoFullTexel(vec2 aoTexel, vec2 fullSize) {
+  return min(aoTexel * 2.0, fullSize - vec2(1.0));
+}
+
+// Compute raw GTAO visibility in [0, 1] at the half-resolution pixel `fragCoord`.
+float sapienComputeGTAO(sampler2D depthTex, sampler2D normalTex, vec2 fragCoord, mat4 proj,
+                        mat4 invProj, float radius, float strength) {
   if (radius <= 1e-5 || strength <= 1e-5) {
     return 1.0;
   }
 
-  // Snap to the exact full-resolution texel center before reading nearest-filtered depth/normal
-  // and reconstructing 3D positions; unsnapped UVs introduce sub-pixel parallax that tilts
-  // reconstructed neighbor vectors off planar surfaces (especially on odd dimensions).
+  // Read nearest-filtered depth/normal at exact full-resolution texel centers; unsnapped UVs
+  // introduce sub-pixel parallax that tilts reconstructed neighbor vectors off planar surfaces.
   vec2 fullSize = vec2(textureSize(depthTex, 0));
   vec2 invFullSize = 1.0 / max(fullSize, vec2(1.0));
-  vec2 centerTexel = clamp(floor(uv * fullSize), vec2(0.0), fullSize - vec2(1.0));
+  vec2 centerTexel = sapienGtaoFullTexel(floor(fragCoord), fullSize);
   vec2 centerUV = (centerTexel + 0.5) * invFullSize;
 
   float centerDepth = texture(depthTex, centerUV).x;
@@ -174,7 +180,7 @@ float sapienSampleBilateralAO(sampler2D aoTex, sampler2D depthTex, vec2 uv, floa
   vec2 invAoSize = 1.0 / max(aoSize, vec2(1.0));
   vec2 fullSize = vec2(textureSize(depthTex, 0));
   vec2 invFullSize = 1.0 / max(fullSize, vec2(1.0));
-  vec2 baseTexel = floor(uv * aoSize) + 0.5;
+  vec2 baseTexel = floor(uv * aoSize);
   float absCenterZ = abs(centerZ);
   float depthSigma = max(0.05 * absCenterZ, 0.02);
 
@@ -182,10 +188,9 @@ float sapienSampleBilateralAO(sampler2D aoTex, sampler2D depthTex, vec2 uv, floa
   float weightSum = 0.0;
   for (int dy = -1; dy <= 1; ++dy) {
     for (int dx = -1; dx <= 1; ++dx) {
-      vec2 sampleUV = clamp((baseTexel + vec2(float(dx), float(dy))) * invAoSize,
-                            0.5 * invAoSize, 1.0 - 0.5 * invAoSize);
-      vec2 depthTexel = clamp(floor(sampleUV * fullSize), vec2(0.0), fullSize - vec2(1.0));
-      vec2 depthUV = (depthTexel + 0.5) * invFullSize;
+      vec2 aoTexel = clamp(baseTexel + vec2(float(dx), float(dy)), vec2(0.0), aoSize - 1.0);
+      vec2 sampleUV = (aoTexel + 0.5) * invAoSize;
+      vec2 depthUV = (sapienGtaoFullTexel(aoTexel, fullSize) + 0.5) * invFullSize;
       float sampleDepth = texture(depthTex, depthUV).x;
       if (sampleDepth >= 1.0) {
         continue;

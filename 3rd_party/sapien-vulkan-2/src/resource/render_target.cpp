@@ -48,6 +48,8 @@ void SVRenderTarget::createDeviceResources() {
 
       mFormat == vk::Format::eR16G16B16A16Uint || mFormat == vk::Format::eR16G16B16A16Sint ||
 
+      mFormat == vk::Format::eR32Uint || mFormat == vk::Format::eR32Sint ||
+
       mFormat == vk::Format::eR32Sfloat || mFormat == vk::Format::eR16Sfloat) {
     usage = vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eColorAttachment |
             vk::ImageUsageFlagBits::eTransferSrc;

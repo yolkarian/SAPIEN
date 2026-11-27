@@ -110,6 +110,10 @@ void SVMetallicMaterial::setThinWalled(bool thinWalled) {
   mBuffer.thinWalled = thinWalled ? 1 : 0;
   changed();
 }
+void SVMetallicMaterial::setOcclusionStrength(float strength) {
+  mBuffer.occlusionStrength = strength;
+  changed();
+}
 
 void SVMetallicMaterial::setTexture(TextureSlot slot, std::shared_ptr<SVTexture> texture) {
   mTextures.at(slot) = std::move(texture);

@@ -27,4 +27,10 @@ struct Ray {
   // shadow rays: the light left after transparent occluders; the shadow miss clears isShadow
   vec3 transmittance;
   int isShadow;
+
+  // 1 when the closest hit scattered light, 0 for a miss or for the pass-through of the
+  // uncovered part of a surface (geometry_opacity / object transparency). AOV classification
+  // counts scattering events, not raw bounces, so that such a pass-through neither advances nor
+  // changes the class.
+  int scattered;
 };

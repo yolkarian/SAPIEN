@@ -454,6 +454,142 @@ class TestRasterShadows(unittest.TestCase):
             self.assertGreater(centre_brightness(cam1, "default"), 0.3)
             self.assertGreater(centre_brightness(extra_cams[2], "minimal"), 0.3)
 
+    def test_point_cloud_shadows_do_not_depend_on_render_order(self) -> None:
+        """Only the point pack draws point clouds into the scene's shared shadow maps. A default
+        camera used to reuse maps a point camera had just rendered, so whether it showed the
+        point cloud's shadow depended on which camera rendered first."""
+
+        def centres(point_first: bool) -> tuple[float, float]:
+            with sapien.Scene() as scene:
+                scene.set_ambient_light([0.0, 0.0, 0.0])
+                scene.add_ground(
+                    0.0,
+                    render_material=sapien.render.RenderMaterial(
+                        base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0
+                    ),
+                )
+                scene.add_directional_light(
+                    [0.7071068, 0.0, -0.7071068],
+                    [2.0, 2.0, 2.0],
+                    shadow=True,
+                    shadow_scale=4.0,
+                    shadow_map_size=1024,
+                )
+                # a 0.3 m point above and beside the view: its shadow falls on the origin
+                points = sapien.render.RenderPointCloudComponent(1)
+                points.set_vertices(np.array([[-0.5, 0.0, 0.5]], np.float32))
+                points.set_attribute("color", np.array([[1.0, 1.0, 1.0, 1.0]], np.float32))
+                points.set_attribute("scale", np.array([0.3], np.float32))
+                cloud = sapien.Entity()
+                cloud.add_component(points)
+                scene.add_entity(cloud)
+
+                cameras = {}
+                for pack in ("default", "point"):
+                    cameras[pack] = scene.add_camera(
+                        pack, 64, 64, 0.8, 0.1, 20.0, render_config=make_default_config(pack)
+                    )
+                    cameras[pack].entity.pose = sapien.Pose(
+                        [0.0, 0.0, 1.5], [0.7071068, 0.0, 0.7071068, 0.0]
+                    )
+                scene.update_render()
+                for pack in ("point", "default") if point_first else ("default", "point"):
+                    cameras[pack].take_picture()
+                return tuple(
+                    float(cameras[pack].get_picture("Lighting")[28:36, 28:36, :3].mean())
+                    for pack in ("default", "point")
+                )
+
+        default_after_point, point_shadowed = centres(point_first=True)
+        default_first, _ = centres(point_first=False)
+        self.assertGreater(default_first, 0.2)
+        self.assertLess(point_shadowed, 0.2 * default_first)
+        self.assertAlmostEqual(default_after_point, default_first, delta=1e-3)
+
+    def test_a_light_change_waits_for_another_cameras_shadow_pass(self) -> None:
+        """Camera B's frame draws the scene's shared shadow maps from a 2-million-triangle
+        occluder. While that frame runs, the light turns and camera A uploads the new light
+        matrices into the scene's shared light buffers. B's picture must equal the same frame
+        rendered alone: an upload that does not wait rasterises B's maps with A's light."""
+        first, turned = [1.0, 0.0, -1.0], [0.0, 1.0, -1.0]
+
+        def build(direction):
+            scene = sapien.Scene()
+            scene.set_ambient_light([0.0, 0.0, 0.0])
+            scene.add_ground(
+                0.0,
+                render_material=sapien.render.RenderMaterial(
+                    base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0
+                ),
+            )
+            light = scene.add_directional_light(
+                direction, [2.0, 2.0, 2.0], shadow=True, shadow_scale=3.0
+            )
+            # a grid of tiny triangles over a 0.3 m square 0.5 m up, both windings: slow to
+            # rasterise, and its shadow falls 0.5 m beside it along the light
+            xs = np.linspace(-0.15, 0.15, 708, dtype=np.float32)
+            gx, gy = np.meshgrid(xs, xs, indexing="ij")
+            vertices = np.stack([gx.ravel(), gy.ravel(), np.full(gx.size, 0.5, np.float32)], -1)
+            index = np.arange(gx.size).reshape(gx.shape)
+            a, b, c, d = index[:-1, :-1], index[1:, :-1], index[1:, 1:], index[:-1, 1:]
+            triangles = np.concatenate(
+                [np.stack([a, b, c], -1).reshape(-1, 3), np.stack([a, c, d], -1).reshape(-1, 3)]
+            ).astype(np.uint32)
+            triangles = np.ascontiguousarray(np.concatenate([triangles, triangles[:, ::-1]]))
+            body = sapien.render.RenderBodyComponent()
+            body.attach(
+                sapien.render.RenderShapeTriangleMesh(
+                    vertices,
+                    triangles,
+                    np.zeros((0, 3), np.float32),
+                    np.zeros((0, 2), np.float32),
+                    sapien.render.RenderMaterial(base_color=[1, 1, 1, 1]),
+                )
+            )
+            occluder = sapien.Entity()
+            occluder.add_component(body)
+            scene.add_entity(occluder)
+            # far outside every shadow map: moving it starts a new shadow epoch
+            marker = add_box(scene, [0.1] * 3, sapien.Pose([50.0, 0.0, 0.0]))
+            cameras = []
+            for name in ("B", "A"):
+                camera = scene.add_camera(
+                    name, 128, 128, 1.2, 0.1, 20.0, render_config=make_default_config()
+                )
+                camera.entity.pose = sapien.Pose(
+                    [0.0, 0.0, 2.5], [0.7071068, 0.0, 0.7071068, 0.0]
+                )
+                cameras.append(camera)
+            return scene, light, marker, cameras
+
+        def alone(direction) -> np.ndarray:
+            scene, _, _, (camera, _) = build(direction)
+            with scene:
+                scene.update_render()
+                camera.take_picture()
+                return camera.get_picture("Lighting")[..., :3].copy()
+
+        reference = alone(first)
+        # the scene is meaningful only if turning the light moves the shadow
+        self.assertGreater(float(np.abs(alone(turned) - reference).max()), 0.3)
+
+        scene, light, marker, (camera_b, camera_a) = build(first)
+        with scene:
+            scene.update_render()
+            for camera in (camera_b, camera_a):
+                camera.take_picture()
+                camera.get_picture("Lighting")
+            marker.set_pose(sapien.Pose([50.0, 1.0, 0.0]))
+            scene.update_render()
+            camera_b.take_picture()  # B draws the shared maps in this frame
+            light.entity.set_pose(
+                sapien.Pose([0, 0, 0], sapien.math.shortest_rotation([1, 0, 0], turned))
+            )
+            scene.update_render()
+            camera_a.take_picture()
+            picture = camera_b.get_picture("Lighting")[..., :3]
+            np.testing.assert_allclose(picture, reference, atol=0.02)
+
 
 if __name__ == "__main__":
     unittest.main()

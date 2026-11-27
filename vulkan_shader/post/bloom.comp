@@ -17,6 +17,15 @@ layout(push_constant) uniform Parameters {
   float bloomKnee;
 };
 
+// Neighbouring taps must not leave a pixel of the glow unlit: rings are spaced RING_SPACING
+// pixels and every ring carries one tap per RING_SPACING pixels of arc, which keeps the tap
+// lattice denser than the 2-pixel footprint of the bilinear fetch. MAX_RADIUS is where that
+// lattice still fits inside MAX_TAPS, so the gather cost has a fixed ceiling.
+const float RING_SPACING = 1.35;
+const float MAX_RADIUS = 8.0;
+const int MAX_TAPS = 144;
+const float TWO_PI = 6.28318530718;
+
 vec3 bloomExtract(vec3 rgb) {
   rgb = sapienSanitizeRadiance(rgb);
   float brightness = max(rgb.r, max(rgb.g, rgb.b));
@@ -26,6 +35,22 @@ vec3 bloomExtract(vec3 rgb) {
   soft = soft * soft / (4.0 * knee);
   float contribution = max(soft, brightness - bloomThreshold);
   return brightness > 1e-6 ? rgb * (contribution / brightness) : vec3(0.0);
+}
+
+// Bilinear fetch of the thresholded colour at a continuous pixel position, clamped to the image.
+// The threshold applies to each texel before the blend: thresholding the blend instead cuts every
+// tap that overlaps a bright texel by less than threshold / brightness, which leaves pixels of the
+// glow around a small emitter unlit.
+vec3 sampleExtracted(vec2 pos, ivec2 size) {
+  pos -= 0.5;
+  ivec2 p0 = ivec2(floor(pos));
+  vec2 f = pos - vec2(p0);
+  ivec2 maxP = size - ivec2(1);
+  vec3 c00 = bloomExtract(imageLoad(inColor, clamp(p0, ivec2(0), maxP)).rgb);
+  vec3 c10 = bloomExtract(imageLoad(inColor, clamp(p0 + ivec2(1, 0), ivec2(0), maxP)).rgb);
+  vec3 c01 = bloomExtract(imageLoad(inColor, clamp(p0 + ivec2(0, 1), ivec2(0), maxP)).rgb);
+  vec3 c11 = bloomExtract(imageLoad(inColor, clamp(p0 + ivec2(1, 1), ivec2(0), maxP)).rgb);
+  return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
 void main() {
@@ -40,26 +65,30 @@ void main() {
     return;
   }
 
-  float radius = max(bloomRadius, 0.5);
-  float sigma = 0.45 * radius;
+  float radius = clamp(bloomRadius, 0.5, MAX_RADIUS);
+  // A 0.37 R gaussian keeps the peak of a one-pixel emitter within 3% of the two-ring gather
+  // it replaces at the default radius of 4, without the rings of dots at larger ones.
+  float sigma = 0.37 * radius;
   float inv2Sigma2 = 0.5 / max(sigma * sigma, 1e-4);
+  int rings = max(1, int(ceil(radius / RING_SPACING)));
+  float ringStep = radius / float(rings);
+  vec2 centerPos = vec2(pixel) + 0.5;
 
   vec3 accum = bloomExtract(center.rgb);
   float weightSum = 1.0;
-
-  // Two concentric rings (12 taps each) plus center for smooth isotropic gather.
-  const int TAPS = 12;
-  const float TWO_PI = 6.28318530718;
-  for (int ring = 1; ring <= 2; ++ring) {
-    float r = radius * (ring == 1 ? 0.5 : 1.0);
+  int taps = 0;
+  for (int ring = 1; ring <= rings && taps < MAX_TAPS; ++ring) {
+    float r = ringStep * float(ring);
     float w = exp(-r * r * inv2Sigma2);
-    float angleOffset = ring == 1 ? 0.0 : (TWO_PI / float(2 * TAPS));
-    for (int i = 0; i < TAPS; ++i) {
-      float a = angleOffset + TWO_PI * float(i) / float(TAPS);
-      ivec2 offset = ivec2(round(vec2(cos(a), sin(a)) * r));
-      ivec2 p = clamp(pixel + offset, ivec2(0), size - ivec2(1));
-      accum += bloomExtract(imageLoad(inColor, p).rgb) * w;
+    int count = max(6, int(ceil(TWO_PI * r / RING_SPACING)));
+    // Odd rings are rotated by half a tap so the lattice has no preferred direction.
+    float angleOffset = (ring % 2 == 0 ? 0.0 : 0.5) * TWO_PI / float(count);
+    for (int i = 0; i < count && taps < MAX_TAPS; ++i) {
+      float a = angleOffset + TWO_PI * float(i) / float(count);
+      vec2 offset = r * vec2(cos(a), sin(a));
+      accum += sampleExtracted(centerPos + offset, size) * w;
       weightSum += w;
+      ++taps;
     }
   }
 

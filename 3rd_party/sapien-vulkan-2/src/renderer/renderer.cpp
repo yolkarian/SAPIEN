@@ -81,12 +81,6 @@ Renderer::Renderer(std::shared_ptr<core::Context> context, std::shared_ptr<Rende
                                                                   config->shaderDefines);
 
   mPostChain = std::make_unique<PostChain>(mContext, config->postPasses, config->shaderDefines);
-  if (mPostChain->getPropertyType("toneMapper") == CustomPropertyType::eInt) {
-    mPostChain->setProperty("toneMapper", 2);
-  }
-  if (mPostChain->getPropertyType("exposure") == CustomPropertyType::eFloat) {
-    mPostChain->setProperty("exposure", 1.f);
-  }
 
   // Make reflected shader defaults visible through the custom-property API.
   for (auto const &pass : mShaderPack->getNonShadowPasses()) {
@@ -889,8 +883,6 @@ void Renderer::prepareRender(scene::Camera &camera) {
 
     prepareFramebuffers(mWidth, mHeight);
     prepareInputTextureDescriptorSets();
-    mSpecializationConstantsChanged = false;
-    mRequiresRebuild = false;
 
     if (mShaderPackInstance->needsShadowPass()) {
       prepareLightBuffers();
@@ -913,6 +905,10 @@ void Renderer::prepareRender(scene::Camera &camera) {
       throw std::runtime_error("Camera size and renderer size does not match. "
                                "Please resize camera first.");
     }
+    // only a complete rebuild clears the flags: one that threw (too many lights for the
+    // uniform buffers, a camera of another size) is retried by the next frame
+    mSpecializationConstantsChanged = false;
+    mRequiresRebuild = false;
   }
 
   if (mRequiresRecord) {
@@ -1098,8 +1094,10 @@ bool Renderer::shouldRenderShadows(bool &wantsPointShadow) const {
     return false;
   }
   wantsPointShadow = wantsPointShadowPass();
+  // the maps are shared by every camera of the scene: reuse them only when they hold exactly
+  // what this pack draws, point-cloud shadows included or not, whichever camera rendered first
   if (mShadowMaps->renderedShadowEpoch == mScene->getShadowEpoch() &&
-      (!wantsPointShadow || mShadowMaps->renderedWithPointShadow)) {
+      mShadowMaps->renderedWithPointShadow == wantsPointShadow) {
     return false;
   }
   return true;

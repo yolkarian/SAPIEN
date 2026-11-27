@@ -46,7 +46,7 @@ BUILTIN_PACKS = {
         "toneMapper": ("uniform", "int", 2, 0.0, 5.0),
         "bloomIntensity": ("uniform", "float", 0.0, 0.0, None),
         "bloomThreshold": ("uniform", "float", 1.0, 0.0, None),
-        "bloomRadius": ("uniform", "float", 4.0, 0.5, 32.0),
+        "bloomRadius": ("uniform", "float", 4.0, 0.5, 8.0),
         "bloomKnee": ("uniform", "float", 0.5, 0.0, 1.0),
         "exposureEV": ("uniform", "float", 0.0, None, None),
         "whiteBalanceTemp": ("uniform", "float", 6500.0, 1500.0, 25000.0),

@@ -9,6 +9,7 @@
 #include "svulkan2/shader/glsl_compiler.h"
 #include "svulkan2/renderer/post_chain.h"
 #include "svulkan2/renderer/rt_integrator_tables.h"
+#include <utility>
 #include <variant>
 
 namespace svulkan2 {
@@ -90,6 +91,10 @@ public:
   std::vector<std::string> getRenderTargetNames() const override;
 
   core::Buffer &getCameraBuffer();
+  /** float offsets in the camera buffer of prevViewMatrix and prevViewMatrixInverse, or
+   *  {-1, -1} when the pack's camera layout has none (a GPU pose writer must then leave the
+   *  buffer's prev slots alone) */
+  std::pair<int, int> getCameraPrevViewOffsets() const;
   void prepareResources(scene::Camera &camera) override;
   void uploadCpuFrameState(scene::Camera &camera) override;
   void uploadCpuCameraState(scene::Camera &camera) override;

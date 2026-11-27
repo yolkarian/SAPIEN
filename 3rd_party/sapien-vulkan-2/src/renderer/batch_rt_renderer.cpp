@@ -325,7 +325,7 @@ void BatchRTRenderer::initialize(std::vector<std::shared_ptr<scene::Scene>> cons
     materialRecords.push_back(scene::packMaterial(
         *material, [&](std::shared_ptr<resource::SVTexture> const &texture) {
           auto [slot, added] =
-              mTextureSlots.try_emplace(texture.get(), static_cast<int>(textures.size()));
+              mTextureSlots.try_emplace(texture, static_cast<int>(textures.size()));
           if (added) {
             texture->uploadToDevice(*mContext);
             textures.push_back(texture);
@@ -637,7 +637,7 @@ void BatchRTRenderer::refreshLightRows() {
   mLights.clear();
   auto textureIndex = [&](std::shared_ptr<resource::SVTexture> const &texture) {
     auto [slot, added] =
-        mTextureSlots.try_emplace(texture.get(), static_cast<int>(mTextures.size()));
+        mTextureSlots.try_emplace(texture, static_cast<int>(mTextures.size()));
     if (added) {
       texture->loadAsync().get();
       texture->uploadToDevice(*mContext);
@@ -670,7 +670,7 @@ void BatchRTRenderer::uploadMaterials() {
   for (auto const &material : mMaterials) {
     records.push_back(scene::packMaterial(
         *material, [&](std::shared_ptr<resource::SVTexture> const &texture) {
-          auto slot = mTextureSlots.find(texture.get());
+          auto slot = mTextureSlots.find(texture);
           if (slot == mTextureSlots.end()) {
             throw std::runtime_error("a material of the batched ray tracing group samples a "
                                      "texture the group did not use when it was initialized");
@@ -782,6 +782,12 @@ void BatchRTRenderer::render(vk::Semaphore wait, uint64_t waitValue, vk::Semapho
                                    barrier, {}, {});
   }
   core::TLAS::RecordUpdates(mCommandBuffer.get(), tlases);
+
+  // PrevTlasInstances once per render version, from the instance rows CUDA wrote this frame:
+  // every camera of an environment must see the same previous transforms.
+  for (auto const &scene : mEnvironments) {
+    scene->recordPrevTLASSnapshot(mCommandBuffer.get());
+  }
 
   {
     vk::MemoryBarrier barrier(vk::AccessFlagBits::eAccelerationStructureWriteKHR,

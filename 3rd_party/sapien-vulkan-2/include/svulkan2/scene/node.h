@@ -29,6 +29,10 @@ protected:
   // False until worldModelMatrix has been computed once, so prevWorldModelMatrix starts equal
   // to the initial pose instead of the zero matrix.
   bool mHasWorldModelMatrix{false};
+  // Set when a freshly created node must take the pose computed by the next recursive update as
+  // its prev matrix too. Nodes are created at the origin and posed afterwards, so the pose the
+  // creation-time update computed is not a frame the camera ever rendered.
+  bool mInitializePrevOnNextUpdate{false};
 
   /** marks this node and its ancestors for the next Scene::updateModelMatrices() */
   void markTransformDirty();
@@ -73,6 +77,13 @@ public:
 
   /** called before rendering to update the cached model matrix */
   void updateGlobalModelMatrixRecursive();
+  /** Defer the previous-matrix history of this node to the next
+   *  updateGlobalModelMatrixRecursive(): the cached world matrix stays valid for reads, but that
+   *  pass then sets prevWorldModelMatrix equal to the pose it computes instead of to the pose the
+   *  node held at creation. Nodes are created at the origin and get their real pose afterwards,
+   *  so without this the first rendered frame reports motion from the origin, and a node added
+   *  before the first update would start from the zero matrix. */
+  void initializeWorldModelMatrixOnNextUpdate();
   std::vector<class Object *> getObjectsRecursive() const;
 
   /** force compute current model matrix */

@@ -105,6 +105,20 @@ __global__ void update_camera_transforms_kernel(CameraData *cameras, float *pose
   int pose_index = camera.poseIndex;
   float *buffer = (float *)camera.buffer;
 
+  // The shader's MotionVector compares against the transforms of the previous frame, so the
+  // slots it reads must hold the view matrices this kernel is about to replace. Raster camera
+  // buffers have no such slots: their offset is -1 and this copy is skipped.
+  if (camera.prevViewOffset >= 0) {
+    for (int i = 0; i < 16; ++i) {
+      buffer[camera.prevViewOffset + i] = buffer[i];
+    }
+  }
+  if (camera.prevViewInverseOffset >= 0) {
+    for (int i = 0; i < 16; ++i) {
+      buffer[camera.prevViewInverseOffset + i] = buffer[32 + i];
+    }
+  }
+
   Pose pose_b2w =
       Pose(Vec3(poses[pose_stride * pose_index], poses[pose_stride * pose_index + 1],
                 poses[pose_stride * pose_index + 2]),

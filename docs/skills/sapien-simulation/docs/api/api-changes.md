@@ -16,6 +16,7 @@ Half-resolution GTAO in `default` and `vr_default` rasterization packs:
 
 - **Behavior change:** `default` and `vr_default` replace inline SSAO with a half-resolution `ao` pass (`vulkan_shader/common/gtao.glsl`) plus a 3×3 depth-aware bilateral filter/upsample in `deferred.frag`. Controlled by the existing `ambientOcclusionStrength` (default `0.65`, `0` disables) and `ambientOcclusionRadius` (default `0.3` m) parameters.
 - `camera.get_picture_names()` on `default` / `vr_default` now includes `AmbientOcclusion` (`float32`, half-resolution shape `(ceil(H/2), ceil(W/2))`, raw GTAO visibility in `[0, 1]`).
+- Custom packs: a scalar `int`/`uint` output is now an `r32i`/`r32ui` render target (a 2D picture), no longer a 4-channel one.
 
 Rasterization shadow upgrades and scene-owned shared shadow maps:
 
@@ -27,28 +28,41 @@ Rasterization shadow upgrades and scene-owned shared shadow maps:
 
 `RenderBodyComponent.cast_shadow` and full post-processing passes:
 
-- `RenderBodyComponent.cast_shadow` (default `True`): controls shadow casting in rasterization, `rt`, `shadow_catcher` and `rt_batch` (via TLAS instance mask bit `0x02`). Setting it to `False` keeps the body visible to camera rays while skipping shadow rays and shadow maps.
+- `RenderBodyComponent.cast_shadow` (default `True`): controls shadow casting in rasterization, `rt`, `shadow_catcher` and `rt_batch` (via TLAS instance mask bit `0x02`). Setting it to `False` keeps the body visible, also in reflections and behind glass, and lets every shadow ray and shadow map ignore it: it blocks no light that is sampled through shadow rays (point, directional, spot and parallelogram lights, the light-sampled part of environment and emissive light). Paths that bounce into it still hit it, so in `rt` it still darkens ambient light and the BSDF-sampled part of environment light, like Blender's shadow ray visibility. The `shadow_catcher` catcher surface ignores it entirely.
 - `toneMapper` now accepts `0..5` across built-in packs: `0` gamma 2.2, `1` sRGB, `2` ACES (default), `3` Khronos PBR Neutral, `4` AgX, `5` Filmic (Hable).
-- Built-in `vulkan_shader/post/` adds `bloom`, `color_grade`, `lens` and `fxaa`. The `rt` pack runs `["bloom", "color_grade", "tonemap", "lens"]` (identity defaults; all parameters settable via `RenderConfig` and `camera.set_property` without resetting accumulation) and declares presets `"preview"` (`spp=4, maxDepth=4`) and `"production"` (`spp=64, maxDepth=12, clampIndirect=10.0`).
+- Built-in `vulkan_shader/post/` adds `bloom`, `color_grade`, `lens` and `fxaa`. The `rt` pack runs `["bloom", "color_grade", "tonemap", "lens"]` (identity defaults; all parameters settable via `RenderConfig` and `camera.set_property` without resetting accumulation) and declares presets `"preview"` (`spp=4, maxDepth=4`) and `"production"` (`spp=64, maxDepth=12, clampIndirect=10.0`). `bloomRadius` is at most 8 pixels. White balance is a Bradford adaptation (above 6500 K warms). Lens distortion, chromatic aberration and vignette are circular in pixels on non-square images.
+- Custom packs listing a built-in pass: every pass parameter starts at its neutral value (`cdlSlope` 1, `whiteBalanceTemp` 6500, `fxaaEdgeThreshold` 0.125, ...), so an undeclared parameter renders as identity; declare it in `pack.json` to tune it.
 
 The `rt` path tracer outputs first-batch AOVs:
 
 - New `rt` pictures from `camera.get_picture(name)`:
   - `Depth` (`float32`, shape `(H, W)`): linear depth in metres along the camera view axis, `0` on sky (matches `rt_batch`).
-  - `MotionVector` (`float32`, shape `(H, W, 2)`): screen-space optical flow `(dx, dy)` in pixels (`curr - prev`, `+x` right, `+y` down), covering moving objects, moving cameras and rotating sky; `0` on the initial frame and after an idle `update_render()`.
-  - `Emission`, `DiffuseDirect`, `SpecularDirect`, `DiffuseIndirect`, `SpecularIndirect` (`float32`, shape `(H, W, 4)`): accumulated over frames; their RGB sum equals `HdrColor` (before denoising) everywhere in the image.
+  - `MotionVector` (`float32`, shape `(H, W, 2)`): screen-space optical flow `(dx, dy)` in pixels (`curr - prev`, `+x` right, `+y` down), covering moving objects, moving cameras and rotating sky; `0` on the initial frame, on the first frame of an object or camera added mid-run, and after an idle `update_render()`. The previous frame is per scene render version: every camera of the scene and repeated `take_picture()` calls of one step see the same motion; camera-group cameras with GPU poses (`cuda`, PhysX-mounted) report motion since the previous frame.
+  - `Emission`, `DiffuseDirect`, `SpecularDirect`, `DiffuseIndirect`, `SpecularIndirect` (`float32`, shape `(H, W, 4)`): accumulated over frames; their RGB sum equals `HdrColor` (before denoising) everywhere in the image. Classes follow scattering events: light reached through an alpha cutout or a semi-transparent surface keeps its class.
 - Custom RT packs may declare `rg32f`/`rg16f`/`rgba16f` `out<Name>` storage images and bind `PrevTlasInstances` in the scene set (`rt` uses binding 20).
 
 Materials follow the first batch of OpenPBR Surface 1.1:
 
 - **Breaking:** `RenderMaterial(specular=...)` and `.specular` are gone. Use `specular_weight`,
-  which scales the normal-incidence reflectance of `ior`; `specular=s` is `specular_weight=2*s`
-  at the new default `ior=1.5` (was 1.45). `transmission_roughness` is removed.
+  which scales the normal-incidence reflectance of `ior`; for dielectrics `specular=s` is
+  `specular_weight=2*s` at the new default `ior=1.5` (was 1.45). Metals keep
+  `specular_weight=1`: their reflectance is the base colour scaled by `specular_weight`
+  (clamped to 1), so `metallic=1, specular=0` migrated by the dielectric rule renders black.
+  `transmission_roughness` is removed.
 - New `RenderMaterial` members: `base_weight`, `specular_weight`, `specular_color`,
   `specular_roughness_anisotropy`, `transmission_color`, `transmission_depth` (scene units),
   `coat_weight`, `coat_color`, `coat_roughness`, `coat_ior`, `fuzz_weight`, `fuzz_color`,
-  `fuzz_roughness`, `thin_walled`, `occlusion_texture`. `metallic`, `roughness`, `ior`,
-  `transmission`, `base_color` and `emission` keep their meaning.
+  `fuzz_roughness`, `thin_walled`, `occlusion_texture`, `occlusion_strength` (default 1: the
+  texture darkens ambient and image-based light by `mix(1, texel, strength)`). `metallic`,
+  `roughness`, `ior`, `transmission`, `base_color` and `emission` keep their meaning.
+- **Behavior change (glTF import):** `KHR_materials_specular` maps to `specular_weight` and
+  `specular_color`, except on fully metallic materials (the extension leaves the metal BRDF
+  alone); a colour above 1 moves its excess into `specular_weight`. `KHR_materials_ior` 0 (the
+  specular-glossiness mode) becomes `ior=10000` (reflectance 1) and 1 stays 1. Transmission is
+  tinted by the base colour through `transmission_color` unless `KHR_materials_volume` gives
+  an attenuation colour. The occlusion texture's `strength` becomes `occlusion_strength`. Other
+  formats keep reading an IOR of 1 or less (OBJ's `Ni 1`) as 1.5, and their light maps
+  (Collada's ambient texture) are no longer imported as occlusion.
 - **Behavior change (`rt`, `shadow_catcher`):** base-colour alpha is coverage, so a glass made
   with `base_color` alpha now looks cut-out; use `transmission=1.0` (and
   `transmission_color`). Transmission is tinted by `transmission_color`, not the base colour.
@@ -57,19 +71,25 @@ Materials follow the first batch of OpenPBR Surface 1.1:
   shade coat, fuzz and specular colour over their base BRDF (anisotropy averaged into the
   roughness, no transmission) and the occlusion texture; materials without coat or fuzz render
   as before. Deferred raster packs have a new `uvec4` picture `Material` (packed layers).
+  A coat denser than the base no longer gives a bright grazing ring, a coated glass body no
+  longer gains energy, glass at an IOR ratio of 1 transmits, a metal's `specular_weight` acts
+  as at most 1 everywhere, and fuzz reflects its full albedo (brighter at grazing angles than
+  before). Emissive meshes with a coat, fuzz, base-colour alpha below 1 or object
+  `transparency` are found by BSDF sampling only.
 - Custom packs: `Material` (`common/material.glsl`) is 512 bytes; `fresnel`, `textureMask`
   and `emission` became `specularWeight` (with `ior`), slot tests (`material.xTexture >= 0`)
-  and `emissionColor`/`emissionStrength`. `common/bsdf.glsl` is replaced by
-  `common/openpbr.glsl`.
+  and `emissionColor`/`emissionStrength`; the word after `thinWalled` is `occlusionStrength`,
+  which a pack applies as `mix(1.0, occlusionTexel, material.occlusionStrength)`.
+  `common/bsdf.glsl` is replaced by `common/openpbr.glsl`.
 
 Rasterization lights have no fixed limit:
 
 - **Behavior change:** the built-in raster packs draw every light of the scene instead of at
   most 3 directional, 10 point and 10 spot lights (`minimal`: 10 point). The bound is the
   device's uniform-buffer range (on NVIDIA 2047 point or directional, 371 spot and textured
-  lights); beyond it the camera raises `RuntimeError`. Shadow casters and textured lights
-  remain bounded by the pack's shadow maps. In `minimal`, textured lights now sample their
-  shadow map.
+  lights); beyond it the camera raises `RuntimeError` and renders again once enough lights are
+  removed. Shadow casters and textured lights remain bounded by the pack's shadow maps. In
+  `minimal`, textured lights now sample their shadow map.
 - **Breaking (custom raster packs):** lights are the uniform buffers `PointLights`,
   `DirectionalLights` and `SpotLights` of the scene set (records of
   `common/light_data.glsl`, formerly `common/rt_light.glsl`), sized by the specialization
@@ -166,7 +186,7 @@ Rasterization shader packs read one scene-wide descriptor set:
   `material` (uniform buffers), and `transforms[]`, `materials[]`, the bindless `textures[]`
   for any entry; shadow passes read `transforms[instance.transformIndex]` too. The
   `object_set.glsl` / `material_set.glsl` sets are removed; packs written against them fail to
-  load until ported. `Material` is 256 B; a material texture index of `-1` means no texture.
+  load until ported. `Material` is 512 B; a material texture index of `-1` means no texture.
 - **Breaking:** `max_num_textures` (`set_global_config`, default 512) is the number of
   `textures[]` slots; slot 0 is the white default texture and a scene needing more distinct
   textures raises `RuntimeError`. `max_num_materials` is only the initial size of
@@ -252,8 +272,8 @@ Rendering:
   see "Rasterization lights have no fixed limit" above for the current behavior.
 - **Behavior change:** HDR environment maps keep radiance above 1 in rough reflections (raster
   image-based lighting); scenes lit by bright HDR maps render brighter than before.
-- **Behavior change:** glTF `KHR_materials_specular` now sets `RenderMaterial.specular` to
-  `0.5 * specularFactor * luminance(specularColor)`.
+- **Behavior change:** glTF `KHR_materials_specular` reads its colour as the colour instead of
+  the factor; see the OpenPBR section above for how it maps to the material.
 
 
 C++ programs (native trainers such as PufferLib 5.0, no Python):

@@ -14,6 +14,37 @@ namespace {
 char const *const kInput = "inColor";
 char const *const kOutput = "outColor";
 constexpr vk::Format kColorFormat = vk::Format::eR32G32B32A32Sfloat;
+
+// Neutral values of the built-in post passes, keyed by push-constant member name and seeded
+// before any pack.json value is applied. A pack may list a pass without declaring its
+// parameters, and the push constants then stay at their zero-filled value: color_grade with
+// cdlSlope and cdlPower 0 renders black, and fxaa with threshold 0 smooths every pixel. Members
+// whose neutral value is zero are absent.
+struct FloatDefault {
+  char const *name;
+  float value;
+};
+constexpr FloatDefault kFloatDefaults[] = {
+    {"exposure", 1.f},
+    {"bloomThreshold", 1.f},
+    {"bloomRadius", 4.f},
+    {"bloomKnee", .5f},
+    {"whiteBalanceTemp", 6500.f},
+    {"contrast", 1.f},
+    {"saturation", 1.f},
+    {"cdlSlope", 1.f},
+    {"cdlPower", 1.f},
+    {"vignetteSmoothness", .5f},
+    {"fxaaEdgeThreshold", .125f},
+    {"fxaaSubpix", .75f},
+};
+struct IntDefault {
+  char const *name;
+  int value;
+};
+constexpr IntDefault kIntDefaults[] = {
+    {"toneMapper", 2},
+};
 } // namespace
 
 PostChain::PostChain(std::shared_ptr<core::Context> context,
@@ -75,6 +106,19 @@ PostChain::PostChain(std::shared_ptr<core::Context> context,
         auto [it, inserted] = mProperties.try_emplace(name, Property{element.dtype});
         if (!inserted && it->second.dtype != element.dtype) {
           throw fail("parameter \"" + name + "\" has another type in an earlier pass");
+        }
+        if (inserted) {
+          // the neutral value of a built-in pass parameter; a pack.json value overrides it
+          for (auto const &d : kFloatDefaults) {
+            if (name == d.name && element.dtype == DataType::FLOAT()) {
+              std::memcpy(it->second.value, &d.value, sizeof(d.value));
+            }
+          }
+          for (auto const &d : kIntDefaults) {
+            if (name == d.name && element.dtype == DataType::INT()) {
+              std::memcpy(it->second.value, &d.value, sizeof(d.value));
+            }
+          }
         }
       }
       ranges.push_back({vk::ShaderStageFlagBits::eCompute, 0, pass.parameters->size});

@@ -416,6 +416,9 @@ void BatchedCamera::internalGpuInit() {
     data.buffer = internalGetCameraCudaBuffer(*cam);
     data.localPose = POSE_GL_TO_ROS;
     data.poseIndex = static_cast<int>(mCudaRowCameras.size());
+    auto [prevView, prevViewInverse] = internalGetCameraPrevViewOffsets(*cam);
+    data.prevViewOffset = prevView;
+    data.prevViewInverseOffset = prevViewInverse;
     rowCameraData.push_back(data);
     mCudaRowCameras.push_back(cam);
   }
@@ -444,6 +447,15 @@ void BatchedCamera::internalGpuInit() {
   mUploadedStateVersions.clear();
   for (auto &cam : mCameras) {
     mUploadedStateVersions.push_back(cam->getCameraStateVersion());
+  }
+  // The snapshot above wrote prev from the node's creation-time history, which the first
+  // updateModelMatrices() replaces with the pose it computed. Cameras whose matrices come from
+  // the CPU upload once more at the next update_render(), so their first rendered frame is at
+  // rest; the pose kernels roll their own prev at every frame.
+  mPendingMotionSettle.clear();
+  for (auto &cam : mCameras) {
+    mPendingMotionSettle.push_back(cam->getPoseMode() != CameraPoseMode::eCuda &&
+                                   internalGetCameraPrevViewOffsets(*cam).first >= 0);
   }
   mGpuInitialized = true;
 }
@@ -529,7 +541,8 @@ void BatchedCamera::internalWaitForRendersIdle() {
 
 bool BatchedCamera::internalHasDirtyCameraState() const {
   for (size_t i = 0; i < mCameras.size(); ++i) {
-    if (mCameras[i]->getCameraStateVersion() != mUploadedStateVersions.at(i)) {
+    if (mPendingMotionSettle.at(i) ||
+        mCameras[i]->getCameraStateVersion() != mUploadedStateVersions.at(i)) {
       return true;
     }
   }
@@ -540,7 +553,12 @@ void BatchedCamera::internalUploadDirtyCameraState() {
   for (size_t i = 0; i < mCameras.size(); ++i) {
     auto &cam = mCameras[i];
     uint64_t version = cam->getCameraStateVersion();
-    if (version == mUploadedStateVersions.at(i)) {
+    bool dirty = version != mUploadedStateVersions.at(i);
+    // A cpu-mode camera's upload sets prev = the pose of the frame before it, so a camera that
+    // then stops moving would keep reporting its last motion. Upload once more after the frame
+    // that consumed the move: the node's prev has caught up and this upload settles it.
+    bool settle = mPendingMotionSettle.at(i);
+    if (!dirty && !settle) {
       continue;
     }
     // The full camera buffer uploads, including the CPU view matrices. For
@@ -552,6 +570,11 @@ void BatchedCamera::internalUploadDirtyCameraState() {
       cam->getInternalRenderer().uploadCpuCameraState(cam->getInternalCamera());
     }
     mUploadedStateVersions.at(i) = version;
+    // a camera the pose kernels drive rolls its own prev every frame, and a raster buffer has no
+    // prev slots to settle
+    mPendingMotionSettle.at(i) =
+        dirty && cam->getPoseMode() != CameraPoseMode::eCuda &&
+        internalGetCameraPrevViewOffsets(*cam).first >= 0;
   }
 }
 
@@ -564,6 +587,19 @@ void *BatchedCamera::internalGetCameraCudaBuffer(SapienRenderCameraComponent &ca
 #endif
   }
   return camera.getCudaBuffer().ptr;
+}
+
+std::pair<int, int>
+BatchedCamera::internalGetCameraPrevViewOffsets(SapienRenderCameraComponent &camera) {
+  // a batched camera row holds only the four matrices a pose kernel rewrites
+  if (mBatchRenderer) {
+    return {-1, -1};
+  }
+  if (auto *rt = dynamic_cast<svulkan2::renderer::RTRenderer *>(&camera.getInternalRenderer())) {
+    return rt->getCameraPrevViewOffsets();
+  }
+  // raster camera buffers have no prev slots: float 64 is the camera width
+  return {-1, -1};
 }
 
 void BatchedCamera::takePicture() {
@@ -1371,6 +1407,9 @@ void BatchedRenderSystem::gpuInit() {
       data.localPose = pose;
 
       data.poseIndex = index;
+      auto [prevView, prevViewInverse] = cb->internalGetCameraPrevViewOffsets(*cam);
+      data.prevViewOffset = prevView;
+      data.prevViewInverseOffset = prevViewInverse;
 
       allCamData.push_back(data);
       mCameraCount++;

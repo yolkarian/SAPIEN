@@ -83,8 +83,11 @@ struct SapienRenderCameraInternal {
       mSemaphore = mContext->createTimelineSemaphore(mFrameCounter);
     }
     waitForRender();
-    mFrameCounter++;
-    mRenderer->render(*mCamera, {}, {}, {}, mSemaphore.get(), mFrameCounter);
+    // advance only after the render submitted its signal: one that threw (e.g. too many lights)
+    // signals nothing, and the next wait for its value would never return
+    uint64_t next = mFrameCounter + 1;
+    mRenderer->render(*mCamera, {}, {}, {}, mSemaphore.get(), next);
+    mFrameCounter = next;
   }
 
   std::vector<std::string> getImageNames() const {

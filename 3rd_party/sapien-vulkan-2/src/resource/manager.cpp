@@ -126,7 +126,9 @@ SVResourceManager::CreateRTShaderPack(std::string const &dirname, ShaderDefines 
   mRTShaderPackRegistry[key] = shaderPack;
 
   setVertexLayout(shaderPack->computeCompatibleInputVertexLayout());
-  if (auto layout = shaderPack->computePrimitiveLayout()) {
+  // a pack without point sets (shadow_catcher) leaves the point layout to the packs that draw
+  // points, as batched packs do
+  if (auto layout = shaderPack->computePrimitiveLayout(); layout && !layout->elements.empty()) {
     setPrimitiveVertexLayout(layout);
   }
 

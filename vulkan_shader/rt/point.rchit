@@ -26,8 +26,11 @@ void main() {
   Point p = points[nonuniformEXT(id)].p[gl_PrimitiveID];
   vec3 worldShadingNormal = normalize(vec3((objectPos - p.position) * gl_WorldToObjectEXT));
   vec3 baseColor = p.color.xyz;
-  // a rough dielectric bead whose alpha becomes transmission, tinted by its colour
+  // a rough dielectric bead whose alpha becomes transmission, tinted by its colour. A bead's
+  // path leaves it on the far side without the renderer ever exiting it, so it is treated as a
+  // thin wall: the 1 / eta^2 radiance factor of a refraction has no matching exit to cancel it.
   OpenPBR m = openpbrDielectric(baseColor, 0.1, 1.2, 1.0 - p.color.a);
+  m.thinWalled = true;
   m.transmissionTint = m.base;
 
   vec3 V = normalize(-ray.direction);
@@ -47,4 +50,5 @@ void main() {
   ray.normal = worldShadingNormal;
   ray.albedo = baseColor;
   ray.segmentation = uvec4(0);
+  ray.scattered = 1;
 }

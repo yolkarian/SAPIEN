@@ -199,6 +199,12 @@ void SapienRenderMaterial::setOcclusionTexture(std::shared_ptr<SapienRenderTextu
 std::shared_ptr<SapienRenderTexture2D> SapienRenderMaterial::getOcclusionTexture() const {
   return getTexture(*mMaterial, Slot::eOcclusion);
 }
+void SapienRenderMaterial::setOcclusionStrength(float strength) {
+  mMaterial->setOcclusionStrength(strength);
+}
+float SapienRenderMaterial::getOcclusionStrength() const {
+  return mMaterial->getOcclusionStrength();
+}
 
 } // namespace sapien_renderer
 } // namespace sapien

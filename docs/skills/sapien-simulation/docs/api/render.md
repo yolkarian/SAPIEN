@@ -75,7 +75,7 @@ Agent-facing compact API table. Source of truth is checked-in `.pyi`/wrapper sou
 
 | Member | Type | Use | Notes |
 |---|---|---|---|
-| `cast_shadow` | `bool` | Whether the body casts shadows in rasterization and ray tracing (`True` by default). |  |
+| `cast_shadow` | `bool` | Whether the body casts shadows in rasterization and ray tracing (`True` by default). | `False`: shadow rays and shadow maps ignore it; it stays visible (also in reflections and through glass) and path-traced bounces still hit it, so it still darkens ambient light. |
 | `shading_mode` | `int` |  |  |
 | `visibility` | `float` |  |  |
 
@@ -326,12 +326,13 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 | `metallic` | `float` |  | OpenPBR base_metalness. |
 | `metallic_texture` | `RenderTexture2D` |  |  |
 | `normal_texture` | `RenderTexture2D` |  |  |
+| `occlusion_strength` | `float` |  | How much the occlusion texture darkens ambient and image-based light: occlusion = mix(1, texel, strength), glTF's occlusionTexture.strength. |
 | `occlusion_texture` | `RenderTexture2D \| None` |  |  |
 | `roughness` | `float` |  | OpenPBR specular_roughness. |
 | `roughness_texture` | `RenderTexture2D` |  |  |
 | `specular_color` | `Annotated[list[float], FixedSize(3)]` |  | OpenPBR specular_color: RGB tint of the specular reflection. |
 | `specular_roughness_anisotropy` | `float` |  | OpenPBR specular_roughness_anisotropy. |
-| `specular_weight` | `float` |  | OpenPBR specular_weight: scales the normal-incidence reflectance of `ior`. The removed `specular` parameter s is 2*s here, at ior 1.5. |
+| `specular_weight` | `float` |  | OpenPBR specular_weight: scales the normal-incidence reflectance of `ior`. The removed `specular` parameter s is 2*s here at ior 1.5 for dielectrics; metals keep 1 (their reflectance is base_color scaled by specular_weight, at most 1). |
 | `thin_walled` | `bool` |  | OpenPBR geometry_thin_walled: a closed thin shell rather than a solid. |
 | `transmission` | `float` |  | OpenPBR transmission_weight. |
 | `transmission_color` | `Annotated[list[float], FixedSize(3)]` |  | OpenPBR transmission_color: RGB tint of light passing through. |
@@ -358,6 +359,7 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 | `get_metallic` | method | `get_metallic(self) -> float` |  |  |
 | `get_metallic_texture` | method | `get_metallic_texture(self) -> RenderTexture2D` |  |  |
 | `get_normal_texture` | method | `get_normal_texture(self) -> RenderTexture2D` |  |  |
+| `get_occlusion_strength` | method | `get_occlusion_strength(self) -> float` |  |  |
 | `get_occlusion_texture` | method | `get_occlusion_texture(self) -> RenderTexture2D` |  |  |
 | `get_roughness` | method | `get_roughness(self) -> float` |  |  |
 | `get_roughness_texture` | method | `get_roughness_texture(self) -> RenderTexture2D` |  |  |
@@ -385,6 +387,7 @@ textured light rejects `texture=None` without mutation; detached lights accept i
 | `set_metallic` | method | `set_metallic(self, metallic: float) -> None` |  |  |
 | `set_metallic_texture` | method | `set_metallic_texture(self, texture: RenderTexture2D) -> None` |  |  |
 | `set_normal_texture` | method | `set_normal_texture(self, texture: RenderTexture2D) -> None` |  |  |
+| `set_occlusion_strength` | method | `set_occlusion_strength(self, strength: float) -> None` |  |  |
 | `set_occlusion_texture` | method | `set_occlusion_texture(self, texture: RenderTexture2D) -> None` |  |  |
 | `set_roughness` | method | `set_roughness(self, roughness: float) -> None` |  |  |
 | `set_roughness_texture` | method | `set_roughness_texture(self, texture: RenderTexture2D) -> None` |  |  |

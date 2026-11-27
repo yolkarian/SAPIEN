@@ -36,11 +36,21 @@ vec4 sampleBilinear(vec2 uv, ivec2 size) {
   return mix(mix(c00, c10, f.x), mix(c01, c11, f.x), f.y);
 }
 
-vec2 distortUv(vec2 uv) {
-  vec2 p = uv * 2.0 - 1.0;
+// Centred coordinate of `uv` measured in pixels, one unit per half image height, so r^2 is a
+// circle on non-square images: x is scaled by the aspect ratio and divided back out below.
+vec2 centeredPixels(vec2 uv, ivec2 size) {
+  return (uv * 2.0 - 1.0) * vec2(float(size.x) / float(size.y), 1.0);
+}
+
+vec2 centeredToUv(vec2 p, ivec2 size) {
+  return p * vec2(float(size.y) / float(size.x), 1.0) * 0.5 + 0.5;
+}
+
+// Brown-Conrady radial distortion of a centred pixel-space position.
+vec2 distort(vec2 p, ivec2 size) {
   float r2 = dot(p, p);
   float scale = 1.0 + lensDistortionK1 * r2 + lensDistortionK2 * r2 * r2;
-  return (p * scale) * 0.5 + 0.5;
+  return centeredToUv(p * scale, size);
 }
 
 uint pcgHash(uint v) {
@@ -75,15 +85,19 @@ void main() {
   }
 
   vec2 uv = (vec2(pixel) + 0.5) / vec2(size);
-  vec2 p = uv * 2.0 - 1.0;
+  vec2 p = centeredPixels(uv, size);
   vec4 color;
 
   if (lensDistortionK1 != 0.0 || lensDistortionK2 != 0.0 || chromaticAberration != 0.0) {
-    vec2 uvG = distortUv(uv);
-    vec4 gSample = sampleBilinear(uvG, size);
+    vec4 gSample = sampleBilinear(distort(p, size), size);
     if (chromaticAberration != 0.0) {
-      vec2 uvR = distortUv(uv + p * chromaticAberration);
-      vec2 uvB = distortUv(uv - p * chromaticAberration);
+      // Radial red/blue offset. The 2x keeps the documented magnitude: in uv units the offset
+      // is p_uv * chromaticAberration, as before, but it now follows the pixel radius so it is
+      // circular on non-square images.
+      float red = 1.0 + 2.0 * chromaticAberration;
+      float blue = 1.0 - 2.0 * chromaticAberration;
+      vec2 uvR = distort(p * red, size);
+      vec2 uvB = distort(p * blue, size);
       color = vec4(sampleBilinear(uvR, size).r, gSample.g, sampleBilinear(uvB, size).b, gSample.a);
     } else {
       color = gSample;

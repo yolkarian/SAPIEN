@@ -8,6 +8,10 @@ import unittest
 import numpy as np
 import sapien
 
+try:
+    import torch
+except ImportError:  # pragma: no cover - the batched pictures are CUDA buffers
+    torch = None
 
 SIZE = 64
 
@@ -170,6 +174,421 @@ class RtMotionVectorAov(unittest.TestCase):
             sky5 = f5["Segmentation"][..., 1] == 0
             self.assertTrue(sky5.any())
             self.assertGreater(float(mv5[sky5, 0].mean()), 1.0)
+
+
+class RtFirstFrameMotion(unittest.TestCase):
+    """Nodes created mid-run report no motion on their first rendered frame: their previous
+    pose is the pose they were created at, not the origin or the zero matrix."""
+
+    def test_object_and_camera_added_mid_run_start_at_rest(self) -> None:
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([0.2, 0.2, 0.2])
+            # settle the scene once before anything is added
+            scene.update_render()
+
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(
+                half_size=[0.4, 0.4, 0.4],
+                material=sapien.render.RenderMaterial(base_color=[0.7, 0.3, 0.3, 1.0]),
+            )
+            box = builder.build_kinematic()
+            # a pose the creation-time update never sees: the render node starts at the origin
+            box.set_pose(sapien.Pose([0.0, 0.0, 0.5]))
+
+            camera = scene.add_camera(
+                "camera", SIZE, SIZE, 1.0, 0.1, 20.0, render_config=rt_config(spp=1, depth=1)
+            )
+            camera.entity.pose = sapien.Pose([-3.0, 0.3, 0.2])
+
+            pics = render_pictures(scene, camera, ("MotionVector", "Segmentation"))
+            mv = pics["MotionVector"]
+            seg = pics["Segmentation"][..., 1] > 0
+            self.assertTrue(seg.any(), "the box must be visible on its first frame")
+            # object motion is measured against the previous TLAS rows, camera motion against
+            # prevViewMatrix: both must be the current pose on the first frame
+            np.testing.assert_allclose(mv, 0.0, atol=1e-5)
+
+
+class RtSharedSceneMotion(unittest.TestCase):
+    def test_two_cameras_of_one_scene_see_the_same_object_motion(self) -> None:
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([0.2, 0.2, 0.2])
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(
+                half_size=[0.4, 0.4, 0.4],
+                material=sapien.render.RenderMaterial(base_color=[0.7, 0.3, 0.3, 1.0]),
+            )
+            box = builder.build_kinematic()
+
+            cameras = [
+                scene.add_camera(
+                    "camera", SIZE, SIZE, 1.0, 0.1, 20.0, render_config=rt_config(spp=1, depth=1)
+                )
+                for _ in range(2)
+            ]
+            cameras[0].entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+            cameras[1].entity.pose = sapien.Pose([-3.0, 0.5, 0.3])
+
+            # build both renderers and let their first frames settle
+            for camera in cameras:
+                render_pictures(scene, camera, ("MotionVector",))
+
+            # one object move, then both cameras and the first one again in the same step
+            box.set_pose(sapien.Pose([0.0, -0.3, 0.0]))
+            scene.update_render()
+            motions = []
+            for camera in [*cameras, cameras[0]]:
+                camera.take_picture()
+                motion = camera.get_picture("MotionVector").copy()
+                segmentation = camera.get_picture("Segmentation").copy()
+                self.assertTrue((segmentation[..., 1] > 0).any())
+                motions.append(motion[segmentation[..., 1] > 0].mean(axis=0))
+
+            # the object moved toward -Y by 0.3 m: +x in the image of a camera looking along +X
+            for motion in motions:
+                self.assertGreater(float(motion[0]), 2.0)
+            # A later frame of the same scene render version must not become its own previous
+            # frame: all three agree, including the repeat of the first camera.
+            for motion in motions[1:]:
+                np.testing.assert_allclose(
+                    motion, motions[0], atol=0.5 * abs(float(motions[0][0])), err_msg=str(motions)
+                )
+
+
+class RtTextureSwap(unittest.TestCase):
+    def test_a_replaced_base_color_texture_reaches_the_ray_tracer(self) -> None:
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([1.0, 1.0, 1.0])
+            material = sapien.render.RenderMaterial(
+                base_color=[1.0, 1.0, 1.0, 1.0], specular_weight=0.0, roughness=1.0
+            )
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(half_size=[0.4, 0.4, 0.4], material=material)
+            builder.build_kinematic()
+            camera = scene.add_camera(
+                "camera", SIZE, SIZE, 1.0, 0.1, 20.0, render_config=rt_config(spp=1, depth=2)
+            )
+            camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+
+            def centre() -> np.ndarray:
+                return render_pictures(scene, camera, ("HdrColor",))["HdrColor"][
+                    SIZE // 2, SIZE // 2, :3
+                ]
+
+            def flat(colour: tuple[int, int, int, int]) -> sapien.render.RenderTexture2D:
+                return sapien.render.RenderTexture2D(
+                    np.full((2, 2, 4), colour, np.uint8), "R8G8B8A8Unorm"
+                )
+
+            material.base_color_texture = flat((0, 255, 0, 255))
+            green = centre()
+            self.assertGreater(float(green[1]), max(float(green[0]), float(green[2])) + 0.2)
+
+            # textures[] is sized when the tables are built: dropping the texture and adding a
+            # new one before the next frame must rebuild and upload the new image, whatever
+            # address its SVTexture gets
+            material.base_color_texture = None
+            material.base_color_texture = flat((0, 0, 255, 255))
+            blue = centre()
+            self.assertGreater(float(blue[2]), max(float(blue[0]), float(blue[1])) + 0.2)
+
+
+class RtEmissionEditObjects(unittest.TestCase):
+    def test_segmentation_survives_an_emission_only_edit(self) -> None:
+        """An emission edit repacks the emissive light tables; the Objects buffer that carries
+        segmentation, transparency and flat shading must be refilled with them."""
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([0.2, 0.2, 0.2])
+            material = sapien.render.RenderMaterial(
+                emission=[1.0, 0.0, 0.0, 1.0], base_color=[0.0, 0.0, 0.0, 1.0]
+            )
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(half_size=[0.4, 0.4, 0.4], material=material)
+            builder.build_kinematic().set_pose(sapien.Pose([0.0, 0.0, 0.0]))
+
+            camera = scene.add_camera(
+                "camera", SIZE, SIZE, 1.0, 0.1, 20.0, render_config=rt_config(spp=1, depth=1)
+            )
+            camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+
+            before = render_pictures(scene, camera, ("Segmentation", "HdrColor"))["Segmentation"]
+            self.assertTrue((before[..., 1] > 0).any())
+
+            # An emission-only edit repacks the light tables and re-renders the same scene version
+            # with no update_render() in between: that is the path that used to leave the freshly
+            # allocated Objects buffer uninitialised.
+            material.emission = [0.0, 0.0, 1.0, 1.0]
+            camera.take_picture()
+            after = camera.get_picture("Segmentation").copy()
+            hdr = camera.get_picture("HdrColor").copy()
+            np.testing.assert_array_equal(after, before)
+            # the edit did reach the tracer, so this is not a stale frame
+            np.testing.assert_allclose(hdr[SIZE // 2, SIZE // 2, :3], [0.0, 0.0, 1.0], atol=0.02)
+
+
+class RtGroupedMotionVector(unittest.TestCase):
+    """Grouped cameras get their view matrices from the CUDA pose kernel, which must roll the
+    previous view into prevViewMatrix: MotionVector is the displacement since the last frame,
+    not since gpu_init()."""
+
+    def setUp(self) -> None:
+        if torch is None or not torch.cuda.is_available():
+            self.skipTest("grouped rendering requires a CUDA device and CUDA-enabled Torch")
+
+    def _scene_and_group(self, pose_mode: str):
+        scene = sapien.Scene([sapien.physx.PhysxCpuSystem(), sapien.render.RenderSystem()])
+        scene.set_ambient_light([0.2, 0.2, 0.2])
+        builder = scene.create_actor_builder()
+        builder.add_box_visual(
+            half_size=[0.4, 0.4, 0.4],
+            material=sapien.render.RenderMaterial(base_color=[0.7, 0.3, 0.3, 1.0]),
+        )
+        builder.build_kinematic().set_pose(sapien.Pose([0.0, 0.0, 0.0]))
+        camera = scene.add_camera(
+            "camera", SIZE, SIZE, 1.0, 0.1, 20.0, render_config=rt_config(spp=1, depth=1)
+        )
+        camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+        group = sapien.render.RenderSystemGroup([scene.render_system])
+        camera_group = group.create_camera_group([camera], ["MotionVector", "Segmentation"])
+        camera_group.set_pose_mode(camera, pose_mode)
+        group.gpu_init()
+        return scene, group, camera_group, camera
+
+    @staticmethod
+    def _box_motion(camera_group: "sapien.render.RenderCameraGroup") -> np.ndarray:
+        """Mean MotionVector over the box, ordered on the group's CUDA stream."""
+        motion = torch.from_dlpack(camera_group.get_picture_cuda("MotionVector")).cpu().numpy()
+        segmentation = torch.from_dlpack(
+            camera_group.get_picture_cuda("Segmentation")).cpu().numpy()
+        box = segmentation[0, ..., 1] > 0
+        assert box.any()
+        return motion[0][box].mean(axis=0)
+
+    def test_cuda_pose_motion_is_measured_from_the_previous_frame(self) -> None:
+        scene, group, camera_group, camera = self._scene_and_group("cuda")
+        try:
+            group.update_render()
+            camera_group.take_picture()
+            # nothing moved since gpu_init(): the first frame is at rest
+            np.testing.assert_allclose(self._box_motion(camera_group), 0.0, atol=1e-4)
+
+            # the camera moves toward -Y (its right): the static box shifts left in the image
+            camera_group.set_cuda_pose(camera, sapien.Pose([-3.0, -0.4, 0.0]))
+            group.update_render()
+            camera_group.take_picture()
+            moved = self._box_motion(camera_group)
+            self.assertLess(float(moved[0]), -2.0)
+
+            # the camera then holds still: the next frame must not repeat the move
+            group.update_render()
+            camera_group.take_picture()
+            np.testing.assert_allclose(self._box_motion(camera_group), 0.0, atol=1e-4)
+        finally:
+            group.close()
+            scene.close()
+
+    def test_cpu_pose_settles_to_zero_motion_after_the_move(self) -> None:
+        scene, group, camera_group, camera = self._scene_and_group("cpu")
+        try:
+            group.update_render()
+            camera_group.take_picture()
+            np.testing.assert_allclose(self._box_motion(camera_group), 0.0, atol=1e-4)
+
+            camera.entity.pose = sapien.Pose([-3.0, -0.4, 0.0])
+            group.update_render()
+            camera_group.take_picture()
+            self.assertLess(float(self._box_motion(camera_group)[0]), -2.0)
+
+            # one more update_render uploads the settled matrices: a camera that stopped moving
+            # reports zero motion from then on
+            group.update_render()
+            camera_group.take_picture()
+            np.testing.assert_allclose(self._box_motion(camera_group), 0.0, atol=1e-4)
+        finally:
+            group.close()
+            scene.close()
+
+
+class RtGroupedObjectMotion(unittest.TestCase):
+    """The grouped GPU path writes the TLAS instance rows from the CUDA pose buffer, so the
+    PrevTlasInstances snapshot must cover the same rows: MotionVector of a GPU-posed object is
+    its displacement since the previous frame, including on the first frame."""
+
+    HALF_SIZE = 0.4
+    HEIGHT = 0.4
+
+    def setUp(self) -> None:
+        if torch is None or not torch.cuda.is_available():
+            self.skipTest("grouped rendering requires a CUDA device and CUDA-enabled Torch")
+
+    @classmethod
+    def _scene(cls):
+        scene = sapien.Scene([sapien.physx.PhysxCpuSystem(), sapien.render.RenderSystem()])
+        scene.set_ambient_light([0.2, 0.2, 0.2])
+        builder = scene.create_actor_builder()
+        builder.add_box_visual(
+            half_size=[cls.HALF_SIZE] * 3,
+            material=sapien.render.RenderMaterial(base_color=[0.7, 0.3, 0.3, 1.0]),
+        )
+        actor = builder.build_kinematic()
+        # The CPU pose stays at the origin while the GPU pose row is authoritative: a body whose
+        # pose comes from CUDA must not inherit the stale CPU history as its previous frame.
+        actor.set_pose(sapien.Pose([0.0, 0.0, 0.0]))
+        body = actor.find_component_by_type(sapien.render.RenderBodyComponent)
+        body.render_shapes[0].set_gpu_pose_batch_index(0)
+        return scene, actor
+
+    @classmethod
+    def _cameras(cls, scene, count: int):
+        cameras = [
+            scene.add_camera(
+                "camera", SIZE, SIZE, 1.0, 0.1, 20.0, render_config=rt_config(spp=1, depth=1)
+            )
+            for _ in range(count)
+        ]
+        for index, camera in enumerate(cameras):
+            camera.entity.pose = sapien.Pose([-3.0, 0.6 * index, 0.0])
+        return cameras
+
+    @staticmethod
+    def _poses(height: float, y: float) -> "torch.Tensor":
+        return torch.tensor(
+            [[0.0, y, height, 1.0, 0.0, 0.0, 0.0]], device="cuda", dtype=torch.float32
+        )
+
+    @staticmethod
+    def _box_pictures(camera_group, row: int = 0):
+        """(MotionVector, box mask) of camera `row`, ordered on the group's CUDA stream."""
+        motion = torch.from_dlpack(camera_group.get_picture_cuda("MotionVector")).cpu().numpy()
+        segmentation = torch.from_dlpack(
+            camera_group.get_picture_cuda("Segmentation")).cpu().numpy()
+        box = segmentation[row, ..., 1] > 0
+        assert box.any(), "the box must be visible"
+        return motion[row][box].mean(axis=0), box
+
+    def test_gpu_posed_object_motion_is_measured_from_the_previous_frame(self) -> None:
+        scene, _ = self._scene()
+        (camera,) = self._cameras(scene, 1)
+        group = sapien.render.RenderSystemGroup([scene.render_system])
+        camera_group = group.create_camera_group([camera], ["MotionVector", "Segmentation"])
+        poses = self._poses(self.HEIGHT, 0.0)
+        group.set_cuda_poses(sapien.CudaArray(poses))
+        group.gpu_init()
+        try:
+            # nothing has moved since gpu_init(): the first frame is at rest
+            group.update_render()
+            camera_group.take_picture()
+            np.testing.assert_allclose(self._box_pictures(camera_group)[0], 0.0, atol=1e-4)
+
+            # the object moves toward -Y, which is +x in the image of a camera looking along +X
+            dy = -0.3
+            poses[0, 1] = dy
+            group.update_render()
+            camera_group.take_picture()
+            moved, _ = self._box_pictures(camera_group)
+            fx = camera.get_intrinsic_matrix()[0, 0]
+            front_z = 3.0 - self.HALF_SIZE
+            self.assertGreater(float(moved[0]), 2.0)
+            np.testing.assert_allclose(
+                moved[0], -dy * fx / front_z, rtol=0.3,
+                err_msg=f"expected the analytic pinhole displacement, got {moved}",
+            )
+
+            # the object holds still: the next frame must not repeat the move
+            group.update_render()
+            camera_group.take_picture()
+            np.testing.assert_allclose(self._box_pictures(camera_group)[0], 0.0, atol=1e-4)
+        finally:
+            del poses
+            group.close()
+            scene.close()
+
+    def test_two_cameras_of_one_group_see_the_same_object_motion(self) -> None:
+        scene, _ = self._scene()
+        cameras = self._cameras(scene, 2)
+        group = sapien.render.RenderSystemGroup([scene.render_system])
+        camera_group = group.create_camera_group(
+            cameras, ["MotionVector", "Segmentation"])
+        poses = self._poses(self.HEIGHT, 0.0)
+        group.set_cuda_poses(sapien.CudaArray(poses))
+        group.gpu_init()
+        try:
+            group.update_render()
+            camera_group.take_picture()
+            for row in range(2):
+                np.testing.assert_allclose(
+                    self._box_pictures(camera_group, row)[0], 0.0, atol=1e-4)
+
+            # one object move. Cameras render one after another inside one group frame: neither
+            # may overwrite the other's previous instance rows with its own current ones.
+            poses[0, 1] = -0.3
+            group.update_render()
+            camera_group.take_picture()
+            motions = [self._box_pictures(camera_group, row)[0] for row in range(2)]
+            for motion in motions:
+                self.assertGreater(float(motion[0]), 2.0)
+            np.testing.assert_allclose(
+                motions[1][0], motions[0][0], rtol=0.25, err_msg=str(motions)
+            )
+        finally:
+            del poses
+            group.close()
+            scene.close()
+
+
+class RtPassThroughAov(unittest.TestCase):
+    def test_camera_ray_through_a_cutout_light_is_direct(self) -> None:
+        """An alpha-cutout quad in front of a Lambertian wall: the wall is the camera ray's own
+        vertex, so its light belongs to DiffuseDirect and never to SpecularIndirect."""
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([0.0, 0.0, 0.0])
+            wall = scene.create_actor_builder()
+            wall.add_box_visual(
+                half_size=[0.05, 2.0, 2.0],
+                material=sapien.render.RenderMaterial(
+                    base_color=[0.8, 0.8, 0.8, 1.0], specular_weight=0.0, roughness=1.0
+                ),
+            )
+            wall.build_kinematic().set_pose(sapien.Pose([2.0, 0.0, 0.0]))
+
+            # base_color.a is geometry_opacity: a fully open quad the path passes straight through
+            cutout = scene.create_actor_builder()
+            cutout.add_box_visual(
+                half_size=[0.01, 2.0, 2.0],
+                material=sapien.render.RenderMaterial(base_color=[1.0, 1.0, 1.0, 0.0]),
+            )
+            cutout.build_kinematic().set_pose(sapien.Pose([0.0, 0.0, 0.0]))
+
+            # travelling toward +X, so the face of the wall the camera sees is lit
+            scene.add_directional_light([1.0, 0.0, 0.0], [3.0, 3.0, 3.0], shadow=False)
+            camera = scene.add_camera(
+                "camera", SIZE, SIZE, 1.0, 0.1, 20.0, render_config=rt_config(spp=1, depth=2)
+            )
+            camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+
+            pics = render_pictures(
+                scene,
+                camera,
+                ("HdrColor", "Emission", "DiffuseDirect", "SpecularDirect", "DiffuseIndirect",
+                 "SpecularIndirect"),
+                frames=4,
+            )
+            total = (
+                pics["Emission"][..., :3]
+                + pics["DiffuseDirect"][..., :3]
+                + pics["SpecularDirect"][..., :3]
+                + pics["DiffuseIndirect"][..., :3]
+                + pics["SpecularIndirect"][..., :3]
+            )
+            np.testing.assert_allclose(total, pics["HdrColor"][..., :3], rtol=1e-4, atol=1e-4)
+
+            # sample the wall behind the middle of the cutout
+            centre = (slice(SIZE // 2 - 8, SIZE // 2 + 8), slice(SIZE // 2 - 8, SIZE // 2 + 8))
+            direct = pics["DiffuseDirect"][centre][..., :3]
+            self.assertGreater(float(direct.mean()), 0.2)
+            np.testing.assert_allclose(pics["SpecularDirect"][centre][..., :3], 0.0, atol=1e-6)
+            np.testing.assert_allclose(pics["SpecularIndirect"][centre][..., :3], 0.0, atol=1e-6)
+            np.testing.assert_allclose(pics["DiffuseIndirect"][centre][..., :3], 0.0, atol=1e-6)
 
 
 class RtRadianceSplitAov(unittest.TestCase):

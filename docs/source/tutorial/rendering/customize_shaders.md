@@ -177,8 +177,13 @@ and data inspection:
 
 ```python
 camera.set_property("exposure", 1.0)
-camera.set_property("toneMapper", 2)  # 0: gamma 2.2, 1: sRGB, 2: ACES + sRGB
+camera.set_property("toneMapper", 2)
 ```
+
+`toneMapper` selects the curve: `0` gamma 2.2, `1` sRGB, `2` ACES fitted + sRGB
+(the default), `3` Khronos PBR Neutral + sRGB, `4` AgX + sRGB and `5` Filmic +
+sRGB (Hable). The parameter's `description` in `pack.json`, reported through
+`RenderConfig.parameters`, spells out the same list.
 
 These are uniform parameters of the pack's `pack.json`, applied from the
 `RenderConfig` at creation; `camera.set_property` overrides one at runtime.
@@ -198,14 +203,9 @@ lighting, visible dielectric reflections, and a sky/ground background instead
 of sampling the renderer's black placeholder cubemap. Calling
 `scene.set_environment_map(...)` replaces this fallback.
 
-The default raster shader also applies screen-space ambient occlusion (SSAO) to
-indirect light. Its camera properties can be tuned per camera, or the effect
-can be disabled by setting its strength to zero:
-
-The built-in `default` and `vr_default` packs also run a half-resolution `ao`
-pass (`ao.vert` / `ao.frag`, writing `AmbientOcclusion` at `ceil(W/2) × ceil(H/2)`)
-between `gbuffer` and `deferred` for Ground-Truth Ambient Occlusion (GTAO),
-bilaterally filtered and upsampled by `deferred.frag`.
+The default raster shader applies half-resolution Ground-Truth Ambient Occlusion
+(GTAO) to indirect light. Its camera properties can be tuned per camera, or the
+effect can be disabled by setting its strength to zero:
 
 ```python
 camera.set_property("ambientOcclusionStrength", 0.65)
@@ -213,7 +213,10 @@ camera.set_property("ambientOcclusionRadius", 0.3)  # scene units
 # camera.set_property("ambientOcclusionStrength", 0.0)
 ```
 
-SSAO supplies local contact shading, but cast shadows still require a light
+The built-in `default` and `vr_default` packs run the `ao` pass (`ao.vert` /
+`ao.frag`, writing `AmbientOcclusion` at `ceil(W/2) × ceil(H/2)`) between `gbuffer`
+and `deferred`; `deferred.frag` filters it against depth and upsamples it. AO
+supplies local contact shading, but cast shadows still require a light
 created with `shadow=True`. A useful starting point for a meter-scale robotics
 scene is:
 
@@ -386,8 +389,27 @@ after `gpu_init()` and raises `RuntimeError` instead.
 `"post"` in `pack.json` lists compute passes that run in the listed order, each
 reading the colour the previous one wrote. A pass `name` is the file
 `<pack>/post/<name>.comp` if the pack ships it, else the built-in
-`vulkan_shader/post/<name>.comp`. The built-in pass is `tonemap` (exposure, tone
-curve, display encoding; parameters `exposure` and `toneMapper`).
+`vulkan_shader/post/<name>.comp`.
+
+The built-in passes, in chain order for the `rt` pack, are:
+
+| Pass | Effect | Parameters (neutral value) |
+|---|---|---|
+| `bloom` | soft-knee thresholded gaussian glow added in linear HDR | `bloomIntensity` (0, off), `bloomThreshold` (1), `bloomRadius` (4 px, 0.5–8), `bloomKnee` (0.5) |
+| `color_grade` | EV exposure, Bradford white balance, ASC CDL, contrast, saturation | `exposureEV` (0), `whiteBalanceTemp` (6500 K), `whiteBalanceTint` (0), `contrast` (1), `saturation` (1), `cdlSlope` (1), `cdlOffset` (0), `cdlPower` (1) |
+| `tonemap` | exposure, tone curve, display encoding | `exposure` (1), `toneMapper` (2) |
+| `lens` | Brown-Conrady distortion, chromatic aberration, vignette, film grain, sensor noise | `lensDistortionK1` (0), `lensDistortionK2` (0), `chromaticAberration` (0), `vignetteStrength` (0), `vignetteSmoothness` (0.5), `filmGrain` (0), `sensorReadNoise` (0), `sensorShotNoise` (0), `noiseSeed` (0) |
+| `fxaa` | FXAA 3.11 edge smoothing on display-referred colour | `fxaaEdgeThreshold` (0.125), `fxaaSubpix` (0.75) |
+
+The neutral values are seeded inside the post chain, so a pass listed without
+its parameters declared in `pack.json` renders as identity and a pass the
+shader declares but `pack.json` does not is simply not tunable: to expose one,
+declare it as a uniform parameter of `pack.json`. A parameter whose neutral
+value is not zero (`cdlSlope`, `toneMapper`, …) therefore never falls back to
+the zero-filled push constant. Every lens effect is radial in pixels, so the
+distortion, the chromatic aberration and the vignette are circular on
+non-square images; `chromaticAberration` scales the green pixel radius by
+`1 ± 2 ×` its value for the red and blue channels.
 
 | Pack | First pass reads | Last pass writes |
 |---|---|---|
@@ -429,6 +451,9 @@ void main() {
   `RenderConfig` or `camera.set_property`. Changing one keeps the samples a
   ray-tracing camera accumulated and does not rebuild rasterization pipelines.
   A name used by several passes is one parameter.
+- A pass's push-constant member that `pack.json` does not declare is not
+  tunable, so a pass is only adjustable through the parameters its pack
+  declares; the built-in passes keep their neutral defaults when undeclared.
 - Dispatch covers the image rounded up to the local size, so skip pixels
   outside it as above.
 

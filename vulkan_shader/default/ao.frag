@@ -17,7 +17,6 @@ layout(location = 0) out float outAmbientOcclusion;
 
 void main() {
   outAmbientOcclusion = sapienComputeGTAO(
-      samplerGbufferDepth, samplerNormal, inUV, gl_FragCoord.xy,
-      cameraBuffer.projectionMatrix, cameraBuffer.projectionMatrixInverse,
-      ambientOcclusionRadius, ambientOcclusionStrength);
+      samplerGbufferDepth, samplerNormal, gl_FragCoord.xy, cameraBuffer.projectionMatrix,
+      cameraBuffer.projectionMatrixInverse, ambientOcclusionRadius, ambientOcclusionStrength);
 }

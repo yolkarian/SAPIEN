@@ -33,7 +33,7 @@ struct Material {
   float coatIor;
   float fuzzRoughness;
   int thinWalled;
-  int padding0;
+  float occlusionStrength; // glTF occlusionTexture.strength: mix(1, texture, strength)
   int padding1;
   vec4 textureTransforms[7];
   int baseColorTexture;

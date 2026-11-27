@@ -275,6 +275,16 @@ Surface emptySurface() {
   return surface;
 }
 
+/** the component of `tangent` orthogonal to `normal`, or an arbitrary one when it vanishes */
+vec3 orthogonalTangent(vec3 normal, vec3 tangent) {
+  tangent -= normal * dot(normal, tangent);
+  if (dot(tangent, tangent) < 1e-6) {
+    vec3 axis = abs(normal.x) < 0.95 ? vec3(1, 0, 0) : vec3(0, 1, 0);
+    tangent = cross(axis, normal);
+  }
+  return normalize(tangent);
+}
+
 /** fill the material terms of `surface`; returns the alpha of the hit texel */
 float shadeTriangleMaterial(uint materialIndex, vec2 uv, inout Surface surface) {
   Material material = materials.m[materialIndex];
@@ -406,12 +416,7 @@ Surface traceScene(int envIndex, vec3 origin, vec3 direction, float tMin) {
         continue;
       }
 
-      worldTangent -= worldShadingNormal * dot(worldShadingNormal, worldTangent);
-      if (dot(worldTangent, worldTangent) < 1e-6) {
-        vec3 axis = abs(worldShadingNormal.x) < 0.95 ? vec3(1, 0, 0) : vec3(0, 1, 0);
-        worldTangent = cross(axis, worldShadingNormal);
-      }
-      worldTangent = normalize(worldTangent);
+      worldTangent = orthogonalTangent(worldShadingNormal, worldTangent);
       vec3 worldBitangent = normalize(cross(worldShadingNormal, worldTangent));
       if (material.normalTexture >= 0) {
         vec3 texNormal = normalize(texture(textures[nonuniformEXT(material.normalTexture)],
@@ -419,7 +424,11 @@ Surface traceScene(int envIndex, vec3 origin, vec3 direction, float tMin) {
                                               material.textureTransforms[2].xy).xyz * 2.0 - 1.0);
         vec3 shaded = mat3(worldTangent, worldBitangent, worldShadingNormal) * texNormal;
         if (dot(shaded, worldGeometricNormal) > 0.0) {
+          // surfaceBsdf projects L and wo onto (T, B, N): the frame must be orthonormal around
+          // the mapped normal, or the BSDF is evaluated in a skewed frame
           worldShadingNormal = normalize(shaded);
+          worldTangent = orthogonalTangent(worldShadingNormal, worldTangent);
+          worldBitangent = normalize(cross(worldShadingNormal, worldTangent));
         }
       }
 
@@ -513,7 +522,7 @@ vec3 surfaceAmbientAlbedo(Surface surface, vec3 wo) {
   OpenPBR m = surface.material;
   vec3 diffuse = m.base * ((1.0 - m.metallic) * (1.0 - m.transmission));
 #if defined(SHADING_PBR)
-  float fd = openpbrFresnel(wo.z, m.eta);
+  float fd = openpbrFresnel(wo.z, m.baseEta);
   vec3 base = diffuse * (1.0 - fd) +
               m.metallic * openpbrMetalFresnel(wo.z, m.base, m.specularColor, m.specularWeight) +
               (1.0 - m.metallic) * fd * m.specularColor;

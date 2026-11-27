@@ -125,6 +125,9 @@ void main() {
     ray.emission = vec3(0.0);
     ray.directDiffuse = vec3(0.0);
     ray.directSpecular = vec3(0.0);
+    // the path goes straight on through the uncovered part: not a scattering event, so the AOV
+    // class of the vertex the ray left carries on
+    ray.scattered = 0;
     return;
   }
 
@@ -164,4 +167,5 @@ void main() {
   ray.normal = worldShadingNormal;
   ray.albedo = base.rgb;
   ray.segmentation = obj.segmentation;
+  ray.scattered = 1;
 }

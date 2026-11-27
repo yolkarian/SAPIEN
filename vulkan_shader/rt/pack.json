@@ -94,8 +94,8 @@
       "type": "float",
       "default": 4.0,
       "minimum": 0.5,
-      "maximum": 32.0,
-      "description": "Bloom gather radius in pixels."
+      "maximum": 8.0,
+      "description": "Bloom gather radius in pixels; at most 144 taps, so the glow stays smooth up to 8."
     },
     "bloomKnee": {
       "kind": "uniform",
@@ -177,7 +177,7 @@
       "kind": "uniform",
       "type": "float",
       "default": 0.0,
-      "description": "Radial red/blue channel UV offset for lateral chromatic aberration (0 is none)."
+      "description": "Radial lateral chromatic aberration: the red and blue channels are sampled at (1 +/- 2 x this) times the pixel radius of green (0 is none)."
     },
     "vignetteStrength": {
       "kind": "uniform",

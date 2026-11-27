@@ -39,12 +39,6 @@ RTRenderer::RTRenderer(std::shared_ptr<core::Context> context, std::string const
   mCustomPropertiesFloat["focusPlane"] = 1.f;
 
   mPostChain = std::make_unique<PostChain>(mContext, postPasses, mShaderDefines);
-  if (mPostChain->getPropertyType("toneMapper") == CustomPropertyType::eInt) {
-    mPostChain->setProperty("toneMapper", 2);
-  }
-  if (mPostChain->getPropertyType("exposure") == CustomPropertyType::eFloat) {
-    mPostChain->setProperty("exposure", 1.f);
-  }
 
   mSceneAccessFence =
       mContext->getDevice().createFenceUnique({vk::FenceCreateFlagBits::eSignaled});
@@ -191,8 +185,10 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
 
     mSceneVersion = scene->getVersion();
   } else if (emissionChanged) {
-    // the emissive light-sampling tables hold the radiance of the materials
+    // the emissive light-sampling tables hold the radiance of the materials; prepareScene()
+    // replaces the Objects buffer, and only updateObjects() fills the object metadata it holds
     prepareScene();
+    updateObjects();
   }
 
   if (mSceneRenderVersion != mScene->getRenderVersion() || mRequiresRebuild) {
@@ -407,28 +403,9 @@ void RTRenderer::recordRender() {
                                      mShaderPackInstance->getHitRegion(),
                                      mShaderPackInstance->getCallRegion(), mWidth, mHeight, 1);
 
-  if (mEffectiveExternalTransformUpdates && mScene->getTLAS() &&
-      mScene->hasRTPrevTLASInstanceBuffer()) {
-    // Snapshot external/CUDA instance transforms after tracing so the next frame sees them as
-    // PrevTlasInstances. CPU-managed scenes upload prevWorldModelMatrix directly in updateTLAS().
-    auto &src = mScene->getTLAS()->getInstanceBuffer();
-    auto &dst = mScene->getRTPrevTLASInstanceBuffer();
-    vk::DeviceSize copySize = std::min(src.getSize(), dst.getSize());
-    if (copySize > 0) {
-      vk::MemoryBarrier preCopy(vk::AccessFlagBits::eShaderRead,
-                                vk::AccessFlagBits::eTransferWrite);
-      mRenderCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eRayTracingShaderKHR,
-                                            vk::PipelineStageFlagBits::eTransfer, {}, preCopy, {},
-                                            {});
-      mRenderCommandBuffer->copyBuffer(src.getVulkanBuffer(), dst.getVulkanBuffer(),
-                                       vk::BufferCopy(0, 0, copySize));
-      vk::MemoryBarrier postCopy(vk::AccessFlagBits::eTransferWrite,
-                                 vk::AccessFlagBits::eShaderRead);
-      mRenderCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                                            vk::PipelineStageFlagBits::eRayTracingShaderKHR, {},
-                                            postCopy, {}, {});
-    }
-  }
+  // PrevTlasInstances is snapshotted once per render version right before the trace is submitted
+  // (Scene::submitPrevTLASSnapshot), so every camera of the scene reads the same previous frame
+  // and a second trace in one step does not see its own transforms as prev.
 
   // make sure ray tracing is done
 
@@ -762,6 +739,7 @@ void RTRenderer::render(scene::Camera &camera, std::vector<vk::Semaphore> const 
 
   prepareRender(camera);
 
+  mScene->submitPrevTLASSnapshot();
   mContext->getDevice().resetFences(mSceneAccessFence.get());
   mContext->getQueue().submit(mRenderCommandBuffer.get(), {}, {}, {}, mSceneAccessFence.get());
 
@@ -791,7 +769,11 @@ void RTRenderer::render(
 
   prepareRender(camera);
 
-  mContext->getQueue().submit(mRenderCommandBuffer.get(), {}, {}, {}, {});
+  mScene->submitPrevTLASSnapshot();
+  // Mirror the fence overload: the scene waits on this fence before it rewrites buffers the
+  // trace rays read, so this submit must signal it too.
+  mContext->getDevice().resetFences(mSceneAccessFence.get());
+  mContext->getQueue().submit(mRenderCommandBuffer.get(), {}, {}, {}, mSceneAccessFence.get());
 #ifdef SVULKAN2_CUDA_INTEROP
   if (mDenoiser) {
     mDenoiser->denoise(mRenderImages.at(mDenoiseColorName)->getImage(),
@@ -1024,6 +1006,17 @@ core::Buffer &RTRenderer::getCameraBuffer() {
     throw std::runtime_error("camera buffer is not initialized");
   }
   return *mCameraBuffer;
+}
+
+std::pair<int, int> RTRenderer::getCameraPrevViewOffsets() const {
+  auto &elements = mCameraBufferLayout.elements;
+  auto view = elements.find("prevViewMatrix");
+  auto inverse = elements.find("prevViewMatrixInverse");
+  if (view == elements.end() || inverse == elements.end()) {
+    return {-1, -1};
+  }
+  return {static_cast<int>(view->second.offset / sizeof(float)),
+          static_cast<int>(inverse->second.offset / sizeof(float))};
 }
 
 void RTRenderer::setExternalCameraUpdatesEnabled(bool enable) {

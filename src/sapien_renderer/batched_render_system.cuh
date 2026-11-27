@@ -17,6 +17,12 @@ struct CameraData {
   void *buffer;
   Pose localPose;
   int poseIndex;
+  // float offsets in `buffer` of the prev view matrix and its inverse: the kernel copies the
+  // current view matrices there before overwriting them, so MotionVector sees the previous
+  // frame. -1 when the camera buffer layout has no such slots (the raster camera buffer puts
+  // width at float 64, so the offset must never be assumed).
+  int prevViewOffset;
+  int prevViewInverseOffset;
 };
 
 /**
@@ -33,7 +39,9 @@ void update_object_transforms(float **scene_transform_buffers, float **rt_instan
                               int transform_stride, RenderShapeData *render_shapes, float *poses,
                               int pose_stride, int count, CUstream_st *stream);
 
-/** Camera buffer stores the view matrix at float 0 and inverse view matrix at float 32. */
+/** Camera buffer stores the view matrix at float 0 and inverse view matrix at float 32. When
+ *  CameraData names prev-slot offsets, the kernel first copies the current view matrices into
+ *  them, so the shader's MotionVector sees the transforms of the previous frame. */
 void update_camera_transforms(CameraData *cameras, float *poses, int pose_stride, int count,
                               CUstream_st *stream);
 

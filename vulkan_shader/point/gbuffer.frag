@@ -75,7 +75,7 @@ void main() {
   // occlusion of the indirect light, from glTF's occlusion texture (red channel)
   outSpecular.a = 1.0;
   if (material.occlusionTexture >= 0) {
-    outSpecular.a = texture(textures[nonuniformEXT(material.occlusionTexture)], materialUV(material.textureTransforms[6], inUV)).r;
+    outSpecular.a = mix(1.0, texture(textures[nonuniformEXT(material.occlusionTexture)], materialUV(material.textureTransforms[6], inUV)).r, material.occlusionStrength);
   }
 
   if (instance.shadeFlat == 0) {

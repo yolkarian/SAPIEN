@@ -175,11 +175,14 @@ private:
   std::map<std::string, std::unique_ptr<core::Buffer>> mPictureBuffers;
   vk::DeviceSize mPictureBytes{};
 
-  // the group's materials in materials[] order; mTextureSlots maps a texture to textures[]
+  // the group's materials in materials[] order; mTextureSlots maps a texture to textures[].
+  // The keys own the textures: mTextures holds only image views, and a raw-pointer key would let
+  // a freed texture's address be reused by a new one (skipping both the promised error and the
+  // upload of the new image).
   std::vector<std::shared_ptr<resource::SVMetallicMaterial>> mMaterials;
   std::unique_ptr<core::Buffer> mMaterialBuffer;
   uint64_t mMaterialVersion{}; // SVMetallicMaterial global version last packed
-  std::unordered_map<resource::SVTexture const *, int> mTextureSlots;
+  std::unordered_map<std::shared_ptr<resource::SVTexture>, int> mTextureSlots;
   std::vector<std::pair<vk::ImageView, vk::Sampler>> mTextures;
   std::unique_ptr<core::Buffer> mCameraBuffer;
   vk::DeviceSize mCameraSlotSize{};

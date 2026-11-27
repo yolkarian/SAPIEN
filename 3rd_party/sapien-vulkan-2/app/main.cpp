@@ -35,16 +35,22 @@ static void window_close_callback(GLFWwindow *window) {
   glfwSetWindowShouldClose(window, GLFW_FALSE);
 }
 
+static std::shared_ptr<resource::SVMetallicMaterial>
+createMaterial(glm::vec4 baseColor, float roughness = 0.45f, float metallic = 0.f) {
+  auto material = std::make_shared<resource::SVMetallicMaterial>();
+  material->setBaseColor(baseColor);
+  material->setRoughness(roughness);
+  material->setMetallic(metallic);
+  return material;
+}
+
 static void setupSphereArray(svulkan2::scene::Scene &scene) {
   for (uint32_t i = 0; i < 3; ++i) {
     for (uint32_t j = 0; j < 3; ++j) {
       float metallic = i / 5.f;
       float roughness = j / 5.f;
-      float specular = 0.5f;
-      auto shape = resource::SVShape::Create(
-          resource::SVMesh::CreateUVSphere(32, 16),
-          std::make_shared<resource::SVMetallicMaterial>(
-              glm::vec4{0, 0, 0, 1}, glm::vec4{1, 1, 1, 1}, specular, roughness, metallic));
+      auto shape = resource::SVShape::Create(resource::SVMesh::CreateUVSphere(32, 16),
+                                             createMaterial({1, 1, 1, 1}, roughness, metallic));
       auto &o = scene.addObject(
           resource::SVModel::FromData({shape}),
           {.position = {((int)i - 1) / 8.f, 0.2 + j / 8.f, 0}, .scale = {0.05, 0.05, 0.05}});
@@ -55,9 +61,7 @@ static void setupSphereArray(svulkan2::scene::Scene &scene) {
 
 static void setupGround(svulkan2::scene::Scene &scene) {
   auto plane = resource::SVMesh::CreateYZPlane();
-  auto shape =
-      resource::SVShape::Create(plane, std::make_shared<resource::SVMetallicMaterial>(
-                                           glm::vec4{0, 0, 0, 1}, glm::vec4{0.8, 0.8, 0.8, 1.0}));
+  auto shape = resource::SVShape::Create(plane, createMaterial({0.8, 0.8, 0.8, 1.0}));
   scene.addObject(resource::SVModel::FromData({shape}),
                   {.rotation = {0.7071068, 0, 0, 0.7071068}, .scale = {10, 10, 10}});
 }

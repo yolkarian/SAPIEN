@@ -218,8 +218,14 @@ void IntegratorTables::build(core::Context &context, scene::Scene &scene,
       glm::vec4 emission = material->getEmission();
       glm::vec3 radiance = glm::vec3(emission) * emission.w;
       auto const &mesh = shape->mesh;
-      bool emissive = luminance(radiance) > 0.f &&
-                      !material->getTexture(resource::SVMetallicMaterial::eEmission) && mesh &&
+      // Emission textures, layered emission (a coat or fuzz dims it by the emission factor) and a
+      // partly transparent base (stochastic coverage) make the visible emission vary per
+      // direction or per sample: such meshes are left to BSDF sampling (base -1), where the
+      // closest-hit shader applies the same factor, which also keeps their contribution unbiased.
+      bool modulated = material->getTexture(resource::SVMetallicMaterial::eEmission) ||
+                       material->getCoatWeight() > 0.f || material->getFuzzWeight() > 0.f ||
+                       material->getBaseColor().a < 1.f || object->getTransparency() > 0.f;
+      bool emissive = luminance(radiance) > 0.f && !modulated && mesh &&
                       mesh->getTriangleCount() > 0 && mesh->hasVertexAttribute("position");
       bases.push_back(emissive ? int32_t(weights.size()) : -1);
       if (!emissive) {

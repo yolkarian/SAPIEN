@@ -6,6 +6,7 @@
 #include <atomic>
 #include <map>
 #include <mutex>
+#include <utility>
 struct CUstream_st;
 
 namespace svulkan2 {
@@ -88,6 +89,10 @@ public:
   /** device pointer of `camera`'s camera data, where the CUDA pose kernels write its view
    *  matrices: its renderer's camera buffer, or its row of the group renderer's camera table */
   void *internalGetCameraCudaBuffer(SapienRenderCameraComponent &camera);
+  /** float offsets of prevViewMatrix/prevViewMatrixInverse in that camera data, {-1, -1} when the
+   *  buffer has no prev slots (raster camera buffers, batched camera rows) */
+  std::pair<int, int>
+  internalGetCameraPrevViewOffsets(SapienRenderCameraComponent &camera);
 
   ~BatchedCamera();
 
@@ -122,6 +127,9 @@ private:
   CudaArray mCudaRowCameraDataBuffer;
   // camera state versions covered by the last CPU upload, parallel to mCameras
   std::vector<uint64_t> mUploadedStateVersions;
+  // a cpu-mode camera whose last upload still left prev != view: the next update uploads the
+  // settled matrices so a camera that stopped moving reports zero MotionVector
+  std::vector<bool> mPendingMotionSettle;
 
   // re-records mCommandBuffer against the cameras' current render target images
   void recordCopyCommands();

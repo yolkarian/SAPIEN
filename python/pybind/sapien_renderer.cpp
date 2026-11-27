@@ -1129,7 +1129,9 @@ version moved; an unchanged version means zero per-frame light uploads.)doc")
       .def_property("specular_weight", &SapienRenderMaterial::getSpecularWeight,
                     &SapienRenderMaterial::setSpecularWeight,
                     "OpenPBR specular_weight: scales the normal-incidence reflectance of `ior`. "
-                    "A previous specular value s maps to specular_weight 2*s at ior 1.5.")
+                    "A previous specular value s maps to specular_weight 2*s at ior 1.5 for "
+                    "dielectrics; metals keep 1, since their reflectance is base_color scaled "
+                    "by specular_weight (at most 1).")
       .def("get_specular_weight", &SapienRenderMaterial::getSpecularWeight)
       .def("set_specular_weight", &SapienRenderMaterial::setSpecularWeight, py::arg("weight"))
       .def_property("specular_color", &SapienRenderMaterial::getSpecularColor,
@@ -1244,6 +1246,13 @@ version moved; an unchanged version means zero per-frame light uploads.)doc")
       .def("get_occlusion_texture", &SapienRenderMaterial::getOcclusionTexture)
       .def("set_occlusion_texture", &SapienRenderMaterial::setOcclusionTexture,
            py::arg("texture"))
+      .def_property("occlusion_strength", &SapienRenderMaterial::getOcclusionStrength,
+                    &SapienRenderMaterial::setOcclusionStrength,
+                    "How much the occlusion texture darkens ambient and image-based light: "
+                    "occlusion = mix(1, texel, strength), glTF's occlusionTexture.strength.")
+      .def("get_occlusion_strength", &SapienRenderMaterial::getOcclusionStrength)
+      .def("set_occlusion_strength", &SapienRenderMaterial::setOcclusionStrength,
+           py::arg("strength"))
       .def("__eq__", [](SapienRenderMaterial &self, SapienRenderMaterial &other) {
         return self.getMaterial() == other.getMaterial();
       });

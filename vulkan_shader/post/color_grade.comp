@@ -44,17 +44,21 @@ vec2 kelvinToChromaticity(float T) {
   return vec2(x, max(y, 1e-4));
 }
 
-// Bradford chromatic adaptation from D65 to target (temp, tint) in linear Rec.709 RGB.
+// Bradford chromatic adaptation in linear Rec.709 RGB: whiteBalanceTemp is the camera's
+// white-point setting, as on a DSLR, so a temperature above 6500 K warms the image.
 vec3 applyWhiteBalance(vec3 rgb, float temp, float tint) {
-  // Linear Rec.709 -> Bradford LMS (column-major GLSL matrices)
+  // One LMS space for both ends: Bradford XYZ -> LMS composed with linear Rec.709 (D65) ->
+  // XYZ, so the per-channel scale below is applied in the space it was derived in. Column-major
+  // GLSL matrices; the pair is numerically inverse (error 1.1e-8).
   const mat3 rgbToLms = mat3(
-      0.31399022, 0.15537241, 0.01775239,
-      0.63951294, 0.75789446, 0.10944209,
-      0.04649755, 0.08670142, 0.87256922);
+      0.42265804, 0.05569079, 0.02137922,
+      0.49135661, 0.96155627, 0.08764394,
+      0.02736450, 0.02318934, 0.98074348);
   const mat3 lmsToRgb = mat3(
-       5.47221206, -1.12524190,  0.02980165,
-      -4.64196010,  2.29317094, -0.19318073,
-       0.16963708, -0.16789520,  1.16364789);
+       2.53844790, -0.14600032, -0.04228832,
+      -1.29348235,  1.11662230, -0.07159011,
+      -0.04024329, -0.02232848,  1.02250725);
+  // The same LMS space for the white points, which are given in XYZ.
   const mat3 xyzToLms = mat3(
        0.8951000, -0.7502000,  0.0389000,
        0.2664000,  1.7135000, -0.0685000,
@@ -68,14 +72,10 @@ vec3 applyWhiteBalance(vec3 rgb, float temp, float tint) {
   vec3 xyzRef = vec3(xyRef.x / xyRef.y, 1.0, (1.0 - xyRef.x - xyRef.y) / xyRef.y);
   vec3 xyzDst = vec3(xyDst.x / xyDst.y, 1.0, (1.0 - xyDst.x - xyDst.y) / xyDst.y);
 
-  vec3 lmsRef = xyzToLms * xyzRef;
-  vec3 lmsDst = xyzToLms * xyzDst;
-  // Warmer temp (>6500K) warms the image: scale by lmsRef / lmsDst when compensating a cooler
-  // illuminant, or lmsDst / lmsRef? Interpreting whiteBalanceTemp as the camera's white-point
-  // Kelvin setting (like a DSLR / UE5): raising Temp above 6500K makes the image warmer (redder).
-  vec3 scale = lmsRef / max(lmsDst, vec3(1e-4));
-  // Note: for higher Kelvin, xyDst has smaller x (bluer), so lmsDst.z > lmsRef.z and
-  // lmsRef.z / lmsDst.z < 1 (less blue -> warmer image), matching standard camera WB!
+  // Adaptation gain: the ratio of the reference white to the target white in LMS. At 6500 K
+  // it is exactly one; a hotter target white is bluer, so its blue LMS is larger and the gain
+  // below one, which warms the image.
+  vec3 scale = (xyzToLms * xyzRef) / max(xyzToLms * xyzDst, vec3(1e-4));
   vec3 lms = rgbToLms * rgb;
   return max(lmsToRgb * (lms * scale), vec3(0.0));
 }

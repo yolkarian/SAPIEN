@@ -51,9 +51,10 @@ void Node::updateGlobalModelMatrixRecursive() {
                           glm::scale(glm::mat4(1), mTransform.scale);
   glm::mat4 worldMatrix = mParent ? (mParent->mTransform.worldModelMatrix * localMatrix)
                                   : localMatrix;
-  if (!mHasWorldModelMatrix) {
+  if (!mHasWorldModelMatrix || mInitializePrevOnNextUpdate) {
     mTransform.prevWorldModelMatrix = worldMatrix;
     mHasWorldModelMatrix = true;
+    mInitializePrevOnNextUpdate = false;
   } else {
     mTransform.prevWorldModelMatrix = mTransform.worldModelMatrix;
   }
@@ -62,6 +63,11 @@ void Node::updateGlobalModelMatrixRecursive() {
   for (auto c : mChildren) {
     c->updateGlobalModelMatrixRecursive();
   }
+}
+
+void Node::initializeWorldModelMatrixOnNextUpdate() {
+  mInitializePrevOnNextUpdate = true;
+  markTransformDirty();
 }
 
 std::vector<Object *> Node::getObjectsRecursive() const {

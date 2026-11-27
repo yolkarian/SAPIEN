@@ -106,6 +106,9 @@ Node &Scene::addNode(Node &parent, Transform const &transform) {
   // will update the current matrix into the previous matrix
   mNodes.back()->setTransform(transform);
   mNodes.back()->updateGlobalModelMatrixRecursive();
+  // the pose comes from the caller after this call, so the first updateModelMatrices() must set
+  // prev = world: the node then reports no motion on its first rendered frame
+  mNodes.back()->initializeWorldModelMatrixOnNextUpdate();
   return *mNodes.back();
 }
 
@@ -128,6 +131,9 @@ Object &Scene::addObject(Node &parent, std::shared_ptr<resource::SVModel> model,
 
   mObjects.back()->setTransform(transform);
   mObjects.back()->updateGlobalModelMatrixRecursive();
+  // the pose comes from the caller after this call, so the first updateModelMatrices() must set
+  // prev = world: the node then reports no motion on its first rendered frame
+  mObjects.back()->initializeWorldModelMatrixOnNextUpdate();
   return result;
 }
 
@@ -143,6 +149,9 @@ Object &Scene::addDeformableObject(std::shared_ptr<resource::SVModel> model) {
 
   mDeformableObjects.back()->setTransform({});
   mDeformableObjects.back()->updateGlobalModelMatrixRecursive();
+  // the pose comes from the caller after this call, so the first updateModelMatrices() must set
+  // prev = world: the node then reports no motion on its first rendered frame
+  mDeformableObjects.back()->initializeWorldModelMatrixOnNextUpdate();
   return result;
 }
 
@@ -164,6 +173,9 @@ LineObject &Scene::addLineObject(Node &parent, std::shared_ptr<resource::SVLineS
 
   mLineObjects.back()->setTransform(transform);
   mLineObjects.back()->updateGlobalModelMatrixRecursive();
+  // the pose comes from the caller after this call, so the first updateModelMatrices() must set
+  // prev = world: the node then reports no motion on its first rendered frame
+  mLineObjects.back()->initializeWorldModelMatrixOnNextUpdate();
   return result;
 }
 
@@ -185,6 +197,9 @@ PointObject &Scene::addPointObject(Node &parent, std::shared_ptr<resource::SVPoi
 
   mPointObjects.back()->setTransform(transform);
   mPointObjects.back()->updateGlobalModelMatrixRecursive();
+  // the pose comes from the caller after this call, so the first updateModelMatrices() must set
+  // prev = world: the node then reports no motion on its first rendered frame
+  mPointObjects.back()->initializeWorldModelMatrixOnNextUpdate();
   return result;
 }
 
@@ -202,6 +217,9 @@ Camera &Scene::addCamera(Node &parent, Transform const &transform) {
 
   mCameras.back()->setTransform(transform);
   mCameras.back()->updateGlobalModelMatrixRecursive();
+  // the pose comes from the caller after this call, so the first updateModelMatrices() must set
+  // prev = world: the node then reports no motion on its first rendered frame
+  mCameras.back()->initializeWorldModelMatrixOnNextUpdate();
   parent.addChild(*mCameras.back());
   return result;
 }
@@ -788,6 +806,10 @@ void Scene::uploadShadowToDevice(core::Buffer &shadowBuffer, RasterShadowMaps &s
                  (totalBytes > 0 && std::memcmp(shadowMaps.lastLightBufferBytes.data(),
                                                 allLightData.data(), totalBytes) != 0);
   if (changed) {
+    // The buffers are host-visible and written by memcpy: another camera's queued shadow pass
+    // may still read them. Raster renderers do not register an access fence, so wait for the
+    // queue rather than letting the write race those reads.
+    mContext->getQueue().waitIdle();
     for (size_t i = 0; i < allLightData.size() && i < shadowMaps.lightBuffers.size(); ++i) {
       shadowMaps.lightBuffers[i]->upload(&allLightData[i], sizeof(LightBufferData));
     }
@@ -1088,26 +1110,91 @@ void Scene::buildAccelerationStructuresLocked(
   }
 }
 
-static std::vector<vk::AccelerationStructureInstanceKHR>
-packPrevTLASInstances(std::vector<Object *> const &objects,
-                      std::vector<PointObject *> const &pointObjects) {
-  std::vector<vk::AccelerationStructureInstanceKHR> rows;
-  rows.reserve(objects.size() + pointObjects.size());
-  auto append = [&](TransformWithCache const &t) {
-    glm::mat4 const &m =
-        t.prevWorldModelMatrix[3][3] != 0.f ? t.prevWorldModelMatrix : t.worldModelMatrix;
-    glm::mat4 transposed = glm::transpose(m);
-    vk::AccelerationStructureInstanceKHR inst{};
-    std::memcpy(&inst.transform.matrix[0][0], &transposed, sizeof(inst.transform));
-    rows.push_back(inst);
-  };
-  for (auto obj : objects) {
-    append(obj->getTransform());
+bool Scene::recordPrevTLASSnapshot(vk::CommandBuffer commandBuffer) {
+  std::lock_guard lock(mRTResourcesLock);
+  if (!mPrevTLASInstanceBuffer || !mLastTLASInstanceBuffer || !mTLAS) {
+    return false;
   }
-  for (auto obj : pointObjects) {
-    append(obj->getTransform());
+  // One snapshot per render version: every camera of the scene and every repeated render call
+  // in one step must see the same previous-frame transforms.
+  if (mTLASSnapshotRenderVersion == mRenderVersion) {
+    return false;
   }
-  return rows;
+  vk::DeviceSize size =
+      std::min(mPrevTLASInstanceBuffer->getSize(), mLastTLASInstanceBuffer->getSize());
+  if (size == 0) {
+    return false;
+  }
+
+  // the instance rows were written by the host (CPU transforms), by CUDA (external transforms),
+  // by the transfer that uploaded them or read by the refit, and the two snapshot buffers by the
+  // previous frame
+  vk::MemoryBarrier toTransfer(vk::AccessFlagBits::eHostWrite | vk::AccessFlagBits::eMemoryWrite |
+                                   vk::AccessFlagBits::eTransferWrite |
+                                   vk::AccessFlagBits::eShaderRead,
+                               vk::AccessFlagBits::eTransferRead |
+                                   vk::AccessFlagBits::eTransferWrite);
+  commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+                                vk::PipelineStageFlagBits::eTransfer, {}, toTransfer, {}, {});
+  vk::MemoryBarrier betweenCopies(vk::AccessFlagBits::eTransferRead |
+                                      vk::AccessFlagBits::eTransferWrite,
+                                  vk::AccessFlagBits::eTransferRead |
+                                      vk::AccessFlagBits::eTransferWrite);
+
+  // The first rendered frame after the tables were built has no predecessor: Last takes the rows
+  // of this version too, so that frame reports no object motion whatever wrote the instance
+  // buffer (the CPU state at gpu_init() or CUDA) before it.
+  if (!mTLASSnapshotInitialized) {
+    commandBuffer.copyBuffer(mTLAS->getInstanceBuffer().getVulkanBuffer(),
+                             mLastTLASInstanceBuffer->getVulkanBuffer(),
+                             vk::BufferCopy(0, 0, size));
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                                  vk::PipelineStageFlagBits::eTransfer, {}, betweenCopies, {},
+                                  {});
+  }
+
+  commandBuffer.copyBuffer(mLastTLASInstanceBuffer->getVulkanBuffer(),
+                           mPrevTLASInstanceBuffer->getVulkanBuffer(),
+                           vk::BufferCopy(0, 0, size));
+  // the next copy overwrites what the one above just read
+  commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                                vk::PipelineStageFlagBits::eTransfer, {}, betweenCopies, {}, {});
+  commandBuffer.copyBuffer(mTLAS->getInstanceBuffer().getVulkanBuffer(),
+                           mLastTLASInstanceBuffer->getVulkanBuffer(),
+                           vk::BufferCopy(0, 0, size));
+
+  // the ray tracing shaders read PrevTlasInstances
+  vk::MemoryBarrier toShader(vk::AccessFlagBits::eTransferWrite,
+                             vk::AccessFlagBits::eShaderRead);
+  commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                                vk::PipelineStageFlagBits::eRayTracingShaderKHR, {}, toShader,
+                                {}, {});
+
+  mTLASSnapshotInitialized = true;
+  mTLASSnapshotRenderVersion = mRenderVersion;
+  return true;
+}
+
+void Scene::submitPrevTLASSnapshot() {
+  auto device = mContext->getDevice();
+  if (!mPrevTLASSnapshotCommandBuffer) {
+    mPrevTLASSnapshotCommandBuffer = getCommandPool().allocateCommandBuffer();
+    mPrevTLASSnapshotFence = device.createFenceUnique({vk::FenceCreateFlagBits::eSignaled});
+  }
+  // the previous snapshot is a few copies that finished long ago; its buffer is reused
+  if (device.waitForFences(mPrevTLASSnapshotFence.get(), VK_TRUE, UINT64_MAX) !=
+      vk::Result::eSuccess) {
+    throw std::runtime_error("failed to wait for the previous TLAS instance snapshot");
+  }
+  mPrevTLASSnapshotCommandBuffer->reset();
+  mPrevTLASSnapshotCommandBuffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+  bool recorded = recordPrevTLASSnapshot(mPrevTLASSnapshotCommandBuffer.get());
+  mPrevTLASSnapshotCommandBuffer->end();
+  if (recorded) {
+    device.resetFences(mPrevTLASSnapshotFence.get());
+    mContext->getQueue().submit(mPrevTLASSnapshotCommandBuffer.get(),
+                                mPrevTLASSnapshotFence.get());
+  }
 }
 
 void Scene::updateTLAS(bool useDeviceTransforms) {
@@ -1141,12 +1228,6 @@ void Scene::updateTLAS(bool useDeviceTransforms) {
     }
 
     mTLAS->recordUpdate(mASUpdateCommandBuffer.get(), transforms);
-    if (mPrevTLASInstanceBuffer) {
-      auto prevRows = packPrevTLASInstances(objects, pointObjects);
-      if (!prevRows.empty()) {
-        mPrevTLASInstanceBuffer->upload(prevRows);
-      }
-    }
   }
   mASUpdateCommandBuffer->end();
   mContext->getQueue().submit(mASUpdateCommandBuffer.get(), {});
@@ -1189,7 +1270,6 @@ void Scene::createRTStorageBuffers(StructDataLayout const &geometryInstanceBuffe
 
   std::unordered_map<std::shared_ptr<resource::SVMesh>, uint32_t> mesh2Id;
   std::unordered_map<std::shared_ptr<resource::SVMaterial>, uint32_t> material2Id;
-  std::unordered_map<std::shared_ptr<resource::SVTexture>, uint32_t> texture2Id;
 
   std::vector<std::shared_ptr<resource::SVMesh>> meshes;
   std::vector<std::shared_ptr<resource::SVMetallicMaterial>> materials;
@@ -1230,13 +1310,14 @@ void Scene::createRTStorageBuffers(StructDataLayout const &geometryInstanceBuffe
   // textures[]: the materials' textures, then those of textured lights
   mRTTextureSlots.clear();
   auto textureSlot = [&](std::shared_ptr<resource::SVTexture> const &texture) {
-    if (!texture2Id.contains(texture)) {
+    auto [slot, added] =
+        mRTTextureSlots.try_emplace(texture, static_cast<int>(textures.size()));
+    if (added) {
       texture->loadAsync().get();
       texture->uploadToDevice(*mContext);
-      texture2Id[texture] = static_cast<uint32_t>(textures.size());
       textures.push_back(texture);
     }
-    return mRTTextureSlots[texture.get()] = static_cast<int>(texture2Id.at(texture));
+    return slot->second;
   };
   mRTMaterials = std::move(materials);
   mRTMaterialRecords.clear();
@@ -1309,16 +1390,22 @@ void Scene::createRTStorageBuffers(StructDataLayout const &geometryInstanceBuffe
   mRTParallelogramLightBuffer = lightBuffer(mRTLights.parallelogram);
   writeRTLightBuffers();
 
-  // previous-frame TLAS instance transforms for ray-traced motion vectors
-  auto prevRows = packPrevTLASInstances(objects, pointObjects);
-  mPrevTLASInstanceBuffer = core::Buffer::Create(
-      *mContext,
-      std::max<size_t>(1, prevRows.size()) * sizeof(vk::AccelerationStructureInstanceKHR),
-      vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferDst,
-      VMA_MEMORY_USAGE_CPU_TO_GPU);
-  if (!prevRows.empty()) {
-    mPrevTLASInstanceBuffer->upload(prevRows);
-  }
+  // TLAS instance transforms for ray-traced motion vectors: Prev is what the shaders read, Last
+  // is the previous render version's rows the next snapshot copies into it. The first snapshot
+  // seeds both with the rows of its own version, so the first rendered frame reports no motion.
+  auto createInstanceRows = [&](size_t count) {
+    return core::Buffer::Create(
+        *mContext, std::max<size_t>(1, count) * sizeof(vk::AccelerationStructureInstanceKHR),
+        vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc |
+            vk::BufferUsageFlagBits::eTransferDst,
+        VMA_MEMORY_USAGE_GPU_ONLY);
+  };
+  size_t instanceRows = objects.size() + pointObjects.size();
+  mPrevTLASInstanceBuffer = createInstanceRows(instanceRows);
+  mLastTLASInstanceBuffer = createInstanceRows(instanceRows);
+  // fresh buffers: the next snapshot seeds them from the instance rows of its own version
+  mTLASSnapshotInitialized = false;
+  mTLASSnapshotRenderVersion = 0;
 
   // build textures
   mTextures.clear();
@@ -1343,7 +1430,7 @@ void Scene::updateRTStorageBuffers() {
   // the scene version did not change, so the same lights and textures are repacked
   mRTLights.clear();
   mRTLights.append(*this, [&](std::shared_ptr<resource::SVTexture> const &texture) {
-    return mRTTextureSlots.at(texture.get());
+    return mRTTextureSlots.at(texture);
   });
   writeRTLightBuffers();
 }
@@ -1369,7 +1456,7 @@ std::optional<Scene::RTMaterialVersions> Scene::uploadRTMaterials() {
   for (auto const &material : mRTMaterials) {
     records.push_back(
         packMaterial(*material, [&](std::shared_ptr<resource::SVTexture> const &texture) {
-          auto slot = mRTTextureSlots.find(texture.get());
+          auto slot = mRTTextureSlots.find(texture);
           newTexture |= slot == mRTTextureSlots.end();
           return slot == mRTTextureSlots.end() ? -1 : slot->second;
         }));
@@ -1385,12 +1472,18 @@ std::optional<Scene::RTMaterialVersions> Scene::uploadRTMaterials() {
                   records.size() * sizeof(GpuMaterial)) == 0) {
     return mRTMaterialVersions;
   }
+  // IntegratorTables::build leaves out an emissive material whose coat or fuzz weight is non-zero
+  // or whose base colour is not opaque, and a fully transparent object masks its emitter: such
+  // edits change the tables although no emission colour did
   bool emissionChanged = false;
   for (size_t i = 0; i < records.size(); ++i) {
     auto const &now = records[i];
     auto const &before = mRTMaterialRecords[i];
     emissionChanged |= now.parameters.emissionColor != before.parameters.emissionColor ||
                        now.parameters.emissionStrength != before.parameters.emissionStrength ||
+                       now.parameters.coatWeight != before.parameters.coatWeight ||
+                       now.parameters.fuzzWeight != before.parameters.fuzzWeight ||
+                       now.parameters.baseColor.a != before.parameters.baseColor.a ||
                        now.textures[resource::SVMetallicMaterial::eEmission] !=
                            before.textures[resource::SVMetallicMaterial::eEmission];
   }

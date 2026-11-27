@@ -94,36 +94,71 @@ void main() {
     ray.envLightPdf = 0.0;
     ray.scatterOrigin = origin.xyz;
 
+    // Weight of the ray being traced and the part of it that reached the previous vertex
+    // through a diffuse lobe (the rest went through specular, coat, fuzz or transmission).
     vec3 attenuation = vec3(1.0);
     vec3 attDiffuse = vec3(0.0);
     vec3 attSpecular = vec3(0.0);
+    // Scattering events on this path before the vertex being traced. A pass-through of the
+    // uncovered part of a surface neither scatters nor advances the count, so the ray keeps the
+    // AOV class of the vertex it left.
+    int scatters = 0;
     for (int bounce = 0; bounce <= maxDepth; ++bounce) {
-      bool first = bounce == 0;
       ray.depth = uint(bounce);
+      ray.scattered = 0;
       traceRayEXT(tlas, gl_RayFlagsNoneEXT, 0x01, 0, 0, 0,
                   ray.origin, tMin, ray.direction, tMax, 0);
+      // the closest hit shaders only clear alpha on a miss, so alpha > 0 is a hit and a hit that
+      // did not scatter is the ray going straight through the uncovered part of a surface
+      bool hit = ray.alpha > 0.0;
+      bool passThrough = hit && ray.scattered == 0;
 
       vec3 vertexDirect = ray.directDiffuse + ray.directSpecular;
       vec3 vertexTotal = ray.emission + vertexDirect;
       vec3 contribution = vertexTotal * attenuation;
-      // Indirect-clamp: contributions after the first bounce are clamped by luminance to
+      // Indirect-clamp: contributions after the camera vertex are clamped by luminance to
       // suppress fireflies. 0 disables it.
       float clampScale = 1.0;
-      if (!first && clampIndirect > 0.0) {
+      if (scatters > 0 && clampIndirect > 0.0) {
         float peak = max(contribution.x, max(contribution.y, contribution.z));
         if (peak > clampIndirect) clampScale = clampIndirect / peak;
       }
       radiance += contribution * clampScale;
 
-      if (first) {
-        emissionSum += ray.emission;
-        diffuseDirectSum += ray.directDiffuse;
-        specularDirectSum += ray.directSpecular;
-        attDiffuse = ray.diffuseAttenuation;
-        attSpecular = ray.attenuation - ray.diffuseAttenuation;
-        attenuation = ray.attenuation;
+      if (passThrough) {
+        // the uncovered part only filters the ray: the light it carries keeps the class and the
+        // lobe split of the ray it lets through
+        attDiffuse *= ray.attenuation;
+        attSpecular *= ray.attenuation;
+      } else if (scatters == 0) {
+        // the camera ray's own vertex: it carries no lobe, so its light is direct light. The ray
+        // may have crossed the uncovered parts of surfaces on its way here.
+        emissionSum += ray.emission * attenuation;
+        diffuseDirectSum += ray.directDiffuse * attenuation;
+        specularDirectSum += ray.directSpecular * attenuation;
+        attDiffuse = attenuation * ray.diffuseAttenuation;
+        attSpecular = attenuation * (ray.attenuation - ray.diffuseAttenuation);
+      } else if (scatters == 1) {
+        // light found by the primary BSDF continuation ray is direct light (C D L / C S L), which
+        // matches light-sampled direct light across MIS / NEE / BSDF
+        diffuseDirectSum += (ray.emission * attDiffuse) * clampScale;
+        specularDirectSum += (ray.emission * attSpecular) * clampScale;
+        diffuseIndirectSum += (vertexDirect * attDiffuse) * clampScale;
+        specularIndirectSum += (vertexDirect * attSpecular) * clampScale;
+        attDiffuse *= ray.attenuation;
+        attSpecular *= ray.attenuation;
+      } else {
+        diffuseIndirectSum += (vertexTotal * attDiffuse) * clampScale;
+        specularIndirectSum += (vertexTotal * attSpecular) * clampScale;
+        attDiffuse *= ray.attenuation;
+        attSpecular *= ray.attenuation;
+      }
+      attenuation *= ray.attenuation;
+      scatters += ray.scattered;
 
-        bool hit = ray.alpha > 0.0;
+      if (bounce == 0) {
+        // the geometric outputs describe the camera ray's own hit; only the radiance split
+        // follows scattering events
         alpha += ray.alpha;
         imageStore(outNormal, px, vec4(mat3(cameraBuffer.viewMatrix) * ray.normal, 1.0));
         imageStore(outAlbedo, px, vec4(ray.albedo, 1.0));
@@ -151,21 +186,6 @@ void main() {
           motion = (currUv - prevUv) * vec2(cameraBuffer.width, cameraBuffer.height);
         }
         imageStore(outMotionVector, px, vec4(motion, 0.0, 0.0));
-      } else {
-        if (bounce == 1) {
-          // Emission / environment hit by the primary BSDF continuation ray is direct light
-          // (C D L / C S L), matching light-sampled direct light across MIS / NEE / BSDF.
-          diffuseDirectSum += (ray.emission * attDiffuse) * clampScale;
-          specularDirectSum += (ray.emission * attSpecular) * clampScale;
-          diffuseIndirectSum += (vertexDirect * attDiffuse) * clampScale;
-          specularIndirectSum += (vertexDirect * attSpecular) * clampScale;
-        } else {
-          diffuseIndirectSum += (vertexTotal * attDiffuse) * clampScale;
-          specularIndirectSum += (vertexTotal * attSpecular) * clampScale;
-        }
-        attDiffuse *= ray.attenuation;
-        attSpecular *= ray.attenuation;
-        attenuation = attDiffuse + attSpecular;
       }
 
       if (ray.depth > uint(maxDepth) || any(isnan(attenuation)) || any(isinf(attenuation)) ||
