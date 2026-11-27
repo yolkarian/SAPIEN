@@ -114,7 +114,15 @@ int main() {
   config->colorFormat4 = vk::Format::eR32G32B32A32Sfloat;
 
   // auto renderer = std::make_shared<renderer::Renderer>(context, config);
-  auto renderer = std::make_shared<renderer::RTRenderer>(context, "../shader/rt");
+  // what SAPIEN applies from vulkan_shader/rt/pack.json, which svulkan2 does not read: the
+  // light-sampling variant, the tonemap pass that turns HdrColor into the displayed Color, and
+  // the push-constant defaults (zero-filled otherwise, and 0 samples per pixel render nothing)
+  auto renderer = std::make_shared<renderer::RTRenderer>(
+      context, "../shader/rt", ShaderDefines{{"LIGHT_SAMPLING_MIS", "1"}},
+      std::vector<std::string>{"../shader/post/tonemap.comp"});
+  renderer->setCustomProperty("spp", 4);
+  renderer->setCustomProperty("maxDepth", 8);
+  renderer->setCustomProperty("toneMapper", 2);
 
   // renderer->enableDenoiser(renderer::RTRenderer::DenoiserType::eOIDN, "HdrColor", "Albedo",
   //                          "Normal");

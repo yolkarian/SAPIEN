@@ -19,8 +19,9 @@ its own Zig modules.
 
 `svulkan2` provides the generic shader-pack runtime. The shaders in
 `shader_internal/` are private renderer assets used for tasks such as BRDF LUT
-and environment-map generation. The top-level `shader/` directory supports the
-standalone examples and is not the source of SAPIEN's packaged shader packs.
+and environment-map generation. The top-level `shader/` directory is a symlink
+to SAPIEN's `vulkan_shader/`, so the standalone examples in `app/` load the same
+packs as SAPIEN.
 
 SAPIEN's canonical runtime packs live in the SAPIEN repository under
 `vulkan_shader/` and are packaged into the `sapien` wheel. Product rendering
