@@ -56,7 +56,12 @@ float sapienComputeGTAO(sampler2D depthTex, sampler2D normalTex, vec2 fragCoord,
   bool isOrtho = abs(proj[3][3]) > 0.5;
   vec3 V = isOrtho ? vec3(0.0, 0.0, 1.0) : normalize(-P);
   float denom = isOrtho ? 1.0 : max(-P.z, 1e-4);
-  vec2 uvRadius = min(0.5 * vec2(abs(proj[0][0]), abs(proj[1][1])) * radius / denom, vec2(0.25));
+  vec2 uvRadius = 0.5 * vec2(abs(proj[0][0]), abs(proj[1][1])) * radius / denom;
+  // Scale uniformly so screenDir stays aligned with view-space sliceDirV on non-square viewports.
+  float maxUvRadius = max(uvRadius.x, uvRadius.y);
+  if (maxUvRadius > 0.25) {
+    uvRadius *= 0.25 / maxUvRadius;
+  }
 
   if (max(uvRadius.x * fullSize.x, uvRadius.y * fullSize.y) < 1.0) {
     return 1.0;

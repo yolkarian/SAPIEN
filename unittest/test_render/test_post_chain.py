@@ -601,6 +601,51 @@ class PostChain(unittest.TestCase):
             float(pictures[3500.0][0] / pictures[3500.0][2]) * 1.3,
         )
 
+    def test_white_balance_tint_sign_convention(self) -> None:
+        """Positive whiteBalanceTint shifts neutral grey toward magenta (R, B > G) and negative
+        shifts it toward green (G > R, B), matching standard camera tint sliders."""
+        grey = np.array([0.25, 0.25, 0.25])
+        results = {}
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([0.0, 0.0, 0.0])
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(
+                half_size=[0.5, 0.5, 0.5],
+                material=sapien.render.RenderMaterial(
+                    base_color=[0.0, 0.0, 0.0, 1.0],
+                    emission=[*grey, 1.0],
+                    specular_weight=0.0,
+                ),
+            )
+            builder.build_kinematic()
+            config = sapien.render.RenderConfig("rt")
+            config["spp"] = 1
+            config["maxDepth"] = 0
+            config["toneMapper"] = 1
+            config["exposure"] = 1.0
+            camera = scene.add_camera("camera", SIZE, SIZE, 1.0, 0.1, 20.0, render_config=config)
+            camera.entity.pose = sapien.Pose([-2.0, 0.0, 0.0])
+            scene.update_render()
+            for tint in (-0.5, 0.0, 0.5):
+                camera.set_property("whiteBalanceTemp", 6500.0)
+                camera.set_property("whiteBalanceTint", tint)
+                camera.take_picture()
+                results[tint] = linear_from_srgb(
+                    camera.get_picture("Color")[SIZE // 2, SIZE // 2, :3]
+                )
+
+        np.testing.assert_allclose(results[0.0], grey, rtol=1e-4, atol=1e-5)
+        # +tint -> magenta (green drops relative to red and blue)
+        self.assertGreater(float(results[0.5][0]), float(results[0.5][1]) * 1.05, str(results[0.5]))
+        self.assertGreater(float(results[0.5][2]), float(results[0.5][1]) * 1.05, str(results[0.5]))
+        # -tint -> green (green rises relative to red and blue)
+        self.assertGreater(
+            float(results[-0.5][1]), float(results[-0.5][0]) * 1.05, str(results[-0.5])
+        )
+        self.assertGreater(
+            float(results[-0.5][1]), float(results[-0.5][2]) * 1.05, str(results[-0.5])
+        )
+
     def test_an_undeclared_pass_parameter_keeps_its_neutral_default(self) -> None:
         """A pass whose parameters pack.json does not declare renders with the neutral values
         the chain seeds, not with the zero-filled push constants: color_grade with cdlSlope and

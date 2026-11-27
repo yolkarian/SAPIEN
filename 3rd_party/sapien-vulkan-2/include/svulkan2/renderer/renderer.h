@@ -122,6 +122,9 @@ class Renderer : public RendererBase {
   std::unordered_map<resource::SVTexture const *, int32_t> mTextureIndices;
   // descriptors last written to textures[] slots [0, size); later slots hold the default
   std::vector<vk::DescriptorImageInfo> mBoundTextures;
+  // per-material draw state (opacity bucket 0=invisible/1=transparent/2=opaque, cullMode)
+  // last recorded into command buffers; a change requires re-recording
+  std::vector<std::pair<uint8_t, vk::CullModeFlagBits>> mMaterialDrawStates;
   // byte stride of customObjectData[]; 0 when the pack declares no custom data
   uint32_t mCustomDataStride{0};
   uint64_t mLastMaterialVersion{0};

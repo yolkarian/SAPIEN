@@ -71,6 +71,8 @@ public:
   Camera::Type getCameraType() const { return mType; };
 
   void uploadToDevice(core::Buffer &cameraBuffer, StructDataLayout const &cameraLayout);
+  /** Upload only projection matrices and viewport size, preserving GPU-written view/prevView. */
+  void uploadProjectionToDevice(core::Buffer &cameraBuffer, StructDataLayout const &cameraLayout);
 
   inline glm::mat4 getProjectionMatrix() const { return mProjectionMatrix; }
 };

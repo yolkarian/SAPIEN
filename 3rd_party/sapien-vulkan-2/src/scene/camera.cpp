@@ -47,6 +47,8 @@ void Camera::setOrthographicParameters(float near, float far, float scaling, flo
 void Camera::setOrthographicParameters(float near, float far, float left, float right,
                                        float bottom, float top, float width, float height) {
   mType = Camera::Type::eOrthographic;
+  mWidth = width;
+  mHeight = height;
   mNear = near;
   mFar = far;
 
@@ -101,6 +103,25 @@ void Camera::uploadToDevice(core::Buffer &cameraBuffer, StructDataLayout const &
   }
 
   cameraBuffer.upload<char>(buffer);
+}
+
+void Camera::uploadProjectionToDevice(core::Buffer &cameraBuffer,
+                                      StructDataLayout const &cameraLayout) {
+  auto projInv = glm::inverse(mProjectionMatrix);
+  cameraBuffer.upload(&mProjectionMatrix[0][0], 64,
+                      cameraLayout.elements.at("projectionMatrix").offset);
+  cameraBuffer.upload(&projInv[0][0], 64,
+                      cameraLayout.elements.at("projectionMatrixInverse").offset);
+  auto it = cameraLayout.elements.find("width");
+  if (it != cameraLayout.elements.end()) {
+    float fwidth = static_cast<float>(mWidth);
+    cameraBuffer.upload(&fwidth, sizeof(float), it->second.offset);
+  }
+  it = cameraLayout.elements.find("height");
+  if (it != cameraLayout.elements.end()) {
+    float fheight = static_cast<float>(mHeight);
+    cameraBuffer.upload(&fheight, sizeof(float), it->second.offset);
+  }
 }
 
 float Camera::getWidth() const {

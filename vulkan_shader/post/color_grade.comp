@@ -67,7 +67,8 @@ vec3 applyWhiteBalance(vec3 rgb, float temp, float tint) {
   vec2 xyRef = kelvinToChromaticity(6500.0);
   vec2 xyDst = kelvinToChromaticity(temp);
   // Tint shifts green/magenta along y (negative tint = greener, positive = more magenta).
-  xyDst.y = clamp(xyDst.y - tint * 0.05, 0.05, 0.85);
+  // Dividing by a greener target white point (larger xyDst.y) shifts the adapted image magenta.
+  xyDst.y = clamp(xyDst.y + tint * 0.05, 0.05, 0.85);
 
   vec3 xyzRef = vec3(xyRef.x / xyRef.y, 1.0, (1.0 - xyRef.x - xyRef.y) / xyRef.y);
   vec3 xyzDst = vec3(xyDst.x / xyDst.y, 1.0, (1.0 - xyDst.x - xyDst.y) / xyDst.y);

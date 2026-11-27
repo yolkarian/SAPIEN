@@ -61,6 +61,9 @@ void RTRenderer::setScene(std::shared_ptr<scene::Scene> scene) {
     return;
   }
   if (mScene) {
+    if (mSceneAccessFence && mContext->isVulkanAvailable()) {
+      auto _ = mContext->getDevice().waitForFences(mSceneAccessFence.get(), VK_TRUE, UINT64_MAX);
+    }
     mScene->unregisterAccessFence(mSceneAccessFence.get());
   }
 
@@ -125,6 +128,15 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
       mEnvironmentMap->load();
     }
     mRequiresRebuild = true;
+  }
+
+  // Wait for any previous trace submission from this renderer before mutating camera/object
+  // buffers, push constants, or re-recording mRenderCommandBuffer (and before resetting the fence).
+  if (mSceneAccessFence) {
+    if (mContext->getDevice().waitForFences(mSceneAccessFence.get(), VK_TRUE, UINT64_MAX) !=
+        vk::Result::eSuccess) {
+      throw std::runtime_error("failed to wait for previous ray tracing frame");
+    }
   }
 
   // A batched camera can render a SceneGroup while remaining attached to its
@@ -810,7 +822,8 @@ void RTRenderer::display(std::string const &imageName, vk::Image backBuffer, vk:
   renderTarget->getImage().transitionLayout(
       mDisplayCommandBuffer.get(), vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
       vk::AccessFlagBits::eMemoryWrite, vk::AccessFlagBits::eTransferRead,
-      vk::PipelineStageFlagBits::eComputeShader | vk::PipelineStageFlagBits::eTransfer,
+      vk::PipelineStageFlagBits::eRayTracingShaderKHR |
+          vk::PipelineStageFlagBits::eComputeShader | vk::PipelineStageFlagBits::eTransfer,
       vk::PipelineStageFlagBits::eTransfer);
 
   {
@@ -1044,6 +1057,14 @@ void RTRenderer::uploadCpuCameraState(scene::Camera &camera) {
   camera.uploadToDevice(*mCameraBuffer, mCameraBufferLayout);
 }
 
+void RTRenderer::uploadCpuCameraProjection(scene::Camera &camera) {
+  if (!mCameraBuffer) {
+    throw std::runtime_error(
+        "uploadCpuCameraProjection failed: renderer resources are not prepared");
+  }
+  camera.uploadProjectionToDevice(*mCameraBuffer, mCameraBufferLayout);
+}
+
 void RTRenderer::uploadCpuSceneLightState() {
   if (!mScene) {
     throw std::runtime_error("uploadCpuSceneLightState failed: scene is not set");
@@ -1071,6 +1092,9 @@ void RTRenderer::setExternalTransformUpdatesEnabled(bool enable, bool cudaIntero
 }
 
 RTRenderer::~RTRenderer() {
+  if (mSceneAccessFence && mContext && mContext->isVulkanAvailable()) {
+    auto _ = mContext->getDevice().waitForFences(mSceneAccessFence.get(), VK_TRUE, UINT64_MAX);
+  }
   if (mScene && mSceneAccessFence) {
     mScene->unregisterAccessFence(mSceneAccessFence.get());
   }

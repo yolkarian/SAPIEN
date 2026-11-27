@@ -213,6 +213,30 @@ class EnvironmentLighting(unittest.TestCase):
             # a table misaligned with the map would make light sampling noisier than BSDF
             self.assertLess(noises[mode], 0.75 * noises["bsdf"], str(noises))
 
+    def test_coated_and_modulated_glass_conserves_white_furnace(self) -> None:
+        """Transmissive glass under a denser coat or modulated specular_weight must stay finite
+        and never exceed the white furnace: Snell refraction must keep the physical IOR ratio so
+        entry and exit 1 / eta^2 factors cancel, and reflection + transmission Fresnel must sum
+        to one."""
+        environment = self.environment(np.full((32, 64, 3), 2.0, np.float32))
+        cases = {
+            "denser_coat": dict(ior=1.15, coat_weight=1.0, coat_ior=1.6, coat_roughness=0.1),
+            "low_specular_weight": dict(ior=1.5, specular_weight=0.1),
+            "high_specular_weight": dict(ior=1.5, specular_weight=25.0),
+        }
+        for name, fields in cases.items():
+            with self.subTest(case=name):
+                glass = sapien.render.RenderMaterial(
+                    base_color=[1, 1, 1, 1], roughness=0.2, transmission=1.0
+                )
+                for field, value in fields.items():
+                    setattr(glass, field, value)
+                image = self.sphere(environment, glass, config("mis", spp=16, depth=8), frames=8)
+                self.assertTrue(np.all(np.isfinite(image)), name)
+                mean = float(image[disk(0.5)].mean())
+                self.assertGreater(mean, 2.0 * 0.7, f"{name}: {mean}")
+                self.assertLess(mean, 2.0 * 1.03, f"{name}: {mean}")
+
 
 class EmissiveMeshLighting(unittest.TestCase):
     """A white floor lit only by an emissive sphere above it."""
@@ -386,6 +410,75 @@ class EmissiveMeshLighting(unittest.TestCase):
                                            delta=0.05 * means["bsdf"], msg=str(means))
                 # and the modulation is visible: the emitter is dimmer than the bare one
                 self.assertLess(means["bsdf"], 0.95 * bare["bsdf"], str((bare, means)))
+
+    def test_single_sided_emissive_mesh_emits_only_from_front_face(self) -> None:
+        """A single-sided opaque emissive quad facing away from the floor must not light the
+        floor in mis, nee, or bsdf; flipping its winding to face the floor must light it
+        identically across all three strategies."""
+        def floor_mean(facing_floor: bool) -> dict[str, float]:
+            verts = np.array(
+                [[-0.4, -0.4, 0.6], [0.4, -0.4, 0.6], [0.4, 0.4, 0.6], [-0.4, 0.4, 0.6]],
+                dtype=np.float32,
+            )
+            tris = (
+                np.array([[0, 2, 1], [0, 3, 2]], dtype=np.uint32)
+                if facing_floor
+                else np.array([[0, 1, 2], [0, 2, 3]], dtype=np.uint32)
+            )
+            means = {}
+            for mode in ("mis", "nee", "bsdf"):
+                with sapien.Scene() as scene:
+                    scene.set_ambient_light([0.0, 0.0, 0.0])
+                    scene.add_ground(
+                        0.0,
+                        render_material=sapien.render.RenderMaterial(
+                            base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0
+                        ),
+                    )
+                    mat = sapien.render.RenderMaterial(
+                        emission=[20.0, 20.0, 20.0, 1.0],
+                        base_color=[0, 0, 0, 1],
+                        specular_weight=0.0,
+                    )
+                    body = sapien.render.RenderBodyComponent()
+                    body.attach(
+                        sapien.render.RenderShapeTriangleMesh(
+                            verts,
+                            tris,
+                            np.zeros((0, 3), np.float32),
+                            np.zeros((0, 2), np.float32),
+                            mat,
+                        )
+                    )
+                    emitter = sapien.Entity()
+                    emitter.add_component(body)
+                    scene.add_entity(emitter)
+                    camera = scene.add_camera(
+                        "camera",
+                        SIZE,
+                        SIZE,
+                        0.6,
+                        0.1,
+                        20.0,
+                        render_config=config(mode, spp=16, depth=1),
+                    )
+                    # Look obliquely at the floor beside the quad so the quad itself is out of view
+                    camera.entity.pose = sapien.Pose(
+                        [1.4, 0.0, 2.0], [0.7071068, 0.0, 0.7071068, 0.0]
+                    )
+                    means[mode] = float(render(scene, camera, 8).mean())
+            return means
+
+        back = floor_mean(facing_floor=False)
+        for mode, val in back.items():
+            self.assertLess(val, 1e-4, f"{mode} back-face emitted light: {back}")
+
+        front = floor_mean(facing_floor=True)
+        self.assertGreater(front["bsdf"], 0.05, str(front))
+        for mode in ("mis", "nee"):
+            self.assertAlmostEqual(
+                front[mode], front["bsdf"], delta=0.06 * front["bsdf"], msg=str(front)
+            )
 
 
 class Shadows(unittest.TestCase):
@@ -646,6 +739,49 @@ class IndirectClamp(unittest.TestCase):
         full = picture(config(spp=8, depth=3))
         self.assertAlmostEqual(clamped, direct, delta=0.01 * direct)
         self.assertGreater(full, 1.03 * direct)
+
+    def test_clamp_keeps_bsdf_direct_emission_unclamped(self) -> None:
+        """A tight clampIndirect must not clamp BSDF direct lighting from an emissive mesh:
+        mis, nee, and bsdf must still agree on the floor illuminated by an emissive sphere."""
+        means = {}
+        for mode in ("mis", "nee", "bsdf"):
+            with sapien.Scene() as scene:
+                scene.set_ambient_light([0.0, 0.0, 0.0])
+                scene.add_ground(
+                    0.0,
+                    render_material=sapien.render.RenderMaterial(
+                        base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0
+                    ),
+                )
+                builder = scene.create_actor_builder()
+                builder.add_sphere_visual(
+                    radius=0.35,
+                    material=sapien.render.RenderMaterial(
+                        emission=[20.0, 20.0, 20.0, 1.0],
+                        base_color=[0, 0, 0, 1],
+                        specular_weight=0.0,
+                    ),
+                )
+                builder.build_kinematic().set_pose(sapien.Pose([1.0, 0.0, 0.7]))
+                camera = scene.add_camera(
+                    "camera",
+                    SIZE,
+                    SIZE,
+                    0.6,
+                    0.1,
+                    20.0,
+                    render_config=config(mode, spp=16, depth=2, clamp=1e-4),
+                )
+                camera.entity.pose = sapien.Pose(
+                    [0.0, 0.0, 3.0], [0.7071068, 0.0, 0.7071068, 0.0]
+                )
+                means[mode] = float(render(scene, camera, 12).mean())
+
+        self.assertGreater(means["bsdf"], 0.05, str(means))
+        for mode in ("mis", "nee"):
+            self.assertAlmostEqual(
+                means[mode], means["bsdf"], delta=0.06 * means["bsdf"], msg=str(means)
+            )
 
 
 class MaterialEdits(unittest.TestCase):

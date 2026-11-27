@@ -114,10 +114,6 @@ void main() {
   }
   albedo.rgb *= material.baseWeight;
 
-  // the coat over the base lowers the IOR contrast of the base's interface
-  frm.r = materialDielectricF0(material.ior / mix(1.0, material.coatIor, material.coatWeight),
-                               material.specularWeight);
-
   if (material.roughnessTexture >= 0) {
     frm.g = texture(textures[nonuniformEXT(material.roughnessTexture)], materialUV(material.textureTransforms[1], inUV)).r;
   } else {
@@ -131,6 +127,7 @@ void main() {
   }
 
   OpenPBR m = openpbrSurface(material, albedo.rgb, frm.b, frm.g, 0.0, false);
+  frm.r = materialDielectricF0(m.baseEta, 1.0);
   frm.g = sapienRasterRoughness(m, frm.g, material.specularAnisotropy);
   bool layered = openpbrHasLayers(m);
 
@@ -147,9 +144,9 @@ void main() {
     normal = -normalize(cross(fdx.xyz, fdy.xyz));
   }
 
-  float specular = frm.x;
-  float roughness = frm.y;
-  float metallic = frm.z;
+  float specular = max(frm.x, 0.0);
+  float roughness = clamp(frm.y, 0.045, 1.0);
+  float metallic = clamp(frm.z, 0.0, 1.0);
 
   vec4 csPosition = inPosition;
   csPosition /= csPosition.w;

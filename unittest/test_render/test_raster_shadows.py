@@ -590,6 +590,98 @@ class TestRasterShadows(unittest.TestCase):
             picture = camera_b.get_picture("Lighting")[..., :3]
             np.testing.assert_allclose(picture, reference, atol=0.02)
 
+    def test_off_axis_point_and_spot_receivers_have_no_shadow_acne(self) -> None:
+        """An unoccluded flat floor illuminated obliquely (~56 deg off-axis) by a point light or
+        wide spotlight must show no self-shadowing acne under PCF or PCSS."""
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([0.0, 0.0, 0.0])
+            scene.add_ground(
+                0.0,
+                render_material=sapien.render.RenderMaterial(
+                    base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0
+                ),
+            )
+            pt_light = scene.add_point_light(
+                [-1.5, 0.0, 1.0],
+                [15.0, 15.0, 15.0],
+                shadow=True,
+                shadow_near=0.1,
+                shadow_far=10.0,
+                shadow_map_size=512,
+            )
+            spot_light = scene.add_spot_light(
+                [-1.5, 0.0, 1.0],
+                [1.5, 0.0, -1.0],
+                inner_fov=1.0,
+                outer_fov=1.4,
+                color=[0.0, 0.0, 0.0],
+                shadow=True,
+                shadow_near=0.1,
+                shadow_far=10.0,
+                shadow_map_size=512,
+            )
+            cam = scene.add_camera(
+                "cam", 96, 96, 0.8, 0.1, 20.0, render_config=make_default_config("default")
+            )
+            cam.entity.pose = sapien.Pose([0.0, 0.0, 2.0], [0.7071068, 0.0, 0.7071068, 0.0])
+
+            def check_no_acne(light_comp, label: str) -> None:
+                light_comp.shadow = False
+                scene.update_render()
+                cam.take_picture()
+                ref = cam.get_picture("Lighting")[16:80, 16:80, :3].mean(axis=-1)
+
+                light_comp.shadow = True
+                scene.update_render()
+                cam.take_picture()
+                lum = cam.get_picture("Lighting")[16:80, 16:80, :3].mean(axis=-1)
+
+                self.assertGreater(float(np.median(ref)), 0.05, f"{label}: floor should be lit")
+                ratio = float((lum / np.maximum(ref, 1e-6)).min())
+                self.assertGreater(
+                    ratio,
+                    0.98,
+                    f"{label}: off-axis shadow acne detected (min ratio={ratio:.4f})",
+                )
+
+            check_no_acne(pt_light, "off-axis point PCF")
+            pt_light.radius = 0.25
+            check_no_acne(pt_light, "off-axis point PCSS")
+
+            pt_light.color = [0.0, 0.0, 0.0]
+            spot_light.color = [15.0, 15.0, 15.0]
+            check_no_acne(spot_light, "off-axis spot PCF")
+            spot_light.radius = 0.25
+            check_no_acne(spot_light, "off-axis spot PCSS")
+
+    def test_exceeding_shadow_limit_raises_and_recovers(self) -> None:
+        """Exceeding the shader pack's directional shadow count must raise cleanly before
+        writing descriptors, and disabling the excess shadow light must recover cleanly."""
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([0.0, 0.0, 0.0])
+            scene.add_ground(
+                0.0,
+                render_material=sapien.render.RenderMaterial(
+                    base_color=[1, 1, 1, 1], specular_weight=0.0, roughness=1.0
+                ),
+            )
+            scene.add_directional_light([0.0, 0.0, -1.0], [2.0, 2.0, 2.0], shadow=True)
+            extra = scene.add_directional_light([0.5, 0.0, -1.0], [1.0, 1.0, 1.0], shadow=True)
+            cam = scene.add_camera(
+                "cam", 32, 32, 0.8, 0.1, 20.0, render_config=make_default_config("default")
+            )
+            cam.entity.pose = sapien.Pose([0.0, 0.0, 2.0], [0.7071068, 0.0, 0.7071068, 0.0])
+
+            scene.update_render()
+            with self.assertRaisesRegex(RuntimeError, "too many directional"):
+                cam.take_picture()
+
+            extra.shadow = False
+            scene.update_render()
+            cam.take_picture()
+            lit = float(cam.get_picture("Lighting")[..., :3].mean())
+            self.assertGreater(lit, 0.2)
+
 
 if __name__ == "__main__":
     unittest.main()

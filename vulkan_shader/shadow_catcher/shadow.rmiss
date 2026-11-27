@@ -4,8 +4,8 @@
 #include "ray.glsl"
 #include "push_constant.glsl"
 
-layout(location = 1) rayPayloadInEXT ShadowRay shadowRay;
+layout(location = 0) rayPayloadInEXT Ray ray;
 
 void main() {
-  shadowRay.shadowed = false;
+  ray.isShadow = 0;
 }

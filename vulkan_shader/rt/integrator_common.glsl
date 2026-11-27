@@ -10,7 +10,7 @@ struct EmissiveTriangle {
   vec4 v0;        // xyz = vertex 0, w = probability of selecting this triangle
   vec4 e1;        // xyz = vertex 1 - vertex 0, w = TLAS instance (bit pattern of an int)
   vec4 e2;        // xyz = vertex 2 - vertex 0
-  vec4 emission;  // rgb = emitted radiance (both sides)
+  vec4 emission;  // rgb = emitted radiance, w > 0.5 when double-sided
 };
 
 // One row of the TLAS instance buffer (VkAccelerationStructureInstanceKHR): the 3x4 row-major
@@ -63,11 +63,21 @@ Surface makeSurface(vec3 pos, vec3 T, vec3 B, vec3 N, vec3 Ng, vec3 V, OpenPBR m
   return s;
 }
 
-// Power heuristic (beta = 2) of two solid-angle pdfs.
+// Power heuristic (beta = 2) of two solid-angle pdfs, scaled to avoid float32 overflow/underflow.
 float misPowerHeuristic(float a, float b) {
-  float a2 = a * a;
-  float b2 = b * b;
-  return a2 / max(a2 + b2, 1e-20);
+  if (a <= 0.0) {
+    return 0.0;
+  }
+  if (b <= 0.0) {
+    return 1.0;
+  }
+  if (a >= b) {
+    float r = b / a;
+    return 1.0 / (1.0 + r * r);
+  }
+  float r = a / b;
+  float r2 = r * r;
+  return r2 / (1.0 + r2);
 }
 
 // MIS weight of light that a path ray found with BSDF pdf `bsdfPdf`, `pdfLight` being its

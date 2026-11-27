@@ -3,10 +3,13 @@
 #extension GL_EXT_scalar_block_layout : enable
 #extension GL_EXT_nonuniform_qualifier : enable
 
+hitAttributeEXT vec2 attribs;
+
 #include "random.glsl"
 #include "ray.glsl"
 #include "geometry.glsl"
 #include "push_constant.glsl"
+#include "../common/scene_structs.glsl"
 
 layout(location = 0) rayPayloadInEXT Ray ray;
 
@@ -18,31 +21,74 @@ layout(set = 1, binding = 2) readonly buffer Materials {
   Material m[];
 } materials;
 
-struct Object {
-  uvec4 segmentation;
-  float transparency;
-  int shadeFlat;
-  int padding0;
-  int padding1;
-};
+layout(set = 1, binding = 4) uniform sampler2D textures[];
+
+layout(std430, set = 1, binding = 8) readonly buffer Vertices {
+  Vertex v[];
+} vertices[];
+
+layout(set = 1, binding = 9) readonly buffer Indices {
+  uint i[];
+} indices[];
 
 layout(set = 1, binding = 11) readonly buffer Objects {
   Object o[];
 } objects;
 
+vec2 interpolateUV(uint geometryIndex) {
+  uint v0 = indices[nonuniformEXT(geometryIndex)].i[3 * gl_PrimitiveID + 0];
+  uint v1 = indices[nonuniformEXT(geometryIndex)].i[3 * gl_PrimitiveID + 1];
+  uint v2 = indices[nonuniformEXT(geometryIndex)].i[3 * gl_PrimitiveID + 2];
+  Vertex a = vertices[nonuniformEXT(geometryIndex)].v[v0];
+  Vertex b = vertices[nonuniformEXT(geometryIndex)].v[v1];
+  Vertex c = vertices[nonuniformEXT(geometryIndex)].v[v2];
+  float b0 = 1.0 - attribs.x - attribs.y;
+  return vec2(a.u, a.v) * b0 + vec2(b.u, b.v) * attribs.x + vec2(c.u, c.v) * attribs.y;
+}
+
 void main() {
   Object obj = objects.o[gl_InstanceID];
+  if (obj.transparency > 0.99) {
+    ignoreIntersectionEXT;
+  }
+
   int instanceId = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT;
+  uint geometryIndex = geometryInstances.i[instanceId].geometryIndex;
   Material mat = materials.m[geometryInstances.i[instanceId].materialIndex];
 
-  bool isInside = gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT;
+  bool mirrored = determinant(mat3(gl_ObjectToWorldEXT)) < 0.0;
+  bool isInside = (gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT) != mirrored;
+
   if (ray.isShadow != 0) {
     // A shadow ray passes the uncovered part of the surface (geometry_opacity, object
     // transparency) and the covered part's transmission. Light entering a body takes the
     // transmission tint (with transmission_depth, the colour reached at that depth). Triangles
     // run any-hit once per primitive (no duplicate invocations), so the product is exact.
-    float coverage = clamp(mat.baseColor.a, 0.0, 1.0) * (1.0 - clamp(obj.transparency, 0.0, 1.0));
-    float transmission = clamp(mat.transmissionWeight, 0.0, 1.0) * (1.0 - clamp(mat.metallic, 0.0, 1.0));
+    float baseAlpha = mat.baseColor.a;
+    float transmissionWeight = mat.transmissionWeight;
+    float metallic = mat.metallic;
+    if (mat.baseColorTexture >= 0 || mat.transmissionTexture >= 0 || mat.metallicTexture >= 0) {
+      vec2 uv = interpolateUV(geometryIndex);
+      if (mat.baseColorTexture >= 0) {
+        baseAlpha *= textureLod(textures[nonuniformEXT(mat.baseColorTexture)],
+                                materialUV(mat.textureTransforms[0], uv), 0.0).a;
+      }
+      if (mat.transmissionTexture >= 0) {
+        transmissionWeight = textureLod(textures[nonuniformEXT(mat.transmissionTexture)],
+                                        materialUV(mat.textureTransforms[5], uv), 0.0).x;
+      }
+      if (mat.metallicTexture >= 0) {
+        metallic = textureLod(textures[nonuniformEXT(mat.metallicTexture)],
+                              materialUV(mat.textureTransforms[3], uv), 0.0).x;
+      }
+    }
+    float coverage = clamp(baseAlpha, 0.0, 1.0) * (1.0 - clamp(obj.transparency, 0.0, 1.0));
+    float transmission = clamp(transmissionWeight, 0.0, 1.0) * (1.0 - clamp(metallic, 0.0, 1.0));
+    // Back faces of fully opaque single-sided meshes are culled for path rays, so shadow rays
+    // ignore them as well to keep NEE/MIS visibility consistent.
+    if (isInside && mat.thinWalled == 0 && transmission < 1e-4 && coverage >= 1.0 - 1e-5) {
+      ignoreIntersectionEXT;
+    }
     vec3 tint = isInside && mat.thinWalled == 0 ? vec3(1.0) : clamp(mat.transmissionColor, 0.0, 1.0);
     ray.transmittance *= mix(vec3(1.0), transmission * tint, coverage);
     if (max(ray.transmittance.x, max(ray.transmittance.y, ray.transmittance.z)) > 0.0) {
@@ -51,12 +97,16 @@ void main() {
     return; // fully blocked: accept the hit, which ends the ray
   }
 
-  // path rays: fully transparent objects and back faces of opaque single-sided surfaces are
-  // invisible
-  if (obj.transparency > 0.99) {
-    ignoreIntersectionEXT;
-  }
-  if (isInside && mat.transmissionWeight < 1e-4 && mat.thinWalled == 0) {
-    ignoreIntersectionEXT;
+  // path rays: back faces of opaque single-sided surfaces are invisible
+  if (isInside && mat.thinWalled == 0) {
+    float transmissionWeight = mat.transmissionWeight;
+    if (mat.transmissionTexture >= 0) {
+      vec2 uv = interpolateUV(geometryIndex);
+      transmissionWeight = textureLod(textures[nonuniformEXT(mat.transmissionTexture)],
+                                      materialUV(mat.textureTransforms[5], uv), 0.0).x;
+    }
+    if (transmissionWeight < 1e-4) {
+      ignoreIntersectionEXT;
+    }
   }
 }

@@ -179,25 +179,30 @@ void IntegratorTables::build(core::Context &context, scene::Scene &scene,
       }
     }
     double total = 0.0;
-    for (float weight : weights) {
+    for (float &weight : weights) {
+      if (!std::isfinite(weight) || weight < 0.f) {
+        weight = 0.f;
+      }
       total += weight;
     }
-    if (total > 0.0) {
+    if (std::isfinite(total) && total > 0.0) {
       float floor = float(kEnvWeightFloor * total / weights.size());
       for (float &weight : weights) {
         weight += floor;
       }
       SapienAliasTable table = buildAlias(weights);
-      float cellSolidAngle = 4.f * kPi / weights.size();
-      envEntries.assign(4 * weights.size(), 0);
-      for (size_t c = 0; c < weights.size(); ++c) {
-        float pdf = weights[c] / table.total / cellSolidAngle;
-        envEntries[4 * c + 0] = table.entries[c].alias;
-        envEntries[4 * c + 1] = table.entries[c].threshold;
-        std::memcpy(&envEntries[4 * c + 2], &pdf, sizeof(pdf));
+      if (std::isfinite(table.total) && table.total > 0.f) {
+        float cellSolidAngle = 4.f * kPi / weights.size();
+        envEntries.assign(4 * weights.size(), 0);
+        for (size_t c = 0; c < weights.size(); ++c) {
+          float pdf = weights[c] / table.total / cellSolidAngle;
+          envEntries[4 * c + 0] = table.entries[c].alias;
+          envEntries[4 * c + 1] = table.entries[c].threshold;
+          std::memcpy(&envEntries[4 * c + 2], &pdf, sizeof(pdf));
+        }
+        envWidth = width;
       }
       sapien_alias_table_free(&table);
-      envWidth = width;
     }
   }
   envAliasBuffer =
@@ -218,11 +223,13 @@ void IntegratorTables::build(core::Context &context, scene::Scene &scene,
       glm::vec4 emission = material->getEmission();
       glm::vec3 radiance = glm::vec3(emission) * emission.w;
       auto const &mesh = shape->mesh;
-      // Emission textures, layered emission (a coat or fuzz dims it by the emission factor) and a
-      // partly transparent base (stochastic coverage) make the visible emission vary per
-      // direction or per sample: such meshes are left to BSDF sampling (base -1), where the
-      // closest-hit shader applies the same factor, which also keeps their contribution unbiased.
+      // Emission textures, base-color textures (which may carry alpha cutouts), layered emission
+      // (a coat or fuzz dims it by the emission factor) and a partly transparent base (stochastic
+      // coverage) make the visible emission vary per direction or per sample: such meshes are left
+      // to BSDF sampling (base -1), where the closest-hit shader applies the same factor, which
+      // also keeps their contribution unbiased.
       bool modulated = material->getTexture(resource::SVMetallicMaterial::eEmission) ||
+                       material->getTexture(resource::SVMetallicMaterial::eBaseColor) ||
                        material->getCoatWeight() > 0.f || material->getFuzzWeight() > 0.f ||
                        material->getBaseColor().a < 1.f || object->getTransparency() > 0.f;
       bool emissive = luminance(radiance) > 0.f && !modulated && mesh &&
@@ -239,15 +246,26 @@ void IntegratorTables::build(core::Context &context, scene::Scene &scene,
       int32_t rowBits = row;
       float rowFloat;
       std::memcpy(&rowFloat, &rowBits, sizeof(rowFloat));
+      // Match camera.rahit back-face visibility: only thin-walled or transmissive meshes emit
+      // from both sides; opaque single-sided meshes emit from their front face only.
+      float doubleSided =
+          (material->getThinWalled() || material->getTransmission() >= 1e-4f ||
+           material->getTexture(resource::SVMetallicMaterial::eTransmission) != nullptr)
+              ? 1.f
+              : 0.f;
       for (uint32_t t = 0; t < mesh->getTriangleCount(); ++t) {
         glm::vec3 p0 = vertex(indices[3 * t]);
         glm::vec3 e1 = vertex(indices[3 * t + 1]) - p0;
         glm::vec3 e2 = vertex(indices[3 * t + 2]) - p0;
         float worldArea = 0.5f * glm::length(glm::cross(glm::vec3(model * glm::vec4(e1, 0.f)),
                                                         glm::vec3(model * glm::vec4(e2, 0.f))));
-        weights.push_back(worldArea * luminance(radiance));
-        float data[16] = {p0.x, p0.y, p0.z, 0.f, e1.x, e1.y, e1.z, rowFloat,
-                          e2.x, e2.y, e2.z, 0.f, radiance.x, radiance.y, radiance.z, 0.f};
+        float w = worldArea * luminance(radiance);
+        if (!std::isfinite(w) || w < 0.f) {
+          w = 0.f;
+        }
+        weights.push_back(w);
+        float data[16] = {p0.x, p0.y, p0.z, 0.f, e1.x,       e1.y,       e1.z,       rowFloat,
+                          e2.x, e2.y, e2.z, 0.f, radiance.x, radiance.y, radiance.z, doubleSided};
         triangles.insert(triangles.end(), data, data + 16);
       }
     }
@@ -260,16 +278,21 @@ void IntegratorTables::build(core::Context &context, scene::Scene &scene,
   for (float weight : weights) {
     total += weight;
   }
-  if (total > 0.0) {
+  if (std::isfinite(total) && total > 0.0) {
     SapienAliasTable table = buildAlias(weights);
-    aliasEntries.assign(2 * weights.size(), 0);
-    for (size_t t = 0; t < weights.size(); ++t) {
-      aliasEntries[2 * t] = table.entries[t].alias;
-      aliasEntries[2 * t + 1] = table.entries[t].threshold;
-      triangles[16 * t + 3] = weights[t] / table.total; // selection probability
+    if (std::isfinite(table.total) && table.total > 0.f) {
+      aliasEntries.assign(2 * weights.size(), 0);
+      for (size_t t = 0; t < weights.size(); ++t) {
+        aliasEntries[2 * t] = table.entries[t].alias;
+        aliasEntries[2 * t + 1] = table.entries[t].threshold;
+        triangles[16 * t + 3] = weights[t] / table.total; // selection probability
+      }
+      emissiveCount = int(weights.size());
+    } else {
+      triangles.clear();
+      std::fill(bases.begin(), bases.end(), -1);
     }
     sapien_alias_table_free(&table);
-    emissiveCount = int(weights.size());
   } else {
     triangles.clear();
     std::fill(bases.begin(), bases.end(), -1);

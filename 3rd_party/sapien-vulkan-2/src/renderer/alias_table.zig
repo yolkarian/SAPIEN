@@ -30,9 +30,10 @@ const Entry = struct { alias: usize, prob: f64 };
 /// the shader must never sample it (the renderer sets the light count to zero in that case).
 pub fn build(allocator: std.mem.Allocator, weights: []const f32) !Table {
     const count = weights.len;
+    if (count > std.math.maxInt(u32)) return error.TooManyEntries;
     var entries = try allocator.alloc(Entry, count);
     errdefer allocator.free(entries);
-    for (entries) |*entry| entry.* = .{ .alias = 0, .prob = 0 };
+    for (entries, 0..) |*entry, i| entry.* = .{ .alias = i, .prob = 0 };
 
     var total: f64 = 0;
     for (weights) |w| {
@@ -41,6 +42,8 @@ pub fn build(allocator: std.mem.Allocator, weights: []const f32) !Table {
     if (count == 0 or total <= 0) {
         return .{ .entries = entries, .total = 0 };
     }
+    const total_f32: f32 = @floatCast(total);
+    if (!std.math.isFinite(total_f32)) return error.TotalOverflow;
 
     const average = total / @as(f64, @floatFromInt(count));
     var scaled = try allocator.alloc(f64, count);
@@ -92,7 +95,7 @@ pub fn build(allocator: std.mem.Allocator, weights: []const f32) !Table {
         entries[small[small_len]].prob = 1;
     }
 
-    return .{ .entries = entries, .total = @floatCast(total) };
+    return .{ .entries = entries, .total = total_f32 };
 }
 
 pub const Table = struct {
@@ -132,8 +135,13 @@ export fn sapien_alias_table_build(weights: ?[*]const f32, count: usize, out: *C
         writeError(error_buffer, error_size, "alias table: null weights with nonzero count");
         return 1;
     })[0..count];
-    var table = build(c_allocator, slice) catch {
-        writeError(error_buffer, error_size, "alias table: out of memory");
+    var table = build(c_allocator, slice) catch |err| {
+        const msg = switch (err) {
+            error.TooManyEntries => "alias table: count exceeds u32 index range",
+            error.TotalOverflow => "alias table: weight sum overflows float32",
+            else => "alias table: out of memory",
+        };
+        writeError(error_buffer, error_size, msg);
         return 1;
     };
     defer table.deinit(c_allocator);
@@ -262,4 +270,40 @@ test "C interface builds, frees and rejects a null input" {
     var bad: CTable = undefined;
     try std.testing.expectEqual(@as(c_int, 1), sapien_alias_table_build(null, 3, &bad, &error_buffer, error_buffer.len));
     try std.testing.expectEqualStrings("alias table: null weights with nonzero count", std.mem.sliceTo(&error_buffer, 0));
+}
+
+test "all-zero and non-finite weights alias to self and ignore invalid entries" {
+    const zeros = [_]f32{ 0, 0, 0, 0 };
+    var zero_table = try build(test_allocator, &zeros);
+    defer zero_table.deinit(test_allocator);
+    try std.testing.expectEqual(@as(f32, 0), zero_table.total);
+    for (zero_table.entries, 0..) |entry, i| {
+        try std.testing.expectEqual(i, entry.alias);
+        try std.testing.expectEqual(@as(f64, 0), entry.prob);
+    }
+
+    const mixed = [_]f32{ std.math.nan(f32), -3.0, 2.0, std.math.inf(f32), 6.0 };
+    var table = try build(test_allocator, &mixed);
+    defer table.deinit(test_allocator);
+    try std.testing.expectApproxEqAbs(@as(f32, 8.0), table.total, 1e-6);
+    for ([_]usize{ 0, 1, 3 }) |bad_idx| {
+        try std.testing.expectEqual(@as(f64, 0), table.entries[bad_idx].prob);
+        try std.testing.expect(table.entries[bad_idx].alias == 2 or table.entries[bad_idx].alias == 4);
+    }
+}
+
+test "weight sum overflowing float32 returns TotalOverflow" {
+    const huge = [_]f32{ std.math.floatMax(f32), std.math.floatMax(f32) };
+    try std.testing.expectError(error.TotalOverflow, build(test_allocator, &huge));
+
+    var out: CTable = undefined;
+    var error_buffer: [128]u8 = undefined;
+    try std.testing.expectEqual(
+        @as(c_int, 1),
+        sapien_alias_table_build(&huge, huge.len, &out, &error_buffer, error_buffer.len),
+    );
+    try std.testing.expectEqualStrings(
+        "alias table: weight sum overflows float32",
+        std.mem.sliceTo(&error_buffer, 0),
+    );
 }

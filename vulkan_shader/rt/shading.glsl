@@ -144,6 +144,9 @@ void traceParallelogramLights(Surface s, inout DirectLighting result) {
     vec3 L = d / dist;
     vec3 lnormal = cross(light.edge0, light.edge1);
     float area = length(lnormal);
+    if (area <= 1e-12) {
+      continue;
+    }
     float cosL = dot(lnormal / area, L);
     vec3 fDiff, fSpec;
     evalBsdfSplit(s, L, fDiff, fSpec);
@@ -228,6 +231,9 @@ void estimateEmissiveTriangles(Surface s, inout DirectLighting result) {
   vec3 e1 = instanceVector(m, tri.e1.xyz);
   vec3 e2 = instanceVector(m, tri.e2.xyz);
   vec3 cr = cross(e1, e2);
+  if (determinant(mat3(m.row0.xyz, m.row1.xyz, m.row2.xyz)) < 0.0) {
+    cr = -cr;
+  }
   float area2 = length(cr);
   if (area2 <= 0.0) {
     return;
@@ -238,9 +244,13 @@ void estimateEmissiveTriangles(Surface s, inout DirectLighting result) {
   vec3 y = instancePoint(m, tri.v0.xyz) + su * (1.0 - v) * e1 + su * v * e2;
   vec3 d = y - s.pos;
   float d2 = dot(d, d);
+  if (d2 <= 1e-12) {
+    return;
+  }
   float dist = sqrt(d2);
   vec3 L = d / dist;
-  float cosL = abs(dot(cr, L)) / area2;
+  // Single-sided opaque meshes cull back faces in camera.rahit: only their front side emits.
+  float cosL = (tri.emission.w > 0.5 ? abs(dot(cr, L)) : -dot(cr, L)) / area2;
   vec3 fDiff, fSpec;
   evalBsdfSplit(s, L, fDiff, fSpec);
   if (cosL <= 1e-6 || isBlack(fDiff + fSpec)) {

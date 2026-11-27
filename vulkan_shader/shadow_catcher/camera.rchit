@@ -13,7 +13,6 @@ hitAttributeEXT vec3 attribs;
 #include "../common/openpbr.glsl"
 
 layout(location = 0) rayPayloadInEXT Ray ray;
-layout(location = 1) rayPayloadInEXT ShadowRay shadowRay;
 
 layout(set = 1, binding = 0) uniform accelerationStructureEXT tlas;
 
@@ -94,6 +93,20 @@ float maxVec3(vec3 v) {
   return max(v.x, max(v.y, v.z));
 }
 
+// Shadow rays share payload 0 so camera.rahit handles transparent occluders and back-face culling.
+vec3 traceShadow(vec3 origin, vec3 L, float tMax, uint mask) {
+  if (tMax <= 0.001) {
+    return vec3(1.0);
+  }
+  ray.isShadow = 1;
+  ray.transmittance = vec3(1.0);
+  traceRayEXT(tlas, gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsSkipClosestHitShaderEXT, mask,
+              0, 0, 1, origin, 0.001, L, tMax, 0);
+  vec3 transmittance = ray.isShadow == 0 ? ray.transmittance : vec3(0.0);
+  ray.isShadow = 0;
+  return transmittance;
+}
+
 // the BSDF times cos toward world direction L at a surface with shading frame `frame`
 vec3 catcherBsdf(OpenPBR m, mat3 frame, vec3 wo, vec3 L) {
   return openpbrEvalReflection(m, wo, L * frame);
@@ -117,26 +130,10 @@ vec3 traceDirectionalLights(vec3 pos, OpenPBR m, mat3 frame, vec3 wo, out vec3 r
       L = normalize(L + radius * (cos(angle) * tangent + sin(angle) * bitangent));
     }
 
-    uint flags = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT;
-
-    shadowRay.shadowed = true;
-    traceRayEXT(tlas,
-                flags,
-                0x02,
-                0,
-                0,
-                1,  // miss index
-                pos,
-                0.001,
-                L,
-                1.0e6,
-                1  // payload location
-    );
-
     vec3 intensity = catcherBsdf(m, frame, wo, L) * emission;
     resultNoShadow += intensity;
-    if (!shadowRay.shadowed) {
-      result += intensity;
+    if (maxVec3(intensity) > 0.0) {
+      result += intensity * traceShadow(pos, L, 1.0e6, 0x02u);
     }
   }
   return result;
@@ -151,35 +148,23 @@ vec3 traceParallelogramLights(vec3 pos, OpenPBR m, mat3 frame, vec3 wo, out vec3
     vec3 emission = light.rgb;
     vec3 d = light.position + rnd(ray.seed) * light.edge0 + rnd(ray.seed) * light.edge1 - pos;
     float d2 = max(dot(d, d), 1e-6);
-    vec3 L = normalize(d);
+    float dist = sqrt(d2);
+    vec3 L = d / dist;
 
     vec3 lnormal = cross(light.edge0, light.edge1);
     float area = length(lnormal);
-    lnormal = normalize(lnormal);
+    if (area <= 1e-12) {
+      continue;
+    }
+    lnormal /= area;
     float dotlnld = dot(lnormal, L); // light normal dot light direction
 
     if (dotlnld > 0.0) {
       emission = emission * dotlnld * area / d2;
-
-      uint flags = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT;
-      shadowRay.shadowed = true;
-      traceRayEXT(tlas,
-                  flags,
-                  0x02,
-                  0,
-                  0,
-                  1,  // miss index
-                  pos,
-                  0.001,
-                  L,
-                  sqrt(d2) - 0.001,
-                  1  // payload location
-      );
-
       vec3 intensity = catcherBsdf(m, frame, wo, L) * emission;
       resultNoShadow += intensity;
-      if (!shadowRay.shadowed) {
-        result += intensity;
+      if (maxVec3(intensity) > 0.0) {
+        result += intensity * traceShadow(pos, L, dist - 0.001, 0x02u);
       }
     }
   }
@@ -193,29 +178,25 @@ vec3 tracePointLights(vec3 pos, OpenPBR m, mat3 frame, vec3 wo, out vec3 resultN
   for (uint i = 0; i < pointLightCount; ++i) {
     PointLight light = pointLights.l[i];
     vec3 emission = light.rgb;
-    vec3 d = light.position - pos;
+    vec3 target = light.position;
+    vec3 toCenter = target - pos;
+    if (light.radius > 0.0 && dot(toCenter, toCenter) > 1e-12) {
+      vec3 dir = normalize(toCenter);
+      vec3 tangent = abs(dir.z) < 0.999 ? normalize(cross(dir, vec3(0, 0, 1))) : vec3(1, 0, 0);
+      vec3 bitangent = cross(dir, tangent);
+      float r = sqrt(rnd(ray.seed)) * light.radius;
+      float angle = 2.0 * M_PI * rnd(ray.seed);
+      target += r * (cos(angle) * tangent + sin(angle) * bitangent);
+    }
+    vec3 d = target - pos;
     float d2 = max(dot(d, d), 1e-6);
-    vec3 L = normalize(d);
+    float dist = sqrt(d2);
+    vec3 L = d / dist;
 
-    uint flags = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT;
-
-    shadowRay.shadowed = true;
-    traceRayEXT(tlas,
-                flags,
-                0x02,
-                0,
-                0,
-                1,  // miss index
-                pos,
-                0.001,
-                L,
-                sqrt(d2) - 0.001,
-                1  // payload location
-    );
     vec3 intensity = catcherBsdf(m, frame, wo, L) * emission / d2;
     resultNoShadow += intensity;
-    if (!shadowRay.shadowed) {
-      result += intensity;
+    if (maxVec3(intensity) > 0.0) {
+      result += intensity * traceShadow(pos, L, dist - 0.001, 0x02u);
     }
   }
   return result;
@@ -229,14 +210,24 @@ vec3 traceSpotLights(vec3 pos, OpenPBR m, mat3 frame, vec3 wo, out vec3 resultNo
     SpotLight light = spotLights.l[i];
 
     vec3 emission = light.rgb;
-    vec3 centerDir =  vec3(0.0, 0.0, -1.0) * mat3(light.viewMat);  // model rotation * forward
-
-    vec3 d = light.position - pos;
+    vec3 centerDir = vec3(0.0, 0.0, -1.0) * mat3(light.viewMat);  // model rotation * forward
+    vec3 target = light.position;
+    vec3 toCenter = target - pos;
+    if (light.radius > 0.0 && dot(toCenter, toCenter) > 1e-12) {
+      vec3 dir = normalize(toCenter);
+      vec3 tangent = abs(dir.z) < 0.999 ? normalize(cross(dir, vec3(0, 0, 1))) : vec3(1, 0, 0);
+      vec3 bitangent = cross(dir, tangent);
+      float r = sqrt(rnd(ray.seed)) * light.radius;
+      float angle = 2.0 * M_PI * rnd(ray.seed);
+      target += r * (cos(angle) * tangent + sin(angle) * bitangent);
+    }
+    vec3 d = target - pos;
     float d2 = max(dot(d, d), 1e-6);
-    vec3 L = normalize(d);
+    float dist = sqrt(d2);
+    vec3 L = d / dist;
 
-    float cf1 = cos(light.fovInner/2) + 1e-5;
-    float cf2 = cos(light.fovOuter/2);
+    float cf1 = cos(light.fovInner / 2) + 1e-5;
+    float cf2 = cos(light.fovOuter / 2);
 
     float visibility = clamp((dot(-L, centerDir) - cf2) / (cf1 - cf2), 0.0, 1.0);
 
@@ -252,27 +243,11 @@ vec3 traceSpotLights(vec3 pos, OpenPBR m, mat3 frame, vec3 wo, out vec3 resultNo
 
     float maxTexColor = maxVec3(texColor);
 
-    if (visibility > 0.0) {
-      uint flags = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT;
-      shadowRay.shadowed = true;
-      traceRayEXT(tlas,
-                  flags,
-                  0x02,
-                  0,
-                  0,
-                  1,  // miss index
-                  pos,
-                  0.001,
-                  L,
-                  sqrt(d2) - 0.001,
-                  1  // payload location
-      );
-      if (visibility > 1e-5 && maxTexColor > 1e-5) {
-        vec3 intensity = catcherBsdf(m, frame, wo, L) * emission / d2 * visibility * texColor;
-        resultNoShadow += intensity;
-        if (!shadowRay.shadowed) {
-          result += intensity;
-        }
+    if (visibility > 1e-5 && maxTexColor > 1e-5) {
+      vec3 intensity = catcherBsdf(m, frame, wo, L) * emission / d2 * visibility * texColor;
+      resultNoShadow += intensity;
+      if (maxVec3(intensity) > 0.0) {
+        result += intensity * traceShadow(pos, L, dist - 0.001, 0x02u);
       }
     }
   }
@@ -323,7 +298,7 @@ void main() {
   vec3 worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
   vec3 worldTangent = normalize(vec3(gl_ObjectToWorldEXT * vec4(tangent, 0.0)));
 
-  bool isInside = gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT;
+  bool isInside = dot(worldGeometricNormal, gl_WorldRayDirectionEXT) > 0.0;
   if (isInside) {
     worldGeometricNormal = -worldGeometricNormal;
     worldShadingNormal = -worldShadingNormal;
@@ -370,11 +345,13 @@ void main() {
                            materialUV(mat.textureTransforms[5], uv)).x;
   }
 
+  vec3 absorbed = isInside ? exp(-openpbrAbsorption(mat) * gl_HitTEXT) : vec3(1.0);
+
   // geometry_opacity and object transparency: the uncovered part lets the ray go straight on
   float coverage = clamp(base.a, 0.0, 1.0) * (1.0 - clamp(obj.transparency, 0.0, 1.0));
   if (rnd(ray.seed) >= coverage) {
     ray.origin = worldPosition;
-    ray.attenuation = vec3(1.0);
+    ray.attenuation = absorbed;
     ray.normal = worldShadingNormal;
     ray.albedo = baseColor;
     ray.segmentation = obj.segmentation;
@@ -399,6 +376,10 @@ void main() {
     worldShadingNormal = worldGeometricNormal;
   }
   worldTangent -= worldShadingNormal * dot(worldShadingNormal, worldTangent);
+  if (dot(worldTangent, worldTangent) < 1e-6) {
+    vec3 axis = abs(worldShadingNormal.x) < 0.95 ? vec3(1, 0, 0) : vec3(0, 1, 0);
+    worldTangent = cross(axis, worldShadingNormal);
+  }
   worldTangent = normalize(worldTangent);
   worldShadingBitangent = normalize(cross(worldShadingNormal, worldTangent));
   tbn = mat3(worldTangent, worldShadingBitangent, worldShadingNormal);
@@ -408,65 +389,50 @@ void main() {
   wo = normalize(vec3(wo.xy, max(wo.z, 1e-4))); // a normal map can tilt N away from V
   OpenPBRSample bsdf = openpbrSample(m, wo, vec3(rnd(ray.seed), rnd(ray.seed), rnd(ray.seed)));
   vec3 L = tbn * bsdf.wi;
-  vec3 attenuation = bsdf.weight;
+  bool validSample = dot(bsdf.wi, bsdf.wi) > 1e-6 &&
+                     ((dot(worldGeometricNormal, L) > 0.0) != bsdf.transmitted);
+  vec3 attenuation = validSample ? bsdf.weight : vec3(0.0);
 
-  vec3 plNoShadow, dlNoShadow, slNoShadow, alNoShadow, elNoShadow;
+  vec3 plNoShadow, dlNoShadow, slNoShadow, alNoShadow;
+  vec3 elNoShadow = vec3(0.0);
 
-  ray.radiance = emission * openpbrEmissionFactor(m, wo.z)
+  ray.radiance = (emission * openpbrEmissionFactor(m, wo.z)
     + tracePointLights(worldPosition, m, tbn, wo, plNoShadow)
     + traceDirectionalLights(worldPosition, m, tbn, wo, dlNoShadow)
     + traceSpotLights(worldPosition, m, tbn, wo, slNoShadow)
-    + traceParallelogramLights(worldPosition, m, tbn, wo, alNoShadow);
+    + traceParallelogramLights(worldPosition, m, tbn, wo, alNoShadow)) * absorbed;
 
-  {
-    // This ray also decides whether the path goes on. Only the catcher ignores bodies that cast
-    // no shadow (instance mask 0x01 without 0x02); every other surface must still see them in
-    // its reflections and refractions.
-    uint flags = gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT;
-    shadowRay.shadowed = true;
-    traceRayEXT(tlas,
-                flags,
-                obj.segmentation.x == 1 ? 0x02u : 0x01u,
-                0,
-                0,
-                1,  // miss index
-                worldPosition,
-                0.001,
-                L,
-                1e4,
-                1  // payload location
-      );
+  ray.origin = worldPosition;
+  ray.direction = validSample ? L : worldGeometricNormal;
+  ray.attenuation = attenuation * absorbed;
+  ray.normal = worldShadingNormal;
+  ray.albedo = baseColor;
+  ray.segmentation = obj.segmentation;
+  ray.scattered = 1;
 
-    if (envmap != 0) {
-      elNoShadow = attenuation * clamp(texture(samplerEnvironment, L.xzy).rgb, vec3(0.0), vec3(100.0));
-    } else {
-      elNoShadow = attenuation * ambientLight;
+  if (obj.segmentation.x == 1 && inDepth == 0) {
+    if (validSample && maxVec3(attenuation) > 0.0) {
+      vec3 env = envmap != 0
+                     ? clamp(texture(samplerEnvironment, L.xzy).rgb, vec3(0.0), vec3(100.0))
+                     : ambientLight;
+      elNoShadow = attenuation * env;
+      // Only the primary catcher hit ignores cast_shadow=False objects (mask 0x02).
+      ray.radiance += elNoShadow * traceShadow(worldPosition, L, 1e4, 0x02u) * absorbed;
     }
-
-    if (!shadowRay.shadowed) {
-      ray.radiance += elNoShadow;
-      ray.depth = maxDepth + 1;
-      ray.origin = worldPosition;
-      ray.direction = L;
-      ray.attenuation = attenuation;
-      ray.normal = worldShadingNormal;
-      ray.albedo = baseColor;
-      ray.segmentation = obj.segmentation;
-    } else {
-      ray.origin = worldPosition;
-      ray.direction = L;
-      ray.attenuation = attenuation;
-      ray.normal = worldShadingNormal;
-      ray.albedo = baseColor;
-      ray.segmentation = obj.segmentation;
-    }
-
-    if (obj.segmentation.x == 1 && inDepth == 0) {
-      vec3 radianceNoShadow = plNoShadow + dlNoShadow + slNoShadow + alNoShadow + elNoShadow;
-      float shadowness = 1.0 - (ray.radiance.x + ray.radiance.y + ray.radiance.z + 1e-6) / (radianceNoShadow.x + radianceNoShadow.y + radianceNoShadow.z + 1e-6);
-      ray.radiance = vec3(0.0);
-      ray.alpha = shadowness;
-      ray.depth = maxDepth + 1;
-    }
+    vec3 radianceNoShadow = (plNoShadow + dlNoShadow + slNoShadow + alNoShadow + elNoShadow) * absorbed;
+    float shadowness = 1.0 - (ray.radiance.x + ray.radiance.y + ray.radiance.z + 1e-6) /
+                             (radianceNoShadow.x + radianceNoShadow.y + radianceNoShadow.z + 1e-6);
+    ray.radiance = vec3(0.0);
+    ray.alpha = clamp(shadowness, 0.0, 1.0);
+    ray.depth = maxDepth + 1;
+  } else if (!validSample || maxVec3(attenuation) <= 0.0) {
+    ray.attenuation = vec3(0.0);
+    ray.depth = maxDepth + 1;
+  } else if (uint(inDepth) >= maxDepth) {
+    vec3 env = envmap != 0
+                   ? clamp(texture(samplerEnvironment, L.xzy).rgb, vec3(0.0), vec3(100.0))
+                   : ambientLight;
+    ray.radiance += attenuation * env * traceShadow(worldPosition, L, 1e4, 0x01u) * absorbed;
+    ray.depth = maxDepth + 1;
   }
 }

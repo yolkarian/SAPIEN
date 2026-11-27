@@ -71,7 +71,8 @@ void main() {
   vec3 worldShadingNormal = normalize(vec3(shadingNormal * gl_WorldToObjectEXT));
   vec3 worldPosition = gl_WorldRayOriginEXT + gl_WorldRayDirectionEXT * gl_HitTEXT;
   vec3 worldTangent = normalize(vec3(gl_ObjectToWorldEXT * vec4(tangent, 0.0)));
-  bool isInside = gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT;
+  // geometricNormal * gl_WorldToObjectEXT always points outward even under mirrored transforms.
+  bool isInside = dot(worldGeometricNormal, gl_WorldRayDirectionEXT) > 0.0;
   if (isInside) {
     worldGeometricNormal = -worldGeometricNormal;
     worldShadingNormal = -worldShadingNormal;
@@ -144,6 +145,10 @@ void main() {
   if (dot(worldShadingNormal, worldGeometricNormal) <= 0.0)
     worldShadingNormal = worldGeometricNormal;
   worldTangent -= worldShadingNormal * dot(worldShadingNormal, worldTangent);
+  if (dot(worldTangent, worldTangent) < 1e-6) {
+    vec3 axis = abs(worldShadingNormal.x) < 0.95 ? vec3(1, 0, 0) : vec3(0, 1, 0);
+    worldTangent = cross(axis, worldShadingNormal);
+  }
   worldTangent = normalize(worldTangent);
   worldShadingBitangent = normalize(cross(worldShadingNormal, worldTangent));
 

@@ -401,6 +401,37 @@ class TestShadowCatcher(unittest.TestCase):
         self.assertGreater(float(centre[0]), 0.2)
         self.assertGreater(float(centre[0]), 3.0 * float(centre[1]))
 
+    def test_shadow_catcher_point_radius_and_glass_tir_render_finite(self) -> None:
+        """Shadow catcher must stay finite under point/spot light radius and glass grazing/TIR
+        paths, and cast visible shadows onto the catcher."""
+        with sapien.Scene() as scene:
+            scene.set_ambient_light([0.2, 0.2, 0.2])
+            scene.add_ground(0.0)
+            pt = scene.add_point_light([-1.0, 0.0, 2.0], [10.0, 10.0, 10.0])
+            pt.radius = 0.15
+            spot = scene.add_spot_light(
+                [0.0, -1.5, 2.0], [0.0, 1.5, -2.0], inner_fov=0.6, outer_fov=1.0, color=[8.0, 8.0, 8.0]
+            )
+            spot.radius = 0.15
+            builder = scene.create_actor_builder()
+            builder.add_box_visual(
+                half_size=[0.35, 0.35, 0.35],
+                material=sapien.render.RenderMaterial(
+                    base_color=[1.0, 1.0, 1.0, 1.0], roughness=0.05, transmission=1.0, ior=1.5
+                ),
+            )
+            builder.build_kinematic().set_pose(sapien.Pose([0.0, 0.0, 0.35]))
+            config = sapien.render.RenderConfig("shadow_catcher")
+            config["spp"] = 8
+            config.denoiser = "none"
+            camera = scene.add_camera("camera", SIZE, SIZE, 0.8, 0.1, 20.0, render_config=config)
+            camera.entity.pose = sapien.Pose([-2.2, 0.0, 1.2], [0.96, 0.0, 0.28, 0.0])
+            scene.update_render()
+            camera.take_picture()
+            hdr = camera.get_picture("HdrColor")
+            self.assertTrue(np.all(np.isfinite(hdr)))
+            self.assertGreater(float(hdr[..., 3].max()), 0.5)
+
 
 class TestGltfMaterialImport(unittest.TestCase):
     def _triangle_gltf(
@@ -569,6 +600,80 @@ class TestGltfMaterialImport(unittest.TestCase):
             material = parts[0].material
         np.testing.assert_allclose(material.base_color, [0.5, 0.5, 0.5, 1.0], atol=1e-6)
         self.assertIsNone(material.occlusion_texture)
+
+    def test_volume_extension_with_zero_thickness_stays_thin_walled(self) -> None:
+        """Per KHR_materials_volume, thicknessFactor == 0 means thin-walled and attenuation
+        parameters must be ignored."""
+        imported = self._import({
+            "pbrMetallicRoughness": {"baseColorFactor": [1.0, 0.6, 0.2, 1.0]},
+            "extensions": {
+                "KHR_materials_transmission": {"transmissionFactor": 1.0},
+                "KHR_materials_volume": {
+                    "thicknessFactor": 0.0,
+                    "attenuationDistance": 0.5,
+                    "attenuationColor": [0.1, 0.2, 0.9],
+                },
+            },
+        })
+        self.assertTrue(imported.thin_walled)
+        self.assertEqual(imported.transmission_depth, 0.0)
+        np.testing.assert_allclose(imported.transmission_color, [1.0, 0.6, 0.2], atol=1e-6)
+
+    def test_opaque_alpha_mode_ignores_base_color_alpha(self) -> None:
+        """Per glTF 2.0, default/OPAQUE alphaMode ignores baseColorFactor alpha while BLEND
+        preserves it."""
+        default_opaque = self._import({
+            "pbrMetallicRoughness": {"baseColorFactor": [0.2, 0.4, 0.6, 0.25]}
+        })
+        self.assertAlmostEqual(default_opaque.base_color[3], 1.0, places=6)
+
+        explicit_opaque = self._import({
+            "alphaMode": "OPAQUE",
+            "pbrMetallicRoughness": {"baseColorFactor": [0.2, 0.4, 0.6, 0.25]},
+        })
+        self.assertAlmostEqual(explicit_opaque.base_color[3], 1.0, places=6)
+
+        blend = self._import({
+            "alphaMode": "BLEND",
+            "pbrMetallicRoughness": {"baseColorFactor": [0.2, 0.4, 0.6, 0.25]},
+        })
+        self.assertAlmostEqual(blend.base_color[3], 0.25, places=6)
+
+    def test_external_metallic_roughness_texture_loads_both_channels(self) -> None:
+        """An external PNG metallicRoughnessTexture must populate both roughness_texture and
+        metallic_texture."""
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "mr.png").write_bytes(png_1x1([0, 128, 255, 255]))
+            positions = np.array([[0, 0, 0], [1, 0, 0], [0, 1, 0]], np.float32).tobytes()
+            uri = "data:application/octet-stream;base64," + base64.b64encode(positions).decode()
+            document = {
+                "asset": {"version": "2.0"},
+                "scene": 0,
+                "scenes": [{"nodes": [0]}],
+                "nodes": [{"mesh": 0}],
+                "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "material": 0}]}],
+                "materials": [{
+                    "pbrMetallicRoughness": {
+                        "metallicRoughnessTexture": {"index": 0},
+                    }
+                }],
+                "images": [{"uri": "mr.png"}],
+                "textures": [{"source": 0}],
+                "buffers": [{"uri": uri, "byteLength": len(positions)}],
+                "bufferViews": [{"buffer": 0, "byteLength": len(positions)}],
+                "accessors": [{
+                    "bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3",
+                    "min": [0, 0, 0], "max": [1, 1, 0],
+                }],
+            }
+            path = root / "triangle.gltf"
+            path.write_text(json.dumps(document))
+            parts = sapien.render.RenderShapeTriangleMesh(str(path)).parts
+            self.assertEqual(len(parts), 1)
+            imported = parts[0].material
+        self.assertIsNotNone(imported.roughness_texture)
+        self.assertIsNotNone(imported.metallic_texture)
 
 
 class TestOcclusionStrength(unittest.TestCase):

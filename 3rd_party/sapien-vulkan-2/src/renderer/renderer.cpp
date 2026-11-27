@@ -841,6 +841,24 @@ void Renderer::prepareRender(scene::Camera &camera) {
       }
     }
 
+    if (mShaderPack->getShadowPass()) {
+      if (mDirectionalLightShadowSizes.size() > mShaderPack->getMaxDirectionalShadowCount()) {
+        throw std::runtime_error("The scene contains too many directional "
+                                 "lights that cast shadows.");
+      }
+      if (mPointLightShadowSizes.size() > mShaderPack->getMaxPointShadowCount()) {
+        throw std::runtime_error("The scene contains too many point "
+                                 "lights that cast shadows.");
+      }
+      if (mSpotLightShadowSizes.size() > mShaderPack->getMaxSpotShadowCount()) {
+        throw std::runtime_error("The scene contains too many spot "
+                                 "lights that cast shadows.");
+      }
+      if (mTexturedLightShadowSizes.size() > mShaderPack->getMaxTexturedShadowCount()) {
+        throw std::runtime_error("The scene contains too many textured lights.");
+      }
+    }
+
     // the light counts size the scene set's light arrays and the shaders' loops; changing one
     // rebuilds the pipelines and the light buffers
     setSpecializationConstant<int>("NUM_POINT_LIGHTS", pointLights.size());
@@ -855,7 +873,8 @@ void Renderer::prepareRender(scene::Camera &camera) {
     if (mShaderPack->getShadowPass() &&
         (!mShaderPackInstance || mShaderPackInstance->needsShadowPass())) {
       auto lightBufferLayout = mShaderPack->getShaderInputLayouts()->lightBufferLayout;
-      if (!mShadowMaps ||
+      auto activeShadowMaps = mScene->getRasterShadowMaps(mConfig->depthFormat);
+      if (!mShadowMaps || mShadowMaps != activeShadowMaps ||
           !mShadowMaps->matches(mConfig->depthFormat, lightBufferLayout->size,
                                 mDirectionalLightShadowSizes, mPointLightShadowSizes,
                                 mSpotLightShadowSizes, mTexturedLightShadowSizes)) {
@@ -1616,6 +1635,7 @@ bool Renderer::refreshMaterialsAndTextures() {
   };
 
   std::vector<scene::GpuMaterial> gpuMaterials;
+  std::vector<std::pair<uint8_t, vk::CullModeFlagBits>> drawStates;
   for (auto obj : objects) {
     for (auto const &shape : obj->getModel()->getShapes()) {
       auto mat = std::static_pointer_cast<resource::SVMetallicMaterial>(shape->material);
@@ -1624,6 +1644,9 @@ bool Renderer::refreshMaterialsAndTextures() {
         continue;
       }
       gpuMaterials.push_back(scene::packMaterial(*mat, textureIndex));
+      float opacity = mat->getOpacity();
+      uint8_t opacityBucket = opacity == 0.f ? 0 : (opacity != 1.f ? 1 : 2);
+      drawStates.emplace_back(opacityBucket, mat->getCullMode());
       mMaterials.push_back(mat);
     }
   }
@@ -1692,6 +1715,11 @@ bool Renderer::refreshMaterialsAndTextures() {
                                vk::DescriptorType::eCombinedImageSampler, slots, {}, {}),
         nullptr);
     mBoundTextures = std::move(textures);
+    rebound = true;
+  }
+
+  if (drawStates != mMaterialDrawStates) {
+    mMaterialDrawStates = std::move(drawStates);
     rebound = true;
   }
 

@@ -173,12 +173,14 @@ void SapienVRDisplay::updateRender() {
   Pose h2w = mRootPose * POSE_GL_TO_ROS * Mat4ToPose(mVR->getHMDPose());
 
   Pose left = h2w * mEyePoses[0];
-  cams[0]->setPosition({left.p.x, left.p.y, left.p.z});
-  cams[0]->setRotation({left.q.w, left.q.x, left.q.y, left.q.z});
+  cams[0]->setTransform({.position = {left.p.x, left.p.y, left.p.z},
+                         .rotation = {left.q.w, left.q.x, left.q.y, left.q.z},
+                         .scale = cams[0]->getScale()});
 
   Pose right = h2w * mEyePoses[1];
-  cams[1]->setPosition({right.p.x, right.p.y, right.p.z});
-  cams[1]->setRotation({right.q.w, right.q.x, right.q.y, right.q.z});
+  cams[1]->setTransform({.position = {right.p.x, right.p.y, right.p.z},
+                         .rotation = {right.q.w, right.q.x, right.q.y, right.q.z},
+                         .scale = cams[1]->getScale()});
 
   if (mRenderSystem) {
     mRenderSystem->step();

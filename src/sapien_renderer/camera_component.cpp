@@ -484,6 +484,9 @@ void SapienRenderCameraComponent::takePicture() {
         "RenderCameraGroup.take_picture() and read RenderCameraGroup.get_picture_cuda(name) "
         "instead.");
   }
+  // Wait for any previous capture before refreshRenderScene() may call setScene() and drop
+  // resources (such as shared shadow-map references) still in flight.
+  mCamera->waitForRender();
   refreshRenderScene();
   mCamera->takePicture();
   mUpdatedWithoutTakingPicture = false;

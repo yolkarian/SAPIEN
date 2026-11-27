@@ -98,6 +98,8 @@ public:
   void prepareResources(scene::Camera &camera) override;
   void uploadCpuFrameState(scene::Camera &camera) override;
   void uploadCpuCameraState(scene::Camera &camera) override;
+  /** Upload only projection matrices and viewport size, keeping GPU-driven view/prevView intact. */
+  void uploadCpuCameraProjection(scene::Camera &camera);
   void uploadCpuSceneLightState() override;
   void setExternalCameraUpdatesEnabled(bool enable);
   bool getExternalCameraUpdatesEnabled() const { return mExternalCameraUpdates; }

@@ -34,7 +34,7 @@ struct GpuSpotLight {
   glm::mat4 viewMat{1.f}; // world to light space; the light shines along its -z
   glm::mat4 projMat{1.f}; // the light's shadow projection, also used for its texture
   glm::vec3 rgb;
-  int padding0{0};
+  int shadowEnabled{1}; // non-zero when this spot/textured light casts shadows
   glm::vec3 position;
   int padding1{0};
   float fovInner{0.f}; // full angles, radians

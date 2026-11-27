@@ -12,6 +12,14 @@ uint64_t SVMetallicMaterial::getGlobalVersion() { return gMaterialVersion.load()
 
 void SVMetallicMaterial::changed() { ++gMaterialVersion; }
 
+void SVMetallicMaterial::setCullMode(vk::CullModeFlagBits cullMode) {
+  if (mCullMode == cullMode) {
+    return;
+  }
+  mCullMode = cullMode;
+  changed();
+}
+
 std::shared_ptr<SVMetallicMaterial> SVMetallicMaterial::clone() const {
   auto copy = std::make_shared<SVMetallicMaterial>();
   copy->mBuffer = mBuffer;

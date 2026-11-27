@@ -9,7 +9,13 @@ layout(location=0) rayPayloadInEXT Ray ray;
 layout(set = 1, binding = 10) uniform samplerCube samplerEnvironment;  // TODO: check this
 
 void main() {
-  ray.radiance = vec3(0.0);
+  if (ray.scattered != 0) {
+    ray.radiance = envmap != 0
+                       ? clamp(texture(samplerEnvironment, ray.direction.xzy).rgb, vec3(0.0), vec3(100.0))
+                       : ambientLight;
+  } else {
+    ray.radiance = vec3(0.0);
+  }
   ray.albedo = ray.radiance;
   ray.normal = vec3(0.0);
   ray.segmentation = uvec4(0);

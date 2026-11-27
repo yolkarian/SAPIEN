@@ -153,7 +153,7 @@ private:
   std::vector<vk::DescriptorImageInfo> environmentMapInfos();
   void writeDescriptors();
   void refreshEnvironmentRows();
-  void refreshLightRows();
+  void refreshLightRows(bool allowNewTextures);
   void updatePushConstant();
 
   std::shared_ptr<core::Context> mContext;

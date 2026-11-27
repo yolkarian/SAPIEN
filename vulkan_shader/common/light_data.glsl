@@ -26,7 +26,7 @@ struct SpotLight {
   mat4 viewMat;
   mat4 projMat;
   vec3 rgb;
-  int padding0;
+  int shadowEnabled;
   vec3 position;
   int padding1;
   float fovInner;

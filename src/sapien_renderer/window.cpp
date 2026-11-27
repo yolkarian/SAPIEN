@@ -556,8 +556,10 @@ CameraMode SapienRendererWindow::getCameraMode() {
 void SapienRendererWindow::setCameraPose(Pose const &pose) {
   auto glpose = pose * POSE_GL_TO_ROS;
   auto cam = getCamera();
-  cam->setPosition({glpose.p.x, glpose.p.y, glpose.p.z});
-  cam->setRotation({glpose.q.w, glpose.q.x, glpose.q.y, glpose.q.z});
+  cam->setTransform({.position = {glpose.p.x, glpose.p.y, glpose.p.z},
+                     .rotation = {glpose.q.w, glpose.q.x, glpose.q.y, glpose.q.z},
+                     .scale = cam->getScale()});
+  cam->updateGlobalModelMatrixRecursive();
 }
 
 Pose SapienRendererWindow::getCameraPose() {
@@ -779,7 +781,8 @@ svulkan2::scene::Camera *SapienRendererWindow::getCamera() {
 
   camera->setPerspectiveParameters(0.1, 10, 1, width, height);
   camera->setName("_controller");
-  camera->setPosition({0, 0, 0});
+  camera->setTransform({.position = {0, 0, 0}, .rotation = {1, 0, 0, 0}, .scale = {1, 1, 1}});
+  camera->updateGlobalModelMatrixRecursive();
   return camera;
 }
 

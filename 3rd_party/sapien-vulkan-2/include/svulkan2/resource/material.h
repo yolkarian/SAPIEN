@@ -15,7 +15,7 @@ public:
 
   virtual ~SVMaterial() = default;
 
-  void setCullMode(vk::CullModeFlagBits cullMode) { mCullMode = cullMode; }
+  virtual void setCullMode(vk::CullModeFlagBits cullMode) { mCullMode = cullMode; }
   vk::CullModeFlagBits getCullMode() const { return mCullMode; }
 
 protected:
@@ -137,6 +137,7 @@ public:
   }
 
   inline float getOpacity() const override { return mBuffer.baseColor.a; }
+  void setCullMode(vk::CullModeFlagBits cullMode) override;
 
   inline Buffer const &getBuffer() const { return mBuffer; }
   /** Process-wide stamp of the most recent edit to any material; renderers use it to decide

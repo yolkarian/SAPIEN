@@ -74,8 +74,9 @@ float sapienDirectionalCascadeShadow(sampler2DArray shadowArray, int cascade, ve
     for (int i = 0; i < PCF_SAMPLE_COUNT; ++i) {
       vec2 offset = (rot * PCF_SAMPLES[i]) * searchUV;
       vec2 sampleUV = clamp(coord.xy + offset, vec2(invRes), vec2(1.0 - invRes));
+      vec2 clampedOffset = sampleUV - coord.xy;
       float sampleDepth = texture(shadowArray, vec3(sampleUV, float(cascade))).x;
-      float expectedReceiver = coord.z + dot(offset, planeBias) - baseBias;
+      float expectedReceiver = coord.z + dot(clampedOffset, planeBias) - baseBias;
       if (sampleDepth < expectedReceiver) {
         blockerSum += sampleDepth;
         blockerCount++;
@@ -94,8 +95,9 @@ float sapienDirectionalCascadeShadow(sampler2DArray shadowArray, int cascade, ve
   for (int i = 0; i < PCF_SAMPLE_COUNT; ++i) {
     vec2 offset = (rot * PCF_SAMPLES[i]) * filterUV;
     vec2 sampleUV = clamp(coord.xy + offset, vec2(invRes), vec2(1.0 - invRes));
+    vec2 clampedOffset = sampleUV - coord.xy;
     float shadowDepth = texture(shadowArray, vec3(sampleUV, float(cascade))).x;
-    float receiverDepth = coord.z + dot(offset, planeBias) - baseBias;
+    float receiverDepth = coord.z + dot(clampedOffset, planeBias) - baseBias;
     visibility += shadowDepth >= receiverDepth ? 1.0 : 0.0;
   }
   return visibility / float(PCF_SAMPLE_COUNT);
@@ -174,11 +176,16 @@ float sapienPerspectiveShadow(sampler2D shadowTex, vec3 coord, mat4 shadowView, 
   float biasWorld = texelWorld * (0.75 + 1.25 * tanTheta);
   float baseBias = max(biasWorld * dNdcDd, 1.5e-5);
 
+  // Exact receiver-plane gradient in hyperbolic NDC depth: for a plane X.nL = posL.nL,
+  // 1/d(u,v) = (ray(u,v).nL) / (posL.nL) is affine in (u,v), so d(ndcZ)/d(u,v) is exact
+  // anywhere in the frustum (not only at the optical axis).
   vec2 planeBias = vec2(0.0);
-  if (nL.z > 0.25) {
-    float dddu = (nL.x / nL.z) * (2.0 * dReceiver / shadowProj[0][0]);
-    float dddv = (nL.y / nL.z) * (2.0 * dReceiver / shadowProj[1][1]);
-    planeBias = vec2(dddu, dddv) * dNdcDd;
+  float posLDist = max(length(posL), 1e-6);
+  float nDotNegPos = dot(nL, -posL);
+  if (NoL > 0.15 && nDotNegPos > 0.15 * posLDist) {
+    float scale = abs(shadowProj[3][2]) / nDotNegPos;
+    planeBias = vec2(nL.x * (2.0 / shadowProj[0][0]),
+                     nL.y * (2.0 / shadowProj[1][1])) * scale;
   }
 
   float filterUV = 1.5 * invRes;
@@ -191,8 +198,9 @@ float sapienPerspectiveShadow(sampler2D shadowTex, vec3 coord, mat4 shadowView, 
     for (int i = 0; i < PCF_SAMPLE_COUNT; ++i) {
       vec2 offset = (rot * PCF_SAMPLES[i]) * searchUV;
       vec2 sampleUV = clamp(coord.xy + offset, vec2(invRes), vec2(1.0 - invRes));
+      vec2 clampedOffset = sampleUV - coord.xy;
       float sampleDepth = texture(shadowTex, sampleUV).x;
-      float expectedReceiver = coord.z + dot(offset, planeBias) - baseBias;
+      float expectedReceiver = coord.z + dot(clampedOffset, planeBias) - baseBias;
       if (sampleDepth < expectedReceiver) {
         blockerDepthSum += shadowProj[3][2] / (sampleDepth + shadowProj[2][2]);
         blockerCount++;
@@ -210,8 +218,9 @@ float sapienPerspectiveShadow(sampler2D shadowTex, vec3 coord, mat4 shadowView, 
   for (int i = 0; i < PCF_SAMPLE_COUNT; ++i) {
     vec2 offset = (rot * PCF_SAMPLES[i]) * filterUV;
     vec2 sampleUV = clamp(coord.xy + offset, vec2(invRes), vec2(1.0 - invRes));
+    vec2 clampedOffset = sampleUV - coord.xy;
     float shadowDepth = texture(shadowTex, sampleUV).x;
-    float receiverDepth = coord.z + dot(offset, planeBias) - baseBias;
+    float receiverDepth = coord.z + dot(clampedOffset, planeBias) - baseBias;
     visibility += shadowDepth >= receiverDepth ? 1.0 : 0.0;
   }
   return visibility / float(PCF_SAMPLE_COUNT);
@@ -243,8 +252,7 @@ float sapienPointShadow(samplerCube shadowCube, vec3 wsl, mat4 shadowProj, vec3 
   float tanTheta = min(sinTheta / max(NoL, 0.05), 6.0);
   float biasWorld = texelWorld * (0.75 + 1.25 * tanTheta);
   float baseBias = max(biasWorld * dNdcDd, 1.5e-5);
-  float axisRatio = maxAxis / dist;
-  float slopeScale = (axisRatio * dNdcDd) / max(NoL, 0.25);
+  float wslDotN = dot(wsl, worldNormal);
 
   vec3 up = abs(toLight.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
   vec3 T = normalize(cross(up, toLight));
@@ -260,8 +268,17 @@ float sapienPointShadow(samplerCube shadowCube, vec3 wsl, mat4 shadowProj, vec3 
     for (int i = 0; i < PCF_SAMPLE_COUNT; ++i) {
       vec2 disk = (rot * PCF_SAMPLES[i]) * searchWorld;
       vec3 deltaW = disk.x * T + disk.y * B;
-      float sampleDepth = texture(shadowCube, wsl - deltaW).x;
-      float expectedReceiver = pixelDepth + dot(worldNormal, deltaW) * slopeScale - baseBias;
+      vec3 wSample = wsl - deltaW;
+      float sampleDepth = texture(shadowCube, wSample).x;
+      // Exact receiver tangent-plane cubemap depth along wSample: handles off-axis major-axis
+      // change and hyperbolic depth without linearization error.
+      float expectedReceiver = pixelDepth - baseBias;
+      if (NoL > 0.15) {
+        float wDotN = max(dot(wSample, worldNormal), 0.25 * wslDotN);
+        vec3 va = abs(wSample);
+        float sampleD = max(max(va.x, va.y), va.z) * (wslDotN / wDotN);
+        expectedReceiver = (-shadowProj[2][2] + shadowProj[3][2] / max(sampleD, 1e-4)) - baseBias;
+      }
       if (sampleDepth < expectedReceiver) {
         blockerDepthSum += shadowProj[3][2] / (sampleDepth + shadowProj[2][2]);
         blockerCount++;
@@ -279,8 +296,15 @@ float sapienPointShadow(samplerCube shadowCube, vec3 wsl, mat4 shadowProj, vec3 
   for (int i = 0; i < PCF_SAMPLE_COUNT; ++i) {
     vec2 disk = (rot * PCF_SAMPLES[i]) * filterWorld;
     vec3 deltaW = disk.x * T + disk.y * B;
-    float shadowDepth = texture(shadowCube, wsl - deltaW).x;
-    float receiverDepth = pixelDepth + dot(worldNormal, deltaW) * slopeScale - baseBias;
+    vec3 wSample = wsl - deltaW;
+    float shadowDepth = texture(shadowCube, wSample).x;
+    float receiverDepth = pixelDepth - baseBias;
+    if (NoL > 0.15) {
+      float wDotN = max(dot(wSample, worldNormal), 0.25 * wslDotN);
+      vec3 va = abs(wSample);
+      float sampleD = max(max(va.x, va.y), va.z) * (wslDotN / wDotN);
+      receiverDepth = (-shadowProj[2][2] + shadowProj[3][2] / max(sampleD, 1e-4)) - baseBias;
+    }
     visibility += shadowDepth >= receiverDepth ? 1.0 : 0.0;
   }
   return visibility / float(PCF_SAMPLE_COUNT);

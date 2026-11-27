@@ -590,6 +590,56 @@ class RtPassThroughAov(unittest.TestCase):
             np.testing.assert_allclose(pics["SpecularIndirect"][centre][..., :3], 0.0, atol=1e-6)
             np.testing.assert_allclose(pics["DiffuseIndirect"][centre][..., :3], 0.0, atol=1e-6)
 
+    def test_cutout_does_not_contaminate_alpha_or_geometric_aovs(self) -> None:
+        """A fully open alpha-cutout (base_color.a == 0) must not write its own Segmentation,
+        Depth, Position, or alpha=1: behind it, a wall reports the wall's AOVs and sky reports
+        alpha=0, Segmentation=0, Depth=0."""
+        centre = (slice(SIZE // 2 - 4, SIZE // 2 + 4), slice(SIZE // 2 - 4, SIZE // 2 + 4))
+
+        def run(with_wall: bool):
+            with sapien.Scene() as scene:
+                scene.set_ambient_light([0.2, 0.2, 0.2])
+                wall_id = 0
+                if with_wall:
+                    wall = scene.create_actor_builder()
+                    wall.add_box_visual(
+                        half_size=[0.05, 2.0, 2.0],
+                        material=sapien.render.RenderMaterial(
+                            base_color=[0.8, 0.8, 0.8, 1.0], specular_weight=0.0, roughness=1.0
+                        ),
+                    )
+                    wall_actor = wall.build_kinematic()
+                    wall_actor.set_pose(sapien.Pose([2.0, 0.0, 0.0]))
+                    wall_id = wall_actor.per_scene_id
+
+                cutout = scene.create_actor_builder()
+                cutout.add_box_visual(
+                    half_size=[0.01, 2.0, 2.0],
+                    material=sapien.render.RenderMaterial(base_color=[1.0, 1.0, 1.0, 0.0]),
+                )
+                cutout.build_kinematic().set_pose(sapien.Pose([0.0, 0.0, 0.0]))
+
+                camera = scene.add_camera(
+                    "camera", SIZE, SIZE, 1.0, 0.1, 20.0, render_config=rt_config(spp=1, depth=3)
+                )
+                camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+                pics = render_pictures(
+                    scene, camera, ("HdrColor", "Segmentation", "Depth", "Position"), frames=1
+                )
+                return pics, wall_id
+
+        with_wall_pics, wall_id = run(with_wall=True)
+        np.testing.assert_allclose(with_wall_pics["HdrColor"][centre][..., 3], 1.0, atol=1e-5)
+        np.testing.assert_array_equal(with_wall_pics["Segmentation"][centre][..., 1], wall_id)
+        # Wall front face is at x = 1.95 seen from x = -3.0 -> depth 4.95 (not cutout's 2.99)
+        np.testing.assert_allclose(with_wall_pics["Depth"][centre], 4.95, atol=1e-2)
+
+        sky_pics, _ = run(with_wall=False)
+        np.testing.assert_allclose(sky_pics["HdrColor"][centre][..., 3], 0.0, atol=1e-5)
+        np.testing.assert_array_equal(sky_pics["Segmentation"][centre][..., 1], 0)
+        np.testing.assert_array_equal(sky_pics["Depth"][centre], 0.0)
+        self.assertTrue(np.all(np.isfinite(sky_pics["Position"])))
+
 
 class RtRadianceSplitAov(unittest.TestCase):
     SPLIT_NAMES = (

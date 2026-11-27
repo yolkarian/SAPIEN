@@ -5,7 +5,7 @@ import sapien.pysapien
 import sapien.pysapien.internal_renderer
 import sapien.pysapien.physx
 import typing
-__all__ = ['RenderBodyComponent', 'RenderConfig', 'RenderCameraComponent', 'RenderCameraGroup', 'RenderCubemap', 'RenderCudaMeshComponent', 'RenderDirectionalLightComponent', 'RenderLightComponent', 'RenderMaterial', 'RenderParallelogramLightComponent', 'RenderPointCloudComponent', 'RenderPointLightComponent', 'RenderSceneLoaderNode', 'RenderShape', 'RenderShapeBox', 'RenderShapeCapsule', 'RenderShapeCylinder', 'RenderShapePlane', 'RenderShapePrimitive', 'RenderShapeSphere', 'RenderShapeTriangleMesh', 'RenderShapeTriangleMeshPart', 'RenderSpotLightComponent', 'RenderSystem', 'RenderSystemGroup', 'RenderTexture', 'RenderTexture2D', 'RenderTexturedLightComponent', 'RenderVRDisplay', 'RenderWindow', 'SapienRenderer', 'can_shutdown', 'get_live_resources', 'shutdown', 'clear_cache', 'enable_vr', 'get_device_summary', 'get_imgui_ini_filename', 'get_vr_action_manifest_filename', 'get_vr_enabled', 'load_scene', 'set_global_config', 'set_imgui_ini_filename', 'set_light_colors', 'set_light_directions', 'set_light_poses', 'set_log_level', 'set_vr_action_manifest_filename']
+__all__ = ['RenderBodyComponent', 'RenderConfig', 'RenderCameraComponent', 'RenderCameraGroup', 'RenderCubemap', 'RenderCudaMeshComponent', 'RenderDirectionalLightComponent', 'RenderLightComponent', 'RenderMaterial', 'RenderParallelogramLightComponent', 'RenderPointCloudComponent', 'RenderPointLightComponent', 'RenderSceneLoaderNode', 'RenderShape', 'RenderShapeBox', 'RenderShapeCapsule', 'RenderShapeCylinder', 'RenderShapePlane', 'RenderShapePrimitive', 'RenderShapeSphere', 'RenderShapeTriangleMesh', 'RenderShapeTriangleMeshPart', 'RenderSpotLightComponent', 'RenderSystem', 'RenderSystemGroup', 'RenderTexture', 'RenderTexture2D', 'RenderTexturedLightComponent', 'RenderVRDisplay', 'RenderWindow', 'SapienRenderer', 'can_shutdown', 'get_live_resources', 'shutdown', 'clear_cache', 'enable_vr', 'get_default_render_config', 'get_device_summary', 'get_imgui_ini_filename', 'get_vr_action_manifest_filename', 'get_vr_enabled', 'load_scene', 'set_default_render_config', 'set_global_config', 'set_imgui_ini_filename', 'set_light_colors', 'set_light_directions', 'set_light_poses', 'set_log_level', 'set_vr_action_manifest_filename']
 M = typing.TypeVar("M", bound=int)
 N = typing.TypeVar("N", bound=int)
 class RenderBodyComponent(sapien.pysapien.Component):
@@ -223,6 +223,9 @@ class RenderCameraComponent(sapien.pysapien.Component):
     def ortho_top(self) -> float:
         ...
     @property
+    def render_config(self) -> RenderConfig:
+        ...
+    @property
     def width(self) -> int:
         ...
 class RenderCameraGroup:
@@ -409,7 +412,7 @@ class RenderMaterial:
     __hash__: typing.ClassVar[None] = None  # type: ignore[assignment]
     base_color: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(4)]
     """RGBA base colour; the alpha channel is the geometry coverage (cut-out), not transparency."""
-    base_color_texture: RenderTexture2D
+    base_color_texture: RenderTexture2D | None
     base_weight: float
     """OpenPBR base_weight."""
     coat_color: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(3)]
@@ -425,7 +428,7 @@ class RenderMaterial:
     RGB emitted colour and, in alpha, the emission strength: OpenPBR emission_luminance as a plain
     radiance multiplier.
     """
-    emission_texture: RenderTexture2D
+    emission_texture: RenderTexture2D | None
     fuzz_color: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(3)]
     """OpenPBR fuzz_color: RGB tint of the fuzz (sheen) layer."""
     fuzz_roughness: float
@@ -436,8 +439,8 @@ class RenderMaterial:
     """OpenPBR specular_ior: index of refraction of the base dielectric."""
     metallic: float
     """OpenPBR base_metalness."""
-    metallic_texture: RenderTexture2D
-    normal_texture: RenderTexture2D
+    metallic_texture: RenderTexture2D | None
+    normal_texture: RenderTexture2D | None
     occlusion_strength: float
     """
     How much the occlusion texture darkens ambient and image-based light: occlusion = mix(1,
@@ -446,7 +449,7 @@ class RenderMaterial:
     occlusion_texture: RenderTexture2D | None
     roughness: float
     """OpenPBR specular_roughness."""
-    roughness_texture: RenderTexture2D
+    roughness_texture: RenderTexture2D | None
     specular_color: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(3)]
     """OpenPBR specular_color: RGB tint of the specular reflection."""
     specular_roughness_anisotropy: float
@@ -468,14 +471,14 @@ class RenderMaterial:
     OpenPBR transmission_depth in scene units (metres): the distance over which the transmitted
     colour reaches full saturation.
     """
-    transmission_texture: RenderTexture2D
+    transmission_texture: RenderTexture2D | None
     def __eq__(self, arg0: RenderMaterial) -> bool:  # type: ignore[override]
         ...
     def __init__(self, emission: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(4)] = [0.0, 0.0, 0.0, 0.0], base_color: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(4)] = [1.0, 1.0, 1.0, 1.0], specular_weight: float = 1.0, roughness: float = 0.44999998807907104, metallic: float = 0.0, transmission: float = 0.0, ior: float = 1.5) -> None:
         ...
     def get_base_color(self) -> typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(4)]:
         ...
-    def get_base_color_texture(self) -> RenderTexture2D:
+    def get_base_color_texture(self) -> RenderTexture2D | None:
         ...
     def get_base_weight(self) -> float:
         ...
@@ -489,7 +492,7 @@ class RenderMaterial:
         ...
     def get_emission(self) -> typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(4)]:
         ...
-    def get_emission_texture(self) -> RenderTexture2D:
+    def get_emission_texture(self) -> RenderTexture2D | None:
         ...
     def get_fuzz_color(self) -> typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(3)]:
         ...
@@ -501,17 +504,17 @@ class RenderMaterial:
         ...
     def get_metallic(self) -> float:
         ...
-    def get_metallic_texture(self) -> RenderTexture2D:
+    def get_metallic_texture(self) -> RenderTexture2D | None:
         ...
-    def get_normal_texture(self) -> RenderTexture2D:
+    def get_normal_texture(self) -> RenderTexture2D | None:
         ...
     def get_occlusion_strength(self) -> float:
         ...
-    def get_occlusion_texture(self) -> RenderTexture2D:
+    def get_occlusion_texture(self) -> RenderTexture2D | None:
         ...
     def get_roughness(self) -> float:
         ...
-    def get_roughness_texture(self) -> RenderTexture2D:
+    def get_roughness_texture(self) -> RenderTexture2D | None:
         ...
     def get_specular_color(self) -> typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(3)]:
         ...
@@ -527,11 +530,11 @@ class RenderMaterial:
         ...
     def get_transmission_depth(self) -> float:
         ...
-    def get_transmission_texture(self) -> RenderTexture2D:
+    def get_transmission_texture(self) -> RenderTexture2D | None:
         ...
     def set_base_color(self, color: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(4)]) -> None:
         ...
-    def set_base_color_texture(self, texture: RenderTexture2D) -> None:
+    def set_base_color_texture(self, texture: RenderTexture2D | None) -> None:
         ...
     def set_base_weight(self, weight: float) -> None:
         ...
@@ -545,7 +548,7 @@ class RenderMaterial:
         ...
     def set_emission(self, emission: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(4)]) -> None:
         ...
-    def set_emission_texture(self, texture: RenderTexture2D) -> None:
+    def set_emission_texture(self, texture: RenderTexture2D | None) -> None:
         ...
     def set_fuzz_color(self, color: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(3)]) -> None:
         ...
@@ -557,17 +560,17 @@ class RenderMaterial:
         ...
     def set_metallic(self, metallic: float) -> None:
         ...
-    def set_metallic_texture(self, texture: RenderTexture2D) -> None:
+    def set_metallic_texture(self, texture: RenderTexture2D | None) -> None:
         ...
-    def set_normal_texture(self, texture: RenderTexture2D) -> None:
+    def set_normal_texture(self, texture: RenderTexture2D | None) -> None:
         ...
     def set_occlusion_strength(self, strength: float) -> None:
         ...
-    def set_occlusion_texture(self, texture: RenderTexture2D) -> None:
+    def set_occlusion_texture(self, texture: RenderTexture2D | None) -> None:
         ...
     def set_roughness(self, roughness: float) -> None:
         ...
-    def set_roughness_texture(self, texture: RenderTexture2D) -> None:
+    def set_roughness_texture(self, texture: RenderTexture2D | None) -> None:
         ...
     def set_specular_color(self, color: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(3)]) -> None:
         ...
@@ -583,7 +586,7 @@ class RenderMaterial:
         ...
     def set_transmission_depth(self, depth: float) -> None:
         ...
-    def set_transmission_texture(self, texture: RenderTexture2D) -> None:
+    def set_transmission_texture(self, texture: RenderTexture2D | None) -> None:
         ...
 class RenderParallelogramLightComponent(RenderLightComponent):
     def __init__(self) -> None:
@@ -1375,6 +1378,9 @@ class RenderWindow:
         ...
     @property
     def ortho_top(self) -> float:
+        ...
+    @property
+    def render_config(self) -> RenderConfig:
         ...
     @property
     def shift(self) -> bool:

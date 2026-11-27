@@ -100,8 +100,9 @@ PostChain::PostChain(std::shared_ptr<core::Context> context,
     for (auto &r : resources.push_constant_buffers) {
       pass.parameters = shader::parseBuffer(compiler, compiler.get_type(r.base_type_id));
       for (auto const &[name, element] : pass.parameters->elements) {
-        if (element.dtype != DataType::INT() && element.dtype != DataType::FLOAT()) {
-          throw fail("parameter \"" + name + "\" must be an int or a float");
+        if (!element.array.empty() ||
+            (element.dtype != DataType::INT() && element.dtype != DataType::FLOAT())) {
+          throw fail("parameter \"" + name + "\" must be a scalar int or float");
         }
         auto [it, inserted] = mProperties.try_emplace(name, Property{element.dtype});
         if (!inserted && it->second.dtype != element.dtype) {

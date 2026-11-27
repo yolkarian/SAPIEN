@@ -406,7 +406,7 @@ void BatchRTRenderer::initialize(std::vector<std::shared_ptr<scene::Scene>> cons
   // Environment and light tables. Their sizes are fixed from here on: the camera group rejects
   // topology changes, so later light edits rewrite rows in place (uploadSceneLightState).
   refreshEnvironmentRows();
-  refreshLightRows();
+  refreshLightRows(true);
   mEnvironmentBuffer = createStorage(mEnvironmentRows.data(),
                                      mEnvironmentRows.size() * sizeof(BatchEnvironmentRow));
   mPointLightBuffer = createStorage(mLights.point.data(),
@@ -632,10 +632,21 @@ void BatchRTRenderer::refreshEnvironmentRows() {
   }
 }
 
-void BatchRTRenderer::refreshLightRows() {
+void BatchRTRenderer::refreshLightRows(bool allowNewTextures) {
   // lights concatenate in environment order; each environment names its [begin, end) range
   mLights.clear();
   auto textureIndex = [&](std::shared_ptr<resource::SVTexture> const &texture) {
+    if (!texture) {
+      return -1;
+    }
+    if (!allowNewTextures) {
+      auto slot = mTextureSlots.find(texture);
+      if (slot == mTextureSlots.end()) {
+        throw std::runtime_error("a textured light of the batched ray tracing group samples a "
+                                 "texture the group did not use when it was initialized");
+      }
+      return slot->second;
+    }
     auto [slot, added] =
         mTextureSlots.try_emplace(texture, static_cast<int>(mTextures.size()));
     if (added) {
@@ -688,7 +699,7 @@ void BatchRTRenderer::uploadSceneLightState() {
   checkInitialized();
   auto previousMaps = mEnvironmentMaps;
   refreshEnvironmentRows();
-  refreshLightRows();
+  refreshLightRows(false);
   if (mEnvironmentMaps != previousMaps) {
     // the caller waits for the previous frame, and every frame re-records its command buffer
     auto const &bindings = mShaderPack->getSceneDescription().bindings;

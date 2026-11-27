@@ -33,16 +33,25 @@ void Node::markTransformDirty() {
 }
 
 void Node::setPosition(glm::vec3 const &pos) {
+  if (mTransform.position == pos) {
+    return;
+  }
   mTransform.position = pos;
-  updateGlobalModelMatrixRecursive();
+  markTransformDirty();
 }
 void Node::setRotation(glm::quat const &rot) {
+  if (mTransform.rotation == rot) {
+    return;
+  }
   mTransform.rotation = rot;
-  updateGlobalModelMatrixRecursive();
+  markTransformDirty();
 }
 void Node::setScale(glm::vec3 const &scale) {
+  if (mTransform.scale == scale) {
+    return;
+  }
   mTransform.scale = scale;
-  updateGlobalModelMatrixRecursive();
+  markTransformDirty();
 }
 
 void Node::updateGlobalModelMatrixRecursive() {

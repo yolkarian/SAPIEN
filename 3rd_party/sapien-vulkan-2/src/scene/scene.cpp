@@ -234,6 +234,7 @@ PointLight &Scene::addPointLight(Node &parent) {
   mPointLights.back()->setScene(this);
   mPointLights.back()->setParent(parent);
   parent.addChild(*mPointLights.back());
+  mPointLights.back()->updateGlobalModelMatrixRecursive();
   return result;
 }
 
@@ -247,6 +248,7 @@ DirectionalLight &Scene::addDirectionalLight(Node &parent) {
   mDirectionalLights.back()->setScene(this);
   mDirectionalLights.back()->setParent(parent);
   parent.addChild(*mDirectionalLights.back());
+  mDirectionalLights.back()->updateGlobalModelMatrixRecursive();
   return result;
 }
 
@@ -260,6 +262,7 @@ SpotLight &Scene::addSpotLight(Node &parent) {
   mSpotLights.back()->setScene(this);
   mSpotLights.back()->setParent(parent);
   parent.addChild(*mSpotLights.back());
+  mSpotLights.back()->updateGlobalModelMatrixRecursive();
   return result;
 }
 
@@ -273,6 +276,7 @@ TexturedLight &Scene::addTexturedLight(Node &parent) {
   mTexturedLights.back()->setScene(this);
   mTexturedLights.back()->setParent(parent);
   parent.addChild(*mTexturedLights.back());
+  mTexturedLights.back()->updateGlobalModelMatrixRecursive();
   return result;
 }
 
@@ -286,6 +290,7 @@ ParallelogramLight &Scene::addParallelogramLight(Node &parent) {
   mParallelogramLights.back()->setScene(this);
   mParallelogramLights.back()->setParent(parent);
   parent.addChild(*mParallelogramLights.back());
+  mParallelogramLights.back()->updateGlobalModelMatrixRecursive();
   return result;
 }
 
@@ -462,6 +467,11 @@ void Scene::updateModelMatrices() {
   }
   mModelMatricesSettling = changed;
   mModelMatricesVersion = mVersion;
+}
+
+std::shared_ptr<RasterShadowMaps> Scene::getRasterShadowMaps(vk::Format depthFormat) const {
+  auto it = mRasterShadowMaps.find(depthFormat);
+  return it != mRasterShadowMaps.end() ? it->second : nullptr;
 }
 
 std::shared_ptr<RasterShadowMaps>
@@ -1112,6 +1122,10 @@ void Scene::buildAccelerationStructuresLocked(
 
 bool Scene::recordPrevTLASSnapshot(vk::CommandBuffer commandBuffer) {
   std::lock_guard lock(mRTResourcesLock);
+  return recordPrevTLASSnapshotLocked(commandBuffer);
+}
+
+bool Scene::recordPrevTLASSnapshotLocked(vk::CommandBuffer commandBuffer) {
   if (!mPrevTLASInstanceBuffer || !mLastTLASInstanceBuffer || !mTLAS) {
     return false;
   }
@@ -1176,6 +1190,7 @@ bool Scene::recordPrevTLASSnapshot(vk::CommandBuffer commandBuffer) {
 }
 
 void Scene::submitPrevTLASSnapshot() {
+  std::lock_guard lock(mRTResourcesLock);
   auto device = mContext->getDevice();
   if (!mPrevTLASSnapshotCommandBuffer) {
     mPrevTLASSnapshotCommandBuffer = getCommandPool().allocateCommandBuffer();
@@ -1188,7 +1203,7 @@ void Scene::submitPrevTLASSnapshot() {
   }
   mPrevTLASSnapshotCommandBuffer->reset();
   mPrevTLASSnapshotCommandBuffer->begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-  bool recorded = recordPrevTLASSnapshot(mPrevTLASSnapshotCommandBuffer.get());
+  bool recorded = recordPrevTLASSnapshotLocked(mPrevTLASSnapshotCommandBuffer.get());
   mPrevTLASSnapshotCommandBuffer->end();
   if (recorded) {
     device.resetFences(mPrevTLASSnapshotFence.get());
@@ -1310,6 +1325,9 @@ void Scene::createRTStorageBuffers(StructDataLayout const &geometryInstanceBuffe
   // textures[]: the materials' textures, then those of textured lights
   mRTTextureSlots.clear();
   auto textureSlot = [&](std::shared_ptr<resource::SVTexture> const &texture) {
+    if (!texture) {
+      return -1;
+    }
     auto [slot, added] =
         mRTTextureSlots.try_emplace(texture, static_cast<int>(textures.size()));
     if (added) {
@@ -1430,7 +1448,11 @@ void Scene::updateRTStorageBuffers() {
   // the scene version did not change, so the same lights and textures are repacked
   mRTLights.clear();
   mRTLights.append(*this, [&](std::shared_ptr<resource::SVTexture> const &texture) {
-    return mRTTextureSlots.at(texture);
+    if (!texture) {
+      return -1;
+    }
+    auto it = mRTTextureSlots.find(texture);
+    return it == mRTTextureSlots.end() ? -1 : it->second;
   });
   writeRTLightBuffers();
 }
@@ -1468,13 +1490,14 @@ std::optional<Scene::RTMaterialVersions> Scene::uploadRTMaterials() {
   }
   mRTMaterialVersion = version;
   // edits of other scenes' materials bump the global version too; they leave this table as is
-  if (std::memcmp(records.data(), mRTMaterialRecords.data(),
+  if (records.empty() ||
+      std::memcmp(records.data(), mRTMaterialRecords.data(),
                   records.size() * sizeof(GpuMaterial)) == 0) {
     return mRTMaterialVersions;
   }
-  // IntegratorTables::build leaves out an emissive material whose coat or fuzz weight is non-zero
-  // or whose base colour is not opaque, and a fully transparent object masks its emitter: such
-  // edits change the tables although no emission colour did
+  // IntegratorTables::build leaves out an emissive material whose coat or fuzz weight is non-zero,
+  // whose base colour is not opaque, or that uses baseColor/emission textures; thinWalled and
+  // transmission also change single- vs double-sided emissive visibility.
   bool emissionChanged = false;
   for (size_t i = 0; i < records.size(); ++i) {
     auto const &now = records[i];
@@ -1484,6 +1507,12 @@ std::optional<Scene::RTMaterialVersions> Scene::uploadRTMaterials() {
                        now.parameters.coatWeight != before.parameters.coatWeight ||
                        now.parameters.fuzzWeight != before.parameters.fuzzWeight ||
                        now.parameters.baseColor.a != before.parameters.baseColor.a ||
+                       now.parameters.thinWalled != before.parameters.thinWalled ||
+                       now.parameters.transmissionWeight != before.parameters.transmissionWeight ||
+                       now.textures[resource::SVMetallicMaterial::eBaseColor] !=
+                           before.textures[resource::SVMetallicMaterial::eBaseColor] ||
+                       now.textures[resource::SVMetallicMaterial::eTransmission] !=
+                           before.textures[resource::SVMetallicMaterial::eTransmission] ||
                        now.textures[resource::SVMetallicMaterial::eEmission] !=
                            before.textures[resource::SVMetallicMaterial::eEmission];
   }
@@ -1569,8 +1598,14 @@ void Scene::uploadRTLights() {
   updateRTStorageBuffers();
 }
 
-void Scene::registerAccessFence(vk::Fence fence) { mAccessFences.push_back(fence); }
-void Scene::unregisterAccessFence(vk::Fence fence) { std::erase(mAccessFences, fence); }
+void Scene::registerAccessFence(vk::Fence fence) {
+  std::lock_guard lock(mRTResourcesLock);
+  mAccessFences.push_back(fence);
+}
+void Scene::unregisterAccessFence(vk::Fence fence) {
+  std::lock_guard lock(mRTResourcesLock);
+  std::erase(mAccessFences, fence);
+}
 
 } // namespace scene
 } // namespace svulkan2

@@ -68,10 +68,17 @@ void main() {
     vec4 csNear = cameraBuffer.projectionMatrixInverse * vec4(d, 0.0, 1.0);
     csNear.xyz /= csNear.w;
     vec3 csDir = csFar.xyz - csNear.xyz;
-    vec3 csFocusPoint = csNear.xyz + ((focusPlane + csNear.z) / -csDir.z) * csDir.xyz;
-    vec3 csFocusOrigin = csNear.xyz + vec3(ax, ay, 0.0);
-    vec3 csFocusDir = csFocusPoint - csFocusOrigin;
-    if (csFocusDir.z != 0) csFocusDir /= -csFocusDir.z;
+    vec3 csFocusOrigin = csNear.xyz;
+    vec3 csFocusDir = csDir;
+    if (aperture > 0.0) {
+      float focusT = (focusPlane + csNear.z) / max(-csDir.z, 1e-6);
+      if (abs(focusT) > 1e-6) {
+        vec3 csFocusPoint = csNear.xyz + focusT * csDir;
+        csFocusOrigin = csNear.xyz + vec3(ax, ay, 0.0);
+        csFocusDir = csFocusPoint - csFocusOrigin;
+        if (csFocusDir.z != 0.0) csFocusDir /= -csFocusDir.z;
+      }
+    }
     vec4 origin = cameraBuffer.viewMatrixInverse * vec4(csFocusOrigin, 1.0);
     vec4 direction = cameraBuffer.viewMatrixInverse * vec4(csFocusDir, 0.0);
 
@@ -103,6 +110,7 @@ void main() {
     // uncovered part of a surface neither scatters nor advances the count, so the ray keeps the
     // AOV class of the vertex it left.
     int scatters = 0;
+    bool geomRecorded = false;
     for (int bounce = 0; bounce <= maxDepth; ++bounce) {
       ray.depth = uint(bounce);
       ray.scattered = 0;
@@ -115,15 +123,23 @@ void main() {
 
       vec3 vertexDirect = ray.directDiffuse + ray.directSpecular;
       vec3 vertexTotal = ray.emission + vertexDirect;
-      vec3 contribution = vertexTotal * attenuation;
-      // Indirect-clamp: contributions after the camera vertex are clamped by luminance to
-      // suppress fireflies. 0 disables it.
+      // Indirect-clamp: only light after the first scattering vertex's direct lighting is
+      // clamped. At scatters == 1, ray.emission is BSDF-sampled direct lighting (C D L / C S L),
+      // so it stays unclamped like NEE direct light while vertexDirect is indirect and clamped.
       float clampScale = 1.0;
-      if (scatters > 0 && clampIndirect > 0.0) {
+      if (scatters == 1 && clampIndirect > 0.0) {
+        vec3 indirectPart = vertexDirect * attenuation;
+        float peak = max(indirectPart.x, max(indirectPart.y, indirectPart.z));
+        if (peak > clampIndirect) clampScale = clampIndirect / peak;
+        radiance += ray.emission * attenuation + indirectPart * clampScale;
+      } else if (scatters > 1 && clampIndirect > 0.0) {
+        vec3 contribution = vertexTotal * attenuation;
         float peak = max(contribution.x, max(contribution.y, contribution.z));
         if (peak > clampIndirect) clampScale = clampIndirect / peak;
+        radiance += contribution * clampScale;
+      } else {
+        radiance += vertexTotal * attenuation;
       }
-      radiance += contribution * clampScale;
 
       if (passThrough) {
         // the uncovered part only filters the ray: the light it carries keeps the class and the
@@ -141,8 +157,8 @@ void main() {
       } else if (scatters == 1) {
         // light found by the primary BSDF continuation ray is direct light (C D L / C S L), which
         // matches light-sampled direct light across MIS / NEE / BSDF
-        diffuseDirectSum += (ray.emission * attDiffuse) * clampScale;
-        specularDirectSum += (ray.emission * attSpecular) * clampScale;
+        diffuseDirectSum += ray.emission * attDiffuse;
+        specularDirectSum += ray.emission * attSpecular;
         diffuseIndirectSum += (vertexDirect * attDiffuse) * clampScale;
         specularIndirectSum += (vertexDirect * attSpecular) * clampScale;
         attDiffuse *= ray.attenuation;
@@ -156,36 +172,47 @@ void main() {
       attenuation *= ray.attenuation;
       scatters += ray.scattered;
 
-      if (bounce == 0) {
-        // the geometric outputs describe the camera ray's own hit; only the radiance split
-        // follows scattering events
-        alpha += ray.alpha;
-        imageStore(outNormal, px, vec4(mat3(cameraBuffer.viewMatrix) * ray.normal, 1.0));
-        imageStore(outAlbedo, px, vec4(ray.albedo, 1.0));
-        imageStore(outSegmentation, px, ray.segmentation);
-        vec4 position = cameraBuffer.viewMatrix * vec4(ray.origin, 1.0);
-        vec4 ndc = cameraBuffer.projectionMatrix * position;
-        imageStore(outPosition, px, vec4(position.xyz, ndc.z / ndc.w));
-        imageStore(outDepth, px, vec4(hit ? max(-position.z, 0.0) : 0.0, 0.0, 0.0, 0.0));
+      if (!geomRecorded && (!passThrough || bounce == maxDepth)) {
+        // Wait past uncovered pass-through surfaces so alpha and geometric AOVs describe the
+        // first visible hit (or the sky behind a fully open cutout).
+        bool finalHit = hit && !passThrough;
+        alpha += finalHit ? ray.alpha : 0.0;
+        geomRecorded = true;
+        if (i == 0) {
+          imageStore(outNormal, px,
+                     vec4(finalHit ? mat3(cameraBuffer.viewMatrix) * ray.normal : vec3(0.0), 1.0));
+          imageStore(outAlbedo, px, vec4(finalHit || !hit ? ray.albedo : vec3(0.0), 1.0));
+          imageStore(outSegmentation, px, finalHit ? ray.segmentation : uvec4(0));
 
-        vec2 motion = vec2(0.0);
-        vec4 currClip, prevClip;
-        if (hit) {
-          currClip = ndc;
-          prevClip = cameraBuffer.projectionMatrix *
-                     (cameraBuffer.prevViewMatrix * vec4(ray.prevWorldPos, 1.0));
-        } else {
-          currClip = cameraBuffer.projectionMatrix *
-                     vec4(mat3(cameraBuffer.viewMatrix) * ray.direction, 0.0);
-          prevClip = cameraBuffer.projectionMatrix *
-                     vec4(mat3(cameraBuffer.prevViewMatrix) * ray.direction, 0.0);
+          vec4 position = vec4(0.0, 0.0, 0.0, 1.0);
+          vec4 ndc = vec4(0.0);
+          if (finalHit) {
+            vec4 camPos = cameraBuffer.viewMatrix * vec4(ray.origin, 1.0);
+            ndc = cameraBuffer.projectionMatrix * camPos;
+            position = vec4(camPos.xyz, abs(ndc.w) > 1e-6 ? ndc.z / ndc.w : 1.0);
+          }
+          imageStore(outPosition, px, position);
+          imageStore(outDepth, px, vec4(finalHit ? max(-position.z, 0.0) : 0.0, 0.0, 0.0, 0.0));
+
+          vec2 motion = vec2(0.0);
+          vec4 currClip, prevClip;
+          if (finalHit) {
+            currClip = ndc;
+            prevClip = cameraBuffer.projectionMatrix *
+                       (cameraBuffer.prevViewMatrix * vec4(ray.prevWorldPos, 1.0));
+          } else {
+            currClip = cameraBuffer.projectionMatrix *
+                       vec4(mat3(cameraBuffer.viewMatrix) * ray.direction, 0.0);
+            prevClip = cameraBuffer.projectionMatrix *
+                       vec4(mat3(cameraBuffer.prevViewMatrix) * ray.direction, 0.0);
+          }
+          if (currClip.w > 1e-6 && prevClip.w > 1e-6) {
+            vec2 currUv = currClip.xy / currClip.w * 0.5 + 0.5;
+            vec2 prevUv = prevClip.xy / prevClip.w * 0.5 + 0.5;
+            motion = (currUv - prevUv) * vec2(gl_LaunchSizeEXT.xy);
+          }
+          imageStore(outMotionVector, px, vec4(motion, 0.0, 0.0));
         }
-        if (currClip.w > 1e-6 && prevClip.w > 1e-6) {
-          vec2 currUv = currClip.xy / currClip.w * 0.5 + 0.5;
-          vec2 prevUv = prevClip.xy / prevClip.w * 0.5 + 0.5;
-          motion = (currUv - prevUv) * vec2(cameraBuffer.width, cameraBuffer.height);
-        }
-        imageStore(outMotionVector, px, vec4(motion, 0.0, 0.0));
       }
 
       if (ray.depth > uint(maxDepth) || any(isnan(attenuation)) || any(isinf(attenuation)) ||

@@ -54,6 +54,11 @@ public:
   inline bool hasLinePass() const { return !mLinePasses.empty(); }
   inline bool hasPointPass() const { return !mPointPasses.empty(); }
 
+  inline uint32_t getMaxPointShadowCount() const { return mMaxPointShadowCount; }
+  inline uint32_t getMaxDirectionalShadowCount() const { return mMaxDirectionalShadowCount; }
+  inline uint32_t getMaxSpotShadowCount() const { return mMaxSpotShadowCount; }
+  inline uint32_t getMaxTexturedShadowCount() const { return mMaxTexturedShadowCount; }
+
 private:
   std::shared_ptr<ShaderConfig> generateShaderLayouts() const;
   void validateShadowArrays();

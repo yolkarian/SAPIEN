@@ -1,3 +1,4 @@
+// One payload at location 0 for path and shadow rays so camera.rahit handles both.
 struct Ray {
   vec3 origin;
   vec3 direction;
@@ -9,8 +10,7 @@ struct Ray {
   uvec4 segmentation;
   uint depth;
   uint seed;
-};
-
-struct ShadowRay {
-  bool shadowed;
+  vec3 transmittance;
+  int isShadow;
+  int scattered;
 };

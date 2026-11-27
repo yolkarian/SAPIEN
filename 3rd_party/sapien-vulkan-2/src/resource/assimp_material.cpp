@@ -5,6 +5,7 @@
 #include "svulkan2/resource/manager.h"
 #include <assimp/GltfMaterial.h>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -101,14 +102,13 @@ static std::shared_ptr<SVTexture> loadEmbededTexture(aiTexture const *texture, u
 /** the roughness (green) and metallic (blue) channels of one image, sampled through two views
  *  that swizzle a single channel each; both textures share the image */
 static std::tuple<std::shared_ptr<SVTexture>, std::shared_ptr<SVTexture>>
-loadEmbededRoughnessMetallicTexture(aiTexture const *texture) {
-  auto image = loadEmbededTexture(texture, 1, 4, false)->getImage();
-
+makeRoughnessMetallicViews(std::shared_ptr<SVImage> const &image, uint32_t mipLevels) {
   auto makeView = [](vk::ComponentSwizzle component) {
     return vk::ComponentMapping(component, component, component, component);
   };
 
   auto roughnessDescription = makeTextureDescription(*image, false, 4);
+  roughnessDescription.mipLevels = mipLevels;
   roughnessDescription.components = makeView(vk::ComponentSwizzle::eG);
 
   auto metallicDescription = roughnessDescription;
@@ -116,6 +116,12 @@ loadEmbededRoughnessMetallicTexture(aiTexture const *texture) {
 
   return {SVTexture::FromImage(image, roughnessDescription),
           SVTexture::FromImage(image, metallicDescription)};
+}
+
+static std::tuple<std::shared_ptr<SVTexture>, std::shared_ptr<SVTexture>>
+loadEmbededRoughnessMetallicTexture(aiTexture const *texture, uint32_t mipLevels) {
+  auto image = loadEmbededTexture(texture, mipLevels, 4, false)->getImage();
+  return makeRoughnessMetallicViews(image, image->getMipLevels());
 }
 
 std::vector<std::shared_ptr<SVMaterial>>
@@ -134,6 +140,8 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
 
   // glTF keeps transmission thin-walled unless KHR_materials_volume gives it a thickness
   std::string extension = fs::path(filename).extension().string();
+  std::transform(extension.begin(), extension.end(), extension.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
   bool gltf = extension == ".gltf" || extension == ".glb";
 
   for (uint32_t mat_idx = 0; mat_idx < scene->mNumMaterials; ++mat_idx) {
@@ -172,6 +180,14 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
       diffuse = {baseColor.r, baseColor.g, baseColor.b};
       alpha = baseColor.a;
     }
+    // glTF 2.0 alphaMode defaults to "OPAQUE", where baseColorFactor.a is ignored.
+    if (gltf) {
+      aiString alphaMode;
+      if (m->Get(AI_MATKEY_GLTF_ALPHAMODE, alphaMode) != AI_SUCCESS ||
+          std::strcmp(alphaMode.C_Str(), "OPAQUE") == 0) {
+        alpha = 1.f;
+      }
+    }
     material->setBaseColor({diffuse.r, diffuse.g, diffuse.b, alpha});
 
     float metallic = 0.f;
@@ -187,9 +203,9 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
           m->Get(AI_MATKEY_SHININESS, shininess) == AI_SUCCESS) {
         float specularIntensity =
             specularColor[0] * 0.2125f + specularColor[1] * 0.7154f + specularColor[2] * 0.0721f;
-        float normalizedShininess = std::sqrt(shininess / 1000);
-        normalizedShininess = std::min(std::max(normalizedShininess, 0.0f), 1.0f);
-        roughness = 1 - normalizedShininess * specularIntensity;
+        float normalizedShininess = std::sqrt(std::max<float>(shininess, 0.0f) / 1000.0f);
+        normalizedShininess = std::clamp(normalizedShininess, 0.0f, 1.0f);
+        roughness = std::clamp(1.0f - normalizedShininess * specularIntensity, 0.0f, 1.0f);
       }
     }
     material->setRoughness(roughness);
@@ -235,10 +251,13 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
     // surface: transmission_color at depth 0.
     float thickness = 0.f;
     bool volume = m->Get(AI_MATKEY_VOLUME_THICKNESS_FACTOR, thickness) == AI_SUCCESS;
-    material->setThinWalled(transmission > 0.f && (volume ? thickness <= 0.f : gltf));
+    bool thinWalled = transmission > 0.f && (volume ? thickness <= 0.f : gltf);
+    material->setThinWalled(thinWalled);
     float attenuationDistance = 0.f;
     aiColor3D attenuationColor{1, 1, 1};
-    if (m->Get(AI_MATKEY_VOLUME_ATTENUATION_DISTANCE, attenuationDistance) == AI_SUCCESS &&
+    // KHR_materials_volume ignores volume attenuation when thicknessFactor == 0 (thin-walled).
+    if (!thinWalled &&
+        m->Get(AI_MATKEY_VOLUME_ATTENUATION_DISTANCE, attenuationDistance) == AI_SUCCESS &&
         std::isfinite(attenuationDistance) && attenuationDistance > 0.f &&
         m->Get(AI_MATKEY_VOLUME_ATTENUATION_COLOR, attenuationColor) == AI_SUCCESS) {
       material->setTransmissionDepth(attenuationDistance);
@@ -302,11 +321,21 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
                    transform.mScaling.x, transform.mScaling.y});
       }
     };
+    aiString mrPath;
+    bool hasGltfMetallicRoughness =
+        gltf &&
+        m->GetTexture(AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_METALLICROUGHNESS_TEXTURE, &mrPath) ==
+            AI_SUCCESS;
+
     loadTexture(aiTextureType_DIFFUSE, SVMetallicMaterial::eBaseColor, true);
-    loadTexture(aiTextureType_METALNESS, SVMetallicMaterial::eMetallic, false);
+    if (!hasGltfMetallicRoughness) {
+      loadTexture(aiTextureType_METALNESS, SVMetallicMaterial::eMetallic, false);
+    }
     loadTexture(aiTextureType_NORMALS, SVMetallicMaterial::eNormal, false);
     loadTexture(aiTextureType_EMISSIVE, SVMetallicMaterial::eEmission, true);
-    loadTexture(aiTextureType_DIFFUSE_ROUGHNESS, SVMetallicMaterial::eRoughness, false);
+    if (!hasGltfMetallicRoughness) {
+      loadTexture(aiTextureType_DIFFUSE_ROUGHNESS, SVMetallicMaterial::eRoughness, false);
+    }
     loadTexture(aiTextureType_TRANSMISSION, SVMetallicMaterial::eTransmission, false);
     // glTF's occlusion texture arrives as a light map with its strength; other formats' light
     // maps are not occlusion (Collada's ambient texture is one)
@@ -320,25 +349,33 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
     loadTexture(aiTextureType_AMBIENT_OCCLUSION, SVMetallicMaterial::eOcclusion, false);
 
     // glTF's metallic-roughness texture: one image, roughness in green and metallic in blue
-    aiString path;
-    if (m->GetTexture(AI_MATKEY_GLTF_PBRMETALLICROUGHNESS_METALLICROUGHNESS_TEXTURE, &path) ==
-        AI_SUCCESS) {
+    if (hasGltfMetallicRoughness) {
       if (!loadTextures) {
-        logger::info("Texture ignored {}", path.C_Str());
-      } else if (auto texture = scene->GetEmbeddedTexture(path.C_Str())) {
-        auto [entry, added] = roughnessMetallicTextureCache.try_emplace(path.C_Str());
+        logger::info("Texture ignored {}", mrPath.C_Str());
+      } else if (auto texture = scene->GetEmbeddedTexture(mrPath.C_Str())) {
+        auto [entry, added] = roughnessMetallicTextureCache.try_emplace(mrPath.C_Str());
         if (added) {
-          logger::info("Loading embeded roughness metallic texture {}", path.C_Str());
-          entry->second = loadEmbededRoughnessMetallicTexture(texture);
+          logger::info("Loading embeded roughness metallic texture {}", mrPath.C_Str());
+          entry->second = loadEmbededRoughnessMetallicTexture(texture, MIP_LEVEL);
         }
         material->setTexture(SVMetallicMaterial::eRoughness, std::get<0>(entry->second));
         material->setTexture(SVMetallicMaterial::eMetallic, std::get<1>(entry->second));
       } else {
-        logger::warn("Loading non-embeded roughness metallic texture is "
-                     "currently not supported");
+        std::string fullPath = (parentDir / mrPath.C_Str()).string();
+        auto [entry, added] = roughnessMetallicTextureCache.try_emplace(fullPath);
+        if (added) {
+          auto image = manager->CreateImageFromFile(fullPath, MIP_LEVEL, 4);
+          entry->second = makeRoughnessMetallicViews(image, MIP_LEVEL);
+          futures.push_back(std::get<0>(entry->second)->loadAsync());
+          futures.push_back(std::get<1>(entry->second)->loadAsync());
+        }
+        material->setTexture(SVMetallicMaterial::eRoughness, std::get<0>(entry->second));
+        material->setTexture(SVMetallicMaterial::eMetallic, std::get<1>(entry->second));
       }
       aiUVTransform transform;
-      if (m->Get(AI_MATKEY_UVTRANSFORM(aiTextureType_UNKNOWN, 0), transform) == AI_SUCCESS) {
+      if (m->Get(AI_MATKEY_UVTRANSFORM(aiTextureType_UNKNOWN, 0), transform) == AI_SUCCESS ||
+          m->Get(AI_MATKEY_UVTRANSFORM(aiTextureType_DIFFUSE_ROUGHNESS, 0), transform) ==
+              AI_SUCCESS) {
         glm::vec4 uv{transform.mTranslation.x,
                      transform.mTranslation.y + 1 - transform.mScaling.y, transform.mScaling.x,
                      transform.mScaling.y};

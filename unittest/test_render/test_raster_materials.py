@@ -121,6 +121,73 @@ class TestRasterLayers(unittest.TestCase):
                 # direct light is not occluded
                 np.testing.assert_allclose(centre(pack, occluded), centre(pack, plain), atol=1e-3)
 
+    def test_zero_coat_ior_renders_finite(self) -> None:
+        """coat_ior = 0 must not divide by zero in G-buffer/forward material evaluation."""
+        for pack in PACKS:
+            with self.subTest(pack=pack):
+                pixel = centre(pack, black(coat_weight=1.0, coat_ior=0.0, coat_roughness=0.2))
+                self.assertTrue(np.all(np.isfinite(pixel)), f"{pack}: {pixel}")
+
+    def test_inplace_alpha_transition_updates_raster_visibility(self) -> None:
+        """Mutating a material's base_color alpha across opaque/translucent/invisible thresholds
+        must re-record raster draw lists without rebuilding scene topology."""
+        for pack in ("default", "minimal"):
+            with self.subTest(pack=pack), sapien.Scene() as scene:
+                scene.set_ambient_light([0.8, 0.8, 0.8])
+                wall_builder = scene.create_actor_builder()
+                wall_builder.add_box_visual(
+                    half_size=[0.05, 2.0, 2.0],
+                    material=sapien.render.RenderMaterial(
+                        base_color=[1.0, 1.0, 1.0, 1.0], specular_weight=0.0, roughness=1.0
+                    ),
+                )
+                wall_builder.build_kinematic().set_pose(sapien.Pose([2.0, 0.0, 0.0]))
+
+                box_mat = sapien.render.RenderMaterial(
+                    base_color=[1.0, 0.0, 0.0, 1.0], specular_weight=0.0, roughness=1.0
+                )
+                box_builder = scene.create_actor_builder()
+                box_builder.add_box_visual(half_size=[0.4, 0.4, 0.4], material=box_mat)
+                box_builder.build_kinematic().set_pose(sapien.Pose([0.0, 0.0, 0.0]))
+
+                camera = scene.add_camera(
+                    "camera",
+                    SIZE,
+                    SIZE,
+                    1.0,
+                    0.05,
+                    10.0,
+                    render_config=sapien.render.RenderConfig(pack),
+                )
+                camera.entity.pose = sapien.Pose([-3.0, 0.0, 0.0])
+
+                def sample() -> np.ndarray:
+                    scene.update_render()
+                    camera.take_picture()
+                    return camera.get_picture(PICTURE[pack])[SIZE // 2, SIZE // 2, :3].astype(
+                        np.float64
+                    )
+
+                opaque = sample()
+                self.assertGreater(float(opaque[0]), 0.1)
+                self.assertLess(float(opaque[1]), 0.05 * float(opaque[0]))
+
+                box_mat.base_color = [1.0, 0.0, 0.0, 0.0]
+                invisible = sample()
+                self.assertGreater(float(invisible[1]), 0.1, str(invisible))
+                self.assertAlmostEqual(
+                    float(invisible[0]), float(invisible[1]), delta=0.05 * float(invisible[1])
+                )
+
+                box_mat.base_color = [1.0, 0.0, 0.0, 0.5]
+                translucent = sample()
+                self.assertGreater(float(translucent[1]), 0.05, str(translucent))
+                self.assertGreater(float(translucent[0]), float(translucent[1]) * 1.2)
+
+                box_mat.base_color = [1.0, 0.0, 0.0, 1.0]
+                restored = sample()
+                np.testing.assert_allclose(restored, opaque, atol=1e-3)
+
 
 if __name__ == "__main__":
     unittest.main()

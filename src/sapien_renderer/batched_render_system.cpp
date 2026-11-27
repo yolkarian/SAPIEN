@@ -19,6 +19,7 @@
 #include <svulkan2/renderer/rt_renderer.h>
 #include <svulkan2/renderer/batch_rt_renderer.h>
 #include <svulkan2/scene/scene_group.h>
+#include <unordered_map>
 #include <unordered_set>
 
 #ifdef SAPIEN_CUDA
@@ -489,18 +490,33 @@ void BatchedCamera::recordGroupedRasterCommands() {
   auto cb = mCommandBuffer.get();
 
   // 1. Shadow passes: record once per unique scene-owned shadow-map set across the group.
-  std::unordered_set<svulkan2::scene::RasterShadowMaps *> recordedShadowMaps;
+  // If any camera sharing a shadow-map set wants point-cloud shadows, record from such a camera
+  // so point shadows are not dropped when a non-point camera appears first in the group.
+  std::unordered_map<svulkan2::scene::RasterShadowMaps *, SapienRenderCameraComponent *> shadowOwners;
+  std::vector<svulkan2::scene::RasterShadowMaps *> shadowOrder;
   for (auto &cam : mCameras) {
     auto &raster = static_cast<svulkan2::renderer::Renderer &>(cam->getInternalRenderer());
     if (!raster.hasActiveShadows()) {
       continue;
     }
-    auto shadowMaps = raster.getShadowMaps();
-    if (recordedShadowMaps.insert(shadowMaps.get()).second) {
-      raster.recordShadowsInto(cb);
-      mGroupedShadowScenes.push_back(
-          {cam->getInternalRenderScene(), std::move(shadowMaps), raster.wantsPointShadowPass()});
+    auto *key = raster.getShadowMaps().get();
+    auto [it, inserted] = shadowOwners.try_emplace(key, cam.get());
+    if (inserted) {
+      shadowOrder.push_back(key);
+    } else if (raster.wantsPointShadowPass()) {
+      auto &prevRaster = static_cast<svulkan2::renderer::Renderer &>(it->second->getInternalRenderer());
+      if (!prevRaster.wantsPointShadowPass()) {
+        it->second = cam.get();
+      }
     }
+  }
+  for (auto *key : shadowOrder) {
+    auto *cam = shadowOwners.at(key);
+    auto &raster = static_cast<svulkan2::renderer::Renderer &>(cam->getInternalRenderer());
+    auto shadowMaps = raster.getShadowMaps();
+    raster.recordShadowsInto(cb);
+    mGroupedShadowScenes.push_back(
+        {cam->getInternalRenderScene(), std::move(shadowMaps), raster.wantsPointShadowPass()});
   }
 
   // 2. Per-camera raster passes (and optional post-processing chain).
@@ -561,19 +577,25 @@ void BatchedCamera::internalUploadDirtyCameraState() {
     if (!dirty && !settle) {
       continue;
     }
-    // The full camera buffer uploads, including the CPU view matrices. For
-    // cuda/attached cameras the CUDA patch later in the same update_render()
-    // rewrites view/inverse-view, so a projection change never overrides a GPU pose.
+    // For GPU-posed RT cameras ('cuda' or 'entity'), upload only projection matrices and size so
+    // the GPU-owned viewMatrix / prevViewMatrix used by MotionVector are not overwritten with the
+    // stale CPU pose from gpu_init().
     if (mBatchRenderer) {
       mBatchRenderer->uploadCpuCameraState(*cam);
+    } else if (cam->getPoseMode() != CameraPoseMode::eCpu) {
+      if (auto *rt = dynamic_cast<svulkan2::renderer::RTRenderer *>(&cam->getInternalRenderer())) {
+        rt->uploadCpuCameraProjection(cam->getInternalCamera());
+      } else {
+        cam->getInternalRenderer().uploadCpuCameraState(cam->getInternalCamera());
+      }
     } else {
       cam->getInternalRenderer().uploadCpuCameraState(cam->getInternalCamera());
     }
     mUploadedStateVersions.at(i) = version;
-    // a camera the pose kernels drive rolls its own prev every frame, and a raster buffer has no
-    // prev slots to settle
+    // Only cpu-mode cameras rely on CPU uploads to settle prevViewMatrix; 'cuda' and 'entity'
+    // cameras roll prevViewMatrix on the GPU inside update_camera_transforms_kernel().
     mPendingMotionSettle.at(i) =
-        dirty && cam->getPoseMode() != CameraPoseMode::eCuda &&
+        dirty && cam->getPoseMode() == CameraPoseMode::eCpu &&
         internalGetCameraPrevViewOffsets(*cam).first >= 0;
   }
 }
@@ -626,9 +648,10 @@ void BatchedCamera::takePicture() {
     checkCudaErrors(
         cudaSignalExternalSemaphoresAsync(&mCudaConsumerSem, &streamDone, 1, mCudaStream));
 #endif
-    mFrameCounter++;
+    uint64_t nextFrame = mFrameCounter + 1;
     mBatchRenderer->takePicture(mConsumerSemaphore.get(), mConsumerValue, mSemaphore.get(),
-                                mFrameCounter);
+                                nextFrame);
+    mFrameCounter = nextFrame;
 #ifdef SAPIEN_CUDA
     cudaExternalSemaphoreWaitParams copied{};
     copied.params.fence.value = mFrameCounter;
@@ -655,7 +678,7 @@ void BatchedCamera::takePicture() {
     if (needsReRecord || currentImages != mRecordedCopyImages) {
       recordGroupedRasterCommands();
     }
-    mFrameCounter++;
+    uint64_t nextFrame = mFrameCounter + 1;
 #ifdef SAPIEN_CUDA
     // Waiting on mConsumerSemaphore at eTransfer lets all graphics/compute render passes run
     // immediately while holding the final copies until prior CUDA consumers finish reading.
@@ -665,13 +688,15 @@ void BatchedCamera::takePicture() {
         cudaSignalExternalSemaphoresAsync(&mCudaConsumerSem, &streamDone, 1, mCudaStream));
     vk::PipelineStageFlags copyStage = vk::PipelineStageFlagBits::eTransfer;
     context->getQueue().submit(mCommandBuffer.get(), mConsumerSemaphore.get(), copyStage,
-                               mConsumerValue, mSemaphore.get(), mFrameCounter, {});
+                               mConsumerValue, mSemaphore.get(), nextFrame, {});
+    mFrameCounter = nextFrame;
     cudaExternalSemaphoreWaitParams copied{};
     copied.params.fence.value = mFrameCounter;
     checkCudaErrors(cudaWaitExternalSemaphoresAsync(&mCudaSem, &copied, 1, mCudaStream));
 #else
-    context->getQueue().submit(mCommandBuffer.get(), {}, {}, {}, mSemaphore.get(), mFrameCounter,
+    context->getQueue().submit(mCommandBuffer.get(), {}, {}, {}, mSemaphore.get(), nextFrame,
                                {});
+    mFrameCounter = nextFrame;
 #endif
     for (auto &entry : mGroupedShadowScenes) {
       entry.shadowMaps->renderedShadowEpoch = entry.scene->getShadowEpoch();
@@ -695,7 +720,7 @@ void BatchedCamera::takePicture() {
   if (currentImages != mRecordedCopyImages) {
     recordCopyCommands();
   }
-  mFrameCounter++;
+  uint64_t nextFrame = mFrameCounter + 1;
 #ifdef SAPIEN_CUDA
   // The copy overwrites the exported image buffers. It waits for everything submitted to the
   // group's CUDA stream so far: consumers of the previous frame on that stream and waits added
@@ -706,13 +731,15 @@ void BatchedCamera::takePicture() {
       cudaSignalExternalSemaphoresAsync(&mCudaConsumerSem, &streamDone, 1, mCudaStream));
   vk::PipelineStageFlags copyStage = vk::PipelineStageFlagBits::eTransfer;
   context->getQueue().submit(mCommandBuffer.get(), mConsumerSemaphore.get(), copyStage,
-                             mConsumerValue, mSemaphore.get(), mFrameCounter, {});
+                             mConsumerValue, mSemaphore.get(), nextFrame, {});
+  mFrameCounter = nextFrame;
   cudaExternalSemaphoreWaitParams copied{};
   copied.params.fence.value = mFrameCounter;
   checkCudaErrors(cudaWaitExternalSemaphoresAsync(&mCudaSem, &copied, 1, mCudaStream));
 #else
-  context->getQueue().submit(mCommandBuffer.get(), {}, {}, {}, mSemaphore.get(), mFrameCounter,
+  context->getQueue().submit(mCommandBuffer.get(), {}, {}, {}, mSemaphore.get(), nextFrame,
                              {});
+  mFrameCounter = nextFrame;
 #endif
 }
 
@@ -1661,6 +1688,13 @@ void BatchedRenderSystem::update() {
   // sync with renderer
   SAPIEN_PROFILE_BLOCK_BEGIN("CUDA Vulkan synchronization");
   notifyUpdate();
+  // Snapshot PrevTlasInstances in lockstep with update_camera_transforms_kernel() so repeated
+  // update_render() calls keep object and camera MotionVector histories on the same step.
+  for (uint32_t i = 0; i < mRenderScenes.size(); ++i) {
+    if (mRTSceneEnabled[i]) {
+      mRenderScenes[i]->submitPrevTLASSnapshot();
+    }
+  }
   SAPIEN_PROFILE_BLOCK_END;
 }
 
@@ -1707,6 +1741,7 @@ void BatchedRenderSystem::refreshAndUploadCpuState() {
     }
   }
 
+  std::unordered_set<BatchedCamera *> uploadedBatchRTRenderers;
   for (uint32_t i : dirtyLightScenes) {
     auto const &selection = mRenderSceneSystems[i];
     auto const &renderScene = mRenderScenes[i];
@@ -1722,15 +1757,24 @@ void BatchedRenderSystem::refreshAndUploadCpuState() {
     }
 
     for (auto const &batch : mCameraBatches) {
+      if (batch->mBatchRenderer) {
+        bool usesScene = false;
+        for (auto const &camera : batch->getCameras()) {
+          if (camera->getInternalRenderScene() == renderScene) {
+            usesScene = true;
+            break;
+          }
+        }
+        if (usesScene && uploadedBatchRTRenderers.insert(batch.get()).second) {
+          batch->mBatchRenderer->uploadSceneLightState();
+        }
+        continue;
+      }
       for (auto const &camera : batch->getCameras()) {
         if (camera->getInternalRenderScene() != renderScene) {
           continue;
         }
-        if (batch->mBatchRenderer) {
-          batch->mBatchRenderer->uploadSceneLightState();
-        } else {
-          camera->getInternalRenderer().uploadCpuSceneLightState();
-        }
+        camera->getInternalRenderer().uploadCpuSceneLightState();
       }
     }
 
@@ -1747,7 +1791,8 @@ void BatchedRenderSystem::notifyUpdate() {
   cudaExternalSemaphoreSignalParams sigParams{};
   sigParams.flags = 0;
   sigParams.params.fence.value = ++mSemValue;
-  cudaSignalExternalSemaphoresAsync(&mCudaSem, &sigParams, 1, (cudaStream_t)mCudaStream);
+  checkCudaErrors(
+      cudaSignalExternalSemaphoresAsync(&mCudaSem, &sigParams, 1, (cudaStream_t)mCudaStream));
 #endif
   vk::PipelineStageFlags stage = vk::PipelineStageFlagBits::eAllCommands;
   mContext->getQueue().submit({}, mSem.get(), stage, mSemValue, {}, {}, {});

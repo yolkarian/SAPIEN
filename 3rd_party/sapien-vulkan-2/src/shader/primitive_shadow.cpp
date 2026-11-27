@@ -73,18 +73,25 @@ vk::UniqueRenderPass PrimitiveShadowPassParser::createRenderPass(
       {}, vk::PipelineBindPoint::eGraphics, 0, nullptr, 0, nullptr, nullptr,
       &depthAttachment);
 
-  // TODO: compute a better dependency
+  // Ensure prior shadow writes and fragment reads complete before loading/writing depth, and
+  // shadow writes become visible to subsequent fragment reads.
   std::array<vk::SubpassDependency, 2> deps{
       vk::SubpassDependency(
           VK_SUBPASS_EXTERNAL, 0,
-          vk::PipelineStageFlagBits::eColorAttachmentOutput |
+          vk::PipelineStageFlagBits::eFragmentShader |
+              vk::PipelineStageFlagBits::eColorAttachmentOutput |
               vk::PipelineStageFlagBits::eEarlyFragmentTests |
               vk::PipelineStageFlagBits::eLateFragmentTests,
-          vk::PipelineStageFlagBits::eFragmentShader |
+          vk::PipelineStageFlagBits::eEarlyFragmentTests |
+              vk::PipelineStageFlagBits::eLateFragmentTests |
+              vk::PipelineStageFlagBits::eFragmentShader |
               vk::PipelineStageFlagBits::eColorAttachmentOutput,
-          vk::AccessFlagBits::eColorAttachmentWrite |
-              vk::AccessFlagBits::eDepthStencilAttachmentWrite,
           vk::AccessFlagBits::eShaderRead |
+              vk::AccessFlagBits::eColorAttachmentWrite |
+              vk::AccessFlagBits::eDepthStencilAttachmentWrite,
+          vk::AccessFlagBits::eDepthStencilAttachmentRead |
+              vk::AccessFlagBits::eDepthStencilAttachmentWrite |
+              vk::AccessFlagBits::eShaderRead |
               vk::AccessFlagBits::eColorAttachmentWrite),
       vk::SubpassDependency(
           0, VK_SUBPASS_EXTERNAL,
@@ -92,10 +99,14 @@ vk::UniqueRenderPass PrimitiveShadowPassParser::createRenderPass(
               vk::PipelineStageFlagBits::eEarlyFragmentTests |
               vk::PipelineStageFlagBits::eLateFragmentTests,
           vk::PipelineStageFlagBits::eFragmentShader |
+              vk::PipelineStageFlagBits::eEarlyFragmentTests |
+              vk::PipelineStageFlagBits::eLateFragmentTests |
               vk::PipelineStageFlagBits::eColorAttachmentOutput,
           vk::AccessFlagBits::eColorAttachmentWrite |
               vk::AccessFlagBits::eDepthStencilAttachmentWrite,
           vk::AccessFlagBits::eShaderRead |
+              vk::AccessFlagBits::eDepthStencilAttachmentRead |
+              vk::AccessFlagBits::eDepthStencilAttachmentWrite |
               vk::AccessFlagBits::eColorAttachmentWrite),
   };
 

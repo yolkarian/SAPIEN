@@ -49,10 +49,6 @@ void main() {
   }
   outAlbedo.rgb *= material.baseWeight;
 
-  // the coat over the base lowers the IOR contrast of the base's interface
-  outSpecular.r = materialDielectricF0(material.ior / mix(1.0, material.coatIor, material.coatWeight),
-                                       material.specularWeight);
-
   if (material.roughnessTexture >= 0) {
     outSpecular.g = texture(textures[nonuniformEXT(material.roughnessTexture)],
                             materialUV(material.textureTransforms[1], inUV)).r;
@@ -68,6 +64,7 @@ void main() {
   }
 
   OpenPBR m = openpbrSurface(material, outAlbedo.rgb, outSpecular.b, outSpecular.g, 0.0, false);
+  outSpecular.r = materialDielectricF0(m.baseEta, 1.0);
   outSpecular.g = sapienRasterRoughness(m, outSpecular.g, material.specularAnisotropy);
   outMaterial = sapienPackMaterial(m);
 

@@ -31,19 +31,28 @@ vec3 sapienLayered(vec3 base, OpenPBR m, vec3 normal, vec3 camDir, vec3 lightDir
     return base;
   }
   float NoV = clamp(dot(normal, camDir), 1e-6, 1.0);
-  vec3 H = normalize(lightDir + camDir);
+  vec3 hv = lightDir + camDir;
+  float hLen2 = dot(hv, hv);
+  vec3 H = hLen2 > 1e-12 ? hv * inversesqrt(hLen2) : normal;
   return base * openpbrUnderLayers(m, NoV, NoL) +
          radiance * openpbrLayerLobes(m, NoV, NoL, clamp(dot(normal, H), 0.0, 1.0),
                                       clamp(dot(camDir, H), 1e-6, 1.0));
 }
 
 vec3 sapienLayeredPoint(vec3 base, OpenPBR m, vec3 normal, vec3 camDir, vec3 l, vec3 rgb) {
-  return sapienLayered(base, m, normal, camDir, normalize(l), rgb / max(dot(l, l), 1e-8));
+  float l2 = dot(l, l);
+  if (l2 <= 1e-12) {
+    return base;
+  }
+  return sapienLayered(base, m, normal, camDir, l * inversesqrt(l2), rgb / max(l2, 1e-8));
 }
 
 // the light-space shadow map coordinates of a world-space position
 vec3 sapienShadowMapCoordWorld(mat4 shadowView, mat4 shadowProj, vec4 worldPos) {
   vec4 coord = shadowProj * (shadowView * worldPos);
+  if (abs(coord.w) <= 1e-6) {
+    return vec3(-1.0);
+  }
   coord /= coord.w;
   coord.xy = coord.xy * 0.5 + 0.5;
   return coord.xyz;
@@ -126,7 +135,7 @@ void sapienAddDirectLighting(inout vec3 color, vec3 position, vec3 normal, vec3 
       mat4 sv = shadowBuffer.texturedLightBuffers[t].viewMatrix;
       mat4 sp = shadowBuffer.texturedLightBuffers[t].projectionMatrix;
       vec3 coord = sapienShadowMapCoordWorld(sv, sp, worldPos);
-      if (shadows) {
+      if (shadows && light.shadowEnabled != 0) {
         visibility = sapienPerspectiveShadow(samplerTexturedLightDepths[t], coord, sv, sp,
                                              worldNormal, light.radius, gl_FragCoord.xy);
       }
@@ -135,10 +144,13 @@ void sapienAddDirectLighting(inout vec3 color, vec3 position, vec3 normal, vec3 
     vec3 c = computeSpotLight(light.fovInner, light.fovOuter, centerDir, light.rgb, l, normal,
                               camDir, diffuseAlbedo, roughness, fresnel);
     if (layered) {
-      float cf1 = cos(light.fovInner / 2) + 1e-6;
-      float cf2 = cos(light.fovOuter / 2);
-      float cone = clamp((dot(-normalize(l), centerDir) - cf2) / (cf1 - cf2), 0, 1);
-      c = sapienLayeredPoint(c, m, normal, camDir, l, light.rgb * cone);
+      float l2 = dot(l, l);
+      if (l2 > 1e-12) {
+        float cf1 = cos(light.fovInner / 2) + 1e-6;
+        float cf2 = cos(light.fovOuter / 2);
+        float cone = clamp((dot(-l * inversesqrt(l2), centerDir) - cf2) / (cf1 - cf2), 0, 1);
+        c = sapienLayeredPoint(c, m, normal, camDir, l, light.rgb * cone);
+      }
     }
     color += visibility * c;
   }

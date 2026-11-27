@@ -316,7 +316,12 @@ float openpbrTransmissionLobe(OpenPBR m, vec3 wo, vec3 wi) {
     return (1.0 - openpbrFresnel(dot(wo, h), m.baseEta)) *
            openpbrGgxReflection(wo, wr, h, m.alpha);
   }
-  vec3 h = normalize(wo + wi * m.eta);
+  vec3 hv = wo + wi * m.eta;
+  float hLen2 = dot(hv, hv);
+  if (hLen2 <= 1e-12) {
+    return 0.0;
+  }
+  vec3 h = hv * inversesqrt(hLen2);
   h = h.z < 0.0 ? -h : h;
   float oh = dot(wo, h);
   float ih = dot(wi, h);
@@ -325,8 +330,10 @@ float openpbrTransmissionLobe(OpenPBR m, vec3 wo, vec3 wi) {
   }
   float denom = ih + oh / m.eta;
   float jacobian = abs(ih) / (denom * denom); // dh / dwi
+  // Match the exterior reflection Fresnel (m.baseEta) so F + (1 - F) = 1 under coat and
+  // specular_weight; inside a body openpbrSurface sets m.baseEta = m.eta for exact TIR.
   return openpbrGgxD(h, m.alpha) * openpbrGgxG2(wo, wi, m.alpha) *
-         (1.0 - openpbrFresnel(oh, m.eta)) * oh * jacobian / (wo.z * m.eta * m.eta);
+         (1.0 - openpbrFresnel(oh, m.baseEta)) * oh * jacobian / (wo.z * m.eta * m.eta);
 }
 
 // the weight of the transmission lobe; light entering also takes the interface tint
@@ -334,8 +341,11 @@ vec3 openpbrTransmissionWeight(OpenPBR m, vec3 wo, vec3 wi) {
   if (m.interior) {
     return vec3(1.0);
   }
-  return openpbrUnderLayers(m, wo.z, abs(wi.z)) * ((1.0 - m.metallic) * m.transmission) *
-         m.transmissionTint;
+  // A solid body crosses the coat once on entry at external cosine wo.z; a thin-walled sheet
+  // crosses both faces at external cosines wo.z and |wi.z|.
+  vec3 under = m.thinWalled ? openpbrUnderLayers(m, wo.z, abs(wi.z))
+                            : openpbrEmissionFactor(m, wo.z);
+  return under * ((1.0 - m.metallic) * m.transmission) * m.transmissionTint;
 }
 
 // ---- sampling ----
@@ -370,11 +380,15 @@ OpenPBRLobes openpbrLobes(OpenPBR m, vec3 wo) {
   float dielectric = 1.0 - m.metallic;
   p.fuzz = fuzzE * openpbrLuminance(m.fuzzColor);
   p.coat = (1.0 - fuzzE) * m.coatWeight * fc;
+  float metalF = openpbrLuminance(
+      openpbrMetalFresnel(wo.z, m.base, m.specularColor, m.specularWeight));
+  if (m.specularWeight > 0.0) {
+    // A black metal at exact normal incidence has F(1) = 0, but rough microfacets still reflect
+    // at grazing half-angles: keep a small floor so the specular lobe stays sampled.
+    metalF = max(metalF, 0.01);
+  }
   p.specular =
-      under *
-      (m.metallic * openpbrLuminance(openpbrMetalFresnel(wo.z, m.base, m.specularColor,
-                                                           m.specularWeight)) +
-       dielectric * fd * openpbrLuminance(m.specularColor));
+      under * (m.metallic * metalF + dielectric * fd * openpbrLuminance(m.specularColor));
   p.diffuse = under * dielectric * (1.0 - m.transmission) * (1.0 - fd) *
               openpbrLuminance(m.base);
   p.transmission = under * dielectric * m.transmission * (1.0 - fd) *
@@ -420,7 +434,12 @@ float openpbrPdfTransmission(OpenPBR m, vec3 wo, vec3 wi) {
     vec3 wr = vec3(wi.xy, -wi.z);
     return openpbrGgxReflectionPdf(wo, normalize(wo + wr), m.alpha);
   }
-  vec3 h = normalize(wo + wi * m.eta);
+  vec3 hv = wo + wi * m.eta;
+  float hLen2 = dot(hv, hv);
+  if (hLen2 <= 1e-12) {
+    return 0.0;
+  }
+  vec3 h = hv * inversesqrt(hLen2);
   h = h.z < 0.0 ? -h : h;
   float oh = dot(wo, h);
   float ih = dot(wi, h);
@@ -523,9 +542,9 @@ OpenPBR openpbrSurface(Material mat, vec3 base, float metallic, float roughness,
   float ratio = n / m.coatEta;
   ratio = ratio < 1.0 ? 1.0 / ratio : ratio;
   m.baseEta = openpbrModulatedEta(mix(n, ratio, m.coatWeight), m.specularWeight);
-  // Refraction and the 1 / eta^2 radiance scaling must use the same ratio entering and leaving a
-  // body, or a round trip through it gains energy; the coat's ratio stays out of it.
-  float refraction = openpbrRefractionEta(openpbrModulatedEta(n, m.specularWeight));
+  // Refraction and the 1 / eta^2 radiance scaling use the physical bulk IOR ratio entering and
+  // leaving a body: specular_weight and the coat modulate Fresnel (m.baseEta), not Snell's law.
+  float refraction = openpbrRefractionEta(n);
   m.eta = m.interior ? 1.0 / refraction : refraction;
   if (m.interior) {
     m.baseEta = m.eta; // the bare interface seen from inside the body

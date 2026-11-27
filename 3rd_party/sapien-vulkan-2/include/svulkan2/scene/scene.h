@@ -135,6 +135,7 @@ public:
 
   std::shared_ptr<RasterShadowMaps> getOrCreateRasterShadowMaps(vk::Format depthFormat,
                                                                 size_t lightBufferSize);
+  std::shared_ptr<RasterShadowMaps> getRasterShadowMaps(vk::Format depthFormat) const;
 
   void uploadShadowToDevice(core::Buffer &shadowBuffer, RasterShadowMaps &shadowMaps,
                             StructDataLayout const &shadowLayout);
@@ -341,6 +342,7 @@ protected:
   bool recordDynamicBLASUpdates(vk::CommandBuffer commandBuffer);
   void createRTStorageBuffers(StructDataLayout const &geometryInstanceBufferLayout);
   void updateRTStorageBuffers();
+  bool recordPrevTLASSnapshotLocked(vk::CommandBuffer commandBuffer);
 
   // ray tracing resources
   std::mutex mRTResourcesLock;

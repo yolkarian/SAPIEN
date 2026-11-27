@@ -12,11 +12,15 @@ template <typename Light> std::vector<Light *> shadowsFirst(std::vector<Light *>
   return lights;
 }
 
+glm::mat4 worldMatrix(Node const &node) { return node.computeWorldModelMatrix(); }
+
 GpuSpotLight spotLightData(SpotLight const &light, int textureId) {
-  return {.viewMat = glm::affineInverse(light.getTransform().worldModelMatrix),
+  glm::mat4 world = worldMatrix(light);
+  return {.viewMat = glm::affineInverse(world),
           .projMat = light.getShadowProjectionMatrix(),
           .rgb = light.getColor(),
-          .position = light.getPosition(),
+          .shadowEnabled = light.isShadowEnabled() ? 1 : 0,
+          .position = glm::vec3(world[3]),
           .fovInner = light.getFovSmall(),
           .fovOuter = light.getFov(),
           .textureId = textureId,
@@ -26,12 +30,16 @@ GpuSpotLight spotLightData(SpotLight const &light, int textureId) {
 
 void LightTable::append(Scene &scene, TextureIndex const &textureIndex) {
   for (auto *light : shadowsFirst(scene.getPointLights())) {
-    point.push_back({.position = light->getPosition(),
+    glm::mat4 world = worldMatrix(*light);
+    point.push_back({.position = glm::vec3(world[3]),
                      .radius = light->getRadius(),
                      .rgb = light->getColor()});
   }
   for (auto *light : shadowsFirst(scene.getDirectionalLights())) {
-    directional.push_back({.direction = light->getDirection(),
+    glm::mat4 world = worldMatrix(*light);
+    glm::vec3 dir = glm::vec3(world * glm::vec4(0.f, 0.f, -1.f, 0.f));
+    float len = glm::length(dir);
+    directional.push_back({.direction = len > 1e-6f ? dir / len : glm::vec3(0.f, 0.f, -1.f),
                            .softness = light->getSoftness(),
                            .rgb = light->getColor()});
   }
@@ -39,13 +47,20 @@ void LightTable::append(Scene &scene, TextureIndex const &textureIndex) {
     spot.push_back(spotLightData(*light, -1));
   }
   for (auto *light : scene.getTexturedLights()) {
-    spot.push_back(spotLightData(*light, textureIndex(light->getTexture())));
+    auto texture = light->getTexture();
+    spot.push_back(spotLightData(*light, texture ? textureIndex(texture) : -1));
   }
   for (auto *light : scene.getParallelogramLights()) {
-    parallelogram.push_back({.rgb = light->getColor(),
-                             .position = light->getOrigin(),
-                             .edge0 = light->getEdgeX(),
-                             .edge1 = light->getEdgeY()});
+    glm::mat4 world = worldMatrix(*light);
+    glm::vec2 half = light->getHalfSize();
+    float angle = light->getAngle();
+    parallelogram.push_back(
+        {.rgb = light->getColor(),
+         .position = glm::vec3(world * glm::vec4(-half.x, -half.y, 0.f, 1.f)),
+         .edge0 = glm::vec3(world * glm::vec4(half.x * 2.f, 0.f, 0.f, 0.f)),
+         .edge1 = glm::vec3(
+             world * glm::vec4(glm::cos(angle) * half.y * 2.f,
+                               glm::sin(angle) * half.y * 2.f, 0.f, 0.f))});
   }
 }
 
