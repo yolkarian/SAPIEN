@@ -139,7 +139,11 @@ void sapienAddDirectLighting(inout vec3 color, vec3 position, vec3 normal, vec3 
         visibility = sapienPerspectiveShadow(samplerTexturedLightDepths[t], coord, sv, sp,
                                              worldNormal, light.radius, gl_FragCoord.xy);
       }
-      visibility *= texture(samplerTexturedLightTextures[light.textureId], coord.xy).x;
+      if (light.textureId >= 0) {
+        // a textured light without a texture is a plain spot light: the rasterizer binds the
+        // default texture for it, but -1 must never index the array
+        visibility *= texture(samplerTexturedLightTextures[light.textureId], coord.xy).x;
+      }
     }
     vec3 c = computeSpotLight(light.fovInner, light.fovOuter, centerDir, light.rgb, l, normal,
                               camDir, diffuseAlbedo, roughness, fresnel);

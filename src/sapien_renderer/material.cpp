@@ -206,5 +206,36 @@ float SapienRenderMaterial::getOcclusionStrength() const {
   return mMaterial->getOcclusionStrength();
 }
 
+void SapienRenderMaterial::setAlphaMode(std::string const &mode) {
+  if (mode == "opaque") {
+    mMaterial->setAlphaMode(svulkan2::resource::SVMetallicMaterial::eAlphaOpaque);
+  } else if (mode == "mask") {
+    mMaterial->setAlphaMode(svulkan2::resource::SVMetallicMaterial::eAlphaMask);
+  } else if (mode == "blend") {
+    mMaterial->setAlphaMode(svulkan2::resource::SVMetallicMaterial::eAlphaBlend);
+  } else {
+    throw std::runtime_error("invalid alpha mode \"" + mode +
+                             "\": use \"opaque\", \"mask\" or \"blend\"");
+  }
+}
+std::string SapienRenderMaterial::getAlphaMode() const {
+  switch (mMaterial->getAlphaMode()) {
+  case svulkan2::resource::SVMetallicMaterial::eAlphaOpaque:
+    return "opaque";
+  case svulkan2::resource::SVMetallicMaterial::eAlphaMask:
+    return "mask";
+  default:
+    return "blend";
+  }
+}
+void SapienRenderMaterial::setAlphaCutoff(float cutoff) {
+  mMaterial->setAlphaCutoff(cutoff);
+}
+float SapienRenderMaterial::getAlphaCutoff() const { return mMaterial->getAlphaCutoff(); }
+void SapienRenderMaterial::setTwoSided(bool twoSided) {
+  mMaterial->setCullMode(twoSided ? vk::CullModeFlagBits::eNone : vk::CullModeFlagBits::eBack);
+}
+bool SapienRenderMaterial::getTwoSided() const { return mMaterial->getTwoSided() != 0; }
+
 } // namespace sapien_renderer
 } // namespace sapien

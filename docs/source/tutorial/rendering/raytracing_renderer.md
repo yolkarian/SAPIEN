@@ -169,12 +169,18 @@ OpenPBR Surface 1.1 parameters. The parameters `base_color`, `roughness`
 (OpenPBR `specular_roughness`), `metallic` (`base_metalness`), `specular_weight`,
 `specular_color`, `ior` (`specular_ior`), `transmission`, `transmission_color`,
 `transmission_depth`, `coat_weight`, `coat_color`, `coat_roughness`, `coat_ior`,
-`fuzz_weight`, `fuzz_color`, `fuzz_roughness`, `base_weight`, `thin_walled`, and
-the emission strength affect ray-traced reflection, refraction and shading.
+`fuzz_weight`, `fuzz_color`, `fuzz_roughness`, `base_weight`, `thin_walled`,
+`two_sided`, and the emission strength affect ray-traced reflection, refraction
+and shading.
 
-`base_color`'s alpha channel is the geometry coverage (a cut-out), not
-transparency: glass is made with `transmission`, and `transmission_color` with
-`transmission_depth` tints light over distance. `specular_weight` scales the
+`base_color`'s alpha channel is geometry coverage, not transparency, and
+`alpha_mode` decides what it means: `"opaque"` (the default, and what an imported
+glTF OPAQUE material gets) ignores it, `"mask"` cuts the surface out below
+`alpha_cutoff`, and `"blend"` keeps it as a stochastic coverage. A texture's alpha
+follows the same mode. Glass is made with `transmission`, and
+`transmission_color` with `transmission_depth` tints light over distance.
+`two_sided` (glTF `doubleSided`) makes the ray tracers show a mesh's back faces and
+let them cast shadows; a one-sided open sheet still blocks what lies behind it. `specular_weight` scales the
 normal-incidence reflectance of `ior`; the removed `specular` parameter s is
 `2*s` here at `ior=1.5` for dielectrics, while metals keep `specular_weight=1`
 (their reflectance is `base_color` scaled by `specular_weight`, at most 1).
@@ -409,7 +415,7 @@ shader source.
 |---|---|---|
 | `"visibility"` | `SHADING_VISIBILITY` | one primary ray; albedo, depth, normal, position, segmentation |
 | `"lambert"` (default) | `SHADING_LAMBERT` | emission + albedo·(ambient + Σ light N·L) |
-| `"pbr"` | `SHADING_PBR` | diffuse + GGX specular direct light, ambient term |
+| `"pbr"` | `SHADING_PBR` | the OpenPBR lobes of the material: diffuse, base specular, coat and fuzz, with the ambient environment term |
 
 The `shadows` bool variant defines `SHADOWS`: one hard shadow ray per light for the
 first `maxShadowLights` (default 4) lights facing the surface point, in the order

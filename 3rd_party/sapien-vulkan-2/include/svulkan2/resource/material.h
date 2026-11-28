@@ -40,6 +40,11 @@ public:
     eTextureSlotCount = 7
   };
 
+  /** glTF's alphaMode: how base_color.a (and the base colour texture's alpha) becomes the
+   *  geometry coverage of a surface. OPAQUE ignores both; MASK cuts the surface out where the
+   *  alpha is below alphaCutoff; BLEND keeps the alpha as a stochastic coverage. */
+  enum AlphaModeInt { eAlphaOpaque = 0, eAlphaMask = 1, eAlphaBlend = 2 };
+
   /** The device-independent parameters: the first 256 bytes of scene::GpuMaterial and of
    *  `Material` in vulkan_shader/common/material.glsl. Defaults are OpenPBR's except
    *  base_color (white) and the specular roughness (0.45), SAPIEN's previous defaults. */
@@ -129,6 +134,13 @@ public:
   void setOcclusionStrength(float strength);
   float getOcclusionStrength() const { return mBuffer.occlusionStrength; }
 
+  void setAlphaMode(AlphaModeInt mode) { mAlphaMode = mode; changed(); }
+  AlphaModeInt getAlphaMode() const { return mAlphaMode; }
+  void setAlphaCutoff(float cutoff) { mAlphaCutoff = cutoff; changed(); }
+  float getAlphaCutoff() const { return mAlphaCutoff; }
+  /** 1 when both faces are visible (cull mode none) */
+  int getTwoSided() const { return getCullMode() == vk::CullModeFlagBits::eNone ? 1 : 0; }
+
   void setTexture(TextureSlot slot, std::shared_ptr<SVTexture> texture);
   std::shared_ptr<SVTexture> getTexture(TextureSlot slot) const { return mTextures.at(slot); }
   void setTextureTransform(TextureSlot slot, glm::vec4 const &transform);
@@ -156,6 +168,8 @@ public:
 private:
   Buffer mBuffer{};
   std::array<std::shared_ptr<SVTexture>, eTextureSlotCount> mTextures;
+  AlphaModeInt mAlphaMode{eAlphaBlend};
+  float mAlphaCutoff{0.5f};
 
   /** every edit bumps the process-wide version renderers compare to repack their tables */
   void changed();

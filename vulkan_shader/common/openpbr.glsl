@@ -40,6 +40,13 @@ struct OpenPBR {
   float fuzzWeight;
   vec3 fuzzColor;
   float fuzzRoughness;
+  // inside a body: the coat and fuzz of the far surface, which the light leaving the body crosses
+  // once (clamp(coatWeight) is 0 on interior surfaces, so they are kept separately)
+  vec3 exitCoatColor;
+  float exitCoatEta;
+  float exitCoatWeight;
+  float exitFuzzWeight;
+  float exitFuzzRoughness;
 };
 
 float openpbrLuminance(vec3 c) { return dot(c, vec3(0.2126, 0.7152, 0.0722)); }
@@ -164,13 +171,25 @@ const float OPENPBR_FUZZ_ALBEDO[256] = float[256](
 );
 
 float openpbrFuzzAlbedo(float mu, float roughness) {
-  vec2 p = clamp(vec2(mu, roughness) * 16.0 - 0.5, vec2(0.0), vec2(15.0));
+  // The table holds cell centres in [1/32, 31/32]. Below the first centre the real albedo keeps
+  // rising toward grazing; clamping to the first column would under-attenuate the layers above by
+  // up to 15% there, so the first column is continued linearly from the two lowest centres.
+  float muClamped = max(mu, 1.0 / 32.0);
+  vec2 p = clamp(vec2(muClamped, roughness) * 16.0 - 0.5, vec2(0.0), vec2(15.0));
   ivec2 i = min(ivec2(p), ivec2(14));
   vec2 t = p - vec2(i);
   float a = mix(OPENPBR_FUZZ_ALBEDO[i.y * 16 + i.x], OPENPBR_FUZZ_ALBEDO[i.y * 16 + i.x + 1], t.x);
   float b = mix(OPENPBR_FUZZ_ALBEDO[(i.y + 1) * 16 + i.x],
                 OPENPBR_FUZZ_ALBEDO[(i.y + 1) * 16 + i.x + 1], t.x);
-  return mix(a, b, t.y);
+  float albedo = mix(a, b, t.y);
+  if (mu < 1.0 / 32.0) {
+    // the value at 3/32 continues the same row: the next column at mu = 1/32
+    int row = i.y;
+    float next = mix(OPENPBR_FUZZ_ALBEDO[row * 16 + 1], OPENPBR_FUZZ_ALBEDO[(row + 1) * 16 + 1],
+                     t.y);
+    albedo += (albedo - next) * (1.0 / 32.0 - mu) * 32.0;
+  }
+  return clamp(albedo, 0.0, 1.0);
 }
 
 float openpbrFuzzLambda(float c, float r) {
@@ -336,10 +355,25 @@ float openpbrTransmissionLobe(OpenPBR m, vec3 wo, vec3 wi) {
          (1.0 - openpbrFresnel(oh, m.baseEta)) * oh * jacobian / (wo.z * m.eta * m.eta);
 }
 
+// what the far surface's coat and fuzz let through when light leaves a body, at external cosine
+// mu: coat_color tints both passes of a solid body, the entry one at the entry vertex and this one
+vec3 openpbrExitLayers(OpenPBR m, float mu) {
+  if (!m.interior) {
+    return vec3(1.0);
+  }
+  float fuzz = 1.0 - m.exitFuzzWeight * openpbrFuzzAlbedo(mu, m.exitFuzzRoughness);
+  vec3 coat = openpbrCoatTransmittance(m.exitCoatColor, m.exitCoatEta, mu) *
+              (1.0 - openpbrFresnel(mu, m.exitCoatEta));
+  return fuzz * mix(vec3(1.0), coat, m.exitCoatWeight);
+}
+
 // the weight of the transmission lobe; light entering also takes the interface tint
 vec3 openpbrTransmissionWeight(OpenPBR m, vec3 wo, vec3 wi) {
   if (m.interior) {
-    return vec3(1.0);
+    // leaving the body through the far surface: the entry pass is already counted by
+    // openpbrEmissionFactor(wo.z) at the entry vertex, so this one completes coat_color's two
+    // passes (and dims the light by that surface's Fresnel and fuzz)
+    return openpbrExitLayers(m, abs(wi.z));
   }
   // A solid body crosses the coat once on entry at external cosine wo.z; a thin-walled sheet
   // crosses both faces at external cosines wo.z and |wi.z|.
@@ -546,6 +580,12 @@ OpenPBR openpbrSurface(Material mat, vec3 base, float metallic, float roughness,
   // leaving a body: specular_weight and the coat modulate Fresnel (m.baseEta), not Snell's law.
   float refraction = openpbrRefractionEta(n);
   m.eta = m.interior ? 1.0 / refraction : refraction;
+  // inside a body the coat and fuzz belong to the far surface, where the light leaves
+  m.exitCoatColor = m.coatColor;
+  m.exitCoatEta = m.coatEta;
+  m.exitCoatWeight = clamp(mat.coatWeight, 0.0, 1.0);
+  m.exitFuzzWeight = clamp(mat.fuzzWeight, 0.0, 1.0);
+  m.exitFuzzRoughness = m.fuzzRoughness;
   if (m.interior) {
     m.baseEta = m.eta; // the bare interface seen from inside the body
   }
@@ -578,6 +618,11 @@ OpenPBR openpbrDielectric(vec3 base, float roughness, float ior, float transmiss
   m.fuzzWeight = 0.0;
   m.fuzzColor = vec3(1.0);
   m.fuzzRoughness = 0.5;
+  m.exitCoatColor = vec3(1.0);
+  m.exitCoatEta = 1.5;
+  m.exitCoatWeight = 0.0;
+  m.exitFuzzWeight = 0.0;
+  m.exitFuzzRoughness = 0.5;
   return m;
 }
 

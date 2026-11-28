@@ -116,7 +116,7 @@ BatchRTRenderer::BatchRTRenderer(std::shared_ptr<core::Context> context,
                                "float32, float for r32f and uvec4 for uint32");
     }
     mPictureFormats[name] = declared;
-    mPictureBytes = static_cast<vk::DeviceSize>(mWidth) * mHeight * getFormatSize(declared);
+    mPictureBytes[name] = static_cast<vk::DeviceSize>(mWidth) * mHeight * getFormatSize(declared);
   }
 
 }
@@ -429,7 +429,7 @@ void BatchRTRenderer::allocatePictures() {
   for (auto const &name : mPictureNames) {
     // exported to CUDA: the group writes each picture in place, so take_picture copies nothing
     mPictureBuffers[name] = core::Buffer::Create(
-        *mContext, mPictureBytes * mCameraCount,
+        *mContext, mPictureBytes.at(name) * mCameraCount,
         vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eTransferSrc |
             vk::BufferUsageFlagBits::eTransferDst,
         VMA_MEMORY_USAGE_GPU_ONLY, VmaAllocationCreateFlags{}, true);

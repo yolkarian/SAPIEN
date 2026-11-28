@@ -108,6 +108,12 @@ void SapienRenderBodyComponent::setShadingMode(int mode) {
 int SapienRenderBodyComponent::getShadingMode() const { return mShadingMode; }
 
 void SapienRenderBodyComponent::setCastShadow(bool castShadow) {
+  // a no-op assignment must not bump the scene version: after a camera group sealed the scene
+  // any version bump makes every later update_render() raise, and setting the old value back
+  // cannot undo it
+  if (mCastShadow == castShadow) {
+    return;
+  }
   mCastShadow = castShadow;
   if (mNode) {
     for (auto c : mNode->getChildren()) {

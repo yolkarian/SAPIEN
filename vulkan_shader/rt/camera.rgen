@@ -37,6 +37,48 @@ layout(set = 2, binding = 0) uniform CameraBuffer {
 
 #include "push_constant.glsl"
 
+// Writes this sample's geometric AOVs (normal, albedo, segmentation, position, depth, motion)
+// once the ray has reached the surface it reports: after the uncovered pass-throughs in front of
+// it, the sky behind a fully open cutout, or a path that ended before reaching anything.
+void recordGeometricAovs(ivec2 px, int sampleIndex, bool finalHit, bool hit, Ray ray) {
+  if (sampleIndex != 0) {
+    return;
+  }
+  imageStore(outNormal, px,
+             vec4(finalHit ? mat3(cameraBuffer.viewMatrix) * ray.normal : vec3(0.0), 1.0));
+  imageStore(outAlbedo, px, vec4(finalHit || !hit ? ray.albedo : vec3(0.0), 1.0));
+  imageStore(outSegmentation, px, finalHit ? ray.segmentation : uvec4(0));
+
+  vec4 position = vec4(0.0, 0.0, 0.0, 1.0);
+  vec4 ndc = vec4(0.0);
+  if (finalHit) {
+    vec4 camPos = cameraBuffer.viewMatrix * vec4(ray.origin, 1.0);
+    ndc = cameraBuffer.projectionMatrix * camPos;
+    position = vec4(camPos.xyz, abs(ndc.w) > 1e-6 ? ndc.z / ndc.w : 1.0);
+  }
+  imageStore(outPosition, px, position);
+  imageStore(outDepth, px, vec4(finalHit ? max(-position.z, 0.0) : 0.0, 0.0, 0.0, 0.0));
+
+  vec2 motion = vec2(0.0);
+  vec4 currClip, prevClip;
+  if (finalHit) {
+    currClip = ndc;
+    prevClip = cameraBuffer.projectionMatrix *
+               (cameraBuffer.prevViewMatrix * vec4(ray.prevWorldPos, 1.0));
+  } else {
+    currClip = cameraBuffer.projectionMatrix *
+               vec4(mat3(cameraBuffer.viewMatrix) * ray.direction, 0.0);
+    prevClip = cameraBuffer.projectionMatrix *
+               vec4(mat3(cameraBuffer.prevViewMatrix) * ray.direction, 0.0);
+  }
+  if (currClip.w > 1e-6 && prevClip.w > 1e-6) {
+    vec2 currUv = currClip.xy / currClip.w * 0.5 + 0.5;
+    vec2 prevUv = prevClip.xy / prevClip.w * 0.5 + 0.5;
+    motion = (currUv - prevUv) * vec2(gl_LaunchSizeEXT.xy);
+  }
+  imageStore(outMotionVector, px, vec4(motion, 0.0, 0.0));
+}
+
 void main() {
   ivec2 px = ivec2(gl_LaunchIDEXT.xy);
   vec2 invScreen = vec2(2.0) / gl_LaunchSizeEXT.xy;
@@ -178,52 +220,34 @@ void main() {
         bool finalHit = hit && !passThrough;
         alpha += finalHit ? ray.alpha : 0.0;
         geomRecorded = true;
-        if (i == 0) {
-          imageStore(outNormal, px,
-                     vec4(finalHit ? mat3(cameraBuffer.viewMatrix) * ray.normal : vec3(0.0), 1.0));
-          imageStore(outAlbedo, px, vec4(finalHit || !hit ? ray.albedo : vec3(0.0), 1.0));
-          imageStore(outSegmentation, px, finalHit ? ray.segmentation : uvec4(0));
-
-          vec4 position = vec4(0.0, 0.0, 0.0, 1.0);
-          vec4 ndc = vec4(0.0);
-          if (finalHit) {
-            vec4 camPos = cameraBuffer.viewMatrix * vec4(ray.origin, 1.0);
-            ndc = cameraBuffer.projectionMatrix * camPos;
-            position = vec4(camPos.xyz, abs(ndc.w) > 1e-6 ? ndc.z / ndc.w : 1.0);
-          }
-          imageStore(outPosition, px, position);
-          imageStore(outDepth, px, vec4(finalHit ? max(-position.z, 0.0) : 0.0, 0.0, 0.0, 0.0));
-
-          vec2 motion = vec2(0.0);
-          vec4 currClip, prevClip;
-          if (finalHit) {
-            currClip = ndc;
-            prevClip = cameraBuffer.projectionMatrix *
-                       (cameraBuffer.prevViewMatrix * vec4(ray.prevWorldPos, 1.0));
-          } else {
-            currClip = cameraBuffer.projectionMatrix *
-                       vec4(mat3(cameraBuffer.viewMatrix) * ray.direction, 0.0);
-            prevClip = cameraBuffer.projectionMatrix *
-                       vec4(mat3(cameraBuffer.prevViewMatrix) * ray.direction, 0.0);
-          }
-          if (currClip.w > 1e-6 && prevClip.w > 1e-6) {
-            vec2 currUv = currClip.xy / currClip.w * 0.5 + 0.5;
-            vec2 prevUv = prevClip.xy / prevClip.w * 0.5 + 0.5;
-            motion = (currUv - prevUv) * vec2(gl_LaunchSizeEXT.xy);
-          }
-          imageStore(outMotionVector, px, vec4(motion, 0.0, 0.0));
-        }
+        recordGeometricAovs(px, i, finalHit, hit, ray);
       }
 
       if (ray.depth > uint(maxDepth) || any(isnan(attenuation)) || any(isinf(attenuation)) ||
           max(max(attenuation.x, attenuation.y), attenuation.z) <= 1e-6) {
         attenuation = vec3(0.0);
+        // a path that ends before it reached a visible surface still reports the sky behind the
+        // last pass-through, so the geometric AOVs are never left from an older frame
+        if (!geomRecorded) {
+          // the path ends inside a medium or a stack of pass-throughs: the camera sees the sky
+          // behind them
+          recordGeometricAovs(px, i, false, ray.alpha > 0.0, ray);
+          geomRecorded = true;
+        }
         break;
       }
-      if (russianRoulette != 0 && bounce >= russianRouletteMinBounces) {
+      // Russian roulette never terminates a pass-through bounce: the ray has not reached a
+      // visible surface yet, so the geometric AOVs and alpha would lose this sample
+      if (russianRoulette != 0 && bounce >= russianRouletteMinBounces && !passThrough) {
         float continuationProbability =
             clamp(max(max(attenuation.x, attenuation.y), attenuation.z), 0.05, 0.95);
-        if (rnd(ray.seed) > continuationProbability) break;
+        if (rnd(ray.seed) > continuationProbability) {
+          if (!geomRecorded) {
+            recordGeometricAovs(px, i, false, ray.alpha > 0.0, ray);
+            geomRecorded = true;
+          }
+          break;
+        }
         attDiffuse /= continuationProbability;
         attSpecular /= continuationProbability;
         attenuation /= continuationProbability;

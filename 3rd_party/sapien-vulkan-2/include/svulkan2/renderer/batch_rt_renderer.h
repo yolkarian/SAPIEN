@@ -173,7 +173,9 @@ private:
   std::vector<std::string> mPictureNames;
   std::map<std::string, vk::Format> mPictureFormats;
   std::map<std::string, std::unique_ptr<core::Buffer>> mPictureBuffers;
-  vk::DeviceSize mPictureBytes{};
+  // bytes per picture of the group's output buffers: each picture has its own format, so its own
+  // row size
+  std::map<std::string, vk::DeviceSize> mPictureBytes;
 
   // the group's materials in materials[] order; mTextureSlots maps a texture to textures[].
   // The keys own the textures: mTextures holds only image views, and a raw-pointer key would let

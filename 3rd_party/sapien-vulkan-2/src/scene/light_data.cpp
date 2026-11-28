@@ -47,8 +47,10 @@ void LightTable::append(Scene &scene, TextureIndex const &textureIndex) {
     spot.push_back(spotLightData(*light, -1));
   }
   for (auto *light : scene.getTexturedLights()) {
-    auto texture = light->getTexture();
-    spot.push_back(spotLightData(*light, texture ? textureIndex(texture) : -1));
+    // Every textured light asks for a slot, texture or not: the rasterizer binds the default
+    // texture into the slot of a light without one, and the shaders index the array by that slot
+    // (the ray tracers return -1 for a missing texture and skip it).
+    spot.push_back(spotLightData(*light, textureIndex(light->getTexture())));
   }
   for (auto *light : scene.getParallelogramLights()) {
     glm::mat4 world = worldMatrix(*light);

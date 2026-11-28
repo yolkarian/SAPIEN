@@ -257,6 +257,9 @@ vec3 traceSpotLights(vec3 pos, OpenPBR m, mat3 frame, vec3 wo, out vec3 resultNo
 
 void main() {
   float inDepth = ray.depth;
+  // a hit, whatever the surface's alpha: the catcher below reports a shadowness of 0 on an
+  // unshadowed pixel, and the ray generator still has to know the camera ray reached it
+  ray.hit = 1;
 
   Object obj = objects.o[gl_InstanceID];
 
@@ -309,9 +312,12 @@ void main() {
 
   Material mat = materials.m[materialIndex];
   vec4 base = mat.baseColor;
+  float texelAlpha = 1.0;
   if (mat.baseColorTexture >= 0) {
-    base *= texture(textures[nonuniformEXT(mat.baseColorTexture)],
-                    materialUV(mat.textureTransforms[0], uv));
+    vec4 texel = texture(textures[nonuniformEXT(mat.baseColorTexture)],
+                         materialUV(mat.textureTransforms[0], uv));
+    base *= texel;
+    texelAlpha = texel.a;
   }
   vec3 baseColor = base.rgb;
 
@@ -348,7 +354,8 @@ void main() {
   vec3 absorbed = isInside ? exp(-openpbrAbsorption(mat) * gl_HitTEXT) : vec3(1.0);
 
   // geometry_opacity and object transparency: the uncovered part lets the ray go straight on
-  float coverage = clamp(base.a, 0.0, 1.0) * (1.0 - clamp(obj.transparency, 0.0, 1.0));
+  float coverage =
+      materialCoverage(mat, texelAlpha) * (1.0 - clamp(obj.transparency, 0.0, 1.0));
   if (rnd(ray.seed) >= coverage) {
     ray.origin = worldPosition;
     ray.attenuation = absorbed;

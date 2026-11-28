@@ -290,9 +290,12 @@ float shadeTriangleMaterial(uint materialIndex, vec2 uv, inout Surface surface) 
   Material material = materials.m[materialIndex];
 
   vec4 base = material.baseColor;
+  float texelAlpha = 1.0;
   if (material.baseColorTexture >= 0) {
-    base *= texture(textures[nonuniformEXT(material.baseColorTexture)],
-                    materialUV(material.textureTransforms[0], uv));
+    vec4 texel = texture(textures[nonuniformEXT(material.baseColorTexture)],
+                         materialUV(material.textureTransforms[0], uv));
+    base *= texel;
+    texelAlpha = texel.a;
   }
   float metallic = material.metallic;
   if (material.metallicTexture >= 0) {
@@ -319,12 +322,12 @@ float shadeTriangleMaterial(uint materialIndex, vec2 uv, inout Surface surface) 
   surface.emission = emission;
   // primary rays only: the lights are always on the side of the camera
   surface.material = openpbrSurface(material, base.rgb, metallic, roughness, transmission, false);
-  return base.a;
+  return materialCoverage(material, texelAlpha);
 }
 
 /** Trace the primary ray into the dispatch's environment. Non-opaque candidates are confirmed or
  *  ignored in this loop, exactly like the rt pack's camera.rahit: fully transparent objects and
- *  back faces of opaque materials are ignored, and an alpha-masked texel below half opacity is
+ *  back faces of opaque one-sided materials are ignored, and a coverage below half opacity is
  *  dropped, deterministically. */
 Surface traceScene(int envIndex, vec3 origin, vec3 direction, float tMin) {
   Surface best = emptySurface();
@@ -359,11 +362,13 @@ Surface traceScene(int envIndex, vec3 origin, vec3 direction, float tMin) {
       Material material = materials.m[materialIndex];
       mat4x3 objectToWorld = rayQueryGetIntersectionObjectToWorldEXT(query, false);
       mat4x3 worldToObject = rayQueryGetIntersectionWorldToObjectEXT(query, false);
-      bool mirrored = determinant(mat3(objectToWorld)) < 0.0;
-      bool isInside = (!rayQueryGetIntersectionFrontFaceEXT(query, false)) != mirrored;
-      // a back face of an opaque material is not a visible surface, like camera.rahit
+      // Vulkan decides facing in object space: a negative-determinant instance transform does not
+      // flip the winding, so the front-face flag alone tells inside from outside
+      bool isInside = !rayQueryGetIntersectionFrontFaceEXT(query, false);
+      bool backFaceVisible = material.thinWalled != 0 || material.twoSided != 0;
+      // a back face of an opaque one-sided material is not a visible surface, like camera.rahit
       if (isInside && material.transmissionWeight < 1e-4 && material.transmissionTexture < 0 &&
-          material.thinWalled == 0) {
+          !backFaceVisible) {
         continue;
       }
 
@@ -414,10 +419,9 @@ Surface traceScene(int envIndex, vec3 origin, vec3 direction, float tMin) {
       surface.geometricNormal = worldGeometricNormal;
       surface.normal = worldShadingNormal;
       float alpha = shadeTriangleMaterial(materialIndex, uv, surface);
-      if (isInside && surface.material.transmission < 1e-4 && !surface.material.thinWalled) {
-        continue;
-      }
-      // alpha mask: a texel below half opacity lets the ray through, deterministically
+      // alpha mask: a texel below half opacity lets the ray through, deterministically. The
+      // coverage already follows the material's alpha mode (OPAQUE ignores the alpha, MASK cuts
+      // out below alphaCutoff, BLEND is sampled like the ray tracers do).
       if (alpha < 0.5) {
         continue;
       }

@@ -82,9 +82,13 @@ void main() {
 
   Material mat = materials.m[materialIndex];
   vec4 base = mat.baseColor;
-  if (mat.baseColorTexture >= 0)
-    base *= texture(textures[nonuniformEXT(mat.baseColorTexture)],
-                    materialUV(mat.textureTransforms[0], uv));
+  float texelAlpha = 1.0;
+  if (mat.baseColorTexture >= 0) {
+    vec4 texel = texture(textures[nonuniformEXT(mat.baseColorTexture)],
+                         materialUV(mat.textureTransforms[0], uv));
+    base *= texel;
+    texelAlpha = texel.a;
+  }
   float metallic = mat.metallic;
   if (mat.metallicTexture >= 0)
     metallic = texture(textures[nonuniformEXT(mat.metallicTexture)],
@@ -114,7 +118,8 @@ void main() {
 
   // geometry_opacity and object transparency: the uncovered part lets the path ray go straight
   // on. The MIS state still belongs to the vertex the ray left.
-  float coverage = clamp(base.a, 0.0, 1.0) * (1.0 - clamp(obj.transparency, 0.0, 1.0));
+  float coverage =
+      materialCoverage(mat, texelAlpha) * (1.0 - clamp(obj.transparency, 0.0, 1.0));
   if (rnd(ray.seed) >= coverage) {
     ray.origin = worldPosition;
     ray.prevWorldPos = prevWorldPos;

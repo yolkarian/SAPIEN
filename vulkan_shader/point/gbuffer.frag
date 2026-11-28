@@ -43,13 +43,20 @@ void main() {
   }
 
   outAlbedo = material.baseColor;
+  float texelAlpha = 1.0;
   if (material.baseColorTexture >= 0) {
-    outAlbedo *= texture(textures[nonuniformEXT(material.baseColorTexture)], materialUV(material.textureTransforms[0], inUV));
+    vec4 texel = texture(textures[nonuniformEXT(material.baseColorTexture)], materialUV(material.textureTransforms[0], inUV));
+    outAlbedo *= texel;
+    texelAlpha = texel.a;
   }
 
-  if (outAlbedo.a == 0) {
+  // geometry coverage follows the material's alpha mode: OPAQUE covers, MASK cuts out below the
+  // cutoff, BLEND keeps the alpha (the deferred lighting pass blends by it)
+  float coverage = materialCoverage(material, texelAlpha);
+  if (coverage <= 0.0) {
     discard;
   }
+  outAlbedo.a = coverage;
   outAlbedo.rgb *= material.baseWeight;
 
   if (material.roughnessTexture >= 0) {

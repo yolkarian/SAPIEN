@@ -33,6 +33,28 @@ layout(set = 2, binding = 0) uniform CameraBuffer {
 
 
 
+// Writes this sample's geometric AOVs of the first visible surface (normal, albedo,
+// segmentation, position), or the sky when the path ended before reaching one.
+void recordGeometricAovs(int sampleIndex, bool finalHit) {
+  if (sampleIndex != 0) {
+    return;
+  }
+  imageStore(outNormal, ivec2(gl_LaunchIDEXT.xy),
+             vec4(finalHit ? mat3(cameraBuffer.viewMatrix) * ray.normal : vec3(0.0), 1.0));
+  imageStore(outAlbedo, ivec2(gl_LaunchIDEXT.xy),
+             vec4(finalHit ? ray.albedo : vec3(0.0), 1.0));
+  imageStore(outSegmentation, ivec2(gl_LaunchIDEXT.xy),
+             finalHit ? ray.segmentation : uvec4(0));
+
+  vec4 position = vec4(0.0, 0.0, 0.0, 1.0);
+  if (finalHit) {
+    vec4 camPos = cameraBuffer.viewMatrix * vec4(ray.origin, 1.0);
+    vec4 ndc = cameraBuffer.projectionMatrix * camPos;
+    position = vec4(camPos.xyz, abs(ndc.w) > 1e-6 ? ndc.z / ndc.w : 1.0);
+  }
+  imageStore(outPosition, ivec2(gl_LaunchIDEXT.xy), position);
+}
+
 void main() {
   vec2 invScreen = vec2(2.0) / gl_LaunchSizeEXT.xy;
   vec2 pixel = gl_LaunchIDEXT.xy * invScreen - 1.0;
@@ -92,6 +114,7 @@ void main() {
     ray.transmittance = vec3(1.0);
     ray.isShadow = 0;
     ray.scattered = 0;
+    ray.hit = 0;
 
     vec3 attenuation = vec3(1.0);
     bool geomRecorded = false;
@@ -109,7 +132,7 @@ void main() {
                   tMax,
                   0);
 
-      bool hit = ray.alpha > 0.0;
+      bool hit = ray.hit != 0;
       bool passThrough = hit && (ray.scattered == prevScattered);
 
       radiance += ray.radiance * attenuation;
@@ -121,35 +144,31 @@ void main() {
         effectiveSpp += a;
         alpha += a;
         geomRecorded = true;
-
-        if (i == 0) {
-          imageStore(outNormal, ivec2(gl_LaunchIDEXT.xy),
-                     vec4(finalHit ? mat3(cameraBuffer.viewMatrix) * ray.normal : vec3(0.0), 1.0));
-          imageStore(outAlbedo, ivec2(gl_LaunchIDEXT.xy),
-                     vec4(finalHit ? ray.albedo : vec3(0.0), 1.0));
-          imageStore(outSegmentation, ivec2(gl_LaunchIDEXT.xy),
-                     finalHit ? ray.segmentation : uvec4(0));
-
-          vec4 position = vec4(0.0, 0.0, 0.0, 1.0);
-          if (finalHit) {
-            vec4 camPos = cameraBuffer.viewMatrix * vec4(ray.origin, 1.0);
-            vec4 ndc = cameraBuffer.projectionMatrix * camPos;
-            position = vec4(camPos.xyz, abs(ndc.w) > 1e-6 ? ndc.z / ndc.w : 1.0);
-          }
-          imageStore(outPosition, ivec2(gl_LaunchIDEXT.xy), position);
-        }
+        recordGeometricAovs(i, finalHit);
       }
 
       if (any(isnan(attenuation)) || any(isinf(attenuation)) ||
           max(max(attenuation.x, attenuation.y), attenuation.z) <= 1e-6) {
         attenuation = vec3(0.0);
+        // a path that ends before it reached a visible surface still reports the sky behind the
+        // last pass-through, so the geometric AOVs are never left from an older frame
+        if (!geomRecorded) {
+          recordGeometricAovs(i, false);
+          geomRecorded = true;
+        }
         break;
       }
 
-      if (russianRoulette != 0 && ray.depth >= russianRouletteMinBounces) {
+      // Russian roulette never terminates a pass-through bounce: the ray has not reached a
+      // visible surface yet, so the geometric AOVs and alpha would lose this sample
+      if (russianRoulette != 0 && ray.depth >= russianRouletteMinBounces && !passThrough) {
         float continuationProbability =
             clamp(max(max(attenuation.x, attenuation.y), attenuation.z), 0.05, 0.95);
         if (rnd(ray.seed) > continuationProbability) {
+          if (!geomRecorded) {
+            recordGeometricAovs(i, false);
+            geomRecorded = true;
+          }
           break;
         }
         attenuation /= continuationProbability;

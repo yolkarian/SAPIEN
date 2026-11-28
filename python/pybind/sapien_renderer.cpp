@@ -1253,6 +1253,24 @@ version moved; an unchanged version means zero per-frame light uploads.)doc")
       .def("get_occlusion_strength", &SapienRenderMaterial::getOcclusionStrength)
       .def("set_occlusion_strength", &SapienRenderMaterial::setOcclusionStrength,
            py::arg("strength"))
+      .def_property("alpha_mode", &SapienRenderMaterial::getAlphaMode,
+                    &SapienRenderMaterial::setAlphaMode,
+                    "glTF alphaMode of base_color.a and of the base colour texture's alpha: "
+                    "\"opaque\" (the default) ignores the alpha, \"mask\" cuts out below "
+                    "alpha_cutoff, \"blend\" keeps it as a stochastic coverage.")
+      .def("get_alpha_mode", &SapienRenderMaterial::getAlphaMode)
+      .def("set_alpha_mode", &SapienRenderMaterial::setAlphaMode, py::arg("mode"))
+      .def_property("alpha_cutoff", &SapienRenderMaterial::getAlphaCutoff,
+                    &SapienRenderMaterial::setAlphaCutoff,
+                    "The alpha threshold of \"mask\" (glTF alphaCutoff, 0.5 by default).")
+      .def("get_alpha_cutoff", &SapienRenderMaterial::getAlphaCutoff)
+      .def("set_alpha_cutoff", &SapienRenderMaterial::setAlphaCutoff, py::arg("cutoff"))
+      .def_property("two_sided", &SapienRenderMaterial::getTwoSided,
+                    &SapienRenderMaterial::setTwoSided,
+                    "Whether both faces of the mesh are visible (glTF doubleSided): the ray "
+                    "tracers then show its back faces and let them cast shadows too.")
+      .def("get_two_sided", &SapienRenderMaterial::getTwoSided)
+      .def("set_two_sided", &SapienRenderMaterial::setTwoSided, py::arg("two_sided"))
       .def("__eq__", [](SapienRenderMaterial &self, SapienRenderMaterial &other) {
         return self.getMaterial() == other.getMaterial();
       });

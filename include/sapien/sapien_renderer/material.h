@@ -1,6 +1,7 @@
 #pragma once
 #include "texture.h"
 #include <array>
+#include <string>
 #include <svulkan2/resource/material.h>
 
 namespace sapien {
@@ -72,6 +73,16 @@ public:
   [[nodiscard]] std::shared_ptr<SapienRenderTexture2D> getOcclusionTexture() const;
   void setOcclusionStrength(float strength);
   [[nodiscard]] float getOcclusionStrength() const;
+
+  /** glTF alphaMode of base_color.a (and of the base colour texture's alpha): "opaque" ignores
+   *  the alpha, "mask" cuts out below alpha_cutoff, "blend" keeps it as a stochastic coverage. */
+  void setAlphaMode(std::string const &mode);
+  [[nodiscard]] std::string getAlphaMode() const;
+  void setAlphaCutoff(float cutoff);
+  [[nodiscard]] float getAlphaCutoff() const;
+  /** whether both faces of the mesh are visible (cull mode none), as glTF's doubleSided sets it */
+  void setTwoSided(bool twoSided);
+  [[nodiscard]] bool getTwoSided() const;
 
   [[nodiscard]] std::shared_ptr<svulkan2::resource::SVMetallicMaterial> getMaterial() const {
     return mMaterial;

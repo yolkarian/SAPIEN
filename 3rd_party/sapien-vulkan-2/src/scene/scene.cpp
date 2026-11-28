@@ -456,6 +456,10 @@ std::vector<ParallelogramLight *> Scene::getParallelogramLights() {
   return result;
 }
 
+bool Scene::isModelMatrixUpdatePending() const {
+  return mRootNode->isSubtreeDirty() || mModelMatricesVersion != mVersion;
+}
+
 void Scene::updateModelMatrices() {
   updateRenderVersion();
   // Recomputing every node costs more than everything else in a frame of a large static
@@ -1125,6 +1129,35 @@ bool Scene::recordPrevTLASSnapshot(vk::CommandBuffer commandBuffer) {
   return recordPrevTLASSnapshotLocked(commandBuffer);
 }
 
+void Scene::recordPrevRowCopyLocked(void const *rows, vk::DeviceSize bytes) {
+  if (!mLastTLASInstanceBuffer) {
+    throw std::runtime_error("recordPrevRowCopyLocked failed: no TLAS instance rows");
+  }
+  bytes = std::min(bytes, mLastTLASInstanceBuffer->getSize());
+  auto device = mContext->getDevice();
+  if (!mPrevTLASRowStagingBuffer) {
+    mPrevTLASRowStagingBuffer =
+        core::Buffer::Create(*mContext, mLastTLASInstanceBuffer->getSize(),
+                             vk::BufferUsageFlagBits::eTransferSrc,
+                             VMA_MEMORY_USAGE_CPU_ONLY);
+    mPrevTLASRowFence = device.createFenceUnique({vk::FenceCreateFlagBits::eSignaled});
+  }
+  // the previous copy is a few buffer copies that finished long ago; only its staging buffer is
+  // reused
+  if (device.waitForFences(mPrevTLASRowFence.get(), VK_TRUE, UINT64_MAX) != vk::Result::eSuccess) {
+    throw std::runtime_error("failed to wait for the previous TLAS row copy");
+  }
+  mPrevTLASRowStagingBuffer->upload(rows, bytes);
+  vk::MemoryBarrier toTransfer(vk::AccessFlagBits::eHostWrite, vk::AccessFlagBits::eTransferRead);
+  mASUpdateCommandBuffer->pipelineBarrier(vk::PipelineStageFlagBits::eHost,
+                                         vk::PipelineStageFlagBits::eTransfer, {}, toTransfer,
+                                         {}, {});
+  mASUpdateCommandBuffer->copyBuffer(mPrevTLASRowStagingBuffer->getVulkanBuffer(),
+                                     mLastTLASInstanceBuffer->getVulkanBuffer(),
+                                     vk::BufferCopy(0, 0, bytes));
+  mPrevRowCopyRecorded = true;
+}
+
 bool Scene::recordPrevTLASSnapshotLocked(vk::CommandBuffer commandBuffer) {
   if (!mPrevTLASInstanceBuffer || !mLastTLASInstanceBuffer || !mTLAS) {
     return false;
@@ -1170,12 +1203,18 @@ bool Scene::recordPrevTLASSnapshotLocked(vk::CommandBuffer commandBuffer) {
   commandBuffer.copyBuffer(mLastTLASInstanceBuffer->getVulkanBuffer(),
                            mPrevTLASInstanceBuffer->getVulkanBuffer(),
                            vk::BufferCopy(0, 0, size));
-  // the next copy overwrites what the one above just read
-  commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
-                                vk::PipelineStageFlagBits::eTransfer, {}, betweenCopies, {}, {});
-  commandBuffer.copyBuffer(mTLAS->getInstanceBuffer().getVulkanBuffer(),
-                           mLastTLASInstanceBuffer->getVulkanBuffer(),
-                           vk::BufferCopy(0, 0, size));
+  // the GPU-owned path rewrites the instance rows after the acceleration-structure update, so
+  // only it copies the current rows into Last here; the CPU path already wrote Last with the
+  // previous version's rows in updateTLAS(), in lockstep with the camera history
+  if (mTLAS->isInstanceBufferExternal()) {
+    // the next copy overwrites what the one above just read
+    commandBuffer.pipelineBarrier(vk::PipelineStageFlagBits::eTransfer,
+                                  vk::PipelineStageFlagBits::eTransfer, {}, betweenCopies, {},
+                                  {});
+    commandBuffer.copyBuffer(mTLAS->getInstanceBuffer().getVulkanBuffer(),
+                             mLastTLASInstanceBuffer->getVulkanBuffer(),
+                             vk::BufferCopy(0, 0, size));
+  }
 
   // the ray tracing shaders read PrevTlasInstances
   vk::MemoryBarrier toShader(vk::AccessFlagBits::eTransferWrite,
@@ -1243,9 +1282,47 @@ void Scene::updateTLAS(bool useDeviceTransforms) {
     }
 
     mTLAS->recordUpdate(mASUpdateCommandBuffer.get(), transforms);
+
+    // MotionVector's previous frame is the previous scene render version. The rows of this
+    // version are recorded above, so the previous version's rows are the nodes' previous world
+    // matrices. They go into Last, which the render-step snapshot rotates into Prev: the object
+    // history then advances in the same step as the camera's, so a render after an idle
+    // update_render() reports no motion and an object moved without a render still reports its
+    // displacement on the next one. The GPU-owned path cannot do this (CUDA rewrites the rows
+    // after this submission), so it keeps its snapshot in submitPrevTLASSnapshot().
+    if (mLastTLASInstanceBuffer && mPrevTLASInstanceBuffer) {
+      auto rows = mTLAS->getInstances();
+      auto objects = getObjects();
+      auto pointObjects = getPointObjects();
+      size_t index = 0;
+      auto writeRow = [&](scene::Node const *node) {
+        if (index >= rows.size()) {
+          return;
+        }
+        glm::mat4 modelTranspose = glm::transpose(node->getTransform().prevWorldModelMatrix);
+        std::memcpy(&rows[index].transform.matrix[0][0], &modelTranspose, sizeof(float) * 12);
+        ++index;
+      };
+      for (auto obj : objects) {
+        writeRow(obj);
+      }
+      for (auto obj : pointObjects) {
+        writeRow(obj);
+      }
+      vk::DeviceSize bytes = rows.size() * sizeof(rows[0]);
+      if (bytes) {
+        recordPrevRowCopyLocked(rows.data(), bytes);
+      }
+    }
   }
   mASUpdateCommandBuffer->end();
-  mContext->getQueue().submit(mASUpdateCommandBuffer.get(), {});
+  if (mPrevRowCopyRecorded && mPrevTLASRowFence) {
+    mContext->getDevice().resetFences(mPrevTLASRowFence.get());
+    mContext->getQueue().submit(mASUpdateCommandBuffer.get(), mPrevTLASRowFence.get());
+    mPrevRowCopyRecorded = false;
+  } else {
+    mContext->getQueue().submit(mASUpdateCommandBuffer.get(), {});
+  }
 }
 
 bool Scene::recordBLASRefits(vk::CommandBuffer commandBuffer) {
@@ -1502,7 +1579,8 @@ std::optional<Scene::RTMaterialVersions> Scene::uploadRTMaterials() {
   for (size_t i = 0; i < records.size(); ++i) {
     auto const &now = records[i];
     auto const &before = mRTMaterialRecords[i];
-    emissionChanged |= now.parameters.emissionColor != before.parameters.emissionColor ||
+    emissionChanged |= now.twoSided != before.twoSided ||
+                       now.parameters.emissionColor != before.parameters.emissionColor ||
                        now.parameters.emissionStrength != before.parameters.emissionStrength ||
                        now.parameters.coatWeight != before.parameters.coatWeight ||
                        now.parameters.fuzzWeight != before.parameters.fuzzWeight ||

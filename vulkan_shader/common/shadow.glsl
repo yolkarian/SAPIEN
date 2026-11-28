@@ -30,9 +30,11 @@ mat2 sapienShadowRotation(vec2 fragCoord) {
 }
 
 // Analytical receiver-plane depth gradient d(ndcZ)/d(uv) for an orthographic shadow projection,
-// derived from the receiver normal in light view space (nL.z > 0 faces the light).
+// derived from the receiver normal in light view space (nL.z > 0 faces the light). At grazing
+// incidence nL.z gets small; clamping it low keeps the gradient exact instead of shrinking the
+// bias into self-shadowing (a clamp at 0.25 darkened unoccluded receivers below NoL ~ 0.1).
 vec2 sapienOrthoReceiverPlaneBias(vec3 nL, mat4 shadowProj) {
-  float nz = max(nL.z, 0.25);
+  float nz = max(nL.z, 1e-3);
   float dzdu = (-nL.x / nz) * (2.0 / shadowProj[0][0]) * shadowProj[2][2];
   float dzdv = (-nL.y / nz) * (2.0 / shadowProj[1][1]) * shadowProj[2][2];
   return vec2(dzdu, dzdv);
@@ -182,7 +184,9 @@ float sapienPerspectiveShadow(sampler2D shadowTex, vec3 coord, mat4 shadowView, 
   vec2 planeBias = vec2(0.0);
   float posLDist = max(length(posL), 1e-6);
   float nDotNegPos = dot(nL, -posL);
-  if (NoL > 0.15 && nDotNegPos > 0.15 * posLDist) {
+  // the exact gradient only needs the receiver to face the light at all: gating it on a larger
+  // cosine left grazing receivers with the flat centre-depth comparison, which shadows them
+  if (nDotNegPos > 1e-4 * posLDist) {
     float scale = abs(shadowProj[3][2]) / nDotNegPos;
     planeBias = vec2(nL.x * (2.0 / shadowProj[0][0]),
                      nL.y * (2.0 / shadowProj[1][1])) * scale;
@@ -273,7 +277,7 @@ float sapienPointShadow(samplerCube shadowCube, vec3 wsl, mat4 shadowProj, vec3 
       // Exact receiver tangent-plane cubemap depth along wSample: handles off-axis major-axis
       // change and hyperbolic depth without linearization error.
       float expectedReceiver = pixelDepth - baseBias;
-      if (NoL > 0.15) {
+      if (wslDotN > 1e-4 * dist) {
         float wDotN = max(dot(wSample, worldNormal), 0.25 * wslDotN);
         vec3 va = abs(wSample);
         float sampleD = max(max(va.x, va.y), va.z) * (wslDotN / wDotN);
@@ -299,7 +303,7 @@ float sapienPointShadow(samplerCube shadowCube, vec3 wsl, mat4 shadowProj, vec3 
     vec3 wSample = wsl - deltaW;
     float shadowDepth = texture(shadowCube, wSample).x;
     float receiverDepth = pixelDepth - baseBias;
-    if (NoL > 0.15) {
+    if (wslDotN > 1e-4 * dist) {
       float wDotN = max(dot(wSample, worldNormal), 0.25 * wslDotN);
       vec3 va = abs(wSample);
       float sampleD = max(max(va.x, va.y), va.z) * (wslDotN / wDotN);

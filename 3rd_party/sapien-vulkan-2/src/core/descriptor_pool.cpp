@@ -35,9 +35,13 @@ DynamicDescriptorPool::DynamicDescriptorPool(std::shared_ptr<Device> device,
 }
 
 void DynamicDescriptorPool::expand() {
+  // every new pool gets one more unit than the last: a set that did not fit into the previous
+  // pools (a scene with more textures, say) then fits, and a scene that keeps growing keeps
+  // fitting. The sizes are scaled into a local copy; the request itself must keep the unit sizes
+  // so the growth compounds instead of restart
   std::vector<vk::DescriptorPoolSize> sizes = mSizes;
   uint32_t count = 0;
-  for (auto &size : mSizes) {
+  for (auto &size : sizes) {
     size.setDescriptorCount(size.descriptorCount * (mPools.size() + 1));
     count += size.descriptorCount;
   }

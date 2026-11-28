@@ -685,6 +685,19 @@ void SapienRendererWindow::render(std::string const &targetName,
   if (!mRenderScene) {
     return;
   }
+  // The viewer's paused loop renders without updateRender(), while the Python setters of the helper
+  // nodes (axes, gizmos, the transform window's preview) only mark their transforms dirty: bring
+  // the world matrices up to date here, or those helpers render at their old pose until the
+  // simulation runs again. A SceneGroup's own root holds none of its member scenes' nodes, so each
+  // member scene updates its own tree.
+  for (auto const &system : mRenderSystems) {
+    if (auto scene = system->getScene(); scene && scene->isModelMatrixUpdatePending()) {
+      scene->updateModelMatrices();
+    }
+  }
+  if (mRenderScene->isModelMatrixUpdatePending()) {
+    mRenderScene->updateModelMatrices();
+  }
   if (mRequiresRebuild) {
     rebuild();
   }

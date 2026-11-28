@@ -6,6 +6,7 @@
 #include "svulkan2/resource/manager.h"
 #include "svulkan2/shader/rt.h"
 #include <map>
+#include <optional>
 #include <utility>
 
 namespace svulkan2 {
@@ -150,6 +151,7 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
 
   // material edits repack the scene's materials[]; one adding a texture rebuilds the tables
   bool emissionChanged = false;
+  std::optional<scene::Scene::RTMaterialVersions> pendingMaterialVersions;
   if (!mRequiresRebuild) {
     auto materials = scene->uploadRTMaterials();
     if (!materials) {
@@ -157,7 +159,7 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
     } else {
       mAccumulationDirty |= materials->content != mMaterialVersions.content;
       emissionChanged = materials->emission != mMaterialVersions.emission;
-      mMaterialVersions = *materials;
+      pendingMaterialVersions = *materials;
     }
   }
 
@@ -199,8 +201,15 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
   } else if (emissionChanged) {
     // the emissive light-sampling tables hold the radiance of the materials; prepareScene()
     // replaces the Objects buffer, and only updateObjects() fills the object metadata it holds
+    //
+    // A throw here leaves the tables half rebuilt: the frame fails, and committing the versions
+    // would make the next frame believe there is nothing to rebuild and bind the freed buffers.
+    // So the versions are committed only once both calls returned.
     prepareScene();
     updateObjects();
+    if (pendingMaterialVersions) {
+      mMaterialVersions = *pendingMaterialVersions;
+    }
   }
 
   if (mSceneRenderVersion != mScene->getRenderVersion() || mRequiresRebuild) {
@@ -225,11 +234,20 @@ void RTRenderer::prepareRender(scene::Camera &camera) {
     }
     mFrameCount = 0;
     mSceneRenderVersion = mScene->getRenderVersion();
+    if (pendingMaterialVersions) {
+      mMaterialVersions = *pendingMaterialVersions;
+    }
   } else if (mAccumulationDirty) {
     // a property that changes the estimate was edited: old samples no longer belong to it
     mFrameCount = 0;
+    if (pendingMaterialVersions) {
+      mMaterialVersions = *pendingMaterialVersions;
+    }
   } else {
     mFrameCount += 1;
+    if (pendingMaterialVersions) {
+      mMaterialVersions = *pendingMaterialVersions;
+    }
   }
   mAccumulationDirty = false;
 
@@ -567,8 +585,9 @@ void RTRenderer::prepareScene() {
       std::vector<vk::DescriptorPoolSize>{
           {vk::DescriptorType::eAccelerationStructureKHR, asCount},
           {vk::DescriptorType::eStorageBuffer,
-           storageBufferCount +
-               static_cast<uint32_t>(vertexBufferInfos.size() + indexBufferInfos.size())},
+           storageBufferCount + static_cast<uint32_t>(vertexBufferInfos.size() +
+                                                      indexBufferInfos.size() +
+                                                      pointsetBufferInfos.size())},
           {vk::DescriptorType::eCombinedImageSampler,
            textureCount + static_cast<uint32_t>(textureInfos.size())}});
   mSceneSet = mScenePool->allocateSet(mShaderPackInstance->getSceneSetLayout());

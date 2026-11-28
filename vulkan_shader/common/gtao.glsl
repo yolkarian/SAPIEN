@@ -185,7 +185,11 @@ float sapienSampleBilateralAO(sampler2D aoTex, sampler2D depthTex, vec2 uv, floa
   vec2 invAoSize = 1.0 / max(aoSize, vec2(1.0));
   vec2 fullSize = vec2(textureSize(depthTex, 0));
   vec2 invFullSize = 1.0 / max(fullSize, vec2(1.0));
-  vec2 baseTexel = floor(uv * aoSize);
+  // the AO pass evaluated full-resolution texel 2 * aoTexel (see sapienComputeGTAO), so derive this
+  // pixel's AO texel from its own full-resolution texel rather than from uv * ceil(size / 2): at
+  // odd sizes the two disagree for about a quarter of the rows and columns
+  vec2 fullTexel = floor(uv * max(fullSize, vec2(1.0)));
+  vec2 baseTexel = floor(fullTexel * 0.5);
   float absCenterZ = abs(centerZ);
   float depthSigma = max(0.05 * absCenterZ, 0.02);
 

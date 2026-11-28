@@ -11,6 +11,9 @@ GpuMaterial packMaterial(resource::SVMetallicMaterial const &material,
     auto texture = material.getTexture(static_cast<resource::SVMetallicMaterial::TextureSlot>(slot));
     record.textures[slot] = texture ? textureSlot(texture) : -1;
   }
+  record.twoSided = material.getTwoSided();
+  record.alphaMode = static_cast<int32_t>(material.getAlphaMode());
+  record.alphaCutoff = material.getAlphaCutoff();
   return record;
 }
 

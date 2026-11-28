@@ -44,11 +44,29 @@ struct Material {
   int transmissionTexture;
   int occlusionTexture;
   int padding2;
-  vec4 reserved[14];
+  int twoSided;      // both faces visible (cull mode none)
+  int alphaMode;     // base_color.a: 0 OPAQUE (ignored), 1 MASK, 2 BLEND (stochastic coverage)
+  float alphaCutoff; // MASK threshold
+  int padding3;
+  vec4 reserved[13];
 };
 
 // a texture's UV from its textureTransforms entry
 vec2 materialUV(vec4 transform, vec2 uv) { return uv * transform.zw + transform.xy; }
+
+// geometry coverage of a surface from its base colour alpha: OPAQUE covers, MASK cuts out below
+// alphaCutoff, BLEND keeps the alpha as a stochastic coverage. `texelAlpha` is the base colour
+// texture's alpha (1 without one).
+float materialCoverage(Material material, float texelAlpha) {
+  if (material.alphaMode == 0) {
+    return 1.0;
+  }
+  float alpha = clamp(material.baseColor.a * texelAlpha, 0.0, 1.0);
+  if (material.alphaMode == 1) {
+    return alpha < material.alphaCutoff ? 0.0 : 1.0;
+  }
+  return alpha;
+}
 
 // normal-incidence reflectance of the dielectric base: OpenPBR's specular_weight times the
 // Fresnel reflectance of specular_ior against air

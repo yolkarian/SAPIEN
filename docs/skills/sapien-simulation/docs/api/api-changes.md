@@ -37,7 +37,7 @@ The `rt` path tracer outputs first-batch AOVs:
 
 - New `rt` pictures from `camera.get_picture(name)`:
   - `Depth` (`float32`, shape `(H, W)`): linear depth in metres along the camera view axis, `0` on sky (matches `rt_batch`).
-  - `MotionVector` (`float32`, shape `(H, W, 2)`): screen-space optical flow `(dx, dy)` in pixels (`curr - prev`, `+x` right, `+y` down), covering moving objects, moving cameras and rotating sky; `0` on the initial frame, on the first frame of an object or camera added mid-run, and after an idle `update_render()`. The previous frame is per scene render version: every camera of the scene and repeated `take_picture()` calls of one step see the same motion; camera-group cameras with GPU poses (`cuda`, PhysX-mounted) report motion since the previous frame.
+  - `MotionVector` (`float32`, shape `(H, W, 2)`): screen-space optical flow `(dx, dy)` in pixels (`curr - prev`, `+x` right, `+y` down), covering moving objects, moving cameras and rotating sky; `0` on the initial frame, on the first frame of an object or camera added mid-run, and after an idle `update_render()`. The previous frame is per scene render version: every camera of the scene and repeated `take_picture()` calls of one step see the same motion, and an object moved without a render reports its move on the next one; camera-group cameras with GPU poses (`cuda`, PhysX-mounted) report motion since the previous frame.
   - `Emission`, `DiffuseDirect`, `SpecularDirect`, `DiffuseIndirect`, `SpecularIndirect` (`float32`, shape `(H, W, 4)`): accumulated over frames; their RGB sum equals `HdrColor` (before denoising) everywhere in the image. Classes follow scattering events: light reached through an alpha cutout or a semi-transparent surface keeps its class.
 - Custom RT packs may declare `rg32f`/`rg16f`/`rgba16f` `out<Name>` storage images and bind `PrevTlasInstances` in the scene set (`rt` uses binding 20).
 
@@ -49,7 +49,7 @@ Materials follow the first batch of OpenPBR Surface 1.1:
   `specular_weight=1`: their reflectance is the base colour scaled by `specular_weight`
   (clamped to 1), so `metallic=1, specular=0` migrated by the dielectric rule renders black.
   `transmission_roughness` is removed.
-- New `RenderMaterial` members: `base_weight`, `specular_weight`, `specular_color`,
+- New `RenderMaterial` members: `alpha_mode` (`"opaque"`, `"mask"`, `"blend"`; glTF's alphaMode, `"opaque"` for imported OPAQUE materials) and `alpha_cutoff` (glTF alphaCutoff) decide whether `base_color.a` and the base colour texture's alpha become geometry coverage: OPAQUE ignores both, MASK cuts out below the cutoff, BLEND keeps the alpha as stochastic coverage in rasterization, `rt` and `rt_batch`. `two_sided` (glTF doubleSided, also set by the loader) makes the ray tracers show a mesh's back faces and let them cast shadows. `base_weight`, `specular_weight`, `specular_color`,
   `specular_roughness_anisotropy`, `transmission_color`, `transmission_depth` (scene units),
   `coat_weight`, `coat_color`, `coat_roughness`, `coat_ior`, `fuzz_weight`, `fuzz_color`,
   `fuzz_roughness`, `thin_walled`, `occlusion_texture`, `occlusion_strength` (default 1: the

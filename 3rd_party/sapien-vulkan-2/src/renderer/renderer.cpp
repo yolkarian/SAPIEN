@@ -841,7 +841,10 @@ void Renderer::prepareRender(scene::Camera &camera) {
       }
     }
 
-    if (mShaderPack->getShadowPass()) {
+    // A camera group that trims its targets to passes without the scene set draws no shadows, so
+    // the limits of the built-in shadow pass do not apply to it (needsShadowPass() is false).
+    if (mShaderPack->getShadowPass() &&
+        (!mShaderPackInstance || mShaderPackInstance->needsShadowPass())) {
       if (mDirectionalLightShadowSizes.size() > mShaderPack->getMaxDirectionalShadowCount()) {
         throw std::runtime_error("The scene contains too many directional "
                                  "lights that cast shadows.");
@@ -870,8 +873,8 @@ void Renderer::prepareRender(scene::Camera &camera) {
     setSpecializationConstant<int>("NUM_SPOT_LIGHT_SHADOWS", mSpotLightShadowSizes.size());
     setSpecializationConstant<int>("NUM_TEXTURED_LIGHT_SHADOWS", mTexturedLightShadowSizes.size());
 
-    if (mShaderPack->getShadowPass() &&
-        (!mShaderPackInstance || mShaderPackInstance->needsShadowPass())) {
+    if (mShaderPack->getShadowPass() && mShaderPackInstance &&
+        mShaderPackInstance->needsShadowPass()) {
       auto lightBufferLayout = mShaderPack->getShaderInputLayouts()->lightBufferLayout;
       auto activeShadowMaps = mScene->getRasterShadowMaps(mConfig->depthFormat);
       if (!mShadowMaps || mShadowMaps != activeShadowMaps ||

@@ -57,17 +57,20 @@ void main() {
   int instanceId = gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT;
   uint geometryIndex = geometryInstances.i[instanceId].geometryIndex;
   Material mat = materials.m[geometryInstances.i[instanceId].materialIndex];
-  bool mirrored = determinant(mat3(gl_ObjectToWorldEXT)) < 0.0;
-  bool isInside = (gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT) != mirrored;
+  // Vulkan decides front/back facing in object space, so a negative-determinant instance
+  // transform does not flip the winding: the hit kind alone tells inside from outside.
+  bool isInside = gl_HitKindEXT == gl_HitKindBackFacingTriangleEXT;
+  // a two-sided surface shows both faces, like a thin-walled one
+  bool backFaceVisible = mat.thinWalled != 0 || mat.twoSided != 0;
 
   if (ray.isShadow != 0) {
-    float baseAlpha = mat.baseColor.a;
+    float texelAlpha = 1.0;
     float transmissionWeight = mat.transmissionWeight;
     float metallic = mat.metallic;
     if (mat.baseColorTexture >= 0 || mat.transmissionTexture >= 0 || mat.metallicTexture >= 0) {
       vec2 uv = interpolateUV(geometryIndex);
       if (mat.baseColorTexture >= 0) {
-        baseAlpha *= textureLod(textures[nonuniformEXT(mat.baseColorTexture)],
+        texelAlpha = textureLod(textures[nonuniformEXT(mat.baseColorTexture)],
                                 materialUV(mat.textureTransforms[0], uv), 0.0).a;
       }
       if (mat.transmissionTexture >= 0) {
@@ -79,12 +82,18 @@ void main() {
                               materialUV(mat.textureTransforms[3], uv), 0.0).x;
       }
     }
-    float coverage = clamp(baseAlpha, 0.0, 1.0) * (1.0 - clamp(obj.transparency, 0.0, 1.0));
+    float coverage =
+        materialCoverage(mat, texelAlpha) * (1.0 - clamp(obj.transparency, 0.0, 1.0));
     float transmission = clamp(transmissionWeight, 0.0, 1.0) * (1.0 - clamp(metallic, 0.0, 1.0));
-    if (isInside && mat.thinWalled == 0 && transmission < 1e-4 && coverage >= 1.0 - 1e-5) {
-      ignoreIntersectionEXT;
+    // An opaque surface blocks a shadow ray from either side: an open one-sided sheet must shadow
+    // what lies behind it, and a closed mesh's far face must not leak light. (Rasterization's shadow
+    // pass culls only the front face, which the light-side ray meets first, so it agrees.) The
+    // uncovered part of a partly transparent surface passes below with its coverage weight.
+    if (isInside && !backFaceVisible && transmission < 1e-4 && coverage >= 1.0 - 1e-5) {
+      ray.transmittance = vec3(0.0);
+      return;
     }
-    vec3 tint = isInside && mat.thinWalled == 0 ? vec3(1.0) : clamp(mat.transmissionColor, 0.0, 1.0);
+    vec3 tint = isInside && !backFaceVisible ? vec3(1.0) : clamp(mat.transmissionColor, 0.0, 1.0);
     ray.transmittance *= mix(vec3(1.0), transmission * tint, coverage);
     if (max(ray.transmittance.x, max(ray.transmittance.y, ray.transmittance.z)) > 0.0) {
       ignoreIntersectionEXT;
@@ -93,7 +102,7 @@ void main() {
   }
 
   // back faces of opaque single-sided surfaces are invisible
-  if (isInside && mat.thinWalled == 0) {
+  if (isInside && !backFaceVisible) {
     float transmissionWeight = mat.transmissionWeight;
     if (mat.transmissionTexture >= 0) {
       vec2 uv = interpolateUV(geometryIndex);

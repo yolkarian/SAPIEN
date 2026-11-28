@@ -180,14 +180,28 @@ loadAssimpMaterials(aiScene const *scene, std::string const &filename, bool hono
       diffuse = {baseColor.r, baseColor.g, baseColor.b};
       alpha = baseColor.a;
     }
-    // glTF 2.0 alphaMode defaults to "OPAQUE", where baseColorFactor.a is ignored.
+    // glTF 2.0 alphaMode: OPAQUE (the default) ignores baseColorFactor.a and the base colour
+    // texture's alpha, MASK cuts out below alphaCutoff, BLEND keeps the alpha as coverage. The mode
+    // goes into the material record so every renderer applies the same rule to the texture too.
+    SVMetallicMaterial::AlphaModeInt alphaMode{SVMetallicMaterial::eAlphaBlend};
+    float alphaCutoff = 0.5f;
     if (gltf) {
-      aiString alphaMode;
-      if (m->Get(AI_MATKEY_GLTF_ALPHAMODE, alphaMode) != AI_SUCCESS ||
-          std::strcmp(alphaMode.C_Str(), "OPAQUE") == 0) {
+      aiString mode;
+      if (m->Get(AI_MATKEY_GLTF_ALPHAMODE, mode) != AI_SUCCESS ||
+          std::strcmp(mode.C_Str(), "OPAQUE") == 0) {
         alpha = 1.f;
+        alphaMode = SVMetallicMaterial::eAlphaOpaque;
+      } else if (std::strcmp(mode.C_Str(), "MASK") == 0) {
+        alphaMode = SVMetallicMaterial::eAlphaMask;
+      }
+      float cutoff = 0.f;
+      if (alphaMode == SVMetallicMaterial::eAlphaMask &&
+          m->Get(AI_MATKEY_GLTF_ALPHACUTOFF, cutoff) == AI_SUCCESS) {
+        alphaCutoff = cutoff;
       }
     }
+    material->setAlphaMode(alphaMode);
+    material->setAlphaCutoff(alphaCutoff);
     material->setBaseColor({diffuse.r, diffuse.g, diffuse.b, alpha});
 
     float metallic = 0.f;

@@ -410,6 +410,14 @@ class RenderLightComponent(sapien.pysapien.Component):
         ...
 class RenderMaterial:
     __hash__: typing.ClassVar[None] = None  # type: ignore[assignment]
+    alpha_cutoff: float
+    """The alpha threshold of "mask" (glTF alphaCutoff, 0.5 by default)."""
+    alpha_mode: str
+    """
+    glTF alphaMode of base_color.a and of the base colour texture's alpha: "opaque" (the default)
+    ignores the alpha, "mask" cuts out below alpha_cutoff, "blend" keeps it as a stochastic
+    coverage.
+    """
     base_color: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(4)]
     """RGBA base colour; the alpha channel is the geometry coverage (cut-out), not transparency."""
     base_color_texture: RenderTexture2D | None
@@ -462,6 +470,11 @@ class RenderMaterial:
     """
     thin_walled: bool
     """OpenPBR geometry_thin_walled: a closed thin shell rather than a solid."""
+    two_sided: bool
+    """
+    Whether both faces of the mesh are visible (glTF doubleSided): the ray tracers then show its
+    back faces and let them cast shadows too.
+    """
     transmission: float
     """OpenPBR transmission_weight."""
     transmission_color: typing.Annotated[list[float], pybind11_stubgen.typing_ext.FixedSize(3)]
@@ -521,6 +534,18 @@ class RenderMaterial:
     def get_specular_roughness_anisotropy(self) -> float:
         ...
     def get_specular_weight(self) -> float:
+        ...
+    def get_alpha_cutoff(self) -> float:
+        ...
+    def get_alpha_mode(self) -> str:
+        ...
+    def get_two_sided(self) -> bool:
+        ...
+    def set_alpha_cutoff(self, cutoff: float) -> None:
+        ...
+    def set_alpha_mode(self, mode: str) -> None:
+        ...
+    def set_two_sided(self, two_sided: bool) -> None:
         ...
     def get_thin_walled(self) -> bool:
         ...

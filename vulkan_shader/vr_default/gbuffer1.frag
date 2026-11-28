@@ -48,9 +48,13 @@ void main() {
   }
 
   albedo = material.baseColor;
+  float texelAlpha = 1.0;
   if (material.baseColorTexture >= 0) {
-    albedo *= texture(textures[nonuniformEXT(material.baseColorTexture)], materialUV(material.textureTransforms[0], inUV));
+    vec4 texel = texture(textures[nonuniformEXT(material.baseColorTexture)], materialUV(material.textureTransforms[0], inUV));
+    albedo *= texel;
+    texelAlpha = texel.a;
   }
+  albedo.a = materialCoverage(material, texelAlpha);
 
   albedo.a *=  (1.f - instance.transparency);
 

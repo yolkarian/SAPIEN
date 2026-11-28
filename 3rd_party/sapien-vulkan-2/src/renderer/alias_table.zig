@@ -28,6 +28,10 @@ const Entry = struct { alias: usize, prob: f64 };
 /// Build a table from `weights`. Negative and non-finite weights are treated as zero. A table
 /// with no positive weight has `total == 0` and every entry selects itself with probability 0;
 /// the shader must never sample it (the renderer sets the light count to zero in that case).
+///
+/// A total that does not fit in float32 (an extreme emission, say) is rescaled by a power of two
+/// before the table is built, so the C side gets `total == inf` and falls back to BSDF sampling
+/// instead of a build error. Every probability is a ratio and stays exact under that rescaling.
 pub fn build(allocator: std.mem.Allocator, weights: []const f32) !Table {
     const count = weights.len;
     if (count > std.math.maxInt(u32)) return error.TooManyEntries;
@@ -42,14 +46,20 @@ pub fn build(allocator: std.mem.Allocator, weights: []const f32) !Table {
     if (count == 0 or total <= 0) {
         return .{ .entries = entries, .total = 0 };
     }
-    const total_f32: f32 = @floatCast(total);
-    if (!std.math.isFinite(total_f32)) return error.TotalOverflow;
+    // a sum beyond float32 is reported as inf after a power-of-two rescaling: the C side skips
+    // light sampling for such a table rather than failing the frame
+    var total_f32: f32 = @floatCast(total);
+    var weightScale: f64 = 1;
+    if (!std.math.isFinite(total_f32)) {
+        weightScale = std.math.pow(f64, 2, -std.math.floor(std.math.log2(total)));
+        total_f32 = std.math.inf(f32);
+    }
 
-    const average = total / @as(f64, @floatFromInt(count));
+    const average = total * weightScale / @as(f64, @floatFromInt(count));
     var scaled = try allocator.alloc(f64, count);
     defer allocator.free(scaled);
     for (weights, 0..) |w, i| {
-        scaled[i] = if (std.math.isFinite(w) and w > 0) @as(f64, w) else 0;
+        scaled[i] = if (std.math.isFinite(w) and w > 0) @as(f64, w) * weightScale else 0;
     }
 
     // Vose: partition into "small" (below average) and "large" (at or above) stacks.
@@ -138,7 +148,6 @@ export fn sapien_alias_table_build(weights: ?[*]const f32, count: usize, out: *C
     var table = build(c_allocator, slice) catch |err| {
         const msg = switch (err) {
             error.TooManyEntries => "alias table: count exceeds u32 index range",
-            error.TotalOverflow => "alias table: weight sum overflows float32",
             else => "alias table: out of memory",
         };
         writeError(error_buffer, error_size, msg);
@@ -292,18 +301,23 @@ test "all-zero and non-finite weights alias to self and ignore invalid entries" 
     }
 }
 
-test "weight sum overflowing float32 returns TotalOverflow" {
+test "a weight sum that overflows float32 builds a table with an infinite total" {
+    // the C side reads an infinite total as "no light sampling" and keeps the frame rendering
     const huge = [_]f32{ std.math.floatMax(f32), std.math.floatMax(f32) };
-    try std.testing.expectError(error.TotalOverflow, build(test_allocator, &huge));
+    var table = try build(test_allocator, &huge);
+    defer table.deinit(test_allocator);
+    try std.testing.expect(std.math.isInf(table.total));
+    // equal weights: a uniform table, every bin keeps itself
+    for (table.entries) |entry| {
+        try std.testing.expectApproxEqAbs(@as(f64, 1), entry.prob, 1e-6);
+    }
 
     var out: CTable = undefined;
     var error_buffer: [128]u8 = undefined;
     try std.testing.expectEqual(
-        @as(c_int, 1),
+        @as(c_int, 0),
         sapien_alias_table_build(&huge, huge.len, &out, &error_buffer, error_buffer.len),
     );
-    try std.testing.expectEqualStrings(
-        "alias table: weight sum overflows float32",
-        std.mem.sliceTo(&error_buffer, 0),
-    );
+    try std.testing.expect(std.math.isInf(out.total));
+    sapien_alias_table_free(&out);
 }

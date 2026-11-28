@@ -152,6 +152,8 @@ public:
    *  this function also copies current matrices into the previous matrices
    */
   void updateModelMatrices();
+  /** true when a local transform or the set of nodes changed since updateModelMatrices() */
+  bool isModelMatrixUpdatePending() const;
 
   /** called to order shadow lights before non-shadow lights */
   void reorderLights();
@@ -343,6 +345,9 @@ protected:
   void createRTStorageBuffers(StructDataLayout const &geometryInstanceBufferLayout);
   void updateRTStorageBuffers();
   bool recordPrevTLASSnapshotLocked(vk::CommandBuffer commandBuffer);
+  /** copies the previous render version's instance rows into Last from a staging buffer; the
+   *  render-step snapshot rotates Last into Prev afterwards */
+  void recordPrevRowCopyLocked(void const *rows, vk::DeviceSize bytes);
 
   // ray tracing resources
   std::mutex mRTResourcesLock;
@@ -354,6 +359,11 @@ protected:
   uint64_t mTLASSnapshotRenderVersion{0};
   // false until the buffers hold rows of a rendered frame; the first snapshot seeds both
   bool mTLASSnapshotInitialized{false};
+  // staging of the previous-row copy, reused once the submission that reads it has finished
+  std::unique_ptr<core::Buffer> mPrevTLASRowStagingBuffer;
+  vk::UniqueFence mPrevTLASRowFence;
+  // the AS update submission carries a previous-row copy, so it signals mPrevTLASRowFence
+  bool mPrevRowCopyRecorded{false};
   std::vector<vk::Buffer> mVertexBuffers;
   std::vector<vk::Buffer> mIndexBuffers;
   std::vector<std::tuple<vk::ImageView, vk::Sampler>> mTextures;

@@ -25,6 +25,8 @@ std::shared_ptr<SVMetallicMaterial> SVMetallicMaterial::clone() const {
   copy->mBuffer = mBuffer;
   copy->mTextures = mTextures;
   copy->mCullMode = mCullMode;
+  copy->mAlphaMode = mAlphaMode;
+  copy->mAlphaCutoff = mAlphaCutoff;
   return copy;
 }
 

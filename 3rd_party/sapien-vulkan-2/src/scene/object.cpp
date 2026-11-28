@@ -91,6 +91,9 @@ void Object::setTransparency(float transparency) {
 }
 
 void Object::setCastShadow(bool castShadow) {
+  if (mCastShadow == castShadow) {
+    return;
+  }
   mCastShadow = castShadow;
   mScene->updateVersion();
 }

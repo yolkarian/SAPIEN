@@ -195,7 +195,8 @@ void IntegratorTables::build(core::Context &context, scene::Scene &scene,
         float cellSolidAngle = 4.f * kPi / weights.size();
         envEntries.assign(4 * weights.size(), 0);
         for (size_t c = 0; c < weights.size(); ++c) {
-          float pdf = weights[c] / table.total / cellSolidAngle;
+          // the weights are normalized to sum to one, so the table's total is 1
+          float pdf = float(weights[c] / total) / cellSolidAngle;
           envEntries[4 * c + 0] = table.entries[c].alias;
           envEntries[4 * c + 1] = table.entries[c].threshold;
           std::memcpy(&envEntries[4 * c + 2], &pdf, sizeof(pdf));
@@ -246,13 +247,16 @@ void IntegratorTables::build(core::Context &context, scene::Scene &scene,
       int32_t rowBits = row;
       float rowFloat;
       std::memcpy(&rowFloat, &rowBits, sizeof(rowFloat));
-      // Match camera.rahit back-face visibility: only thin-walled or transmissive meshes emit
-      // from both sides; opaque single-sided meshes emit from their front face only.
-      float doubleSided =
-          (material->getThinWalled() || material->getTransmission() >= 1e-4f ||
-           material->getTexture(resource::SVMetallicMaterial::eTransmission) != nullptr)
-              ? 1.f
-              : 0.f;
+      // Match camera.rahit back-face visibility: an opaque single-sided mesh emits from its front
+      // face only; a two-sided or thin-walled one emits from both. A transmissive material's back
+      // face is visible too, but its per-texel coverage can still hide it, so a transmission
+      // texture keeps the mesh single-sided here (and the rahit agrees per texel).
+      float doubleSided = (material->getThinWalled() || material->getTwoSided() != 0 ||
+                           (material->getTransmission() >= 1e-4f &&
+                            material->getTexture(resource::SVMetallicMaterial::eTransmission) ==
+                                nullptr))
+                              ? 1.f
+                              : 0.f;
       for (uint32_t t = 0; t < mesh->getTriangleCount(); ++t) {
         glm::vec3 p0 = vertex(indices[3 * t]);
         glm::vec3 e1 = vertex(indices[3 * t + 1]) - p0;
@@ -285,7 +289,8 @@ void IntegratorTables::build(core::Context &context, scene::Scene &scene,
       for (size_t t = 0; t < weights.size(); ++t) {
         aliasEntries[2 * t] = table.entries[t].alias;
         aliasEntries[2 * t + 1] = table.entries[t].threshold;
-        triangles[16 * t + 3] = weights[t] / table.total; // selection probability
+        // the weights are normalized to sum to one, so the table's total is 1
+        triangles[16 * t + 3] = float(weights[t] / total); // selection probability
       }
       emissiveCount = int(weights.size());
     } else {

@@ -69,6 +69,10 @@ public:
 
   vk::AccelerationStructureKHR getVulkanAS() const { return mAS.get(); };
   Buffer &getInstanceBuffer() const { return *mInstanceBuffer; }
+  /** the instance rows of the last recordUpdate() */
+  std::vector<vk::AccelerationStructureInstanceKHR> const &getInstances() const {
+    return mInstances;
+  }
 
 private:
   /** an instance buffer without contents */

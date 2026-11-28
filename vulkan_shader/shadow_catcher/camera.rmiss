@@ -23,4 +23,5 @@ void main() {
   ray.depth = maxDepth + 1;
   ray.origin = vec3(0.0);
   ray.alpha = 0.0;
+  ray.hit = 0;
 }
